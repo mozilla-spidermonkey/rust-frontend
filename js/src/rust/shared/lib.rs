@@ -13,3 +13,4 @@
  * limitations under the License.
  */
 extern crate baldrdash;
+extern crate frontend_rs;

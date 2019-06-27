@@ -418,6 +418,7 @@ else:
 DIRS += [
     'build',
     'frontend',
+    'frontend-rs',
     'gc',
     'jit',
     'wasm',

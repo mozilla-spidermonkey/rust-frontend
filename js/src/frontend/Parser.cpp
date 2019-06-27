@@ -36,6 +36,7 @@
 
 #include "builtin/ModuleObject.h"
 #include "builtin/SelfHostingDefines.h"
+#include "frontend-rs/frontend-rs.h"
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/FoldConstants.h"
 #include "frontend/ModuleSharedContext.h"
@@ -385,6 +386,8 @@ bool ParserBase::setSourceMapInfo() {
 template <class ParseHandler, typename Unit>
 typename ParseHandler::ListNodeType GeneralParser<ParseHandler, Unit>::parse() {
   MOZ_ASSERT(checkOptionsCalled_);
+
+  asdf();
 
   Directives directives(options().strictOption);
   GlobalSharedContext globalsc(cx_, ScopeKind::Global, directives,
