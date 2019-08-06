@@ -92,6 +92,7 @@ with Files('nsVideoFrame.*'):
     BUG_COMPONENT = ('Core', 'Audio/Video')
 
 EXPORTS += [
+    'nsAtomicContainerFrame.h',
     'nsCanvasFrame.h',
     'nsContainerFrame.h',
     'nsDirection.h',
@@ -109,6 +110,7 @@ EXPORTS += [
     'nsIScrollableFrame.h',
     'nsIScrollPositionListener.h',
     'nsIStatefulFrame.h',
+    'nsLineBox.h',
     'nsPageSequenceFrame.h',
     'nsPluginFrame.h',
     'nsQueryFrame.h',
@@ -134,6 +136,7 @@ EXPORTS += [
 EXPORTS.mozilla += [
     '!FrameIdList.h',
     '!FrameTypeList.h',
+    'AnonymousContentKey.h',
     'AspectRatio.h',
     'AutoCopyListener.h',
     'ColumnUtils.h',

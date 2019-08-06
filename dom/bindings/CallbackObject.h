@@ -162,8 +162,33 @@ class CallbackObject : public nsISupports {
     eRethrowExceptions
   };
 
+  // Append a UTF-8 string to aOutString that describes the callback function,
+  // for use in logging or profiler markers.
+  // The string contains the function name and its source location, if
+  // available, in the following format:
+  // "<functionName> (<sourceURL>:<lineNumber>)"
+  void GetDescription(nsACString& aOutString);
+
   size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const {
     return aMallocSizeOf(this);
+  }
+
+  // Used for cycle collection optimization.  Should return true only if all our
+  // outgoing edges are to known-live objects.  In that case, there's no point
+  // traversing our edges to them, because we know they can't be collected
+  // anyway.
+  bool IsBlackForCC() const {
+    // Play it safe in case this gets called after unlink.
+    return (!mCallback || !JS::ObjectIsMarkedGray(mCallback)) &&
+           (!mCallbackGlobal || !JS::ObjectIsMarkedGray(mCallbackGlobal)) &&
+           (!mCreationStack || !JS::ObjectIsMarkedGray(mCreationStack)) &&
+           (!mIncumbentJSGlobal ||
+            !JS::ObjectIsMarkedGray(mIncumbentJSGlobal)) &&
+           // mIncumbentGlobal is known-live if we have a known-live
+           // mIncumbentJSGlobal, since mIncumbentJSGlobal will keep a ref to
+           // it. At this point if mIncumbentJSGlobal is not null, it's
+           // known-live.
+           (!mIncumbentGlobal || mIncumbentJSGlobal);
   }
 
  protected:

@@ -15,8 +15,6 @@ module.exports = {
     "import", // require("eslint-plugin-import")
     "react", // require("eslint-plugin-react")
     "jsx-a11y", // require("eslint-plugin-jsx-a11y")
-    "prettier", // require("eslint-plugin-prettier")
-
     // Temporarily disabled since they aren't vendored into in mozilla central yet
     // "react-hooks", // require("react-hooks")
     "fetch-options", // require("eslint-plugin-fetch-options")
@@ -27,16 +25,14 @@ module.exports = {
     }
   },
   "extends": [
-
     "eslint:recommended",
     "plugin:jsx-a11y/recommended", // require("eslint-plugin-jsx-a11y")
     "plugin:mozilla/recommended", // require("eslint-plugin-mozilla")
     "plugin:mozilla/browser-test",
     "plugin:mozilla/mochitest-test",
     "plugin:mozilla/xpcshell-test",
-    "prettier",
-    "prettier/react",
-    "plugin:prettier/recommended",
+    "plugin:prettier/recommended", // require("eslint-plugin-prettier")
+    "prettier/react", // require("eslint-config-prettier")
   ],
   "globals": {
     // Remove this when m-c updates their eslint: See https://github.com/mozilla/activity-stream/pull/4219
@@ -48,7 +44,13 @@ module.exports = {
       // These files use fluent-dom to insert content
       "files": [
         "content-src/asrouter/templates/OnboardingMessage/**",
+        "content-src/asrouter/templates/FirstRun/**",
         "content-src/asrouter/templates/Trailhead/**",
+        "content-src/asrouter/templates/StartupOverlay/StartupOverlay.jsx",
+        "content-src/components/TopSites/**",
+        "content-src/components/MoreRecommendations/MoreRecommendations.jsx",
+        "content-src/components/CollapsibleSection/CollapsibleSection.jsx",
+        "content-src/components/DiscoveryStreamComponents/DSEmptyState/DSEmptyState.jsx"
       ],
       "rules": {
         "jsx-a11y/anchor-has-content": 0,
@@ -96,21 +98,18 @@ module.exports = {
 
     "accessor-pairs": [2, {"setWithoutGet": true, "getWithoutSet": false}],
     "array-callback-return": 2,
-    "array-element-newline": 0,
     "block-scoped-var": 2,
     "callback-return": 0,
     "camelcase": 0,
     "capitalized-comments": 0,
     "class-methods-use-this": 0,
     "consistent-this": [2, "use-bind"],
-    "curly": [2, "all"],
     "default-case": 0,
     "eqeqeq": 2,
     "for-direction": 2,
     "func-name-matching": 2,
     "func-names": 0,
     "func-style": 0,
-    "function-paren-newline": 0,
     "getter-return": 2,
     "global-require": 0,
     "guard-for-in": 2,
@@ -118,21 +117,16 @@ module.exports = {
     "id-blacklist": 0,
     "id-length": 0,
     "id-match": 0,
-    "implicit-arrow-linebreak": 0,
-    // XXX Switch back to indent once mozilla-central has decided what it is using.
-    "indent": 0,
     "init-declarations": 0,
     "line-comment-position": 0,
     "lines-between-class-members": 2,
     "max-depth": [2, 4],
-    "max-len": 0,
     "max-lines": 0,
     "max-nested-callbacks": [2, 4],
     "max-params": [2, 6],
     "max-statements": [2, 50],
     "max-statements-per-line": [2, {"max": 2}],
     "multiline-comment-style": 0,
-    "multiline-ternary": 0,
     "new-cap": [2, {"newIsCap": true, "capIsNew": false}],
     "newline-after-var": 0,
     "newline-before-return": 0,
@@ -149,7 +143,6 @@ module.exports = {
     "no-eq-null": 2,
     "no-extend-native": 2,
     "no-extra-label": 2,
-    "no-extra-parens": 0,
     "no-implicit-coercion": [2, {"allow": ["!!"]}],
     "no-implicit-globals": 2,
     "no-inline-comments": 0,
@@ -216,7 +209,6 @@ module.exports = {
     "symbol-description": 2,
     "valid-jsdoc": [0, {"requireReturn": false, "requireParamDescription": false, "requireReturnDescription": false}],
     "vars-on-top": 2,
-    "wrap-regex": 0,
     "yoda": [2, "never"]
   }
 };

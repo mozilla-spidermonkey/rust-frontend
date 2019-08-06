@@ -257,26 +257,26 @@ class PresShell final : public nsStubDocumentObserver,
    * on out-of-memory.
    */
   void* AllocateFrame(nsQueryFrame::FrameIID aID, size_t aSize) {
-    void* result = mFrameArena.AllocateByFrameID(aID, aSize);
-    RecordAlloc(result);
-    return result;
+#define FRAME_ID(classname, ...)                                  \
+  static_assert(size_t(nsQueryFrame::FrameIID::classname##_id) == \
+                    size_t(eArenaObjectID_##classname),           \
+                "");
+#define ABSTRACT_FRAME_ID(classname)                              \
+  static_assert(size_t(nsQueryFrame::FrameIID::classname##_id) == \
+                    size_t(eArenaObjectID_##classname),           \
+                "");
+#include "mozilla/FrameIdList.h"
+#undef FRAME_ID
+#undef ABSTRACT_FRAME_ID
+    return AllocateByObjectID(ArenaObjectID(size_t(aID)), aSize);
   }
 
   void FreeFrame(nsQueryFrame::FrameIID aID, void* aPtr) {
-    RecordFree(aPtr);
-    if (!mIsDestroying) {
-      mFrameArena.FreeByFrameID(aID, aPtr);
-    }
+    return FreeByObjectID(ArenaObjectID(size_t(aID)), aPtr);
   }
 
-  /**
-   * This is for allocating other types of objects (not frames).  Separate free
-   * lists are maintained for each type (aID), which must always correspond to
-   * the same aSize value.  AllocateByObjectID is infallible and will abort on
-   * out-of-memory.
-   */
   void* AllocateByObjectID(ArenaObjectID aID, size_t aSize) {
-    void* result = mFrameArena.AllocateByObjectID(aID, aSize);
+    void* result = mFrameArena.Allocate(aID, aSize);
     RecordAlloc(result);
     return result;
   }
@@ -284,7 +284,7 @@ class PresShell final : public nsStubDocumentObserver,
   void FreeByObjectID(ArenaObjectID aID, void* aPtr) {
     RecordFree(aPtr);
     if (!mIsDestroying) {
-      mFrameArena.FreeByObjectID(aID, aPtr);
+      mFrameArena.Free(aID, aPtr);
     }
   }
 
@@ -1593,12 +1593,33 @@ class PresShell final : public nsStubDocumentObserver,
   /**
    * Tells the presshell to scroll again to the last anchor scrolled to by
    * GoToAnchor, if any. This scroll only happens if the scroll
-   * position has not changed since the last GoToAnchor. This is called
-   * by nsDocumentViewer::LoadComplete. This clears the last anchor
-   * scrolled to by GoToAnchor (we don't want to keep it alive if it's
-   * removed from the DOM), so don't call this more than once.
+   * position has not changed since the last GoToAnchor (modulo scroll anchoring
+   * adjustments). This is called by nsDocumentViewer::LoadComplete. This clears
+   * the last anchor scrolled to by GoToAnchor (we don't want to keep it alive
+   * if it's removed from the DOM), so don't call this more than once.
    */
   MOZ_CAN_RUN_SCRIPT nsresult ScrollToAnchor();
+
+  /**
+   * When scroll anchoring adjusts positions in the root frame during page load,
+   * it may move our scroll position in the root frame.
+   *
+   * While that's generally desirable, when scrolling to an anchor via an id-ref
+   * we have a more direct target. If the id-ref points to something that cannot
+   * be selected as a scroll anchor container (like an image or an inline), we
+   * may select a node following it as a scroll anchor, and if then stuff is
+   * inserted on top, we may end up moving the id-ref element offscreen to the
+   * top inadvertently.
+   *
+   * On page load, the document viewer will call ScrollToAnchor(), and will only
+   * scroll to the anchor again if the scroll position is not changed. We don't
+   * want scroll anchoring adjustments to prevent this, so account for them.
+   */
+  void RootScrollFrameAdjusted(nscoord aYAdjustment) {
+    if (mLastAnchorScrolledTo) {
+      mLastAnchorScrollPositionY += aYAdjustment;
+    }
+  }
 
   /**
    * Scrolls the view of the document so that the primary frame of the content
@@ -2953,7 +2974,8 @@ class PresShell final : public nsStubDocumentObserver,
   // The focus information needed for async keyboard scrolling
   FocusTarget mAPZFocusTarget;
 
-  nsPresArena<8192> mFrameArena;
+  using Arena = nsPresArena<8192, ArenaObjectID, eArenaObjectID_COUNT>;
+  Arena mFrameArena;
 
   Maybe<nsPoint> mVisualViewportOffset;
 

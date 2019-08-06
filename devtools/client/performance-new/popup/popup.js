@@ -3,8 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 "use strict";
-const background =
-  ChromeUtils.import("resource://devtools/client/performance-new/popup/background.jsm");
+const background = ChromeUtils.import(
+  "resource://devtools/client/performance-new/popup/background.jsm"
+);
 
 const intervalScale = makeExponentialScale(0.01, 100);
 const buffersizeScale = makeExponentialScale(10000, 100000000);
@@ -32,6 +33,7 @@ const features = [
   "stackwalk",
   "tasktracer",
   "jstracer",
+  "jsallocations",
   "trackopts",
 ];
 const threadPrefix = "perf-settings-thread-checkbox-";
@@ -82,17 +84,21 @@ function initializePopup() {
       background.restartProfiler();
     });
 
-  document.querySelector(".button-start").addEventListener("click", async () => {
-    background.startProfiler();
-    background.adjustState({ isRunning: true });
-    renderState(background.state);
-  });
+  document
+    .querySelector(".button-start")
+    .addEventListener("click", async () => {
+      background.startProfiler();
+      background.adjustState({ isRunning: true });
+      renderState(background.state);
+    });
 
-  document.querySelector(".button-cancel").addEventListener("click", async () => {
-    background.stopProfiler();
-    background.adjustState({ isRunning: false });
-    renderState(background.state);
-  });
+  document
+    .querySelector(".button-cancel")
+    .addEventListener("click", async () => {
+      background.stopProfiler();
+      background.adjustState({ isRunning: false });
+      renderState(background.state);
+    });
 
   document
     .querySelector("#button-capture")
@@ -113,13 +119,15 @@ function initializePopup() {
       renderState(background.state);
     });
 
-  document.querySelector(".interval-range").addEventListener("input", async e => {
-    const frac = e.target.value / 100;
-    background.adjustState({
-      interval: intervalScale.fromFractionToSingleDigitValue(frac),
+  document
+    .querySelector(".interval-range")
+    .addEventListener("input", async e => {
+      const frac = e.target.value / 100;
+      background.adjustState({
+        interval: intervalScale.fromFractionToSingleDigitValue(frac),
+      });
+      renderState(background.state);
     });
-    renderState(background.state);
-  });
 
   document
     .querySelector(".buffersize-range")
@@ -160,10 +168,8 @@ function renderState(state) {
   document.querySelector(".buffersize-value").textContent = prettyBytes(
     buffersize * PROFILE_ENTRY_SIZE
   );
-  document.querySelector(".windowlength-value").textContent = windowLength ===
-    infiniteWindowLength
-    ? `∞`
-    : `${windowLength} sec`;
+  document.querySelector(".windowlength-value").textContent =
+    windowLength === infiniteWindowLength ? `∞` : `${windowLength} sec`;
   const overhead = calculateOverhead(state);
   const overheadDiscreteContainer = document.querySelector(".discrete-level");
   for (let i = 0; i < overheadDiscreteContainer.children.length; i++) {
@@ -257,6 +263,7 @@ function calculateOverhead(state) {
   const overheadFromSeqStyle = state.seqstyle ? 0.05 : 0;
   const overheadFromTaskTracer = state.tasktracer ? 0.05 : 0;
   const overheadFromJSTracer = state.jstracer ? 0.05 : 0;
+  const overheadFromJSAllocations = state.jsallocations ? 0.05 : 0;
   return clamp(
     overheadFromSampling +
       overheadFromBuffersize +
@@ -265,7 +272,8 @@ function calculateOverhead(state) {
       overheadFromJavaScrpt +
       overheadFromSeqStyle +
       overheadFromTaskTracer +
-      overheadFromJSTracer,
+      overheadFromJSTracer +
+      overheadFromJSAllocations,
     0,
     1
   );
@@ -355,9 +363,7 @@ const UNITS = ["B", "kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
 
 function prettyBytes(num) {
   if (!Number.isFinite(num)) {
-    throw new TypeError(
-      `Expected a finite number, got ${typeof num}: ${num}`
-    );
+    throw new TypeError(`Expected a finite number, got ${typeof num}: ${num}`);
   }
 
   const neg = num < 0;

@@ -34,7 +34,6 @@
 #include "BaseProfiler.h"
 
 #include "mozilla/Logging.h"
-#include "mozilla/PlatformMutex.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Vector.h"
 
@@ -83,17 +82,6 @@ class JSONWriter;
 
 namespace baseprofiler {
 
-// Thin shell around mozglue PlatformMutex, for Base Profiler internal use.
-// Does not preserve behavior in JS record/replay.
-class PSMutex : private mozilla::detail::MutexImpl {
- public:
-  PSMutex()
-      : mozilla::detail::MutexImpl(
-            mozilla::recordreplay::Behavior::DontPreserve) {}
-  void Lock() { mozilla::detail::MutexImpl::lock(); }
-  void Unlock() { mozilla::detail::MutexImpl::unlock(); }
-};
-
 typedef uint8_t* Address;
 
 class PlatformData;
@@ -116,11 +104,12 @@ void profiler_get_profile_json_into_lazily_allocated_buffer(
     const std::function<char*(size_t)>& aAllocator, double aSinceTime,
     bool aIsShuttingDown);
 
-// Flags to conveniently track various JS features.
-enum class JSSamplingFlags {
+// Flags to conveniently track various JS instrumentations.
+enum class JSInstrumentationFlags {
   StackSampling = 0x1,
   TrackOptimizations = 0x2,
-  TraceLogging = 0x4
+  TraceLogging = 0x4,
+  Allocations = 0x8
 };
 
 // Record an exit profile from a child process.

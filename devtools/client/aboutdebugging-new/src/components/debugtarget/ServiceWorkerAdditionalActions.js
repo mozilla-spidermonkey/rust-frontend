@@ -4,7 +4,10 @@
 
 "use strict";
 
-const { createFactory, PureComponent } = require("devtools/client/shared/vendor/react");
+const {
+  createFactory,
+  PureComponent,
+} = require("devtools/client/shared/vendor/react");
 const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
 const { connect } = require("devtools/client/shared/vendor/react-redux");
@@ -12,11 +15,43 @@ const { connect } = require("devtools/client/shared/vendor/react-redux");
 const FluentReact = require("devtools/client/shared/vendor/fluent-react");
 const Localized = createFactory(FluentReact.Localized);
 
-const { getCurrentRuntimeDetails } = require("../../modules/runtimes-state-helper");
+const {
+  getCurrentRuntimeDetails,
+} = require("../../modules/runtimes-state-helper");
 
 const Actions = require("../../actions/index");
 const Types = require("../../types/index");
 const { SERVICE_WORKER_STATUSES } = require("../../constants");
+
+/**
+ * The main purpose of this component is to expose a meaningful prop
+ * disabledTitle that can be used with fluent localization.
+ */
+class _ActionButton extends PureComponent {
+  static get propTypes() {
+    return {
+      children: PropTypes.node,
+      className: PropTypes.string.isRequired,
+      disabled: PropTypes.bool.isRequired,
+      disabledTitle: PropTypes.string,
+      onClick: PropTypes.func.isRequired,
+    };
+  }
+
+  render() {
+    const { className, disabled, disabledTitle, onClick } = this.props;
+    return dom.button(
+      {
+        className,
+        disabled,
+        onClick: e => onClick(),
+        title: disabled && disabledTitle ? disabledTitle : undefined,
+      },
+      this.props.children
+    );
+  }
+}
+const ActionButtonFactory = createFactory(_ActionButton);
 
 /**
  * This component displays buttons for service worker.
@@ -52,15 +87,18 @@ class ServiceWorkerAdditionalActions extends PureComponent {
     return Localized(
       {
         id: labelId,
+        attrs: {
+          disabledTitle: !!disabled,
+        },
         key,
       },
-      dom.button(
+      ActionButtonFactory(
         {
           className,
           disabled,
           onClick: e => onClick(),
         },
-        labelId,
+        labelId
       )
     );
   }
@@ -68,9 +106,9 @@ class ServiceWorkerAdditionalActions extends PureComponent {
   _renderPushButton() {
     return this._renderButton({
       className: "default-button default-button--micro qa-push-button",
-      disabled: this.props.runtimeDetails.isMultiE10s,
+      disabled: !this.props.runtimeDetails.canDebugServiceWorkers,
       key: "service-worker-push-button",
-      labelId: "about-debugging-worker-action-push",
+      labelId: "about-debugging-worker-action-push2",
       onClick: this.push.bind(this),
     });
   }
@@ -78,9 +116,9 @@ class ServiceWorkerAdditionalActions extends PureComponent {
   _renderStartButton() {
     return this._renderButton({
       className: "default-button default-button--micro qa-start-button",
-      disabled: this.props.runtimeDetails.isMultiE10s,
+      disabled: !this.props.runtimeDetails.canDebugServiceWorkers,
       key: "service-worker-start-button",
-      labelId: "about-debugging-worker-action-start",
+      labelId: "about-debugging-worker-action-start2",
       onClick: this.start.bind(this),
     });
   }
@@ -99,17 +137,11 @@ class ServiceWorkerAdditionalActions extends PureComponent {
 
     switch (status) {
       case SERVICE_WORKER_STATUSES.RUNNING:
-        return [
-          this._renderUnregisterButton(),
-          this._renderPushButton(),
-        ];
+        return [this._renderUnregisterButton(), this._renderPushButton()];
       case SERVICE_WORKER_STATUSES.REGISTERING:
         return null;
       case SERVICE_WORKER_STATUSES.STOPPED:
-        return [
-          this._renderUnregisterButton(),
-          this._renderStartButton(),
-        ];
+        return [this._renderUnregisterButton(), this._renderStartButton()];
       default:
         console.error("Unexpected service worker status: " + status);
         return null;
@@ -121,7 +153,7 @@ class ServiceWorkerAdditionalActions extends PureComponent {
       {
         className: "toolbar toolbar--right-align",
       },
-      this._renderActionButtons(),
+      this._renderActionButtons()
     );
   }
 }
@@ -133,4 +165,5 @@ const mapStateToProps = state => {
 };
 
 module.exports = FluentReact.withLocalization(
-  connect(mapStateToProps)(ServiceWorkerAdditionalActions));
+  connect(mapStateToProps)(ServiceWorkerAdditionalActions)
+);

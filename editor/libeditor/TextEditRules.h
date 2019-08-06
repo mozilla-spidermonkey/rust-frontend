@@ -15,9 +15,7 @@
 #include "nsCOMPtr.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsIEditor.h"
-#include "nsINamed.h"
 #include "nsISupportsImpl.h"
-#include "nsITimer.h"
 #include "nsString.h"
 #include "nscore.h"
 
@@ -28,6 +26,7 @@ class EditSubActionInfo;
 class HTMLEditor;
 class HTMLEditRules;
 namespace dom {
+class HTMLBRElement;
 class Selection;
 }  // namespace dom
 
@@ -55,7 +54,7 @@ class Selection;
  *    return nsresult directly or with simple class like EditActionResult.
  *    And such methods should be marked as MOZ_MUST_USE.
  */
-class TextEditRules : public nsITimerCallback, public nsINamed {
+class TextEditRules {
  protected:
   typedef EditorBase::AutoSelectionRestorer AutoSelectionRestorer;
   typedef EditorBase::AutoTopLevelEditSubActionNotifier
@@ -70,10 +69,8 @@ class TextEditRules : public nsITimerCallback, public nsINamed {
   template <typename T>
   using OwningNonNull = OwningNonNull<T>;
 
-  NS_DECL_NSITIMERCALLBACK
-  NS_DECL_NSINAMED
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(TextEditRules, nsITimerCallback)
+  NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(TextEditRules)
+  NS_DECL_CYCLE_COLLECTION_NATIVE_CLASS(TextEditRules)
 
   TextEditRules();
 
@@ -82,7 +79,6 @@ class TextEditRules : public nsITimerCallback, public nsINamed {
 
   MOZ_CAN_RUN_SCRIPT
   virtual nsresult Init(TextEditor* aTextEditor);
-  virtual nsresult SetInitialValue(const nsAString& aValue);
   virtual nsresult DetachEditor();
   virtual nsresult BeforeEdit(EditSubAction aEditSubAction,
                               nsIEditor::EDirection aDirection);
@@ -105,14 +101,14 @@ class TextEditRules : public nsITimerCallback, public nsINamed {
    * nodes.  Otherwise, i.e., there is no meaningful content,
    * return true.
    */
-  virtual bool DocumentIsEmpty();
+  virtual bool DocumentIsEmpty() const;
+
+  bool DontEchoPassword() const;
 
  protected:
-  virtual ~TextEditRules();
+  virtual ~TextEditRules() = default;
 
  public:
-  void ResetIMETextPWBuf();
-
   /**
    * Handles the newline characters according to the default system prefs
    * (editor.singleLine.pasteNewlines).
@@ -135,26 +131,9 @@ class TextEditRules : public nsITimerCallback, public nsINamed {
    */
   void HandleNewLines(nsString& aString);
 
-  /**
-   * Prepare a string buffer for being displayed as the contents of a password
-   * field.  This function uses the platform-specific character for representing
-   * characters entered into password fields.
-   *
-   * @param aOutString the output string.  When this function returns,
-   *        aOutString will contain aLength password characters.
-   * @param aLength the number of password characters that aOutString should
-   *        contain.
-   */
-  static void FillBufWithPWChars(nsAString* aOutString, int32_t aLength);
-
-  bool HasBogusNode() { return !!mBogusNode; }
-
-  /**
-   * HideLastPasswordInput() is called when Nodify() calls
-   * TextEditor::HideLastPasswordInput().  It guarantees that there is a
-   * AutoEditActionDataSetter instance in the editor.
-   */
-  MOZ_CAN_RUN_SCRIPT nsresult HideLastPasswordInput();
+  bool HasPaddingBRElementForEmptyEditor() const {
+    return !!mPaddingBRElementForEmptyEditor;
+  }
 
  protected:
   void InitFields();
@@ -287,9 +266,11 @@ class TextEditRules : public nsITimerCallback, public nsINamed {
   MOZ_CAN_RUN_SCRIPT MOZ_MUST_USE nsresult CreateTrailingBRIfNeeded();
 
   /**
-   * Creates a bogus <br> node if the root element has no editable content.
+   * Creates a padding <br> element for empty editor if the root element has no
+   * editable content.
    */
-  MOZ_CAN_RUN_SCRIPT MOZ_MUST_USE nsresult CreateBogusNodeIfNeeded();
+  MOZ_CAN_RUN_SCRIPT MOZ_MUST_USE nsresult
+  CreatePaddingBRElementForEmptyEditorIfNeeded();
 
   /**
    * Returns a truncated insertion string if insertion would place us over
@@ -299,51 +280,6 @@ class TextEditRules : public nsITimerCallback, public nsINamed {
                                      nsAString* aOutString, int32_t aMaxLength,
                                      bool* aTruncated);
 
-  /**
-   * Remove IME composition text from password buffer.
-   */
-  void RemoveIMETextFromPWBuf(uint32_t& aStart, nsAString* aIMEString);
-
-  /**
-   * Create a normal <br> element and insert it to aPointToInsert.
-   *
-   * @param aPointToInsert  The point where the new <br> element will be
-   *                        inserted.
-   * @return                Returns created <br> element or an error code
-   *                        if couldn't create new <br> element.
-   */
-  MOZ_CAN_RUN_SCRIPT CreateElementResult
-  CreateBR(const EditorDOMPoint& aPointToInsert) {
-    CreateElementResult ret = CreateBRInternal(aPointToInsert, false);
-#ifdef DEBUG
-    // If editor is destroyed, it must return NS_ERROR_EDITOR_DESTROYED.
-    if (!CanHandleEditAction()) {
-      MOZ_ASSERT(ret.Rv() == NS_ERROR_EDITOR_DESTROYED);
-    }
-#endif  // #ifdef DEBUG
-    return ret;
-  }
-
-  /**
-   * Create a moz-<br> element and insert it to aPointToInsert.
-   *
-   * @param aPointToInsert  The point where the new moz-<br> element will be
-   *                        inserted.
-   * @return                Returns created <br> element or an error code
-   *                        if couldn't create new <br> element.
-   */
-  MOZ_CAN_RUN_SCRIPT CreateElementResult
-  CreateMozBR(const EditorDOMPoint& aPointToInsert) {
-    CreateElementResult ret = CreateBRInternal(aPointToInsert, true);
-#ifdef DEBUG
-    // If editor is destroyed, it must return NS_ERROR_EDITOR_DESTROYED.
-    if (!CanHandleEditAction()) {
-      MOZ_ASSERT(ret.Rv() == NS_ERROR_EDITOR_DESTROYED);
-    }
-#endif  // #ifdef DEBUG
-    return ret;
-  }
-
   void UndefineCaretBidiLevel();
 
   nsresult CheckBidiLevelForDeletion(const EditorRawDOMPoint& aSelectionPoint,
@@ -351,46 +287,25 @@ class TextEditRules : public nsITimerCallback, public nsINamed {
                                      bool* aCancel);
 
   /**
-   * HideLastPasswordInputInternal() replaces last password characters which
-   * have not been replaced with mask character like '*' with with the mask
-   * character.  This method may cause destroying the editor.
-   */
-  MOZ_CAN_RUN_SCRIPT
-  MOZ_MUST_USE nsresult HideLastPasswordInputInternal();
-
-  /**
    * CollapseSelectionToTrailingBRIfNeeded() collapses selection after the
    * text node if:
    * - the editor is text editor
    * - and Selection is collapsed at the end of the text node
-   * - and the text node is followed by moz-<br>.
+   * - and the text node is followed by a padding <br> element for empty last
+   *   line.
    */
   MOZ_MUST_USE nsresult CollapseSelectionToTrailingBRIfNeeded();
 
   bool IsPasswordEditor() const;
+  bool IsMaskingPassword() const;
   bool IsSingleLineEditor() const;
   bool IsPlaintextEditor() const;
   bool IsReadonly() const;
   bool IsDisabled() const;
   bool IsMailEditor() const;
-  bool DontEchoPassword() const;
 
  private:
   TextEditor* MOZ_NON_OWNING_REF mTextEditor;
-
-  /**
-   * Create a normal <br> element or a moz-<br> element and insert it to
-   * aPointToInsert.
-   *
-   * @param aParentToInsert     The point where the new <br> element will be
-   *                            inserted.
-   * @param aCreateMozBR        true if the caller wants to create a moz-<br>
-   *                            element.  Otherwise, false.
-   * @return                    Returns created <br> element and error code.
-   *                            If it succeeded, never returns nullptr.
-   */
-  MOZ_CAN_RUN_SCRIPT CreateElementResult
-  CreateBRInternal(const EditorDOMPoint& aPointToInsert, bool aCreateMozBR);
 
  protected:
   /**
@@ -473,13 +388,9 @@ class TextEditRules : public nsITimerCallback, public nsINamed {
    */
   inline already_AddRefed<nsINode> GetTextNodeAroundSelectionStartContainer();
 
-  // A buffer we use to store the real value of password editors.
-  nsString mPasswordText;
-  // A buffer we use to track the IME composition string.
-  nsString mPasswordIMEText;
-  uint32_t mPasswordIMEIndex;
-  // Magic node acts as placeholder in empty doc.
-  nsCOMPtr<nsIContent> mBogusNode;
+  // mPaddingBRElementForEmptyEditor should be used for placing caret
+  // at proper position when editor is empty.
+  RefPtr<dom::HTMLBRElement> mPaddingBRElementForEmptyEditor;
   // Cached selected node.
   nsCOMPtr<nsINode> mCachedSelectionNode;
   // Cached selected offset.
@@ -493,9 +404,6 @@ class TextEditRules : public nsITimerCallback, public nsINamed {
   bool mIsHTMLEditRules;
   // The top level editor action.
   EditSubAction mTopLevelEditSubAction;
-  nsCOMPtr<nsITimer> mTimer;
-  uint32_t mLastStart;
-  uint32_t mLastLength;
 
   // friends
   friend class AutoLockRulesSniffing;

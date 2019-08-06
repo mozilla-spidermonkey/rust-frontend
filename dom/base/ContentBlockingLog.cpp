@@ -6,24 +6,29 @@
 
 #include "ContentBlockingLog.h"
 
+#include "nsStringStream.h"
 #include "nsTArray.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/HashFunctions.h"
 #include "mozilla/RandomNum.h"
+#include "mozilla/StaticPrefs_browser.h"
+#include "mozilla/StaticPrefs_privacy.h"
+#include "mozilla/StaticPrefs_telemetry.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/Unused.h"
 #include "mozilla/XorShift128PlusRNG.h"
 #include "mozilla/ipc/IPCStreamUtils.h"
 
-using mozilla::ipc::AutoIPCStream;
+namespace mozilla {
+
+using ipc::AutoIPCStream;
 
 static LazyLogModule gContentBlockingLog("ContentBlockingLog");
 #define LOG(fmt, ...) \
-  MOZ_LOG(gContentBlockingLog, mozilla::LogLevel::Debug, (fmt, ##__VA_ARGS__))
+  MOZ_LOG(gContentBlockingLog, LogLevel::Debug, (fmt, ##__VA_ARGS__))
 
-typedef mozilla::Telemetry::OriginMetricID OriginMetricID;
+typedef Telemetry::OriginMetricID OriginMetricID;
 
-namespace mozilla {
 namespace dom {
 
 // sync with TelemetryOriginData.inc

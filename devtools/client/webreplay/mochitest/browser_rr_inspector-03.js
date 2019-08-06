@@ -14,12 +14,13 @@ Services.scriptloader.loadSubScript(
 function getComputedViewProperty(view, name) {
   let prop;
   for (const property of view.styleDocument.querySelectorAll(
-      "#computed-container .computed-property-view")) {
+    "#computed-container .computed-property-view"
+  )) {
     const nameSpan = property.querySelector(".computed-property-name");
     const valueSpan = property.querySelector(".computed-property-value");
 
     if (nameSpan.firstChild.textContent === name) {
-      prop = {nameSpan: nameSpan, valueSpan: valueSpan};
+      prop = { nameSpan: nameSpan, valueSpan: valueSpan };
       break;
     }
   }
@@ -28,29 +29,27 @@ function getComputedViewProperty(view, name) {
 
 // Test that styles for elements can be viewed when using web replay.
 add_task(async function() {
-  const dbg = await attachRecordingDebugger(
-    "doc_inspector_styles.html",
-    { waitForRecording: true }
-  );
-  const {threadClient, tab, toolbox} = dbg;
+  const dbg = await attachRecordingDebugger("doc_inspector_styles.html", {
+    waitForRecording: true,
+  });
+  const { threadFront } = dbg;
 
-  await threadClient.interrupt();
-  await threadClient.resume();
+  await threadFront.interrupt();
+  await threadFront.resume();
 
-  await threadClient.interrupt();
+  await threadFront.interrupt();
 
-  const {inspector, view} = await openComputedView();
+  const { inspector, view } = await openComputedView();
   await checkBackgroundColor("body", "rgb(0, 128, 0)");
   await checkBackgroundColor("#maindiv", "rgb(0, 0, 255)");
 
-  const bp = await setBreakpoint(threadClient, "doc_inspector_styles.html", 11);
+  const bp = await setBreakpoint(threadFront, "doc_inspector_styles.html", 11);
 
-  await rewindToLine(threadClient, 11);
+  await rewindToLine(threadFront, 11);
   await checkBackgroundColor("#maindiv", "rgb(255, 0, 0)");
 
-  await threadClient.removeBreakpoint(bp);
-  await toolbox.closeToolbox();
-  await gBrowser.removeTab(tab);
+  await threadFront.removeBreakpoint(bp);
+  await shutdownDebugger(dbg);
 
   async function checkBackgroundColor(node, color) {
     await selectNode(node, inspector);

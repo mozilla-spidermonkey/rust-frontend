@@ -28,7 +28,7 @@ const UnsolicitedNotifications = {
   serviceWorkerRegistrationListChanged: "serviceWorkerRegistrationList",
 
   // newSource is still emitted on the ThreadActor, in addition to the
-  // BrowsingContextActor we have to keep it here until ThreadClient is converted to
+  // BrowsingContextActor we have to keep it here until ThreadFront is converted to
   // ThreadFront and/or we stop emitting this duplicated events.
   // See ThreadActor.onNewSourceEvent.
   newSource: "newSource",
@@ -47,6 +47,7 @@ const UnsolicitedPauses = {
   eventBreakpoint: "eventBreakpoint",
   exception: "exception",
   replayForcedPause: "replayForcedPause",
+  mutationBreakpoint: "mutationBreakpoint",
 };
 
 module.exports = {

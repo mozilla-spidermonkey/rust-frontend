@@ -7,8 +7,8 @@
 use self::transform::DirectionVector;
 use super::animated::ToAnimatedValue;
 use super::generics::grid::GridTemplateComponent as GenericGridTemplateComponent;
-use super::generics::grid::{GridLine as GenericGridLine, TrackBreadth as GenericTrackBreadth};
-use super::generics::grid::{TrackList as GenericTrackList, TrackSize as GenericTrackSize};
+use super::generics::grid::{GenericGridLine, GenericTrackBreadth};
+use super::generics::grid::{GenericTrackSize, TrackList as GenericTrackList};
 use super::generics::transform::IsParallelTo;
 use super::generics::{self, GreaterThanOrEqualToOne, NonNegative, ZeroToOne};
 use super::specified;
@@ -23,7 +23,7 @@ use crate::rule_cache::RuleCacheConditions;
 use crate::Atom;
 #[cfg(feature = "servo")]
 use crate::Prefix;
-use euclid::Size2D;
+use euclid::default::Size2D;
 use std::cell::RefCell;
 use std::cmp;
 use std::f32;
@@ -64,17 +64,18 @@ pub use self::length::{NonNegativeLengthPercentage, NonNegativeLengthPercentageO
 #[cfg(feature = "gecko")]
 pub use self::list::ListStyleType;
 pub use self::list::MozListReversed;
-pub use self::list::{QuotePair, Quotes};
+pub use self::list::Quotes;
 pub use self::motion::{OffsetPath, OffsetRotate};
 pub use self::outline::OutlineStyle;
 pub use self::percentage::{NonNegativePercentage, Percentage};
-pub use self::position::{GridAutoFlow, GridTemplateAreas, Position, ZIndex};
+pub use self::position::{GridAutoFlow, GridTemplateAreas, Position, PositionOrAuto, ZIndex};
 pub use self::rect::NonNegativeLengthOrNumberRect;
 pub use self::resolution::Resolution;
 pub use self::svg::MozContextProperties;
 pub use self::svg::{SVGLength, SVGOpacity, SVGPaint, SVGPaintKind};
 pub use self::svg::{SVGPaintOrder, SVGStrokeDashArray, SVGWidth};
 pub use self::table::XSpan;
+pub use self::text::TextDecorationSkipInk;
 pub use self::text::{InitialLetter, LetterSpacing, LineBreak, LineHeight};
 pub use self::text::{OverflowWrap, TextOverflow, WordBreak, WordSpacing};
 pub use self::text::{TextAlign, TextEmphasisPosition, TextEmphasisStyle};

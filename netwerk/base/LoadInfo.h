@@ -52,7 +52,7 @@ typedef nsTArray<nsCOMPtr<nsIRedirectHistoryEntry>> RedirectHistoryArray;
  */
 class LoadInfo final : public nsILoadInfo {
  public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSILOADINFO
 
   // aLoadingPrincipal MUST NOT BE NULL.
@@ -143,7 +143,8 @@ class LoadInfo final : public nsILoadInfo {
            uint64_t aTopOuterWindowID, uint64_t aFrameOuterWindowID,
            uint64_t aBrowsingContextID, uint64_t aFrameBrowsingContextID,
            bool aInitialSecurityCheckDone, bool aIsThirdPartyRequest,
-           bool aIsDocshellReload, bool aSendCSPViolationEvents,
+           bool aIsDocshellReload, bool aIsFormSubmission,
+           bool aSendCSPViolationEvents,
            const OriginAttributes& aOriginAttributes,
            RedirectHistoryArray& aRedirectChainIncludingInternalRedirects,
            RedirectHistoryArray& aRedirectChain,
@@ -153,7 +154,8 @@ class LoadInfo final : public nsILoadInfo {
            bool aIsPreflight, bool aLoadTriggeredFromExternal,
            bool aServiceWorkerTaintingSynthesized,
            bool aDocumentHasUserInteracted, bool aDocumentHasLoaded,
-           const nsAString& aCspNonce, uint32_t aRequestBlockingReason);
+           const nsAString& aCspNonce, bool aSkipContentSniffing,
+           uint32_t aRequestBlockingReason);
   LoadInfo(const LoadInfo& rhs);
 
   NS_IMETHOD GetRedirects(JSContext* aCx,
@@ -173,6 +175,16 @@ class LoadInfo final : public nsILoadInfo {
   // from anywhere else!
   void SetIncludeCookiesSecFlag();
   friend class mozilla::dom::XMLHttpRequestMainThread;
+
+  // nsDocShell::OpenInitializedChannel needs to update the loadInfo with
+  // the correct browsingContext.
+  friend class ::nsDocShell;
+  void UpdateBrowsingContextID(uint64_t aBrowsingContextID) {
+    mBrowsingContextID = aBrowsingContextID;
+  }
+  void UpdateFrameBrowsingContextID(uint64_t aFrameBrowsingContextID) {
+    mFrameBrowsingContextID = aFrameBrowsingContextID;
+  }
 
   // if you add a member, please also update the copy constructor and consider
   // if it should be merged from parent channel through
@@ -219,6 +231,7 @@ class LoadInfo final : public nsILoadInfo {
   bool mInitialSecurityCheckDone;
   bool mIsThirdPartyContext;
   bool mIsDocshellReload;
+  bool mIsFormSubmission;
   bool mSendCSPViolationEvents;
   OriginAttributes mOriginAttributes;
   RedirectHistoryArray mRedirectChainIncludingInternalRedirects;
@@ -234,6 +247,7 @@ class LoadInfo final : public nsILoadInfo {
   bool mDocumentHasUserInteracted;
   bool mDocumentHasLoaded;
   nsString mCspNonce;
+  bool mSkipContentSniffing;
 
   // Is true if this load was triggered by processing the attributes of the
   // browsing context container.

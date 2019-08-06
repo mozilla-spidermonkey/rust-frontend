@@ -185,8 +185,9 @@ bool nsDisplayFieldSetBorder::CreateWebRenderCommands(
     if (!legendRect.IsEmpty()) {
       // We need to clip out the part of the border where the legend would go
       auto appUnitsPerDevPixel = frame->PresContext()->AppUnitsPerDevPixel();
-      auto layoutRect = wr::ToRoundedLayoutRect(
-          LayoutDeviceRect::FromAppUnits(rect, appUnitsPerDevPixel));
+      auto layoutRect = wr::ToRoundedLayoutRect(LayoutDeviceRect::FromAppUnits(
+          frame->GetVisualOverflowRectRelativeToSelf() + offset,
+          appUnitsPerDevPixel));
 
       wr::ComplexClipRegion region;
       region.rect = wr::ToRoundedLayoutRect(
@@ -671,6 +672,7 @@ void nsFieldSetFrame::AppendFrames(ChildListID aListID,
 }
 
 void nsFieldSetFrame::InsertFrames(ChildListID aListID, nsIFrame* aPrevFrame,
+                                   const nsLineList::iterator* aPrevFrameLine,
                                    nsFrameList& aFrameList) {
   MOZ_CRASH("nsFieldSetFrame::InsertFrames not supported");
 }

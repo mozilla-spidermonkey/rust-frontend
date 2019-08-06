@@ -63,7 +63,6 @@ bool nsHTMLContentSerializer::SerializeHTMLAttributes(
 
   nsresult rv;
   nsAutoString valueStr;
-  NS_NAMED_LITERAL_STRING(_mozStr, "_moz");
 
   for (int32_t index = 0; index < count; index++) {
     const nsAttrName* name = aElement->GetAttrNameAt(index);
@@ -77,16 +76,6 @@ bool nsHTMLContentSerializer::SerializeHTMLAttributes(
       continue;
     }
     aElement->GetAttr(namespaceID, attrName, valueStr);
-
-    //
-    // Filter out special case of <br type="_moz"> or <br _moz*>,
-    // used by the editor.  Bug 16988.  Yuck.
-    //
-    if (aTagName == nsGkAtoms::br && aNamespace == kNameSpaceID_XHTML &&
-        attrName == nsGkAtoms::type && namespaceID == kNameSpaceID_None &&
-        StringBeginsWith(valueStr, _mozStr)) {
-      continue;
-    }
 
     if (mIsCopying && mIsFirstChildOfOL && aTagName == nsGkAtoms::li &&
         aNamespace == kNameSpaceID_XHTML && attrName == nsGkAtoms::value &&
@@ -104,7 +93,7 @@ bool nsHTMLContentSerializer::SerializeHTMLAttributes(
         // Would be nice to handle OBJECT tags, but that gets more complicated
         // since we have to search the tag list for CODEBASE as well. For now,
         // just leave them relative.
-        nsCOMPtr<nsIURI> uri = aElement->GetBaseURI();
+        nsIURI* uri = aElement->GetBaseURI();
         if (uri) {
           nsAutoString absURI;
           rv = NS_MakeAbsoluteURI(absURI, valueStr, uri);

@@ -20,7 +20,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/StaticMutex.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_media.h"
 #include "mozilla/WindowsVersion.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/mscom/EnsureMTA.h"
@@ -74,7 +74,7 @@ void WMFDecoderModule::Init() {
     // If we're in the content process and the UseGPUDecoder pref is set, it
     // means that we've given up on the GPU process (it's been crashing) so we
     // should disable DXVA
-    sDXVAEnabled = !StaticPrefs::MediaGpuProcessDecoder();
+    sDXVAEnabled = !StaticPrefs::media_gpu_process_decoder();
     // We need to test for VPX in the content process as the GPUDecoderModule
     // directly calls WMFDecoderModule::Supports in the content process.
     // This unnecessary requirement will be fixed in bug 1534815.
@@ -89,7 +89,7 @@ void WMFDecoderModule::Init() {
 
   sDXVAEnabled = sDXVAEnabled && gfx::gfxVars::CanUseHardwareVideoDecoding();
   testForVPx = testForVPx && gfx::gfxVars::CanUseHardwareVideoDecoding();
-  if (testForVPx && StaticPrefs::MediaWmfVp9Enabled()) {
+  if (testForVPx && StaticPrefs::media_wmf_vp9_enabled_AtStartup()) {
     gfx::WMFVPXVideoCrashGuard guard;
     if (!guard.Crashed()) {
       sUsableVPXMFT = CanCreateMFTDecoder(CLSID_WebmMfVpxDec);

@@ -4,8 +4,8 @@
 "use strict";
 
 const TEST_FILE = "test-network-request.html";
-const TEST_PATH = "http://example.com/browser/devtools/client/webconsole/" +
-                  "test/mochitest/";
+const TEST_PATH =
+  "http://example.com/browser/devtools/client/webconsole/" + "test/mochitest/";
 const TEST_URI = TEST_PATH + TEST_FILE;
 
 add_task(async function task() {
@@ -31,7 +31,7 @@ add_task(async function task() {
 
   info("NetMonitor:PayloadReady received");
 
-  const {hud} = await toolbox.selectTool("webconsole");
+  const { hud } = await toolbox.selectTool("webconsole");
 
   const xhrUrl = TEST_PATH + "test-data.json";
   const messageNode = await waitFor(() => findMessage(hud, xhrUrl));
@@ -56,14 +56,9 @@ async function testNetworkMessage(messageNode) {
   ok(headersTab, "Headers tab is available");
 
   // Headers tab should be selected by default, so just check its content.
-  let headersContent;
-  await waitUntil(() => {
-    headersContent = messageNode.querySelector(
-      "#headers-panel .headers-overview");
-    return headersContent;
-  });
-
-  ok(headersContent, "Headers content is available");
+  await waitUntil(() =>
+    messageNode.querySelector("#headers-panel .headers-overview")
+  );
 }
 
 /**

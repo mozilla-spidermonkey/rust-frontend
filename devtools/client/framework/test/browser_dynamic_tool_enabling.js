@@ -6,28 +6,38 @@
 // Tests that toggling prefs immediately (de)activates the relevant menuitem
 
 var gItemsToTest = {
-  "menu_browserToolbox": ["devtools.chrome.enabled", "devtools.debugger.remote-enabled"],
-  "menu_devtools_connect": "devtools.debugger.remote-enabled",
+  menu_browserToolbox: [
+    "devtools.chrome.enabled",
+    "devtools.debugger.remote-enabled",
+  ],
+  menu_devtools_connect: [
+    "devtools.connectpage.enabled",
+    "devtools.debugger.remote-enabled",
+  ],
 };
 
 function expectedAttributeValueFromPrefs(prefs) {
-  return prefs.every((pref) => Services.prefs.getBoolPref(pref)) ?
-         "" : "true";
+  return prefs.every(pref => Services.prefs.getBoolPref(pref)) ? "" : "true";
 }
 
 function checkItem(el, prefs) {
   const expectedValue = expectedAttributeValueFromPrefs(prefs);
-  is(el.getAttribute("disabled"), expectedValue, "disabled attribute should match current pref state");
-  is(el.getAttribute("hidden"), expectedValue, "hidden attribute should match current pref state");
+  is(
+    el.getAttribute("disabled"),
+    expectedValue,
+    "disabled attribute should match current pref state"
+  );
+  is(
+    el.getAttribute("hidden"),
+    expectedValue,
+    "hidden attribute should match current pref state"
+  );
 }
 
 function test() {
   for (const k in gItemsToTest) {
     const el = document.getElementById(k);
-    let prefs = gItemsToTest[k];
-    if (typeof prefs == "string") {
-      prefs = [prefs];
-    }
+    const prefs = gItemsToTest[k];
     checkItem(el, prefs);
     for (const pref of prefs) {
       Services.prefs.setBoolPref(pref, !Services.prefs.getBoolPref(pref));

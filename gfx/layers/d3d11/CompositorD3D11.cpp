@@ -10,6 +10,7 @@
 
 #include "gfxWindowsPlatform.h"
 #include "nsIWidget.h"
+#include "Layers.h"
 #include "mozilla/gfx/D3D11Checks.h"
 #include "mozilla/gfx/DeviceManagerDx.h"
 #include "mozilla/gfx/GPUParent.h"
@@ -28,7 +29,8 @@
 #include "mozilla/widget/WinCompositorWidget.h"
 
 #include "mozilla/EnumeratedArray.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_gfx.h"
+#include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/Telemetry.h"
 #include "BlendShaderConstants.h"
 
@@ -109,7 +111,7 @@ CompositorD3D11::CompositorD3D11(CompositorBridgeParent* aParent,
       mIsDoubleBuffered(false),
       mVerifyBuffersFailed(false),
       mUseMutexOnPresent(false) {
-  mUseMutexOnPresent = StaticPrefs::UseMutexOnPresent();
+  mUseMutexOnPresent = StaticPrefs::gfx_use_mutex_on_present_AtStartup();
 }
 
 CompositorD3D11::~CompositorD3D11() {}
@@ -122,7 +124,7 @@ void CompositorD3D11::SetVertexBuffer(ID3D11Buffer* aBuffer) {
 }
 
 bool CompositorD3D11::SupportsLayerGeometry() const {
-  return StaticPrefs::D3D11LayerGeometry();
+  return StaticPrefs::layers_geometry_d3d11_enabled();
 }
 
 bool CompositorD3D11::UpdateDynamicVertexBuffer(
@@ -201,8 +203,8 @@ bool CompositorD3D11::Initialize(nsCString* const out_failureReason) {
         (IDXGIFactory2**)getter_AddRefs(dxgiFactory2));
 
 #if (_WIN32_WINDOWS_MAXVER >= 0x0A00)
-    if (StaticPrefs::Direct3D11UseDoubleBuffering() && SUCCEEDED(hr) &&
-        dxgiFactory2 && IsWindows10OrGreater()) {
+    if (gfxVars::UseDoubleBufferingWithCompositor() && SUCCEEDED(hr) &&
+        dxgiFactory2) {
       // DXGI_SCALING_NONE is not available on Windows 7 with Platform Update.
       // This looks awful for things like the awesome bar and browser window
       // resizing so we don't use a flip buffer chain here. When using
@@ -291,10 +293,10 @@ bool CompositorD3D11::Initialize(nsCString* const out_failureReason) {
 }
 
 bool CanUsePartialPresents(ID3D11Device* aDevice) {
-  if (StaticPrefs::PartialPresent() > 0) {
+  if (StaticPrefs::gfx_partialpresent_force() > 0) {
     return true;
   }
-  if (StaticPrefs::PartialPresent() < 0) {
+  if (StaticPrefs::gfx_partialpresent_force() < 0) {
     return false;
   }
   if (DeviceManagerDx::Get()->IsWARP()) {
@@ -1050,7 +1052,7 @@ void CompositorD3D11::DrawGeometry(const Geometry& aGeometry,
       mContext->PSSetShaderResources(TexSlot::Y, 3, srViews);
     } break;
     case EffectTypes::COMPONENT_ALPHA: {
-      MOZ_ASSERT(StaticPrefs::ComponentAlphaEnabled());
+      MOZ_ASSERT(LayerManager::LayersComponentAlphaEnabled());
       MOZ_ASSERT(mAttachments->mComponentBlendState);
       EffectComponentAlpha* effectComponentAlpha =
           static_cast<EffectComponentAlpha*>(aEffectChain.mPrimaryEffect.get());
@@ -1202,7 +1204,7 @@ void CompositorD3D11::BeginFrame(const nsIntRegion& aInvalidRegion,
     }
   }
 
-  if (StaticPrefs::LayersDrawFPS()) {
+  if (StaticPrefs::layers_acceleration_draw_fps()) {
     uint32_t pixelsPerFrame = 0;
     for (auto iter = mBackBufferInvalid.RectIter(); !iter.Done(); iter.Next()) {
       pixelsPerFrame += iter.Get().Width() * iter.Get().Height();
@@ -1247,7 +1249,7 @@ void CompositorD3D11::EndFrame() {
 
   if (oldSize == mSize) {
     Present();
-    if (StaticPrefs::CompositorClearState()) {
+    if (StaticPrefs::gfx_compositor_clearstate()) {
       mContext->ClearState();
     }
   } else {

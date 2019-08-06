@@ -20,24 +20,22 @@ add_task(async function testSelectAll() {
 });
 
 async function testSelectionWhenMovingBetweenBoxes(hud) {
-  const jsterm = hud.jsterm;
-
   // Fill the console with some output.
   hud.ui.clearOutput();
-  await jsterm.execute("1 + 2");
-  await waitFor(() => findMessage(hud, "3"));
-  await jsterm.execute("3 + 4");
-  await waitFor(() => findMessage(hud, "7"));
-  await jsterm.execute("5 + 6");
-  await waitFor(() => findMessage(hud, "11"));
+  await executeAndWaitForMessage(hud, "1 + 2", "3", ".result");
+  await executeAndWaitForMessage(hud, "3 + 4", "7", ".result");
+  await executeAndWaitForMessage(hud, "5 + 6", "11", ".result");
 }
 
 function testBrowserMenuSelectAll(hud) {
   const { ui } = hud;
   const outputContainer = ui.outputNode.querySelector(".webconsole-output");
 
-  is(outputContainer.childNodes.length, 6,
-    "the output node contains the expected number of children");
+  is(
+    outputContainer.childNodes.length,
+    6,
+    "the output node contains the expected number of children"
+  );
 
   // The focus is on the JsTerm, so we need to blur it for the copy comand to
   // work.
@@ -59,8 +57,10 @@ async function testContextMenuSelectAll(hud) {
   const contextMenu = await openContextMenu(hud, outputContainer);
 
   const selectAllItem = contextMenu.querySelector("#console-menu-select");
-  ok(selectAllItem,
-     `the context menu on the output node has a "Select All" item`);
+  ok(
+    selectAllItem,
+    `the context menu on the output node has a "Select All" item`
+  );
 
   outputContainer.focus();
   selectAllItem.click();

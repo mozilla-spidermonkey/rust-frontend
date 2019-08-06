@@ -9,15 +9,6 @@
 const TEST_URI = `data:text/html,<meta charset=utf8>Focus test`;
 
 add_task(async function() {
-  // Run test with legacy JsTerm
-  await pushPref("devtools.webconsole.jsterm.codeMirror", false);
-  await performTests();
-  // And then run it with the CodeMirror-powered one.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", true);
-  await performTests();
-});
-
-async function performTests() {
   info("Testing that messages disappear on a refresh if logs aren't persisted");
   const hud = await openNewTabAndConsole(TEST_URI);
   is(isInputFocused(hud), true, "JsTerm is focused when opening the console");
@@ -26,7 +17,13 @@ async function performTests() {
   ContentTask.spawn(gBrowser.selectedBrowser, null, () => content.focus());
   await waitFor(() => isInputFocused(hud) === false);
 
-  info("Reload the page to check that JsTerm does not steal the content page focus");
+  info(
+    "Reload the page to check that JsTerm does not steal the content page focus"
+  );
   await refreshTab();
-  is(isInputFocused(hud), false, "JsTerm is still unfocused after reloading the page");
-}
+  is(
+    isInputFocused(hud),
+    false,
+    "JsTerm is still unfocused after reloading the page"
+  );
+});

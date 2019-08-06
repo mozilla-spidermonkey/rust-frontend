@@ -30,7 +30,6 @@
 // is included in mozAutoDocUpdate.h.
 #include "nsNPAPIPluginInstance.h"
 #include "gfxDrawable.h"
-#include "mozilla/StaticPrefs.h"
 #include "ImageOps.h"
 #include "mozAutoDocUpdate.h"
 #include "mozilla/AntiTrackingCommon.h"
@@ -97,7 +96,14 @@
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/Services.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/StaticPrefs_full_screen_api.h"
+#ifdef FUZZING
+#  include "mozilla/StaticPrefs_fuzzing.h"
+#endif
+#include "mozilla/StaticPrefs_privacy.h"
+#include "mozilla/StaticPrefs_test.h"
+#include "mozilla/StaticPrefs_ui.h"
 #include "mozilla/TextEditor.h"
 #include "mozilla/TextEvents.h"
 #include "nsArrayUtils.h"
@@ -301,7 +307,6 @@ uint32_t nsContentUtils::sRunnersCountAtFirstBlocker = 0;
 nsIInterfaceRequestor* nsContentUtils::sSameOriginChecker = nullptr;
 
 bool nsContentUtils::sIsHandlingKeyBoardEvent = false;
-bool nsContentUtils::sAllowXULXBL_for_file = false;
 
 nsString* nsContentUtils::sShiftText = nullptr;
 nsString* nsContentUtils::sControlText = nullptr;
@@ -329,6 +334,19 @@ mozilla::LazyLogModule nsContentUtils::sDOMDumpLog("Dump");
 
 int32_t nsContentUtils::sInnerOrOuterWindowCount = 0;
 uint32_t nsContentUtils::sInnerOrOuterWindowSerialCounter = 0;
+
+template int32_t nsContentUtils::ComparePoints(
+    const RangeBoundary& aFirstBoundary, const RangeBoundary& aSecondBoundary,
+    bool* aDisconnected);
+template int32_t nsContentUtils::ComparePoints(
+    const RangeBoundary& aFirstBoundary,
+    const RawRangeBoundary& aSecondBoundary, bool* aDisconnected);
+template int32_t nsContentUtils::ComparePoints(
+    const RawRangeBoundary& aFirstBoundary,
+    const RangeBoundary& aSecondBoundary, bool* aDisconnected);
+template int32_t nsContentUtils::ComparePoints(
+    const RawRangeBoundary& aFirstBoundary,
+    const RawRangeBoundary& aSecondBoundary, bool* aDisconnected);
 
 // Subset of
 // http://www.whatwg.org/specs/web-apps/current-work/#autofill-field-name
@@ -601,9 +619,6 @@ nsresult nsContentUtils::Init() {
   }
 
   sBlockedScriptRunners = new AutoTArray<nsCOMPtr<nsIRunnable>, 8>;
-
-  Preferences::AddBoolVarCache(&sAllowXULXBL_for_file,
-                               "dom.allow_XUL_XBL_for_file");
 
 #ifndef RELEASE_OR_BETA
   sBypassCSSOMOriginCheck = getenv("MOZ_BYPASS_CSSOM_ORIGIN_CHECK");
@@ -1169,10 +1184,6 @@ int32_t nsContentUtils::ParseHTMLInteger(const nsAString& aValue,
         break;
       }
       foundValue = true;
-    } else if (*iter == char16_t('%')) {
-      ++iter;
-      result |= eParseHTMLInteger_IsPercent;
-      break;
     } else {
       break;
     }
@@ -1676,6 +1687,34 @@ bool nsContentUtils::OfflineAppAllowed(nsIPrincipal* aPrincipal) {
   return NS_SUCCEEDED(rv) && allowed;
 }
 
+/* static */
+bool nsContentUtils::PrincipalAllowsL10n(nsIPrincipal* aPrincipal) {
+  // The system principal is always allowed.
+  if (IsSystemPrincipal(aPrincipal)) {
+    return true;
+  }
+
+  nsCOMPtr<nsIURI> uri;
+  nsresult rv = aPrincipal->GetURI(getter_AddRefs(uri));
+  NS_ENSURE_SUCCESS(rv, false);
+
+  bool hasFlags;
+
+  // Allow access to uris that cannot be loaded by web content.
+  rv = NS_URIChainHasFlags(uri, nsIProtocolHandler::URI_DANGEROUS_TO_LOAD,
+                           &hasFlags);
+  NS_ENSURE_SUCCESS(rv, false);
+  if (hasFlags) {
+    return true;
+  }
+
+  // UI resources also get access.
+  rv = NS_URIChainHasFlags(uri, nsIProtocolHandler::URI_IS_UI_RESOURCE,
+                           &hasFlags);
+  NS_ENSURE_SUCCESS(rv, false);
+  return hasFlags;
+}
+
 bool nsContentUtils::MaybeAllowOfflineAppByDefault(nsIPrincipal* aPrincipal) {
   if (!Preferences::GetRootBranch()) return false;
 
@@ -2141,22 +2180,8 @@ nsINode* nsContentUtils::GetCrossDocParentNode(nsINode* aChild) {
   }
 
   Document* doc = aChild->AsDocument();
-  Document* parentDoc = doc->GetParentDocument();
+  Document* parentDoc = doc->GetInProcessParentDocument();
   return parentDoc ? parentDoc->FindContentForSubDocument(doc) : nullptr;
-}
-
-// static
-bool nsContentUtils::ContentIsDescendantOf(const nsINode* aPossibleDescendant,
-                                           const nsINode* aPossibleAncestor) {
-  MOZ_ASSERT(aPossibleDescendant, "The possible descendant is null!");
-  MOZ_ASSERT(aPossibleAncestor, "The possible ancestor is null!");
-
-  do {
-    if (aPossibleDescendant == aPossibleAncestor) return true;
-    aPossibleDescendant = aPossibleDescendant->GetParentNode();
-  } while (aPossibleDescendant);
-
-  return false;
 }
 
 bool nsContentUtils::ContentIsHostIncludingDescendantOf(
@@ -2169,32 +2194,6 @@ bool nsContentUtils::ContentIsHostIncludingDescendantOf(
     if (aPossibleDescendant->IsDocumentFragment()) {
       aPossibleDescendant =
           aPossibleDescendant->AsDocumentFragment()->GetHost();
-    } else {
-      aPossibleDescendant = aPossibleDescendant->GetParentNode();
-    }
-  } while (aPossibleDescendant);
-
-  return false;
-}
-
-bool nsContentUtils::ContentIsShadowIncludingDescendantOf(
-    const nsINode* aPossibleDescendant, const nsINode* aPossibleAncestor) {
-  MOZ_ASSERT(aPossibleDescendant, "The possible descendant is null!");
-  MOZ_ASSERT(aPossibleAncestor, "The possible ancestor is null!");
-
-  if (aPossibleAncestor == aPossibleDescendant->GetComposedDoc()) {
-    return true;
-  }
-
-  do {
-    if (aPossibleDescendant == aPossibleAncestor) {
-      return true;
-    }
-
-    if (aPossibleDescendant->NodeType() == nsINode::DOCUMENT_FRAGMENT_NODE) {
-      ShadowRoot* shadowRoot =
-          ShadowRoot::FromNode(const_cast<nsINode*>(aPossibleDescendant));
-      aPossibleDescendant = shadowRoot ? shadowRoot->GetHost() : nullptr;
     } else {
       aPossibleDescendant = aPossibleDescendant->GetParentNode();
     }
@@ -2262,7 +2261,7 @@ nsINode* nsContentUtils::Retarget(nsINode* aTargetA, nsINode* aTargetB) {
     }
 
     // or A's root is a shadow-including inclusive ancestor of B...
-    if (nsContentUtils::ContentIsShadowIncludingDescendantOf(aTargetB, root)) {
+    if (aTargetB->IsShadowIncludingInclusiveDescendantOf(root)) {
       // ...then return A.
       return aTargetA;
     }
@@ -2389,8 +2388,8 @@ bool nsContentUtils::PositionIsBefore(nsINode* aNode1, nsINode* aNode2,
 }
 
 /* static */
-int32_t nsContentUtils::ComparePoints(nsINode* aParent1, int32_t aOffset1,
-                                      nsINode* aParent2, int32_t aOffset2,
+int32_t nsContentUtils::ComparePoints(const nsINode* aParent1, int32_t aOffset1,
+                                      const nsINode* aParent2, int32_t aOffset2,
                                       bool* aDisconnected,
                                       ComparePointsCache* aParent1Cache) {
   if (aParent1 == aParent2) {
@@ -2400,9 +2399,9 @@ int32_t nsContentUtils::ComparePoints(nsINode* aParent1, int32_t aOffset1,
     return aOffset1 < aOffset2 ? -1 : aOffset1 > aOffset2 ? 1 : 0;
   }
 
-  AutoTArray<nsINode*, 32> parents1, parents2;
-  nsINode* node1 = aParent1;
-  nsINode* node2 = aParent2;
+  AutoTArray<const nsINode*, 32> parents1, parents2;
+  const nsINode* node1 = aParent1;
+  const nsINode* node2 = aParent2;
   do {
     parents1.AppendElement(node1);
     node1 = node1->GetParentNode();
@@ -2425,11 +2424,11 @@ int32_t nsContentUtils::ComparePoints(nsINode* aParent1, int32_t aOffset1,
   }
 
   // Find where the parent chains differ
-  nsINode* parent = parents1.ElementAt(pos1);
+  const nsINode* parent = parents1.ElementAt(pos1);
   uint32_t len;
   for (len = std::min(pos1, pos2); len > 0; --len) {
-    nsINode* child1 = parents1.ElementAt(--pos1);
-    nsINode* child2 = parents2.ElementAt(--pos2);
+    const nsINode* child1 = parents1.ElementAt(--pos1);
+    const nsINode* child2 = parents2.ElementAt(--pos2);
     if (child1 != child2) {
       int32_t child1index = aParent1Cache
                                 ? aParent1Cache->ComputeIndexOf(parent, child1)
@@ -2446,13 +2445,13 @@ int32_t nsContentUtils::ComparePoints(nsINode* aParent1, int32_t aOffset1,
                "should have run out of parent chain for one of the nodes");
 
   if (!pos1) {
-    nsINode* child2 = parents2.ElementAt(--pos2);
+    const nsINode* child2 = parents2.ElementAt(--pos2);
     // XXX aOffset1 may be -1 as mentioned above.  So, why does this return
     //     it's *before* of the valid DOM point?
     return aOffset1 <= parent->ComputeIndexOf(child2) ? -1 : 1;
   }
 
-  nsINode* child1 = parents1.ElementAt(--pos1);
+  const nsINode* child1 = parents1.ElementAt(--pos1);
   // XXX aOffset2 may be -1 as mentioned above.  So, why does this return it's
   //     *after* of the valid DOM point?
   int32_t child1index = aParent1Cache
@@ -2510,14 +2509,19 @@ nsINode* nsContentUtils::GetCommonAncestorUnderInteractiveContent(
 }
 
 /* static */
-int32_t nsContentUtils::ComparePoints(const RawRangeBoundary& aFirst,
-                                      const RawRangeBoundary& aSecond,
-                                      bool* aDisconnected) {
-  if (NS_WARN_IF(!aFirst.IsSet()) || NS_WARN_IF(!aSecond.IsSet())) {
+template <typename FPT, typename FRT, typename SPT, typename SRT>
+int32_t nsContentUtils::ComparePoints(
+    const RangeBoundaryBase<FPT, FRT>& aFirstBoundary,
+    const RangeBoundaryBase<SPT, SRT>& aSecondBoundary, bool* aDisconnected) {
+  if (NS_WARN_IF(!aFirstBoundary.IsSet()) ||
+      NS_WARN_IF(!aSecondBoundary.IsSet())) {
     return -1;
   }
-  return ComparePoints(aFirst.Container(), aFirst.Offset(), aSecond.Container(),
-                       aSecond.Offset(), aDisconnected);
+  // XXX Re-implement this without calling `Offset()` as far as possible,
+  //     and the other overload should be an alias of this.
+  return ComparePoints(aFirstBoundary.Container(), aFirstBoundary.Offset(),
+                       aSecondBoundary.Container(), aSecondBoundary.Offset(),
+                       aDisconnected);
 }
 
 inline bool IsCharInSet(const char* aSet, const char16_t aChar) {
@@ -2654,23 +2658,21 @@ static inline bool IsAutocompleteOff(const nsIContent* aContent) {
 }
 
 /*static*/
-nsresult nsContentUtils::GenerateStateKey(nsIContent* aContent,
-                                          Document* aDocument,
-                                          nsACString& aKey) {
+void nsContentUtils::GenerateStateKey(nsIContent* aContent, Document* aDocument,
+                                      nsACString& aKey) {
+  MOZ_ASSERT(aContent);
+
   aKey.Truncate();
 
   uint32_t partID = aDocument ? aDocument->GetPartID() : 0;
 
-  // We must have content if we're not using a special state id
-  NS_ENSURE_TRUE(aContent, NS_ERROR_FAILURE);
-
   // Don't capture state for anonymous content
   if (aContent->IsInAnonymousSubtree()) {
-    return NS_OK;
+    return;
   }
 
   if (IsAutocompleteOff(aContent)) {
-    return NS_OK;
+    return;
   }
 
   RefPtr<Document> doc = aContent->GetUncomposedDoc();
@@ -2680,10 +2682,6 @@ nsresult nsContentUtils::GenerateStateKey(nsIContent* aContent,
 
   if (doc && doc->IsHTMLOrXHTML()) {
     nsHTMLDocument* htmlDoc = doc->AsHTMLDocument();
-    RefPtr<nsContentList> htmlForms;
-    RefPtr<nsContentList> htmlFormControls;
-    htmlDoc->GetFormsAndFormControls(getter_AddRefs(htmlForms),
-                                     getter_AddRefs(htmlFormControls));
 
     // If we have a form control and can calculate form information, use that
     // as the key - it is more reliable than just recording position in the
@@ -2691,47 +2689,84 @@ nsresult nsContentUtils::GenerateStateKey(nsIContent* aContent,
     // XXXbz Is it, really?  We have bugs on this, I think...
     // Important to have a unique key, and tag/type/name may not be.
     //
-    // If the control has a form, the format of the key is:
-    // f>type>IndOfFormInDoc>IndOfControlInForm>FormName>name
-    // else:
-    // d>type>IndOfControlInDoc>name
+    // The format of the key depends on whether the control has a form,
+    // and whether the element was parser inserted:
+    //
+    // [Has Form, Parser Inserted]:
+    //   fp>type>FormNum>IndOfControlInForm>FormName>name
+    //
+    // [No Form, Parser Inserted]:
+    //   dp>type>ControlNum>name
+    //
+    // [Has Form, Not Parser Inserted]:
+    //   fn>type>IndOfFormInDoc>IndOfControlInForm>FormName>name
+    //
+    // [No Form, Not Parser Inserted]:
+    //   dn>type>IndOfControlInDoc>name
     //
     // XXX We don't need to use index if name is there
     // XXXbz We don't?  Why not?  I don't follow.
     //
     nsCOMPtr<nsIFormControl> control(do_QueryInterface(aContent));
     if (control) {
+      // Get the control number if this was a parser inserted element from the
+      // network.
+      int32_t controlNumber =
+          control->GetParserInsertedControlNumberForStateKey();
+      bool parserInserted = controlNumber != -1;
+
+      RefPtr<nsContentList> htmlForms;
+      RefPtr<nsContentList> htmlFormControls;
+      if (!parserInserted) {
+        // Getting these lists is expensive, as we need to keep them up to date
+        // as the document loads, so we avoid it if we don't need them.
+        htmlDoc->GetFormsAndFormControls(getter_AddRefs(htmlForms),
+                                         getter_AddRefs(htmlFormControls));
+      }
+
       // Append the control type
       KeyAppendInt(control->ControlType(), aKey);
 
       // If in a form, add form name / index of form / index in form
-      Element* formElement = control->GetFormElement();
+      HTMLFormElement* formElement = control->GetFormElement();
       if (formElement) {
         if (IsAutocompleteOff(formElement)) {
           aKey.Truncate();
-          return NS_OK;
+          return;
         }
 
-        KeyAppendString(NS_LITERAL_CSTRING("f"), aKey);
-
-        // Append the index of the form in the document
-        int32_t index = htmlForms->IndexOf(formElement, false);
-        if (index <= -1) {
-          //
-          // XXX HACK this uses some state that was dumped into the document
-          // specifically to fix bug 138892.  What we are trying to do is
-          // *guess* which form this control's state is found in, with the
-          // highly likely guess that the highest form parsed so far is the one.
-          // This code should not be on trunk, only branch.
-          //
-          index = htmlDoc->GetNumFormsSynchronous() - 1;
+        // Append the form number, if this is a parser inserted control, or
+        // the index of the form in the document otherwise.
+        bool appendedForm = false;
+        if (parserInserted) {
+          MOZ_ASSERT(formElement->GetFormNumberForStateKey() != -1,
+                     "when generating a state key for a parser inserted form "
+                     "control we should have a parser inserted <form> element");
+          KeyAppendString(NS_LITERAL_CSTRING("fp"), aKey);
+          KeyAppendInt(formElement->GetFormNumberForStateKey(), aKey);
+          appendedForm = true;
+        } else {
+          KeyAppendString(NS_LITERAL_CSTRING("fn"), aKey);
+          int32_t index = htmlForms->IndexOf(formElement, false);
+          if (index <= -1) {
+            //
+            // XXX HACK this uses some state that was dumped into the document
+            // specifically to fix bug 138892.  What we are trying to do is
+            // *guess* which form this control's state is found in, with the
+            // highly likely guess that the highest form parsed so far is the
+            // one. This code should not be on trunk, only branch.
+            //
+            index = htmlDoc->GetNumFormsSynchronous() - 1;
+          }
+          if (index > -1) {
+            KeyAppendInt(index, aKey);
+            appendedForm = true;
+          }
         }
-        if (index > -1) {
-          KeyAppendInt(index, aKey);
 
+        if (appendedForm) {
           // Append the index of the control in the form
-          nsCOMPtr<nsIForm> form(do_QueryInterface(formElement));
-          index = form->IndexOfControl(control);
+          int32_t index = formElement->IndexOfControl(control);
 
           if (index > -1) {
             KeyAppendInt(index, aKey);
@@ -2743,29 +2778,30 @@ nsresult nsContentUtils::GenerateStateKey(nsIContent* aContent,
         nsAutoString formName;
         formElement->GetAttr(kNameSpaceID_None, nsGkAtoms::name, formName);
         KeyAppendString(formName, aKey);
-
       } else {
-        KeyAppendString(NS_LITERAL_CSTRING("d"), aKey);
-
-        // If not in a form, add index of control in document
-        // Less desirable than indexing by form info.
-
-        // Hash by index of control in doc (we are not in a form)
-        // These are important as they are unique, and type/name may not be.
-
-        // We have to flush sink notifications at this point to make
-        // sure that htmlFormControls is up to date.
-        int32_t index = htmlFormControls->IndexOf(aContent, true);
-        if (index > -1) {
-          KeyAppendInt(index, aKey);
+        // Not in a form.  Append the control number, if this is a parser
+        // inserted control, or the index of the control in the document
+        // otherwise.
+        if (parserInserted) {
+          KeyAppendString(NS_LITERAL_CSTRING("dp"), aKey);
+          KeyAppendInt(control->GetParserInsertedControlNumberForStateKey(),
+                       aKey);
           generatedUniqueKey = true;
+        } else {
+          KeyAppendString(NS_LITERAL_CSTRING("dn"), aKey);
+          int32_t index = htmlFormControls->IndexOf(aContent, true);
+          if (index > -1) {
+            KeyAppendInt(index, aKey);
+            generatedUniqueKey = true;
+          }
         }
-      }
 
-      // Append the control name
-      nsAutoString name;
-      aContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::name, name);
-      KeyAppendString(name, aKey);
+        // Append the control name
+        nsAutoString name;
+        aContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::name,
+                                       name);
+        KeyAppendString(name, aKey);
+      }
     }
   }
 
@@ -2793,8 +2829,6 @@ nsresult nsContentUtils::GenerateStateKey(nsIContent* aContent,
       parent = content->GetParentNode();
     }
   }
-
-  return NS_OK;
 }
 
 // static
@@ -2873,9 +2907,9 @@ nsresult nsContentUtils::NewURIWithDocumentCharset(nsIURI** aResult,
                                                    nsIURI* aBaseURI) {
   if (aDocument) {
     return NS_NewURI(aResult, aSpec, aDocument->GetDocumentCharacterSet(),
-                     aBaseURI, sIOService);
+                     aBaseURI);
   }
-  return NS_NewURI(aResult, aSpec, nullptr, aBaseURI, sIOService);
+  return NS_NewURI(aResult, aSpec, nullptr, aBaseURI);
 }
 
 // static
@@ -3309,10 +3343,10 @@ int32_t nsContentUtils::CORSModeToLoadImageFlags(mozilla::CORSMode aMode) {
 nsresult nsContentUtils::LoadImage(
     nsIURI* aURI, nsINode* aContext, Document* aLoadingDocument,
     nsIPrincipal* aLoadingPrincipal, uint64_t aRequestContextID,
-    nsIURI* aReferrer, net::ReferrerPolicy aReferrerPolicy,
-    imgINotificationObserver* aObserver, int32_t aLoadFlags,
-    const nsAString& initiatorType, imgRequestProxy** aRequest,
-    uint32_t aContentPolicyType, bool aUseUrgentStartForChannel) {
+    nsIReferrerInfo* aReferrerInfo, imgINotificationObserver* aObserver,
+    int32_t aLoadFlags, const nsAString& initiatorType,
+    imgRequestProxy** aRequest, uint32_t aContentPolicyType,
+    bool aUseUrgentStartForChannel) {
   MOZ_ASSERT(aURI, "Must have a URI");
   MOZ_ASSERT(aContext, "Must have a context");
   MOZ_ASSERT(aLoadingDocument, "Must have a document");
@@ -3336,8 +3370,7 @@ nsresult nsContentUtils::LoadImage(
   // right, but the best we can do here...
   return imgLoader->LoadImage(aURI,               /* uri to load */
                               documentURI,        /* initialDocumentURI */
-                              aReferrer,          /* referrer */
-                              aReferrerPolicy,    /* referrer policy */
+                              aReferrerInfo,      /* referrerInfo */
                               aLoadingPrincipal,  /* loading principal */
                               aRequestContextID,  /* request context ID */
                               loadGroup,          /* loadgroup */
@@ -3523,7 +3556,7 @@ void nsContentUtils::GetEventArgNames(int32_t aNameSpaceID, nsAtom* aEventName,
 
 // Note: The list of content bundles in nsStringBundle.cpp should be updated
 // whenever entries are added or removed from this list.
-static const char gPropertiesFiles[nsContentUtils::PropertiesFile_COUNT][56] = {
+static const char* gPropertiesFiles[nsContentUtils::PropertiesFile_COUNT] = {
     // Must line up with the enum values in |PropertiesFile| enum.
     "chrome://global/locale/css.properties",
     "chrome://global/locale/xbl.properties",
@@ -3538,7 +3571,9 @@ static const char gPropertiesFiles[nsContentUtils::PropertiesFile_COUNT][56] = {
     "chrome://global/locale/commonDialogs.properties",
     "chrome://global/locale/mathml/mathml.properties",
     "chrome://global/locale/security/security.properties",
-    "chrome://necko/locale/necko.properties"};
+    "chrome://necko/locale/necko.properties",
+    "chrome://global/locale/layout/HtmlForm.properties",
+    "resource://gre/res/locale/layout/HtmlForm.properties"};
 
 /* static */
 nsresult nsContentUtils::EnsureStringBundle(PropertiesFile aFile) {
@@ -3587,10 +3622,22 @@ void nsContentUtils::AsyncPrecreateStringBundles() {
   }
 }
 
+static bool SpoofLocaleEnglish() {
+  // 0 - will prompt
+  // 1 - don't spoof
+  // 2 - spoof
+  return StaticPrefs::privacy_spoof_english() == 2;
+}
+
 /* static */
 nsresult nsContentUtils::GetLocalizedString(PropertiesFile aFile,
                                             const char* aKey,
                                             nsAString& aResult) {
+  // When we spoof English, use en-US default strings in HTML forms.
+  if (aFile == eFORMS_PROPERTIES_MAYBESPOOF && SpoofLocaleEnglish()) {
+    aFile = eFORMS_PROPERTIES_en_US;
+  }
+
   nsresult rv = EnsureStringBundle(aFile);
   NS_ENSURE_SUCCESS(rv, rv);
   nsIStringBundle* bundle = sStringBundles[aFile];
@@ -3601,6 +3648,11 @@ nsresult nsContentUtils::GetLocalizedString(PropertiesFile aFile,
 nsresult nsContentUtils::FormatLocalizedString(
     PropertiesFile aFile, const char* aKey, const nsTArray<nsString>& aParams,
     nsAString& aResult) {
+  // When we spoof English, use en-US default strings in HTML forms.
+  if (aFile == eFORMS_PROPERTIES_MAYBESPOOF && SpoofLocaleEnglish()) {
+    aFile = eFORMS_PROPERTIES_en_US;
+  }
+
   nsresult rv = EnsureStringBundle(aFile);
   NS_ENSURE_SUCCESS(rv, rv);
   nsIStringBundle* bundle = sStringBundles[aFile];
@@ -3730,7 +3782,7 @@ bool nsContentUtils::IsChildOfSameType(Document* aDoc) {
   nsCOMPtr<nsIDocShellTreeItem> docShellAsItem(aDoc->GetDocShell());
   nsCOMPtr<nsIDocShellTreeItem> sameTypeParent;
   if (docShellAsItem) {
-    docShellAsItem->GetSameTypeParent(getter_AddRefs(sameTypeParent));
+    docShellAsItem->GetInProcessSameTypeParent(getter_AddRefs(sameTypeParent));
   }
   return sameTypeParent != nullptr;
 }
@@ -4964,9 +5016,7 @@ void nsContentUtils::NotifyInstalledMenuKeyboardListener(bool aInstalling) {
 bool nsContentUtils::SchemeIs(nsIURI* aURI, const char* aScheme) {
   nsCOMPtr<nsIURI> baseURI = NS_GetInnermostURI(aURI);
   NS_ENSURE_TRUE(baseURI, false);
-
-  bool isScheme = false;
-  return NS_SUCCEEDED(baseURI->SchemeIs(aScheme, &isScheme)) && isScheme;
+  return baseURI->SchemeIs(aScheme);
 }
 
 bool nsContentUtils::IsSystemPrincipal(nsIPrincipal* aPrincipal) {
@@ -5008,24 +5058,22 @@ bool nsContentUtils::CombineResourcePrincipals(
 }
 
 /* static */
-void nsContentUtils::TriggerLink(nsIContent* aContent,
-                                 nsPresContext* aPresContext, nsIURI* aLinkURI,
+void nsContentUtils::TriggerLink(nsIContent* aContent, nsIURI* aLinkURI,
                                  const nsString& aTargetSpec, bool aClick,
                                  bool aIsTrusted) {
-  NS_ASSERTION(aPresContext, "Need a nsPresContext");
   MOZ_ASSERT(aLinkURI, "No link URI");
 
-  if (aContent->IsEditable()) {
+  if (aContent->IsEditable() || !aContent->OwnerDoc()->LinkHandlingEnabled()) {
     return;
   }
 
-  nsILinkHandler* handler = aPresContext->GetLinkHandler();
-  if (!handler) {
+  nsCOMPtr<nsIDocShell> docShell = aContent->OwnerDoc()->GetDocShell();
+  if (!docShell) {
     return;
   }
 
   if (!aClick) {
-    handler->OnOverLink(aContent, aLinkURI, aTargetSpec);
+    nsDocShell::Cast(docShell)->OnOverLink(aContent, aLinkURI, aTargetSpec);
     return;
   }
 
@@ -5060,7 +5108,7 @@ void nsContentUtils::TriggerLink(nsIContent* aContent,
     nsCOMPtr<nsIPrincipal> triggeringPrincipal = aContent->NodePrincipal();
     nsCOMPtr<nsIContentSecurityPolicy> csp = aContent->GetCsp();
 
-    handler->OnLinkClick(
+    nsDocShell::Cast(docShell)->OnLinkClick(
         aContent, aLinkURI, fileName.IsVoid() ? aTargetSpec : EmptyString(),
         fileName, nullptr, nullptr, EventStateManager::IsHandlingUserInput(),
         aIsTrusted, triggeringPrincipal, csp);
@@ -5089,11 +5137,13 @@ nsIWidget* nsContentUtils::GetTopLevelWidget(nsIWidget* aWidget) {
 const nsDependentString nsContentUtils::GetLocalizedEllipsis() {
   static char16_t sBuf[4] = {0, 0, 0, 0};
   if (!sBuf[0]) {
-    nsAutoString tmp;
-    Preferences::GetLocalizedString("intl.ellipsis", tmp);
-    uint32_t len =
-        std::min(uint32_t(tmp.Length()), uint32_t(ArrayLength(sBuf) - 1));
-    CopyUnicodeTo(tmp, 0, sBuf, len);
+    if (!SpoofLocaleEnglish()) {
+      nsAutoString tmp;
+      Preferences::GetLocalizedString("intl.ellipsis", tmp);
+      uint32_t len =
+          std::min(uint32_t(tmp.Length()), uint32_t(ArrayLength(sBuf) - 1));
+      CopyUnicodeTo(tmp, 0, sBuf, len);
+    }
     if (!sBuf[0]) sBuf[0] = char16_t(0x2026);
   }
   return nsDependentString(sBuf);
@@ -5237,102 +5287,6 @@ bool nsContentUtils::IsInStableOrMetaStableState() {
   MOZ_ASSERT(CycleCollectedJSContext::Get(), "Must be on a script thread!");
   return CycleCollectedJSContext::Get()->IsInStableOrMetaStableState();
 }
-
-/*
- * Helper function for nsContentUtils::ProcessViewportInfo.
- *
- * Handles a single key=value pair. If it corresponds to a valid viewport
- * attribute, add it to the document header data. No validation is done on the
- * value itself (this is done at display time).
- */
-static void ProcessViewportToken(Document* aDocument, const nsAString& token) {
-  /* Iterators. */
-  nsAString::const_iterator tip, tail, end;
-  token.BeginReading(tip);
-  tail = tip;
-  token.EndReading(end);
-
-  /* Move tip to the '='. */
-  while ((tip != end) && (*tip != '=')) ++tip;
-
-  /* If we didn't find an '=', punt. */
-  if (tip == end) return;
-
-  /* Extract the key and value. */
-  const nsAString& key = nsContentUtils::TrimWhitespace<nsCRT::IsAsciiSpace>(
-      Substring(tail, tip), true);
-  const nsAString& value = nsContentUtils::TrimWhitespace<nsCRT::IsAsciiSpace>(
-      Substring(++tip, end), true);
-
-  /* Check for known keys. If we find a match, insert the appropriate
-   * information into the document header. */
-  RefPtr<nsAtom> key_atom = NS_Atomize(key);
-  if (key_atom == nsGkAtoms::height)
-    aDocument->SetHeaderData(nsGkAtoms::viewport_height, value);
-  else if (key_atom == nsGkAtoms::width)
-    aDocument->SetHeaderData(nsGkAtoms::viewport_width, value);
-  else if (key_atom == nsGkAtoms::initial_scale)
-    aDocument->SetHeaderData(nsGkAtoms::viewport_initial_scale, value);
-  else if (key_atom == nsGkAtoms::minimum_scale)
-    aDocument->SetHeaderData(nsGkAtoms::viewport_minimum_scale, value);
-  else if (key_atom == nsGkAtoms::maximum_scale)
-    aDocument->SetHeaderData(nsGkAtoms::viewport_maximum_scale, value);
-  else if (key_atom == nsGkAtoms::user_scalable)
-    aDocument->SetHeaderData(nsGkAtoms::viewport_user_scalable, value);
-}
-
-#define IS_SEPARATOR(c)                                                    \
-  ((c == '=') || (c == ',') || (c == ';') || (c == '\t') || (c == '\n') || \
-   (c == '\r'))
-
-/* static */
-nsresult nsContentUtils::ProcessViewportInfo(Document* aDocument,
-                                             const nsAString& viewportInfo) {
-  /* We never fail. */
-  nsresult rv = NS_OK;
-
-  aDocument->SetHeaderData(nsGkAtoms::viewport, viewportInfo);
-
-  /* Iterators. */
-  nsAString::const_iterator tip, tail, end;
-  viewportInfo.BeginReading(tip);
-  tail = tip;
-  viewportInfo.EndReading(end);
-
-  /* Read the tip to the first non-separator character. */
-  while ((tip != end) && (IS_SEPARATOR(*tip) || nsCRT::IsAsciiSpace(*tip)))
-    ++tip;
-
-  /* Read through and find tokens separated by separators. */
-  while (tip != end) {
-    /* Synchronize tip and tail. */
-    tail = tip;
-
-    /* Advance tip past non-separator characters. */
-    while ((tip != end) && !IS_SEPARATOR(*tip)) ++tip;
-
-    /* Allow white spaces that surround the '=' character */
-    if ((tip != end) && (*tip == '=')) {
-      ++tip;
-
-      while ((tip != end) && nsCRT::IsAsciiSpace(*tip)) ++tip;
-
-      while ((tip != end) && !(IS_SEPARATOR(*tip) || nsCRT::IsAsciiSpace(*tip)))
-        ++tip;
-    }
-
-    /* Our token consists of the characters between tail and tip. */
-    ProcessViewportToken(aDocument, Substring(tail, tip));
-
-    /* Skip separators. */
-    while ((tip != end) && (IS_SEPARATOR(*tip) || nsCRT::IsAsciiSpace(*tip)))
-      ++tip;
-  }
-
-  return rv;
-}
-
-#undef IS_SEPARATOR
 
 /* static */
 void nsContentUtils::HidePopupsInDocument(Document* aDocument) {
@@ -5481,7 +5435,7 @@ bool nsContentUtils::CheckForSubFrameDrop(nsIDragSession* aDragSession,
     // Get each successive parent of the source document and compare it to
     // the drop document. If they match, then this is a drag from a child frame.
     do {
-      doc = doc->GetParentDocument();
+      doc = doc->GetInProcessParentDocument();
       if (doc == targetDoc) {
         // The drag is from a child frame.
         return true;
@@ -5753,18 +5707,14 @@ nsresult nsContentUtils::GetASCIIOrigin(nsIPrincipal* aPrincipal,
 nsresult nsContentUtils::GetASCIIOrigin(nsIURI* aURI, nsACString& aOrigin) {
   MOZ_ASSERT(aURI, "missing uri");
 
-  bool isBlobURL = false;
-  nsresult rv = aURI->SchemeIs(BLOBURI_SCHEME, &isBlobURL);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   // For Blob URI, the path is the URL of the owning page.
-  if (isBlobURL) {
+  if (aURI->SchemeIs(BLOBURI_SCHEME)) {
     nsAutoCString path;
-    rv = aURI->GetPathQueryRef(path);
+    nsresult rv = aURI->GetPathQueryRef(path);
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsCOMPtr<nsIURI> uri;
-    nsresult rv = NS_NewURI(getter_AddRefs(uri), path);
+    rv = NS_NewURI(getter_AddRefs(uri), path);
     if (NS_FAILED(rv)) {
       aOrigin.AssignLiteral("null");
       return NS_OK;
@@ -5779,7 +5729,7 @@ nsresult nsContentUtils::GetASCIIOrigin(nsIURI* aURI, nsACString& aOrigin) {
   NS_ENSURE_TRUE(uri, NS_ERROR_UNEXPECTED);
 
   nsAutoCString host;
-  rv = uri->GetAsciiHost(host);
+  nsresult rv = uri->GetAsciiHost(host);
 
   if (NS_SUCCEEDED(rv) && !host.IsEmpty()) {
     nsAutoCString userPass;
@@ -6113,10 +6063,11 @@ void nsContentUtils::FlushLayoutForTree(nsPIDOMWindowOuter* aWindow) {
 
   if (nsCOMPtr<nsIDocShell> docShell = aWindow->GetDocShell()) {
     int32_t i = 0, i_end;
-    docShell->GetChildCount(&i_end);
+    docShell->GetInProcessChildCount(&i_end);
     for (; i < i_end; ++i) {
       nsCOMPtr<nsIDocShellTreeItem> item;
-      if (docShell->GetChildAt(i, getter_AddRefs(item)) == NS_OK && item) {
+      if (docShell->GetInProcessChildAt(i, getter_AddRefs(item)) == NS_OK &&
+          item) {
         if (nsCOMPtr<nsPIDOMWindowOuter> win = item->GetWindow()) {
           FlushLayoutForTree(win);
         }
@@ -6192,7 +6143,7 @@ PresShell* nsContentUtils::FindPresShellForDocument(const Document* aDocument) {
       return presShell;
     }
     nsCOMPtr<nsIDocShellTreeItem> parent;
-    docShellTreeItem->GetParent(getter_AddRefs(parent));
+    docShellTreeItem->GetInProcessParent(getter_AddRefs(parent));
     docShellTreeItem = parent;
   }
 
@@ -6280,7 +6231,8 @@ bool nsContentUtils::AllowXULXBLForPrincipal(nsIPrincipal* aPrincipal) {
   aPrincipal->GetURI(getter_AddRefs(princURI));
 
   return princURI &&
-         ((sAllowXULXBL_for_file && SchemeIs(princURI, "file")) ||
+         ((StaticPrefs::dom_allow_XUL_XBL_for_file() &&
+           SchemeIs(princURI, "file")) ||
           IsSitePermAllow(aPrincipal, NS_LITERAL_CSTRING("allowXULXBL")));
 }
 
@@ -6578,8 +6530,8 @@ Document* nsContentUtils::GetRootDocument(Document* aDoc) {
     return nullptr;
   }
   Document* doc = aDoc;
-  while (doc->GetParentDocument()) {
-    doc = doc->GetParentDocument();
+  while (doc->GetInProcessParentDocument()) {
+    doc = doc->GetInProcessParentDocument();
   }
   return doc;
 }
@@ -6597,8 +6549,8 @@ bool nsContentUtils::IsInPointerLockContext(nsPIDOMWindowOuter* aWin) {
   }
 
   nsCOMPtr<nsPIDOMWindowOuter> lockTop =
-      pointerLockedDoc->GetWindow()->GetScriptableTop();
-  nsCOMPtr<nsPIDOMWindowOuter> top = aWin->GetScriptableTop();
+      pointerLockedDoc->GetWindow()->GetInProcessScriptableTop();
+  nsCOMPtr<nsPIDOMWindowOuter> top = aWin->GetInProcessScriptableTop();
 
   return top == lockTop;
 }
@@ -6746,6 +6698,27 @@ TextEditor* nsContentUtils::GetActiveEditor(nsPresContext* aPresContext) {
   // Otherwise, HTMLEditor may handle inputs even non-editable element has
   // focus or nobody has focus.
   return GetHTMLEditor(aPresContext);
+}
+
+// static
+TextEditor* nsContentUtils::GetTextEditorFromAnonymousNodeWithoutCreation(
+    nsIContent* aAnonymousContent) {
+  if (!aAnonymousContent) {
+    return nullptr;
+  }
+  nsIContent* parent = aAnonymousContent->FindFirstNonChromeOnlyAccessContent();
+  if (!parent || parent == aAnonymousContent) {
+    return nullptr;
+  }
+  if (HTMLInputElement* inputElement =
+          HTMLInputElement::FromNodeOrNull(parent)) {
+    return inputElement->GetTextEditorWithoutCreation();
+  }
+  if (HTMLTextAreaElement* textareaElement =
+          HTMLTextAreaElement::FromNodeOrNull(parent)) {
+    return textareaElement->GetTextEditorWithoutCreation();
+  }
+  return nullptr;
 }
 
 // static
@@ -6973,7 +6946,7 @@ bool nsContentUtils::PrefetchPreloadEnabled(nsIDocShell* aDocShell) {
       return false;  // do not prefetch, preload, preconnect from mailnews
     }
 
-    docshell->GetParent(getter_AddRefs(parentItem));
+    docshell->GetInProcessParent(getter_AddRefs(parentItem));
     if (parentItem) {
       docshell = do_QueryInterface(parentItem);
       if (!docshell) {
@@ -7135,6 +7108,8 @@ nsresult nsContentUtils::IPCTransferableToTransferable(
     mozilla::dom::BrowserChild* aBrowserChild) {
   nsresult rv;
 
+  aTransferable->SetIsPrivateData(aIsPrivateData);
+
   const nsTArray<IPCDataTransferItem>& items = aDataTransfer.items();
   for (const auto& item : items) {
     aTransferable->AddDataFlavor(item.flavor().get());
@@ -7184,7 +7159,6 @@ nsresult nsContentUtils::IPCTransferableToTransferable(
     }
   }
 
-  aTransferable->SetIsPrivateData(aIsPrivateData);
   aTransferable->SetRequestingPrincipal(aRequestingPrincipal);
   aTransferable->SetContentPolicyType(aContentPolicyType);
   return NS_OK;
@@ -7831,7 +7805,7 @@ nsresult nsContentUtils::SendMouseEvent(
     }
     return presShell->HandleEvent(view->GetFrame(), &event, false, &status);
   }
-  if (StaticPrefs::TestEventsAsyncEnabled()) {
+  if (StaticPrefs::test_events_async_enabled()) {
     status = widget->DispatchInputEvent(&event);
   } else {
     nsresult rv = widget->DispatchEvent(&event, status);
@@ -7853,11 +7827,11 @@ void nsContentUtils::FirePageHideEvent(nsIDocShellTreeItem* aItem,
   doc->OnPageHide(true, aChromeEventHandler, aOnlySystemGroup);
 
   int32_t childCount = 0;
-  aItem->GetChildCount(&childCount);
+  aItem->GetInProcessChildCount(&childCount);
   AutoTArray<nsCOMPtr<nsIDocShellTreeItem>, 8> kids;
   kids.AppendElements(childCount);
   for (int32_t i = 0; i < childCount; ++i) {
-    aItem->GetChildAt(i, getter_AddRefs(kids[i]));
+    aItem->GetInProcessChildAt(i, getter_AddRefs(kids[i]));
   }
 
   for (uint32_t i = 0; i < kids.Length(); ++i) {
@@ -7877,11 +7851,11 @@ void nsContentUtils::FirePageShowEvent(nsIDocShellTreeItem* aItem,
                                        bool aFireIfShowing,
                                        bool aOnlySystemGroup) {
   int32_t childCount = 0;
-  aItem->GetChildCount(&childCount);
+  aItem->GetInProcessChildCount(&childCount);
   AutoTArray<nsCOMPtr<nsIDocShellTreeItem>, 8> kids;
   kids.AppendElements(childCount);
   for (int32_t i = 0; i < childCount; ++i) {
-    aItem->GetChildAt(i, getter_AddRefs(kids[i]));
+    aItem->GetInProcessChildAt(i, getter_AddRefs(kids[i]));
   }
 
   for (uint32_t i = 0; i < kids.Length(); ++i) {
@@ -8018,7 +7992,7 @@ bool nsContentUtils::IsThirdPartyWindowOrChannel(nsPIDOMWindowInner* aWindow,
     // want to check the channel URI against the loading principal as well.
     nsresult rv =
         thirdPartyUtil->IsThirdPartyChannel(aChannel, nullptr, &thirdParty);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
+    if (NS_FAILED(rv)) {
       // Assume third-party in case of failure
       thirdParty = true;
     }
@@ -8728,9 +8702,7 @@ bool nsContentUtils::IsSpecificAboutPage(JSObject* aGlobal, const char* aUri) {
   }
 
   // First check the scheme to avoid getting long specs in the common case.
-  bool isAbout = false;
-  uri->SchemeIs("about", &isAbout);
-  if (!isAbout) {
+  if (!uri->SchemeIs("about")) {
     return false;
   }
 
@@ -8793,7 +8765,7 @@ void nsContentUtils::GetPresentationURL(nsIDocShell* aDocShell,
 
   if (XRE_IsContentProcess()) {
     nsCOMPtr<nsIDocShellTreeItem> sameTypeRoot;
-    aDocShell->GetSameTypeRootTreeItem(getter_AddRefs(sameTypeRoot));
+    aDocShell->GetInProcessSameTypeRootTreeItem(getter_AddRefs(sameTypeRoot));
     nsCOMPtr<nsIDocShellTreeItem> root;
     aDocShell->GetRootTreeItem(getter_AddRefs(root));
     if (sameTypeRoot.get() == root.get()) {
@@ -8921,7 +8893,7 @@ bool nsContentUtils::HttpsStateIsModern(Document* aDocument) {
     return false;
   }
 
-  MOZ_ASSERT(principal->GetIsCodebasePrincipal());
+  MOZ_ASSERT(principal->GetIsContentPrincipal());
 
   nsCOMPtr<nsIContentSecurityManager> csm =
       do_GetService(NS_CONTENTSECURITYMANAGER_CONTRACTID);
@@ -9392,13 +9364,9 @@ bool nsContentUtils::AttemptLargeAllocationLoad(nsIHttpChannel* aChannel) {
   NS_ENSURE_SUCCESS(rv, false);
   NS_ENSURE_TRUE(uri, false);
 
-  nsCOMPtr<nsIURI> referrer;
   nsCOMPtr<nsIReferrerInfo> referrerInfo;
   rv = aChannel->GetReferrerInfo(getter_AddRefs(referrerInfo));
   NS_ENSURE_SUCCESS(rv, false);
-  if (referrerInfo) {
-    referrer = referrerInfo->GetComputedReferrer();
-  }
 
   nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
   nsCOMPtr<nsIPrincipal> triggeringPrincipal = loadInfo->TriggeringPrincipal();
@@ -9420,8 +9388,9 @@ bool nsContentUtils::AttemptLargeAllocationLoad(nsIHttpChannel* aChannel) {
 
   // Actually perform the cross process load
   bool reloadSucceeded = false;
-  rv = wbc3->ReloadInFreshProcess(docShell, uri, referrer, triggeringPrincipal,
-                                  webnavLoadFlags, csp, &reloadSucceeded);
+  rv = wbc3->ReloadInFreshProcess(docShell, uri, referrerInfo,
+                                  triggeringPrincipal, webnavLoadFlags, csp,
+                                  &reloadSucceeded);
   NS_ENSURE_SUCCESS(rv, false);
 
   return reloadSucceeded;
@@ -9634,7 +9603,7 @@ bool nsContentUtils::ShouldBlockReservedKeys(WidgetKeyboardEvent* aKeyEvent) {
         if (docShell &&
             docShell->ItemType() == nsIDocShellTreeItem::typeContent) {
           nsCOMPtr<nsIDocShellTreeItem> rootItem;
-          docShell->GetSameTypeRootTreeItem(getter_AddRefs(rootItem));
+          docShell->GetInProcessSameTypeRootTreeItem(getter_AddRefs(rootItem));
           if (rootItem && rootItem->GetDocument()) {
             principal = rootItem->GetDocument()->NodePrincipal();
           }

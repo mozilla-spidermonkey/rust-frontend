@@ -8,7 +8,8 @@
 #include "APZTestCommon.h"
 
 #include "InputUtils.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_layout.h"
+#include "mozilla/StaticPrefs_mousewheel.h"
 
 class APZCSnappingTester : public APZCTreeManagerTester {};
 
@@ -65,7 +66,7 @@ TEST_F(APZCSnappingTester, Bug1265510) {
   // inner frame; we verify that it does by checking the inner scroll position.
   TimeStamp newTransactionTime =
       now + TimeDuration::FromMilliseconds(
-                StaticPrefs::MouseWheelTransactionTimeoutMs() + 100);
+                StaticPrefs::mousewheel_transaction_timeout() + 100);
   SmoothWheel(manager, ScreenIntPoint(50, 80), ScreenPoint(0, 6),
               newTransactionTime);
   inner->AdvanceAnimationsUntilEnd();

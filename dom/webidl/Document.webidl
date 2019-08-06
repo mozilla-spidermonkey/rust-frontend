@@ -71,9 +71,9 @@ interface Document : Node {
   // because the DOM element reflectors will be in the content scope,
   // instead of the desired UA Widget scope.
   [CEReactions, NewObject, Throws, Func="IsNotUAWidget"]
-  Element createElement(DOMString localName, optional (ElementCreationOptions or DOMString) options);
+  Element createElement(DOMString localName, optional (ElementCreationOptions or DOMString) options = {});
   [CEReactions, NewObject, Throws, Func="IsNotUAWidget"]
-  Element createElementNS(DOMString? namespace, DOMString qualifiedName, optional (ElementCreationOptions or DOMString) options);
+  Element createElementNS(DOMString? namespace, DOMString qualifiedName, optional (ElementCreationOptions or DOMString) options = {});
   [NewObject]
   DocumentFragment createDocumentFragment();
   [NewObject, Func="IsNotUAWidget"]
@@ -146,9 +146,9 @@ partial interface Document {
 
   // dynamic markup insertion
   [CEReactions, Throws]
-  Document open(optional DOMString type, optional DOMString replace = ""); // type is ignored
+  Document open(optional DOMString unused1, optional DOMString unused2); // both arguments are ignored
   [CEReactions, Throws]
-  WindowProxy? open(DOMString url, DOMString name, DOMString features, optional boolean replace = false);
+  WindowProxy? open(USVString url, DOMString name, DOMString features);
   [CEReactions, Throws]
   void close();
   [CEReactions, Throws]
@@ -269,11 +269,14 @@ partial interface Document {
   [SameObject] readonly attribute HTMLCollection anchors;
   [SameObject] readonly attribute HTMLCollection applets;
 
-  //(HTML only)void clear();
-  //(HTML only)void captureEvents();
-  //(HTML only)void releaseEvents();
+  void clear();
+  // @deprecated These are old Netscape 4 methods. Do not use,
+  //             the implementation is no-op.
+  // XXXbz do we actually need these anymore?
+  void captureEvents();
+  void releaseEvents();
 
-  //(HTML only)[SameObject] readonly attribute HTMLAllCollection all;
+  [SameObject] readonly attribute HTMLAllCollection all;
 };
 
 // https://fullscreen.spec.whatwg.org/#api
@@ -380,7 +383,7 @@ partial interface Document {
   void loadBindingDocument(DOMString documentURL);
   // Creates a new XUL element regardless of the document's default type.
   [CEReactions, NewObject, Throws, Func="IsChromeOrXBL"]
-  Element createXULElement(DOMString localName, optional (ElementCreationOptions or DOMString) options);
+  Element createXULElement(DOMString localName, optional (ElementCreationOptions or DOMString) options = {});
   // Wether the document was loaded using a nsXULPrototypeDocument.
   [ChromeOnly]
   readonly attribute boolean loadedFromPrototype;
@@ -430,7 +433,7 @@ partial interface Document {
   // Blocks the initial document parser until the given promise is settled.
   [ChromeOnly, Throws]
   Promise<any> blockParsing(Promise<any> promise,
-                            optional BlockParsingOptions options);
+                            optional BlockParsingOptions options = {});
 
   // like documentURI, except that for error pages, it returns the URI we were
   // trying to load when we hit an error, rather than the error page's own URI.
@@ -601,10 +604,10 @@ Document implements GeometryUtils;
 Document implements FontFaceSource;
 Document implements DocumentOrShadowRoot;
 
-// https://wicg.github.io/feature-policy/#policy
+// https://w3c.github.io/webappsec-feature-policy/#idl-index
 partial interface Document {
     [SameObject, Pref="dom.security.featurePolicy.webidl.enabled"]
-    readonly attribute Policy policy;
+    readonly attribute FeaturePolicy featurePolicy;
 };
 
 /**
@@ -648,4 +651,30 @@ partial interface Document {
   const unsigned short KEYPRESS_EVENT_MODEL_CONFLATED = 2;
   [ChromeOnly]
   void setKeyPressEventModel(unsigned short aKeyPressEventModel);
+};
+
+// Extensions to return information about about the nodes blocked by the
+// Safebrowsing API inside a document.
+partial interface Document {
+  /*
+   * Number of nodes that have been blocked by the Safebrowsing API to prevent
+   * tracking, cryptomining and so on. This method is for testing only.
+   */
+  [ChromeOnly, Pure]
+  readonly attribute long blockedNodeByClassifierCount;
+
+  /*
+   * List of nodes that have been blocked by the Safebrowsing API to prevent
+   * tracking, fingerprinting, cryptomining and so on. This method is for
+   * testing only.
+   */
+  [ChromeOnly, Pure]
+  readonly attribute NodeList blockedNodesByClassifier;
+};
+
+// Extension to programmatically simulate a user interaction on a document,
+// used for testing.
+partial interface Document {
+  [ChromeOnly, BinaryName="setUserHasInteracted"]
+  void userInteractionForTesting();
 };

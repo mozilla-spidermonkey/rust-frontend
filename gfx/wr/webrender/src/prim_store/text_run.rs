@@ -103,6 +103,7 @@ impl TextRunTemplate {
         &mut self,
         frame_state: &mut FrameBuildingState,
     ) {
+        // corresponds to `fetch_glyph` in the shaders
         if let Some(mut request) = frame_state.gpu_cache.request(&mut self.common.gpu_cache_handle) {
             request.push(ColorF::from(self.font.color).premultiplied());
             // this is the only case where we need to provide plain color to GPU
@@ -230,19 +231,26 @@ impl TextRunPrimitive {
         //           will implicitly be part of the device pixel ratio for
         //           the (cached) local space surface, and so this code
         //           will no longer be required.
+        let mut raster_space = raster_space;
         let raster_scale = raster_space.local_scale().unwrap_or(1.0).max(0.001);
 
         // Get the current font size in device pixels
-        let device_font_size = specified_font.size.scale_by(device_pixel_scale.0 * raster_scale);
+        let mut device_font_size = specified_font.size.scale_by(device_pixel_scale.0 * raster_scale);
 
         // Determine if rasterizing glyphs in local or screen space.
-        // Only support transforms that can be coerced to simple 2D transforms.
-        let transform_glyphs = if transform.has_perspective_component() ||
-           !transform.has_2d_inverse() ||
-           // Font sizes larger than the limit need to be scaled, thus can't use subpixels.
-           transform.exceeds_2d_scale(FONT_SIZE_LIMIT / device_font_size.to_f64_px()) ||
-           // Otherwise, ensure the font is rasterized in screen-space.
-           raster_space != RasterSpace::Screen {
+        let transform_glyphs = if raster_space != RasterSpace::Screen {
+            // Ensure the font is supposed to be rasterized in screen-space.
+            false
+        } else if transform.has_perspective_component() || !transform.has_2d_inverse() {
+            // Only support transforms that can be coerced to simple 2D transforms.
+            false
+        } else if transform.exceeds_2d_scale(FONT_SIZE_LIMIT / device_font_size.to_f64_px()) {
+            // Font sizes larger than the limit need to be scaled, thus can't use subpixels.
+            // In this case we adjust the font size and raster space to ensure
+            // we rasterize at the limit, to minimize the amount of scaling.
+            let max_scale = (FONT_SIZE_LIMIT / device_font_size.to_f64_px()) as f32;
+            raster_space = RasterSpace::Local(max_scale * raster_scale);
+            device_font_size = device_font_size.scale_by(max_scale);
             false
         } else {
             true
@@ -276,7 +284,8 @@ impl TextRunPrimitive {
         // specifial subpixel mode that estimates background color).
         if (subpixel_mode == SubpixelMode::Deny && self.used_font.bg_color.a == 0) ||
             // If using local space glyphs, we don't want subpixel AA.
-            !transform_glyphs {
+            !transform_glyphs
+        {
             self.used_font.disable_subpixel_aa();
         }
 
@@ -314,7 +323,7 @@ impl TextRunPrimitive {
                 glyphs.iter().map(|src| {
                     let src_point = src.point + prim_offset;
                     let world_offset = self.used_font.transform.transform(&src_point);
-                    let device_offset = device_pixel_scale.transform_point(&world_offset);
+                    let device_offset = device_pixel_scale.transform_point(world_offset);
                     GlyphKey::new(src.index, device_offset, subpx_dir)
                 }));
         }

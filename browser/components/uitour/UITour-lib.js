@@ -43,17 +43,21 @@ if (typeof Mozilla == "undefined") {
   }
 
   function _generateCallbackID() {
-    return Math.random().toString(36).replace(/[^a-z]+/g, "");
+    return Math.random()
+      .toString(36)
+      .replace(/[^a-z]+/g, "");
   }
 
   function _waitForCallback(callback) {
     var id = _generateCallbackID();
 
     function listener(event) {
-      if (typeof event.detail != "object")
+      if (typeof event.detail != "object") {
         return;
-      if (event.detail.callbackID != id)
+      }
+      if (event.detail.callbackID != id) {
         return;
+      }
 
       document.removeEventListener("mozUITourResponse", listener);
       callback(event.detail.data);
@@ -65,10 +69,12 @@ if (typeof Mozilla == "undefined") {
 
   var notificationListener = null;
   function _notificationListener(event) {
-    if (typeof event.detail != "object")
+    if (typeof event.detail != "object") {
       return;
-    if (typeof notificationListener != "function")
+    }
+    if (typeof notificationListener != "function") {
       return;
+    }
 
     notificationListener(event.detail.event, event.detail.params);
   }
@@ -95,8 +101,6 @@ if (typeof Mozilla == "undefined") {
    * <li>appMenu
    * <li>backForward
    * <li>bookmarks
-   * <li>controlCenter-trackingUnblock
-   * <li>controlCenter-trackingBlock
    * <li>customize
    * <li>devtools
    * <li>forget
@@ -117,7 +121,6 @@ if (typeof Mozilla == "undefined") {
    * <li>searchIcon
    * <li>searchPrefsLink
    * <li>selectedTabIcon
-   * <li>trackingProtection
    * <li>urlbar
    * <li>webide
    * </ul>
@@ -154,12 +157,13 @@ if (typeof Mozilla == "undefined") {
     notificationListener = listener;
 
     if (listener) {
-      document.addEventListener("mozUITourNotification",
-                                _notificationListener);
+      document.addEventListener("mozUITourNotification", _notificationListener);
       Mozilla.UITour.ping(callback);
     } else {
-      document.removeEventListener("mozUITourNotification",
-                                   _notificationListener);
+      document.removeEventListener(
+        "mozUITourNotification",
+        _notificationListener
+      );
     }
   };
 
@@ -260,7 +264,14 @@ if (typeof Mozilla == "undefined") {
    *
    * Mozilla.UITour.showInfo('appMenu', 'my title', 'my text', icon, buttons, options);
    */
-  Mozilla.UITour.showInfo = function(target, title, text, icon, buttons, options) {
+  Mozilla.UITour.showInfo = function(
+    target,
+    title,
+    text,
+    icon,
+    buttons,
+    options
+  ) {
     var buttonData = [];
     if (Array.isArray(buttons)) {
       for (var i = 0; i < buttons.length; i++) {
@@ -274,10 +285,12 @@ if (typeof Mozilla == "undefined") {
     }
 
     var closeButtonCallbackID, targetCallbackID;
-    if (options && options.closeButtonCallback)
+    if (options && options.closeButtonCallback) {
       closeButtonCallbackID = _waitForCallback(options.closeButtonCallback);
-    if (options && options.targetCallback)
+    }
+    if (options && options.targetCallback) {
       targetCallbackID = _waitForCallback(options.targetCallback);
+    }
 
     _sendEvent("showInfo", {
       target,
@@ -303,7 +316,6 @@ if (typeof Mozilla == "undefined") {
    * Valid values:<ul>
    * <li>appMenu
    * <li>bookmarks
-   * <li>controlCenter
    * <li>pocket
    * </ul>
    *
@@ -328,8 +340,9 @@ if (typeof Mozilla == "undefined") {
    */
   Mozilla.UITour.showMenu = function(name, callback) {
     var showCallbackID;
-    if (callback)
+    if (callback) {
       showCallbackID = _waitForCallback(callback);
+    }
 
     _sendEvent("showMenu", {
       name,
@@ -357,7 +370,6 @@ if (typeof Mozilla == "undefined") {
   Mozilla.UITour.showNewTab = function() {
     _sendEvent("showNewTab");
   };
-
 
   /**
    * @typedef Mozilla.UITour.ConfigurationName

@@ -58,7 +58,9 @@
 #include "mozilla/Unused.h"
 #include "GeckoProfiler.h"
 #include "LayersLogging.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_gfx.h"
+#include "mozilla/StaticPrefs_layers.h"
+#include "mozilla/StaticPrefs_layout.h"
 
 #include <algorithm>
 #include <functional>
@@ -601,7 +603,7 @@ class PaintedLayerData {
   nsCString mLog;
 
 #  define FLB_LOG_PAINTED_LAYER_DECISION(pld, ...) \
-    if (StaticPrefs::LayersDumpDecision()) {       \
+    if (StaticPrefs::layers_dump_decision()) {     \
       pld->mLog.AppendPrintf("\t\t\t\t");          \
       pld->mLog.AppendPrintf(__VA_ARGS__);         \
     }
@@ -3091,7 +3093,7 @@ PaintedLayerData* PaintedLayerDataNode::FindPaintedLayerFor(
         break;
       }
 
-      if (StaticPrefs::LayoutSmallerPaintedLayers()) {
+      if (StaticPrefs::layout_smaller_painted_layers()) {
         lowestUsableLayer = nullptr;
       }
     }
@@ -3797,7 +3799,7 @@ UniquePtr<InactiveLayerData> PaintedLayerData::CreateInactiveLayerData(
   FrameLayerBuilder* layerBuilder = new FrameLayerBuilder();
   // Ownership of layerBuilder is passed to tempManager.
   layerBuilder->Init(aState->Builder(), tempManager, this, true,
-                            &aItem->GetClip());
+                     &aItem->GetClip());
 
   tempManager->BeginTransaction();
   if (aState->LayerBuilder()->GetRetainingLayerManager()) {
@@ -4294,6 +4296,7 @@ nsIntRegion ContainerState::ComputeOpaqueRect(
     bool* aOpaqueForAnimatedGeometryRootParent) {
   bool snapOpaque;
   nsRegion opaque = aItem->GetOpaqueRegion(mBuilder, &snapOpaque);
+  MOZ_ASSERT(!opaque.IsComplex());
   if (opaque.IsEmpty()) {
     return nsIntRegion();
   }
@@ -4314,7 +4317,7 @@ nsIntRegion ContainerState::ComputeOpaqueRect(
   // etc will mess us up (and opaque contributions from other containers are
   // not needed).
   if (!nsLayoutUtils::GetCrossDocParentFrame(mContainerFrame)) {
-    mBuilder->AddWindowOpaqueRegion(opaqueClipped);
+    mBuilder->AddWindowOpaqueRegion(aItem->Frame(), opaqueClipped.GetBounds());
   }
   opaquePixels = ScaleRegionToInsidePixels(opaqueClipped, snapOpaque);
 
@@ -4482,7 +4485,7 @@ void ContainerState::ProcessDisplayItems(nsDisplayList* aList) {
 
   nsPoint topLeft(0, 0);
 
-  int32_t maxLayers = StaticPrefs::MaxActiveLayers();
+  int32_t maxLayers = StaticPrefs::layers_max_active();
   int layerCount = 0;
 
   if (!mManager->IsWidgetLayerManager()) {
@@ -5077,7 +5080,7 @@ void ContainerState::ProcessDisplayItems(nsDisplayList* aList) {
       } else if ((itemType == DisplayItemType::TYPE_SUBDOCUMENT ||
                   itemType == DisplayItemType::TYPE_ZOOM ||
                   itemType == DisplayItemType::TYPE_RESOLUTION) &&
-                 StaticPrefs::LayoutUseContainersForRootFrames()) {
+                 StaticPrefs::layout_scroll_root_frame_containers()) {
         newLayerEntry->mBaseScrollMetadata =
             static_cast<nsDisplaySubDocument*>(item)->ComputeScrollMetadata(
                 ownLayer->Manager(), mParameters);
@@ -5965,9 +5968,9 @@ void ContainerState::Finish(uint32_t* aTextContentFlags,
                             nsDisplayList* aChildItems) {
   mPaintedLayerDataTree.Finish();
 
-  if (!StaticPrefs::LayoutUseContainersForRootFrames()) {
+  if (!StaticPrefs::layout_scroll_root_frame_containers()) {
     // Bug 1336544 tracks re-enabling this assertion in the
-    // StaticPrefs::LayoutUseContainersForRootFrames() case.
+    // StaticPrefs::layout_scroll_root_frame_containers() case.
     NS_ASSERTION(mContainerBounds.IsEqualInterior(mAccumulatedChildBounds),
                  "Bounds computation mismatch");
   }
@@ -6205,7 +6208,7 @@ static bool ChooseScaleAndSetTransform(
   // tiling, that's not a problem, since we'll automatically choose a tiled
   // layer for layers of that size. If not, we need to apply clamping to
   // prevent this.
-  if (aTransform && !StaticPrefs::LayersTilesEnabled()) {
+  if (aTransform && !StaticPrefs::layers_enable_tiles_AtStartup()) {
     RestrictScaleToMaxLayerSize(scale, aVisibleRect, aContainerFrame, aLayer);
   }
 
@@ -6304,7 +6307,7 @@ already_AddRefed<ContainerLayer> FrameLayerBuilder::BuildContainerLayerFor(
       aParameters.mScrollMetadataASR;
   const ActiveScrolledRoot* containerCompositorASR = aParameters.mCompositorASR;
 
-  if (!aContainerItem && StaticPrefs::LayoutUseContainersForRootFrames()) {
+  if (!aContainerItem && StaticPrefs::layout_scroll_root_frame_containers()) {
     containerASR = aBuilder->ActiveScrolledRootForRootScrollframe();
     containerScrollMetadataASR = containerASR;
     containerCompositorASR = containerASR;
@@ -7155,7 +7158,7 @@ void FrameLayerBuilder::PaintItems(std::vector<AssignedDisplayItem>& aItems,
  */
 static bool ShouldDrawRectsSeparately(DrawTarget* aDrawTarget,
                                       DrawRegionClip aClip) {
-  if (!StaticPrefs::LayoutPaintRectsSeparately() ||
+  if (!StaticPrefs::layout_paint_rects_separately_AtStartup() ||
       aClip == DrawRegionClip::NONE) {
     return false;
   }
@@ -7283,7 +7286,7 @@ void FrameLayerBuilder::DrawPaintedLayer(PaintedLayer* aLayer,
       layerBuilder->PaintItems(userData->mItems, iterRect, aContext, builder,
                                presContext, offset, userData->mXScale,
                                userData->mYScale);
-      if (StaticPrefs::GfxLoggingPaintedPixelCountEnabled()) {
+      if (StaticPrefs::gfx_logging_painted_pixel_count_enabled()) {
         aLayer->Manager()->AddPaintedPixelCount(iterRect.Area());
       }
     }
@@ -7300,7 +7303,7 @@ void FrameLayerBuilder::DrawPaintedLayer(PaintedLayer* aLayer,
     layerBuilder->PaintItems(userData->mItems, aRegionToDraw.GetBounds(),
                              aContext, builder, presContext, offset,
                              userData->mXScale, userData->mYScale);
-    if (StaticPrefs::GfxLoggingPaintedPixelCountEnabled()) {
+    if (StaticPrefs::gfx_logging_painted_pixel_count_enabled()) {
       aLayer->Manager()->AddPaintedPixelCount(aRegionToDraw.GetBounds().Area());
     }
   }

@@ -10,6 +10,7 @@
 #define nsPresContext_h___
 
 #include "mozilla/Attributes.h"
+#include "mozilla/EnumeratedArray.h"
 #include "mozilla/MediaFeatureChange.h"
 #include "mozilla/NotNull.h"
 #include "mozilla/ScrollStyles.h"
@@ -36,6 +37,7 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/AppUnits.h"
+#include "mozilla/MediaEmulationData.h"
 #include "prclist.h"
 #include "nsThreadUtils.h"
 #include "nsIMessageManager.h"
@@ -52,7 +54,6 @@ class nsITimer;
 class nsIContent;
 class nsIFrame;
 class nsFrameManager;
-class nsILinkHandler;
 class nsAtom;
 class nsIRunnable;
 class gfxFontFeatureValueSet;
@@ -107,12 +108,12 @@ const uint8_t kPresContext_DefaultFixedFont_ID = 0x01;
 #ifdef DEBUG
 struct nsAutoLayoutPhase;
 
-enum nsLayoutPhase {
-  eLayoutPhase_Paint,
-  eLayoutPhase_DisplayListBuilding,  // sometimes a subset of the paint phase
-  eLayoutPhase_Reflow,
-  eLayoutPhase_FrameC,
-  eLayoutPhase_COUNT
+enum class nsLayoutPhase : uint8_t {
+  Paint,
+  DisplayListBuilding,  // sometimes a subset of the paint phase
+  Reflow,
+  FrameC,
+  COUNT
 };
 #endif
 
@@ -132,6 +133,9 @@ class nsPresContext : public nsISupports,
   using Encoding = mozilla::Encoding;
   template <typename T>
   using NotNull = mozilla::NotNull<T>;
+  using MediaEmulationData = mozilla::MediaEmulationData;
+  using StylePrefersColorScheme = mozilla::StylePrefersColorScheme;
+
   typedef mozilla::ScrollStyles ScrollStyles;
   typedef mozilla::StaticPresData StaticPresData;
   using TransactionId = mozilla::layers::TransactionId;
@@ -303,21 +307,19 @@ class nsPresContext : public nsISupports,
   /**
    * Get medium of presentation
    */
-  nsAtom* Medium() {
-    if (!mIsEmulatingMedia) return mMedium;
-    return mMediaEmulated;
+  const nsAtom* Medium() {
+    MOZ_ASSERT(mMedium);
+    return mMediaEmulationData.mMedium ? mMediaEmulationData.mMedium.get()
+                                       : mMedium;
   }
 
   /*
    * Render the document as if being viewed on a device with the specified
    * media type.
+   *
+   * If passed null, it stops emulating.
    */
-  void EmulateMedium(const nsAString& aMediaType);
-
-  /*
-   * Restore the viewer's natural medium
-   */
-  void StopEmulatingMedium();
+  void EmulateMedium(nsAtom* aMediaType);
 
   /** Get a cached integer pref, by its type */
   // *  - initially created for bugs 30910, 61883, 74186, 84398
@@ -346,17 +348,6 @@ class nsPresContext : public nsISupports,
   nsISupports* GetContainerWeak() const;
 
   nsIDocShell* GetDocShell() const;
-
-  // XXX this are going to be replaced with set/get container
-  void SetLinkHandler(nsILinkHandler* aHandler) { mLinkHandler = aHandler; }
-  nsILinkHandler* GetLinkHandler() { return mLinkHandler; }
-
-  /**
-   * Detach this pres context - i.e. cancel relevant timers,
-   * SetLinkHandler(null), etc.
-   * Only to be used by the DocumentViewer.
-   */
-  virtual void Detach();
 
   /**
    * Get the visible area associated with this presentation context.
@@ -498,8 +489,13 @@ class nsPresContext : public nsISupports,
   float GetDeviceFullZoom();
   void SetFullZoom(float aZoom);
 
-  float GetOverrideDPPX() { return mOverrideDPPX; }
-  void SetOverrideDPPX(float aDPPX);
+  float GetOverrideDPPX() const { return mMediaEmulationData.mDPPX; }
+  void SetOverrideDPPX(float);
+
+  Maybe<StylePrefersColorScheme> GetOverridePrefersColorScheme() const {
+    return mMediaEmulationData.mPrefersColorScheme;
+  }
+  void SetOverridePrefersColorScheme(const Maybe<StylePrefersColorScheme>&);
 
   nscoord GetAutoQualityMinFontSize() {
     return DevPixelsToAppUnits(mAutoQualityMinFontSizePixelsPref);
@@ -1130,14 +1126,11 @@ class nsPresContext : public nsISupports,
   mozilla::UniquePtr<nsAnimationManager> mAnimationManager;
   mozilla::UniquePtr<mozilla::RestyleManager> mRestyleManager;
   RefPtr<mozilla::CounterStyleManager> mCounterStyleManager;
-  nsAtom* MOZ_UNSAFE_REF(
-      "always a static atom") mMedium;  // initialized by subclass ctors
-  RefPtr<nsAtom> mMediaEmulated;
+  const nsStaticAtom* mMedium;
   RefPtr<gfxFontFeatureValueSet> mFontFeatureValuesLookup;
-
-  // This pointer is nulled out through SetLinkHandler() in the destructors of
-  // the classes which set it. (using SetLinkHandler() again).
-  nsILinkHandler* MOZ_NON_OWNING_REF mLinkHandler;
+  // TODO(emilio): Maybe lazily create and put under a UniquePtr if this grows a
+  // lot?
+  MediaEmulationData mMediaEmulationData;
 
  public:
   // The following are public member variables so that we can use them
@@ -1152,7 +1145,6 @@ class nsPresContext : public nsISupports,
   float mTextZoom;           // Text zoom, defaults to 1.0
   float mEffectiveTextZoom;  // Text zoom * system font scale
   float mFullZoom;           // Page zoom, defaults to 1.0
-  float mOverrideDPPX;       // DPPX overrided, defaults to 0.0
   gfxSize mLastFontInflationScreenSize;
 
   int32_t mCurAppUnitsPerDevPixel;
@@ -1236,7 +1228,6 @@ class nsPresContext : public nsISupports,
   unsigned mPendingUIResolutionChanged : 1;
   unsigned mPrefChangePendingNeedsReflow : 1;
   unsigned mPostedPrefChangedRunnable : 1;
-  unsigned mIsEmulatingMedia : 1;
 
   // Are we currently drawing an SVG glyph?
   unsigned mIsGlyph : 1;
@@ -1291,7 +1282,8 @@ class nsPresContext : public nsISupports,
 #ifdef DEBUG
  private:
   friend struct nsAutoLayoutPhase;
-  uint32_t mLayoutPhaseCount[eLayoutPhase_COUNT];
+  mozilla::EnumeratedArray<nsLayoutPhase, nsLayoutPhase::COUNT, uint32_t>
+      mLayoutPhaseCount;
 
  public:
   uint32_t LayoutPhaseCount(nsLayoutPhase aPhase) {
@@ -1304,7 +1296,6 @@ class nsRootPresContext final : public nsPresContext {
  public:
   nsRootPresContext(mozilla::dom::Document* aDocument, nsPresContextType aType);
   virtual ~nsRootPresContext();
-  virtual void Detach() override;
 
   /**
    * Registers a plugin to receive geometry updates (position and clip
@@ -1354,6 +1345,18 @@ class nsRootPresContext final : public nsPresContext {
 
   virtual bool IsRoot() override { return true; }
 
+  /**
+   * Add a runnable that will get called before the next paint. They will get
+   * run eventually even if painting doesn't happen. They might run well before
+   * painting happens.
+   */
+  void AddWillPaintObserver(nsIRunnable* aRunnable);
+
+  /**
+   * Run all runnables that need to get called before the next paint.
+   */
+  void FlushWillPaintObservers();
+
   virtual size_t SizeOfExcludingThis(
       mozilla::MallocSizeOf aMallocSizeOf) const override;
 
@@ -1367,10 +1370,28 @@ class nsRootPresContext final : public nsPresContext {
    */
   void CancelApplyPluginGeometryTimer();
 
+  class RunWillPaintObservers : public mozilla::Runnable {
+   public:
+    explicit RunWillPaintObservers(nsRootPresContext* aPresContext)
+        : Runnable("nsPresContextType::RunWillPaintObservers"),
+          mPresContext(aPresContext) {}
+    void Revoke() { mPresContext = nullptr; }
+    NS_IMETHOD Run() override {
+      if (mPresContext) {
+        mPresContext->FlushWillPaintObservers();
+      }
+      return NS_OK;
+    }
+    // The lifetime of this reference is handled by an nsRevocableEventPtr
+    nsRootPresContext* MOZ_NON_OWNING_REF mPresContext;
+  };
+
   friend class nsPresContext;
 
   nsCOMPtr<nsITimer> mApplyPluginGeometryTimer;
   nsTHashtable<nsRefPtrHashKey<nsIContent>> mRegisteredPlugins;
+  nsTArray<nsCOMPtr<nsIRunnable>> mWillPaintObservers;
+  nsRevocableEventPtr<RunWillPaintObservers> mWillPaintFallbackEvent;
 };
 
 #ifdef MOZ_REFLOW_PERF

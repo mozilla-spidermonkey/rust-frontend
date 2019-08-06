@@ -1500,8 +1500,6 @@ HttpBaseChannel::IsThirdPartyTrackingResource(bool* aIsTrackingResource) {
 
 NS_IMETHODIMP
 HttpBaseChannel::GetClassificationFlags(uint32_t* aFlags) {
-  MOZ_ASSERT(!mFirstPartyClassificationFlags ||
-             !mThirdPartyClassificationFlags);
   if (mThirdPartyClassificationFlags) {
     *aFlags = mThirdPartyClassificationFlags;
   } else {
@@ -1512,16 +1510,12 @@ HttpBaseChannel::GetClassificationFlags(uint32_t* aFlags) {
 
 NS_IMETHODIMP
 HttpBaseChannel::GetFirstPartyClassificationFlags(uint32_t* aFlags) {
-  MOZ_ASSERT(
-      !(mFirstPartyClassificationFlags && mFirstPartyClassificationFlags));
   *aFlags = mFirstPartyClassificationFlags;
   return NS_OK;
 }
 
 NS_IMETHODIMP
 HttpBaseChannel::GetThirdPartyClassificationFlags(uint32_t* aFlags) {
-  MOZ_ASSERT(
-      !(mFirstPartyClassificationFlags && mThirdPartyClassificationFlags));
   *aFlags = mThirdPartyClassificationFlags;
   return NS_OK;
 }
@@ -2911,12 +2905,12 @@ already_AddRefed<nsILoadInfo> HttpBaseChannel::CloneLoadInfoForRedirect(
         docShellAttrs.mUserContextId == attrs.mUserContextId,
         "docshell and necko should have the same userContextId attribute.");
     MOZ_ASSERT(
-        docShellAttrs.mInIsolatedMozBrowser == attrs.mInIsolatedMozBrowser,
-        "docshell and necko should have the same inIsolatedMozBrowser "
-        "attribute.");
-    MOZ_ASSERT(
         docShellAttrs.mPrivateBrowsingId == attrs.mPrivateBrowsingId,
         "docshell and necko should have the same privateBrowsingId attribute.");
+    MOZ_ASSERT(docShellAttrs.mGeckoViewSessionContextId ==
+                 attrs.mGeckoViewSessionContextId,
+               "docshell and necko should have the same "
+               "geckoViewSessionContextId attribute");
 
     attrs = docShellAttrs;
     attrs.SetFirstPartyDomain(true, newURI);
@@ -3230,8 +3224,31 @@ nsresult HttpBaseChannel::SetupReplacementChannel(nsIURI* newURI,
   }
 
   if (mReferrerInfo) {
-    rv = httpChannel->SetReferrerInfo(mReferrerInfo);
-    MOZ_ASSERT(NS_SUCCEEDED(rv));
+    ReferrerPolicy referrerPolicy = RP_Unset;
+    nsAutoCString tRPHeaderCValue;
+    Unused << GetResponseHeader(NS_LITERAL_CSTRING("referrer-policy"),
+                                tRPHeaderCValue);
+    NS_ConvertUTF8toUTF16 tRPHeaderValue(tRPHeaderCValue);
+
+    if (!tRPHeaderValue.IsEmpty()) {
+      referrerPolicy =
+          nsContentUtils::GetReferrerPolicyFromHeader(tRPHeaderValue);
+    }
+
+    DebugOnly<nsresult> success;
+    if (referrerPolicy != RP_Unset) {
+      // We may reuse computed referrer in redirect, so if referrerPolicy
+      // changes, we must not use the old computed value, and have to compute
+      // again.
+      nsCOMPtr<nsIReferrerInfo> referrerInfo =
+          dom::ReferrerInfo::CreateFromOtherAndPolicyOverride(mReferrerInfo,
+                                                              referrerPolicy);
+      success = httpChannel->SetReferrerInfoWithoutClone(referrerInfo);
+      MOZ_ASSERT(NS_SUCCEEDED(success));
+    } else {
+      success = httpChannel->SetReferrerInfo(mReferrerInfo);
+      MOZ_ASSERT(NS_SUCCEEDED(success));
+    }
   }
 
   // convey the mAllowSTS flags

@@ -133,6 +133,8 @@ class Output(object):
             elif test.type == "benchmark":
                 if 'assorted-dom' in test.measurements:
                     subtests, vals = self.parseAssortedDomOutput(test)
+                elif 'ares6' in test.measurements:
+                    subtests, vals = self.parseAresSixOutput(test)
                 elif 'motionmark' in test.measurements:
                     subtests, vals = self.parseMotionmarkOutput(test)
                 elif 'speedometer' in test.measurements:
@@ -412,6 +414,109 @@ class Output(object):
 
         return subtests, vals
 
+    def parseAresSixOutput(self, test):
+        # https://browserbench.org/ARES-6/
+        # Every pagecycle will perform the tests from the index page
+        # We have 4 main tests per index page:
+        # - Air, Basic, Babylon, ML
+        # - and from these 4 above, ares6 generates the Overall results
+        # Each test has 3 subtests (firstIteration, steadyState, averageWorstCase):
+        # - _steadyState
+        # - _firstIteration
+        # - _averageWorstCase
+        # Each index page will run 5 cycles, this is set in glue.js
+        #
+        # {
+        #     'expected_browser_cycles': 1,
+        #     'subtest_unit': 'ms',
+        #     'name': 'raptor-ares6-firefox',
+        #     'lower_is_better': False,
+        #     'browser_cycle': '1',
+        #     'subtest_lower_is_better': True,
+        #     'cold': False,
+        #     'browser': 'Firefox 69.0a1 20190531035909',
+        #     'type': 'benchmark',
+        #     'page': 'http://127.0.0.1:35369/ARES-6/index.html?raptor',
+        #     'unit': 'ms',
+        #     'alert_threshold': 2
+        #     'measurements': {
+        #         'ares6': [[{
+        #             'Babylon_firstIteration': [
+        #                 123.68,
+        #                 168.21999999999997,
+        #                 127.34000000000003,
+        #                 113.56,
+        #                 128.78,
+        #                 169.44000000000003
+        #             ],
+        #             'Air_steadyState': [
+        #                 21.184723618090434,
+        #                 22.906331658291457,
+        #                 19.939396984924624,
+        #                 20.572462311557775,
+        #                 20.790452261306534,
+        #                 18.378693467336696
+        #             ],
+        #             etc.
+        #         }]]
+        #     }
+        # }
+        #
+        # Details on how /ARES6/index.html is showing the mean on subsequent test results:
+        #
+        # I selected just a small part from the metrics just to be easier to explain
+        # what is going on.
+        #
+        # After the raptor GeckoView test finishes, we have these results in the logs:
+        #
+        # Extracted from "INFO - raptor-control-server Info: received webext_results:"
+        # 'Air_firstIteration': [660.8000000000002, 626.4599999999999, 655.6199999999999,
+        # 635.9000000000001, 636.4000000000001]
+        #
+        # Extracted from "INFO - raptor-output Info: PERFHERDER_DATA:"
+        # {"name": "Air_firstIteration", "lowerIsBetter": true, "alertThreshold": 2.0,
+        # "replicates": [660.8, 626.46, 655.62, 635.9, 636.4], "value": 636.4, "unit": "ms"}
+        #
+        # On GeckoView's /ARES6/index.html this is what we see for Air - First Iteration:
+        #
+        # - on 1st test cycle : 660.80 (rounded from 660.8000000000002)
+        #
+        # - on 2nd test cycle : 643.63 , this is coming from
+        #   (660.8000000000002 + 626.4599999999999) / 2 ,
+        #   then rounded up to a precision of 2 decimals
+        #
+        # - on 3rd test cycle : 647.63 this is coming from
+        #   (660.8000000000002 + 626.4599999999999 + 655.6199999999999) / 3 ,
+        #   then rounded up to a precision of 2 decimals
+        #
+        # - and so on
+        #
+
+        _subtests = {}
+        data = test.measurements['ares6']
+        for page_cycle in data:
+            for sub, replicates in page_cycle[0].iteritems():
+                # for each pagecycle, build a list of subtests and append all related replicates
+                if sub not in _subtests.keys():
+                    # subtest not added yet, first pagecycle, so add new one
+                    _subtests[sub] = {'unit': test.subtest_unit,
+                                      'alertThreshold': float(test.alert_threshold),
+                                      'lowerIsBetter': test.subtest_lower_is_better,
+                                      'name': sub,
+                                      'replicates': []}
+                _subtests[sub]['replicates'].extend([round(x, 3) for x in replicates])
+
+        vals = []
+        subtests = []
+        names = _subtests.keys()
+        names.sort(reverse=True)
+        for name in names:
+            _subtests[name]['value'] = filters.mean(_subtests[name]['replicates'])
+            subtests.append(_subtests[name])
+            vals.append([_subtests[name]['value'], name])
+
+        return subtests, vals
+
     def parseWASMMiscOutput(self, test):
         '''
           {u'wasm-misc': [
@@ -533,7 +638,7 @@ class Output(object):
             subtests.append(_subtests[name])
             vals.append([_subtests[name]['value'], name])
 
-        print subtests
+        print(subtests)
         return subtests, vals
 
     def parseMotionmarkOutput(self, test):
@@ -765,7 +870,8 @@ class Output(object):
         for name in names:
             _subtests[name]['value'] = round(filters.median(_subtests[name]['replicates']), 2)
             subtests.append(_subtests[name])
-            if name.endswith("dropped_frames"):
+            # only include dropped_frames values, without the %_dropped_frames values
+            if name.endswith("X_dropped_frames"):
                 vals.append([_subtests[name]['value'], name])
 
         return subtests, vals
@@ -838,27 +944,40 @@ class Output(object):
         # now that we've checked for screen captures too, if there were no actual
         # test results we can bail out here
         if self.summarized_results == {}:
-            return False
+            return False, 0
 
         # when gecko_profiling, we don't want results ingested by Perfherder
         extra_opts = self.summarized_results['suites'][0].get('extraOptions', [])
-        if 'gecko_profile' not in extra_opts:
+        test_type = self.summarized_results['suites'][0].get('type', '')
+
+        output_perf_data = True
+        not_posting = '- not posting regular test results for perfherder'
+        if 'gecko_profile' in extra_opts:
+            LOG.info("gecko profiling enabled %s" % not_posting)
+            output_perf_data = False
+        elif test_type == 'scenario':
+            # if a resource-usage flag was supplied the perfherder data
+            # will still be output from output_supporting_data
+            LOG.info("scenario test type was run %s" % not_posting)
+            output_perf_data = False
+
+        total_perfdata = 0
+        if output_perf_data:
             # if we have supporting data i.e. power, we ONLY want those measurements
             # dumped out. TODO: Bug 1515406 - Add option to output both supplementary
             # data (i.e. power) and the regular Raptor test result
             # Both are already available as separate PERFHERDER_DATA json blobs
             if len(self.summarized_supporting_data) == 0:
                 LOG.info("PERFHERDER_DATA: %s" % json.dumps(self.summarized_results))
+                total_perfdata = 1
             else:
                 LOG.info("supporting data measurements exist - only posting those to perfherder")
-        else:
-            LOG.info("gecko profiling enabled - not posting results for perfherder")
 
         json.dump(self.summarized_results, open(results_path, 'w'), indent=2,
                   sort_keys=True)
         LOG.info("results can also be found locally at: %s" % results_path)
 
-        return True
+        return True, total_perfdata
 
     def output_supporting_data(self, test_names):
         '''
@@ -873,8 +992,9 @@ class Output(object):
         if len(self.summarized_supporting_data) == 0:
             LOG.error("no summarized supporting data found for %s" %
                       ', '.join(test_names))
-            return False
+            return False, 0
 
+        total_perfdata = 0
         for next_data_set in self.summarized_supporting_data:
             data_type = next_data_set['suites'][0]['type']
 
@@ -893,8 +1013,9 @@ class Output(object):
             # the output that treeherder expects to find
             LOG.info("PERFHERDER_DATA: %s" % json.dumps(next_data_set))
             LOG.info("%s results can also be found locally at: %s" % (data_type, results_path))
+            total_perfdata += 1
 
-        return True
+        return True, total_perfdata
 
     @classmethod
     def v8_Metric(cls, val_list):

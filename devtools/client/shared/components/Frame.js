@@ -7,14 +7,26 @@
 const { Component } = require("devtools/client/shared/vendor/react");
 const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
-const { getUnicodeUrl, getUnicodeUrlPath, getUnicodeHostname } =
-  require("devtools/client/shared/unicode-url");
-const { getSourceNames, parseURL, isScratchpadScheme, getSourceMappedFile } =
-  require("devtools/client/shared/source-utils");
+const {
+  getUnicodeUrl,
+  getUnicodeUrlPath,
+  getUnicodeHostname,
+} = require("devtools/client/shared/unicode-url");
+const {
+  getSourceNames,
+  parseURL,
+  isScratchpadScheme,
+  getSourceMappedFile,
+} = require("devtools/client/shared/source-utils");
 const { LocalizationHelper } = require("devtools/shared/l10n");
+const { MESSAGE_SOURCE } = require("devtools/client/webconsole/constants");
 
-const l10n = new LocalizationHelper("devtools/client/locales/components.properties");
-const webl10n = new LocalizationHelper("devtools/client/locales/webconsole.properties");
+const l10n = new LocalizationHelper(
+  "devtools/client/locales/components.properties"
+);
+const webl10n = new LocalizationHelper(
+  "devtools/client/locales/webconsole.properties"
+);
 
 class Frame extends Component {
   static get propTypes() {
@@ -23,8 +35,8 @@ class Frame extends Component {
       frame: PropTypes.shape({
         functionDisplayName: PropTypes.string,
         source: PropTypes.string.isRequired,
-        line: PropTypes.oneOfType([ PropTypes.string, PropTypes.number ]),
-        column: PropTypes.oneOfType([ PropTypes.string, PropTypes.number ]),
+        line: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+        column: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
       }).isRequired,
       // Clicking on the frame link -- probably should link to the debugger.
       onClick: PropTypes.func,
@@ -40,6 +52,8 @@ class Frame extends Component {
       showFullSourceUrl: PropTypes.bool,
       // Service to enable the source map feature for console.
       sourceMapService: PropTypes.object,
+      // The source of the message
+      messageSource: PropTypes.string,
     };
   }
 
@@ -63,7 +77,11 @@ class Frame extends Component {
     if (this.props.sourceMapService) {
       const { source, line, column } = this.props.frame;
       this.unsubscribeSourceMapService = this.props.sourceMapService.subscribe(
-        source, line, column, this._locationChanged);
+        source,
+        line,
+        column,
+        this._locationChanged
+      );
     }
   }
 
@@ -116,6 +134,7 @@ class Frame extends Component {
       showHost,
       showEmptyPathAsHost,
       showFullSourceUrl,
+      messageSource,
     } = this.props;
 
     if (this.state && this.state.isSourceMapped && this.state.frame) {
@@ -132,8 +151,8 @@ class Frame extends Component {
 
     const { short, long, host } = getSourceNames(source);
     const unicodeShort = getUnicodeUrlPath(short);
-    const unicodeLong  = getUnicodeUrl(long);
-    const unicodeHost  = host ? getUnicodeHostname(host) : "";
+    const unicodeLong = getUnicodeUrl(long);
+    const unicodeHost = host ? getUnicodeHostname(host) : "";
 
     // Reparse the URL to determine if we should link this; `getSourceNames`
     // has already cached this indirectly. We don't want to attempt to
@@ -142,8 +161,10 @@ class Frame extends Component {
     // Source mapped sources might not necessary linkable, but they
     // are still valid in the debugger.
     // If we have a source ID then we can show the source in the debugger.
-    const isLinkable = !!(isScratchpadScheme(source) || parseURL(source))
-      || isSourceMapped || sourceId;
+    const isLinkable =
+      !!(isScratchpadScheme(source) || parseURL(source)) ||
+      isSourceMapped ||
+      sourceId;
     const elements = [];
     const sourceElements = [];
     let sourceEl;
@@ -171,10 +192,13 @@ class Frame extends Component {
 
       if (functionDisplayName) {
         elements.push(
-          dom.span({
-            key: "function-display-name",
-            className: "frame-link-function-display-name",
-          }, functionDisplayName),
+          dom.span(
+            {
+              key: "function-display-name",
+              className: "frame-link-function-display-name",
+            },
+            functionDisplayName
+          ),
           " "
         );
       }
@@ -189,24 +213,37 @@ class Frame extends Component {
       }
 
       if (locationPrefix) {
-        sourceElements.push(dom.span({
-          key: "locationPrefix",
-          className: "frame-link-prefix",
-        }, locationPrefix));
+        sourceElements.push(
+          dom.span(
+            {
+              key: "locationPrefix",
+              className: "frame-link-prefix",
+            },
+            locationPrefix
+          )
+        );
       }
     }
 
     let displaySource = showFullSourceUrl ? unicodeLong : unicodeShort;
     if (isSourceMapped) {
       displaySource = getSourceMappedFile(displaySource);
-    } else if (showEmptyPathAsHost && (displaySource === "" || displaySource === "/")) {
+    } else if (
+      showEmptyPathAsHost &&
+      (displaySource === "" || displaySource === "/")
+    ) {
       displaySource = host;
     }
 
-    sourceElements.push(dom.span({
-      key: "filename",
-      className: "frame-link-filename",
-    }, displaySource));
+    sourceElements.push(
+      dom.span(
+        {
+          key: "filename",
+          className: "frame-link-filename",
+        },
+        displaySource
+      )
+    );
 
     // If we have a line number > 0.
     if (line) {
@@ -221,48 +258,76 @@ class Frame extends Component {
         attributes["data-column"] = column;
       }
 
-      sourceElements.push(dom.span({
-        key: "line",
-        className: "frame-link-line",
-      }, lineInfo));
+      sourceElements.push(
+        dom.span(
+          {
+            key: "line",
+            className: "frame-link-line",
+          },
+          lineInfo
+        )
+      );
     }
 
     // Inner el is useful for achieving ellipsis on the left and correct LTR/RTL
     // ordering. See CSS styles for frame-link-source-[inner] and bug 1290056.
-    const sourceInnerEl = dom.span({
-      key: "source-inner",
-      className: "frame-link-source-inner",
-      title: isLinkable ?
-        l10n.getFormatStr("frame.viewsourceindebugger", tooltip) : tooltip,
-    }, sourceElements);
+    let tooltipMessage;
+    if (messageSource && messageSource === MESSAGE_SOURCE.CSS) {
+      tooltipMessage = l10n.getFormatStr(
+        "frame.viewsourceinstyleeditor",
+        tooltip
+      );
+    } else {
+      tooltipMessage = l10n.getFormatStr("frame.viewsourceindebugger", tooltip);
+    }
+
+    const sourceInnerEl = dom.span(
+      {
+        key: "source-inner",
+        className: "frame-link-source-inner",
+        title: isLinkable ? tooltipMessage : tooltip,
+      },
+      sourceElements
+    );
 
     // If source is not a URL (self-hosted, eval, etc.), don't make
     // it an anchor link, as we can't link to it.
     if (isLinkable) {
-      sourceEl = dom.a({
-        onClick: e => {
-          e.preventDefault();
-          e.stopPropagation();
-          onClick(this.getSourceForClick({...frame, source, sourceId}));
+      sourceEl = dom.a(
+        {
+          onClick: e => {
+            e.preventDefault();
+            e.stopPropagation();
+            onClick(this.getSourceForClick({ ...frame, source, sourceId }));
+          },
+          href: source,
+          className: "frame-link-source",
+          draggable: false,
         },
-        href: source,
-        className: "frame-link-source",
-        draggable: false,
-      }, sourceInnerEl);
+        sourceInnerEl
+      );
     } else {
-      sourceEl = dom.span({
-        key: "source",
-        className: "frame-link-source",
-      }, sourceInnerEl);
+      sourceEl = dom.span(
+        {
+          key: "source",
+          className: "frame-link-source",
+        },
+        sourceInnerEl
+      );
     }
     elements.push(sourceEl);
 
     if (showHost && unicodeHost) {
       elements.push(" ");
-      elements.push(dom.span({
-        key: "host",
-        className: "frame-link-host",
-      }, unicodeHost));
+      elements.push(
+        dom.span(
+          {
+            key: "host",
+            className: "frame-link-host",
+          },
+          unicodeHost
+        )
+      );
     }
 
     return dom.span(attributes, ...elements);

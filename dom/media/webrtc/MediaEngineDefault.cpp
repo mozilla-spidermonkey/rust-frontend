@@ -29,6 +29,10 @@
 #  include "YuvStamper.h"
 #endif
 
+#define VIDEO_WIDTH_MIN 160
+#define VIDEO_WIDTH_MAX 4096
+#define VIDEO_HEIGHT_MIN 90
+#define VIDEO_HEIGHT_MAX 2160
 #define DEFAULT_AUDIO_TIMER_MS 10
 namespace mozilla {
 
@@ -95,18 +99,35 @@ nsString MediaEngineDefaultVideoSource::GetGroupId() const {
 
 uint32_t MediaEngineDefaultVideoSource::GetBestFitnessDistance(
     const nsTArray<const NormalizedConstraintSet*>& aConstraintSets,
-    const nsString& aDeviceId) const {
+    const nsString& aDeviceId, const nsString& aGroupId) const {
   AssertIsOnOwningThread();
 
-  uint32_t distance = 0;
+  uint64_t distance = 0;
 #ifdef MOZ_WEBRTC
   for (const auto* cs : aConstraintSets) {
-    distance =
-        MediaConstraintsHelper::GetMinimumFitnessDistance(*cs, aDeviceId);
+    distance +=
+        MediaConstraintsHelper::FitnessDistance(Some(aDeviceId), cs->mDeviceId);
+    distance +=
+        MediaConstraintsHelper::FitnessDistance(Some(aGroupId), cs->mGroupId);
+
+    Maybe<nsString> facingMode = Nothing();
+    distance +=
+        MediaConstraintsHelper::FitnessDistance(facingMode, cs->mFacingMode);
+
+    if (cs->mWidth.mMax < VIDEO_WIDTH_MIN ||
+        cs->mWidth.mMin > VIDEO_WIDTH_MAX) {
+      distance += UINT32_MAX;
+    }
+
+    if (cs->mHeight.mMax < VIDEO_HEIGHT_MIN ||
+        cs->mHeight.mMin > VIDEO_HEIGHT_MAX) {
+      distance += UINT32_MAX;
+    }
+
     break;  // distance is read from first entry only
   }
 #endif
-  return distance;
+  return uint32_t(std::min(distance, uint64_t(UINT32_MAX)));
 }
 
 void MediaEngineDefaultVideoSource::GetSettings(
@@ -117,7 +138,7 @@ void MediaEngineDefaultVideoSource::GetSettings(
 
 nsresult MediaEngineDefaultVideoSource::Allocate(
     const MediaTrackConstraints& aConstraints, const MediaEnginePrefs& aPrefs,
-    const nsString& aDeviceId,
+    const nsString& aDeviceId, const nsString& aGroupId,
     const mozilla::ipc::PrincipalInfo& aPrincipalInfo,
     const char** aOutBadConstraint) {
   AssertIsOnOwningThread();
@@ -151,8 +172,11 @@ nsresult MediaEngineDefaultVideoSource::Allocate(
                                    MediaEnginePrefs::DEFAULT_43_VIDEO_HEIGHT
 #endif
       );
-  mOpts.mWidth = std::max(160, std::min(mOpts.mWidth, 4096)) & ~1;
-  mOpts.mHeight = std::max(90, std::min(mOpts.mHeight, 2160)) & ~1;
+  mOpts.mWidth =
+      std::max(VIDEO_WIDTH_MIN, std::min(mOpts.mWidth, VIDEO_WIDTH_MAX)) & ~1;
+  mOpts.mHeight =
+      std::max(VIDEO_HEIGHT_MIN, std::min(mOpts.mHeight, VIDEO_HEIGHT_MAX)) &
+      ~1;
 
   NS_DispatchToMainThread(NS_NewRunnableFunction(
       __func__, [settings = mSettings, frameRate = mOpts.mFPS,
@@ -208,6 +232,7 @@ static void AllocateSolidColorFrame(layers::PlanarYCbCrData& aData, int aWidth,
   aData.mPicY = 0;
   aData.mPicSize = IntSize(aWidth, aHeight);
   aData.mStereoMode = StereoMode::MONO;
+  aData.mYUVColorSpace = gfx::YUVColorSpace::BT601;
 }
 
 static void ReleaseFrame(layers::PlanarYCbCrData& aData) {
@@ -226,8 +251,7 @@ void MediaEngineDefaultVideoSource::SetTrack(
   mStream = aStream;
   mTrackID = aTrackID;
   mPrincipalHandle = aPrincipal;
-  aStream->AddTrack(aTrackID, new VideoSegment(),
-                    SourceMediaStream::ADDTRACK_QUEUED);
+  aStream->AddTrack(aTrackID, new VideoSegment());
 }
 
 nsresult MediaEngineDefaultVideoSource::Start() {
@@ -292,7 +316,8 @@ nsresult MediaEngineDefaultVideoSource::Stop() {
 
 nsresult MediaEngineDefaultVideoSource::Reconfigure(
     const MediaTrackConstraints& aConstraints, const MediaEnginePrefs& aPrefs,
-    const nsString& aDeviceId, const char** aOutBadConstraint) {
+    const nsString& aDeviceId, const nsString& aGroupId,
+    const char** aOutBadConstraint) {
   return NS_OK;
 }
 
@@ -400,12 +425,12 @@ nsString MediaEngineDefaultAudioSource::GetGroupId() const {
 
 uint32_t MediaEngineDefaultAudioSource::GetBestFitnessDistance(
     const nsTArray<const NormalizedConstraintSet*>& aConstraintSets,
-    const nsString& aDeviceId) const {
+    const nsString& aDeviceId, const nsString& aGroupId) const {
   uint32_t distance = 0;
 #ifdef MOZ_WEBRTC
   for (const auto* cs : aConstraintSets) {
-    distance =
-        MediaConstraintsHelper::GetMinimumFitnessDistance(*cs, aDeviceId);
+    distance = MediaConstraintsHelper::GetMinimumFitnessDistance(*cs, aDeviceId,
+                                                                 aGroupId);
     break;  // distance is read from first entry only
   }
 #endif
@@ -423,7 +448,7 @@ void MediaEngineDefaultAudioSource::GetSettings(
 
 nsresult MediaEngineDefaultAudioSource::Allocate(
     const MediaTrackConstraints& aConstraints, const MediaEnginePrefs& aPrefs,
-    const nsString& aDeviceId,
+    const nsString& aDeviceId, const nsString& aGroupId,
     const mozilla::ipc::PrincipalInfo& aPrincipalInfo,
     const char** aOutBadConstraint) {
   AssertIsOnOwningThread();
@@ -471,8 +496,7 @@ void MediaEngineDefaultAudioSource::SetTrack(
   mStream = aStream;
   mTrackID = aTrackID;
   mPrincipalHandle = aPrincipal;
-  aStream->AddAudioTrack(aTrackID, aStream->GraphRate(), new AudioSegment(),
-                         SourceMediaStream::ADDTRACK_QUEUED);
+  aStream->AddAudioTrack(aTrackID, aStream->GraphRate(), new AudioSegment());
 }
 
 nsresult MediaEngineDefaultAudioSource::Start() {
@@ -526,7 +550,8 @@ nsresult MediaEngineDefaultAudioSource::Stop() {
 
 nsresult MediaEngineDefaultAudioSource::Reconfigure(
     const MediaTrackConstraints& aConstraints, const MediaEnginePrefs& aPrefs,
-    const nsString& aDeviceId, const char** aOutBadConstraint) {
+    const nsString& aDeviceId, const nsString& aGroupId,
+    const char** aOutBadConstraint) {
   return NS_OK;
 }
 

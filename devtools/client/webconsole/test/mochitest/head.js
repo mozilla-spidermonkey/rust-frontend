@@ -11,38 +11,44 @@
 /* globals registerTestActor, getTestActor, Task, openToolboxForTab, gBrowser */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/shared/test/test-actor-registry.js",
-  this);
+  this
+);
 
 // shared-head.js handles imports, constants, and utility functions
 // Load the shared-head file first.
 /* import-globals-from ../../../shared/test/shared-head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/shared/test/shared-head.js",
-  this);
+  this
+);
 
 // Import helpers for the new debugger
 /* import-globals-from ../../../debugger/test/mochitest/helpers/context.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/debugger/test/mochitest/helpers/context.js",
-  this);
+  this
+);
 
 // Import helpers for the new debugger
 /* import-globals-from ../../../debugger/test/mochitest/helpers.js*/
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/debugger/test/mochitest/helpers.js",
-  this);
+  this
+);
 
-var {HUDService} = require("devtools/client/webconsole/hudservice");
-var WCUL10n = require("devtools/client/webconsole/webconsole-l10n");
+var {
+  BrowserConsoleManager,
+} = require("devtools/client/webconsole/browser-console-manager");
+var WCUL10n = require("devtools/client/webconsole/utils/l10n");
 const DOCS_GA_PARAMS = `?${new URLSearchParams({
-  "utm_source": "mozilla",
-  "utm_medium": "firefox-console-errors",
-  "utm_campaign": "default",
+  utm_source: "mozilla",
+  utm_medium: "firefox-console-errors",
+  utm_campaign: "default",
 })}`;
 const GA_PARAMS = `?${new URLSearchParams({
-  "utm_source": "mozilla",
-  "utm_medium": "devtools-webconsole",
-  "utm_campaign": "default",
+  utm_source: "mozilla",
+  utm_medium: "devtools-webconsole",
+  utm_campaign: "default",
 })}`;
 
 const wcActions = require("devtools/client/webconsole/actions/index");
@@ -56,10 +62,10 @@ registerCleanupFunction(async function() {
   Services.prefs.getChildList("devtools.webconsole.filter").forEach(pref => {
     Services.prefs.clearUserPref(pref);
   });
-  const browserConsole = HUDService.getBrowserConsole();
+  const browserConsole = BrowserConsoleManager.getBrowserConsole();
   if (browserConsole) {
     browserConsole.ui.clearOutput(true);
-    await HUDService.toggleBrowserConsole();
+    await BrowserConsoleManager.toggleBrowserConsole();
   }
 });
 
@@ -97,10 +103,10 @@ async function openNewTabAndConsole(url, clearJstermHistory = true) {
  */
 async function openNewWindowAndConsole(url) {
   const win = await openNewBrowserWindow();
-  const tab = await addTab(url, {window: win});
+  const tab = await addTab(url, { window: win });
   win.gBrowser.selectedTab = tab;
   const hud = await openConsole(tab);
-  return {win, hud, tab};
+  return { win, hud, tab };
 }
 
 /**
@@ -116,9 +122,11 @@ function logAllStoreChanges(hud) {
   // the store state in case of failure.
   store.subscribe(() => {
     const messages = [...store.getState().messages.messagesById.values()];
-    const debugMessages = messages.map(({id, type, parameters, messageText}) => {
-      return {id, type, parameters, messageText};
-    });
+    const debugMessages = messages.map(
+      ({ id, type, parameters, messageText }) => {
+        return { id, type, parameters, messageText };
+      }
+    );
     info("messages : " + JSON.stringify(debugMessages));
   });
 }
@@ -137,39 +145,39 @@ function logAllStoreChanges(hud) {
 function waitForMessages({ hud, messages, selector = ".message" }) {
   return new Promise(resolve => {
     const matchedMessages = [];
-    hud.ui.on("new-messages",
-      function messagesReceived(newMessages) {
-        for (const message of messages) {
-          if (message.matched) {
-            continue;
-          }
+    hud.ui.on("new-messages", function messagesReceived(newMessages) {
+      for (const message of messages) {
+        if (message.matched) {
+          continue;
+        }
 
-          for (const newMessage of newMessages) {
-            const messageBody =
-              newMessage.node.querySelector(`.message-body`);
-            if (
-              messageBody &&
-              newMessage.node.matches(selector) &&
-              messageBody.textContent.includes(message.text)
-            ) {
-              matchedMessages.push(newMessage);
-              message.matched = true;
-              const messagesLeft = messages.length - matchedMessages.length;
-              info(`Matched a message with text: "${message.text}", ` + (messagesLeft > 0
-                ? `still waiting for ${messagesLeft} messages.`
-                : `all messages received.`)
-              );
-              break;
-            }
-          }
-
-          if (matchedMessages.length === messages.length) {
-            hud.ui.off("new-messages", messagesReceived);
-            resolve(matchedMessages);
-            return;
+        for (const newMessage of newMessages) {
+          const messageBody = newMessage.node.querySelector(`.message-body`);
+          if (
+            messageBody &&
+            newMessage.node.matches(selector) &&
+            messageBody.textContent.includes(message.text)
+          ) {
+            matchedMessages.push(newMessage);
+            message.matched = true;
+            const messagesLeft = messages.length - matchedMessages.length;
+            info(
+              `Matched a message with text: "${message.text}", ` +
+                (messagesLeft > 0
+                  ? `still waiting for ${messagesLeft} messages.`
+                  : `all messages received.`)
+            );
+            break;
           }
         }
-      });
+
+        if (matchedMessages.length === messages.length) {
+          hud.ui.off("new-messages", messagesReceived);
+          resolve(matchedMessages);
+          return;
+        }
+      }
+    });
   });
 }
 
@@ -208,10 +216,20 @@ function waitForRepeatedMessage(hud, text, repeat) {
 async function waitForMessage(hud, text, selector) {
   const messages = await waitForMessages({
     hud,
-    messages: [{text}],
+    messages: [{ text }],
     selector,
   });
   return messages[0];
+}
+
+/**
+ * Execute an input expression.
+ *
+ * @param {Object} hud : The webconsole.
+ * @param {String} input : The input expression to execute.
+ */
+function execute(hud, input) {
+  return hud.ui.wrapper.dispatchEvaluateExpression(input);
 }
 
 /**
@@ -223,9 +241,14 @@ async function waitForMessage(hud, text, selector) {
  * @param {String} matchingText : A string that should match the message body content.
  * @param {String} selector : A selector that should match the message node.
  */
-function executeAndWaitForMessage(hud, input, matchingText, selector = ".message") {
+function executeAndWaitForMessage(
+  hud,
+  input,
+  matchingText,
+  selector = ".message"
+) {
   const onMessage = waitForMessage(hud, matchingText, selector);
-  hud.jsterm.execute(input);
+  execute(hud, input);
   return onMessage;
 }
 
@@ -243,8 +266,18 @@ function executeAndWaitForMessage(hud, input, matchingText, selector = ".message
  * @return object
  *         A promise that is resolved with the result of the condition.
  */
-async function waitFor(condition, message = "waitFor", interval = 10, maxTries = 500) {
-  await BrowserTestUtils.waitForCondition(condition, message, interval, maxTries);
+async function waitFor(
+  condition,
+  message = "waitFor",
+  interval = 10,
+  maxTries = 500
+) {
+  await BrowserTestUtils.waitForCondition(
+    condition,
+    message,
+    interval,
+    maxTries
+  );
   return condition();
 }
 
@@ -276,9 +309,8 @@ function findMessage(hud, text, selector = ".message") {
  */
 function findMessages(hud, text, selector = ".message") {
   const messages = hud.ui.outputNode.querySelectorAll(selector);
-  const elements = Array.prototype.filter.call(
-    messages,
-    (el) => el.textContent.includes(text)
+  const elements = Array.prototype.filter.call(messages, el =>
+    el.textContent.includes(text)
   );
   return elements;
 }
@@ -331,13 +363,13 @@ function loadDocument(url, browser = gBrowser.selectedBrowser) {
 }
 
 /**
-* Returns a promise that resolves when the node passed as an argument mutate
-* according to the passed configuration.
-*
-* @param {Node} node - The node to observe mutations on.
-* @param {Object} observeConfig - A configuration object for MutationObserver.observe.
-* @returns {Promise}
-*/
+ * Returns a promise that resolves when the node passed as an argument mutate
+ * according to the passed configuration.
+ *
+ * @param {Node} node - The node to observe mutations on.
+ * @param {Object} observeConfig - A configuration object for MutationObserver.observe.
+ * @returns {Promise}
+ */
 function waitForNodeMutation(node, observeConfig = {}) {
   return new Promise(resolve => {
     const observer = new MutationObserver(mutations => {
@@ -378,14 +410,18 @@ async function testOpenInDebugger(
 ) {
   info(`Finding message for open-in-debugger test; text is "${text}"`);
   const messageNode = await waitFor(() => findMessage(hud, text));
-  const frameLinkNode = messageNode.querySelector(".message-location .frame-link");
+  const frameLinkNode = messageNode.querySelector(
+    ".message-location .frame-link"
+  );
   ok(frameLinkNode, "The message does have a location link");
-  await checkClickOnNode(hud,
-                         toolbox,
-                         frameLinkNode,
-                         expectUrl,
-                         expectLine,
-                         expectColumn);
+  await checkClickOnNode(
+    hud,
+    toolbox,
+    frameLinkNode,
+    expectUrl,
+    expectLine,
+    expectColumn
+  );
 }
 
 /**
@@ -403,23 +439,29 @@ async function checkClickOnNode(
 
   const onSourceInDebuggerOpened = once(hud.ui, "source-in-debugger-opened");
 
-  EventUtils.sendMouseEvent({ type: "click" },
-    frameLinkNode.querySelector(".frame-link-filename"));
+  EventUtils.sendMouseEvent(
+    { type: "click" },
+    frameLinkNode.querySelector(".frame-link-filename")
+  );
 
   await onSourceInDebuggerOpened;
 
   const dbg = toolbox.getPanel("jsdebugger");
 
   // Wait for the source to finish loading, if it is pending.
-  await waitFor(() => !!dbg._selectors.getSelectedSource(dbg._getState()) &&
-                      !!dbg._selectors.getSelectedLocation(dbg._getState()));
+  await waitFor(
+    () =>
+      !!dbg._selectors.getSelectedSource(dbg._getState()) &&
+      !!dbg._selectors.getSelectedLocation(dbg._getState())
+  );
 
   if (expectUrl) {
     const url = frameLinkNode.getAttribute("data-url");
     ok(url, `source url found ("${url}")`);
 
     is(
-      dbg._selectors.getSelectedSource(dbg._getState()).url, url,
+      dbg._selectors.getSelectedSource(dbg._getState()).url,
+      url,
       "expected source url"
     );
   }
@@ -428,7 +470,8 @@ async function checkClickOnNode(
     ok(line, `source line found ("${line}")`);
 
     is(
-      dbg._selectors.getSelectedLocation(dbg._getState()).line, line,
+      dbg._selectors.getSelectedLocation(dbg._getState()).line,
+      line,
       "expected source line"
     );
   }
@@ -437,7 +480,8 @@ async function checkClickOnNode(
     ok(column, `source column found ("${column}")`);
 
     is(
-      dbg._selectors.getSelectedLocation(dbg._getState()).column, column,
+      dbg._selectors.getSelectedLocation(dbg._getState()).column,
+      column,
       "expected source column"
     );
   }
@@ -447,8 +491,9 @@ async function checkClickOnNode(
  * Returns true if the give node is currently focused.
  */
 function hasFocus(node) {
-  return node.ownerDocument.activeElement == node
-    && node.ownerDocument.hasFocus();
+  return (
+    node.ownerDocument.activeElement == node && node.ownerDocument.hasFocus()
+  );
 }
 
 /**
@@ -468,7 +513,9 @@ function getInputValue(hud) {
  * @param {String} value : The value to set the console input to.
  */
 function setInputValue(hud, value) {
-  return hud.jsterm._setValue(value);
+  const onValueSet = hud.jsterm.once("set-input-value");
+  hud.jsterm._setValue(value);
+  return onValueSet;
 }
 
 /**
@@ -485,9 +532,9 @@ function setInputValue(hud, value) {
 async function setInputValueForAutocompletion(
   hud,
   value,
-  caretPosition = value.length,
+  caretPosition = value.length
 ) {
-  const {jsterm} = hud;
+  const { jsterm } = hud;
 
   setInputValue(hud, "");
   jsterm.focus();
@@ -501,15 +548,7 @@ async function setInputValueForAutocompletion(
   }
 
   if (Number.isInteger(caretPosition)) {
-    if (jsterm.inputNode) {
-      const {inputNode} = jsterm;
-      inputNode.value = value;
-      inputNode.setSelectionRange(caretPosition, caretPosition);
-    }
-
-    if (jsterm.editor) {
-      jsterm.editor.setCursor(jsterm.editor.getPosition(caretPosition));
-    }
+    jsterm.editor.setCursor(jsterm.editor.getPosition(caretPosition));
   }
 }
 
@@ -543,13 +582,7 @@ function checkInputCompletionValue(hud, expectedValue, assertionInfo) {
   }
 
   info(`Expects "${expectedValue}", is "${completionValue}"`);
-
-  if (hud.jsterm.completeNode) {
-    is(completionValue, expectedValue, assertionInfo);
-  } else {
-    // CodeMirror jsterm doesn't need to add prefix-spaces.
-    is(completionValue, expectedValue.trim(), assertionInfo);
-  }
+  is(completionValue, expectedValue, assertionInfo);
 }
 
 /**
@@ -560,14 +593,8 @@ function checkInputCompletionValue(hud, expectedValue, assertionInfo) {
  * @param {String} assertionInfo: Description of the assertion passed to `is`.
  */
 function checkInputCursorPosition(hud, expectedCursorIndex, assertionInfo) {
-  const {jsterm} = hud;
-  if (jsterm.inputNode) {
-    const {selectionStart, selectionEnd} = jsterm.inputNode;
-    is(selectionStart, expectedCursorIndex, assertionInfo);
-    ok(selectionStart === selectionEnd);
-  } else {
-    is(jsterm.editor.getCursor().ch, expectedCursorIndex, assertionInfo);
-  }
+  const { jsterm } = hud;
+  is(jsterm.editor.getCursor().ch, expectedCursorIndex, assertionInfo);
 }
 
 /**
@@ -582,27 +609,27 @@ function checkInputCursorPosition(hud, expectedCursorIndex, assertionInfo) {
  *                  end of the input: "test|".
  * @param {String} assertionInfo: Description of the assertion passed to `is`.
  */
-function checkInputValueAndCursorPosition(hud, expectedStringWithCursor, assertionInfo) {
+function checkInputValueAndCursorPosition(
+  hud,
+  expectedStringWithCursor,
+  assertionInfo
+) {
   info(`Checking jsterm state: \n${expectedStringWithCursor}`);
   if (!expectedStringWithCursor.includes("|")) {
-    ok(false,
-      `expectedStringWithCursor must contain a "|" char to indicate cursor position`);
+    ok(
+      false,
+      `expectedStringWithCursor must contain a "|" char to indicate cursor position`
+    );
   }
 
   const inputValue = expectedStringWithCursor.replace("|", "");
-  const {jsterm} = hud;
+  const { jsterm } = hud;
   is(getInputValue(hud), inputValue, "console input has expected value");
-  if (jsterm.inputNode) {
-    is(jsterm.inputNode.selectionStart, jsterm.inputNode.selectionEnd);
-    is(jsterm.inputNode.selectionStart, expectedStringWithCursor.indexOf("|"),
-      assertionInfo);
-  } else {
-    const lines = expectedStringWithCursor.split("\n");
-    const lineWithCursor = lines.findIndex(line => line.includes("|"));
-    const {ch, line} = jsterm.editor.getCursor();
-    is(line, lineWithCursor, assertionInfo + " - correct line");
-    is(ch, lines[lineWithCursor].indexOf("|"), assertionInfo + " - correct ch");
-  }
+  const lines = expectedStringWithCursor.split("\n");
+  const lineWithCursor = lines.findIndex(line => line.includes("|"));
+  const { ch, line } = jsterm.editor.getCursor();
+  is(line, lineWithCursor, assertionInfo + " - correct line");
+  is(ch, lines[lineWithCursor].indexOf("|"), assertionInfo + " - correct ch");
 }
 
 /**
@@ -612,16 +639,8 @@ function checkInputValueAndCursorPosition(hud, expectedStringWithCursor, asserti
  * @returns {String}
  */
 function getInputCompletionValue(hud) {
-  const {jsterm} = hud;
-  if (jsterm.completeNode) {
-    return jsterm.completeNode.value;
-  }
-
-  if (jsterm.editor) {
-    return jsterm.editor.getAutoCompletionText();
-  }
-
-  return null;
+  const { jsterm } = hud;
+  return jsterm.editor.getAutoCompletionText();
 }
 
 /**
@@ -631,19 +650,10 @@ function getInputCompletionValue(hud) {
  * @returns {Boolean}
  */
 function isInputFocused(hud) {
-  const {jsterm} = hud;
-  const document = jsterm.outputNode.ownerDocument;
+  const { jsterm } = hud;
+  const document = hud.ui.outputNode.ownerDocument;
   const documentIsFocused = document.hasFocus();
-
-  if (jsterm.inputNode) {
-    return document.activeElement == jsterm.inputNode && documentIsFocused;
-  }
-
-  if (jsterm.editor) {
-    return documentIsFocused && jsterm.editor.hasFocus();
-  }
-
-  return false;
+  return documentIsFocused && jsterm.editor.hasFocus();
 }
 
 /**
@@ -691,9 +701,9 @@ async function openDebugger(options = {}) {
     await panel.panelWin.DebuggerController.waitForSourcesLoaded();
   } else {
     // New debugger
-    await toolbox.threadClient.getSources();
+    await toolbox.threadFront.getSources();
   }
-  return {target, toolbox, panel};
+  return { target, toolbox, panel };
 }
 
 async function openInspector(options = {}) {
@@ -781,17 +791,19 @@ function simulateLinkClick(element, clickEventProps) {
  * - where: If the link was opened in the background (null) or not ("tab").
  */
 function overrideOpenLink(fn) {
-  const browserWindow = Services.wm.getMostRecentWindow(gDevTools.chromeWindowType);
+  const browserWindow = Services.wm.getMostRecentWindow(
+    gDevTools.chromeWindowType
+  );
 
   // Override LinkIn methods to prevent navigating.
   const oldOpenTrustedLinkIn = browserWindow.openTrustedLinkIn;
   const oldOpenWebLinkIn = browserWindow.openWebLinkIn;
 
-  const onOpenLink = new Promise((resolve) => {
+  const onOpenLink = new Promise(resolve => {
     const openLinkIn = function(link, where) {
       browserWindow.openTrustedLinkIn = oldOpenTrustedLinkIn;
       browserWindow.openWebLinkIn = oldOpenWebLinkIn;
-      resolve({link: link, where});
+      resolve({ link: link, where });
     };
     browserWindow.openWebLinkIn = browserWindow.openTrustedLinkIn = openLinkIn;
     fn();
@@ -805,7 +817,7 @@ function overrideOpenLink(fn) {
       browserWindow.openTrustedLinkIn = oldOpenTrustedLinkIn;
       browserWindow.openWebLinkIn = oldOpenWebLinkIn;
       timeoutId = null;
-      resolve({link: null, where: null});
+      resolve({ link: null, where: null });
     }, 1000);
   });
 
@@ -853,23 +865,33 @@ async function openMessageInNetmonitor(toolbox, hud, url, urlInConsole) {
 
   const message = await waitFor(() => findMessage(hud, urlInConsole));
 
-  const onNetmonitorSelected = toolbox.once("netmonitor-selected", (event, panel) => {
-    return panel;
-  });
+  const onNetmonitorSelected = toolbox.once(
+    "netmonitor-selected",
+    (event, panel) => {
+      return panel;
+    }
+  );
 
   const menuPopup = await openContextMenu(hud, message);
-  const openInNetMenuItem =
-    menuPopup.querySelector("#console-menu-open-in-network-panel");
+  const openInNetMenuItem = menuPopup.querySelector(
+    "#console-menu-open-in-network-panel"
+  );
   ok(openInNetMenuItem, "open in network panel item is enabled");
   openInNetMenuItem.click();
 
-  const {panelWin} = await onNetmonitorSelected;
-  ok(true, "The netmonitor panel is selected when clicking on the network message");
+  const { panelWin } = await onNetmonitorSelected;
+  ok(
+    true,
+    "The netmonitor panel is selected when clicking on the network message"
+  );
 
   const { store, windowRequire } = panelWin;
-  const nmActions = windowRequire("devtools/client/netmonitor/src/actions/index");
-  const { getSelectedRequest } =
-    windowRequire("devtools/client/netmonitor/src/selectors/index");
+  const nmActions = windowRequire(
+    "devtools/client/netmonitor/src/actions/index"
+  );
+  const { getSelectedRequest } = windowRequire(
+    "devtools/client/netmonitor/src/selectors/index"
+  );
 
   store.dispatch(nmActions.batchEnable(false));
 
@@ -879,6 +901,13 @@ async function openMessageInNetmonitor(toolbox, hud, url, urlInConsole) {
   });
 
   ok(true, "The attached url is correct.");
+
+  info(
+    "Wait for the netmonitor headers panel to appear as it spawn RDP requests"
+  );
+  await waitUntil(() =>
+    panelWin.document.querySelector("#headers-panel .headers-overview")
+  );
 }
 
 function selectNode(hud, node) {
@@ -902,7 +931,7 @@ async function waitForBrowserConsole() {
       Services.obs.removeObserver(observer, "web-console-created");
       subject.QueryInterface(Ci.nsISupportsString);
 
-      const hud = HUDService.getBrowserConsole();
+      const hud = BrowserConsoleManager.getBrowserConsole();
       ok(hud, "browser console is open");
       is(subject.data, hud.hudId, "notification hudId is correct");
 
@@ -917,10 +946,10 @@ async function waitForBrowserConsole() {
  * @param {Object} hud
  */
 async function getFilterState(hud) {
-  const {outputNode} = hud.ui;
+  const { outputNode } = hud.ui;
   const filterBar = outputNode.querySelector(".webconsole-filterbar-secondary");
   const buttons = filterBar.querySelectorAll("button");
-  const result = { };
+  const result = {};
 
   for (const button of buttons) {
     const classes = new Set(button.classList.values());
@@ -962,7 +991,7 @@ function getFilterInput(hud) {
  *          }
  */
 async function setFilterState(hud, settings) {
-  const {outputNode} = hud.ui;
+  const { outputNode } = hud.ui;
   const filterBar = outputNode.querySelector(".webconsole-filterbar-secondary");
 
   for (const category in settings) {
@@ -983,11 +1012,16 @@ async function setFilterState(hud, settings) {
     }
 
     if (!button) {
-      ok(false, `setFilterState() called with a category of ${category}, ` +
-                `which doesn't exist.`);
+      ok(
+        false,
+        `setFilterState() called with a category of ${category}, ` +
+          `which doesn't exist.`
+      );
     }
 
-    info(`Setting the ${category} category to ${value ? "checked" : "disabled"}`);
+    info(
+      `Setting the ${category} category to ${value ? "checked" : "disabled"}`
+    );
 
     const isPressed = button.getAttribute("aria-pressed");
 
@@ -1032,7 +1066,7 @@ async function openReverseSearch(hud) {
   const onReverseSearchUiOpen = waitFor(() => getReverseSearchElement(hud));
   const isMacOS = AppConstants.platform === "macosx";
   if (isMacOS) {
-    EventUtils.synthesizeKey("r", {ctrlKey: true});
+    EventUtils.synthesizeKey("r", { ctrlKey: true });
   } else {
     EventUtils.synthesizeKey("VK_F9");
   }
@@ -1042,7 +1076,7 @@ async function openReverseSearch(hud) {
 }
 
 function getReverseSearchElement(hud) {
-  const {outputNode} = hud.ui;
+  const { outputNode } = hud.ui;
   return outputNode.querySelector(".reverse-search");
 }
 
@@ -1062,7 +1096,7 @@ function getReverseSearchInfoElement(hud) {
  * @returns {Boolean}
  */
 function isReverseSearchInputFocused(hud) {
-  const {outputNode} = hud.ui;
+  const { outputNode } = hud.ui;
   const document = outputNode.ownerDocument;
   const documentIsFocused = document.hasFocus();
   const reverseSearchInput = outputNode.querySelector(".reverse-search-input");
@@ -1080,13 +1114,15 @@ function isReverseSearchInputFocused(hud) {
  */
 async function selectNodeWithPicker(toolbox, testActor, selector) {
   const inspector = toolbox.getPanel("inspector");
-  const inspectorFront = inspector.inspector;
+  const inspectorFront = inspector.inspectorFront;
 
   const onPickerStarted = inspectorFront.nodePicker.once("picker-started");
   inspectorFront.nodePicker.start();
   await onPickerStarted;
 
-  info(`Picker mode started, now clicking on "${selector}" to select that node`);
+  info(
+    `Picker mode started, now clicking on "${selector}" to select that node`
+  );
   const onPickerStopped = inspectorFront.nodePicker.once("picker-stopped");
   const onInspectorUpdated = inspector.once("inspector-updated");
 
@@ -1158,7 +1194,10 @@ function getObjectInspectorChildrenNodes(node) {
   const children = [];
 
   let currentNode = node;
-  while (currentNode.nextSibling && getLevel(currentNode.nextSibling) === childLevel) {
+  while (
+    currentNode.nextSibling &&
+    getLevel(currentNode.nextSibling) === childLevel
+  ) {
     currentNode = currentNode.nextSibling;
     children.push(currentNode);
   }
@@ -1211,7 +1250,7 @@ function getAutocompletePopupLabels(popup) {
  * @returns {HTMLElement|null}
  */
 function getConfirmDialog(toolbox) {
-  const {doc} = toolbox;
+  const { doc } = toolbox;
   return doc.querySelector(".invoke-confirm");
 }
 
@@ -1263,8 +1302,10 @@ function isScrolledToBottom(container) {
     return true;
   }
   const lastNodeHeight = container.lastChild.clientHeight;
-  return container.scrollTop + container.clientHeight >=
-         container.scrollHeight - lastNodeHeight / 2;
+  return (
+    container.scrollTop + container.clientHeight >=
+    container.scrollHeight - lastNodeHeight / 2
+  );
 }
 
 /**
@@ -1281,14 +1322,19 @@ function isScrolledToBottom(container) {
  */
 function checkConsoleOutputForWarningGroup(hud, expectedMessages) {
   const messages = findMessages(hud, "");
-  is(messages.length, expectedMessages.length, "Got the expected number of messages");
+  is(
+    messages.length,
+    expectedMessages.length,
+    "Got the expected number of messages"
+  );
 
   const isInWarningGroup = index => {
     const message = expectedMessages[index];
     if (!message.startsWith("|")) {
       return false;
     }
-    const groups = expectedMessages.slice(0, index)
+    const groups = expectedMessages
+      .slice(0, index)
       .reverse()
       .filter(m => !m.startsWith("|"));
     if (groups.length === 0) {
@@ -1304,51 +1350,80 @@ function checkConsoleOutputForWarningGroup(hud, expectedMessages) {
 
     // Collapsed Warning group
     if (expectedMessage.startsWith("▶︎⚠")) {
-      is(message.querySelector(".arrow").getAttribute("aria-expanded"), "false",
-        "There's a collapsed arrow");
-      is(message.querySelector(".indent").getAttribute("data-indent"), "0",
-        "The warningGroup has the expected indent");
+      is(
+        message.querySelector(".arrow").getAttribute("aria-expanded"),
+        "false",
+        "There's a collapsed arrow"
+      );
+      is(
+        message.querySelector(".indent").getAttribute("data-indent"),
+        "0",
+        "The warningGroup has the expected indent"
+      );
       expectedMessage = expectedMessage.replace("▶︎⚠ ", "");
     }
 
     // Expanded Warning group
     if (expectedMessage.startsWith("▼︎⚠")) {
-      is(message.querySelector(".arrow").getAttribute("aria-expanded"), "true",
-        "There's an expanded arrow");
-      is(message.querySelector(".indent").getAttribute("data-indent"), "0",
-        "The warningGroup has the expected indent");
+      is(
+        message.querySelector(".arrow").getAttribute("aria-expanded"),
+        "true",
+        "There's an expanded arrow"
+      );
+      is(
+        message.querySelector(".indent").getAttribute("data-indent"),
+        "0",
+        "The warningGroup has the expected indent"
+      );
       expectedMessage = expectedMessage.replace("▼︎⚠ ", "");
     }
 
     // Collapsed console.group
     if (expectedMessage.startsWith("▶︎")) {
-      is(message.querySelector(".arrow").getAttribute("aria-expanded"), "false",
-        "There's a collapsed arrow");
+      is(
+        message.querySelector(".arrow").getAttribute("aria-expanded"),
+        "false",
+        "There's a collapsed arrow"
+      );
       expectedMessage = expectedMessage.replace("▶︎ ", "");
     }
 
     // Expanded console.group
     if (expectedMessage.startsWith("▼")) {
-      is(message.querySelector(".arrow").getAttribute("aria-expanded"), "true",
-        "There's an expanded arrow");
+      is(
+        message.querySelector(".arrow").getAttribute("aria-expanded"),
+        "true",
+        "There's an expanded arrow"
+      );
       expectedMessage = expectedMessage.replace("▼ ", "");
     }
 
     // In-group message
     if (expectedMessage.startsWith("|")) {
       if (isInWarningGroup(i)) {
-        is(message.querySelector(".indent.warning-indent").getAttribute("data-indent"),
-          "1", "The message has the expected indent");
+        is(
+          message
+            .querySelector(".indent.warning-indent")
+            .getAttribute("data-indent"),
+          "1",
+          "The message has the expected indent"
+        );
       }
 
       expectedMessage = expectedMessage.replace("| ", "");
     } else {
-      is(message.querySelector(".indent").getAttribute("data-indent"),
-        "0", "The message has the expected indent");
+      is(
+        message.querySelector(".indent").getAttribute("data-indent"),
+        "0",
+        "The message has the expected indent"
+      );
     }
 
-    ok(message.textContent.trim().includes(expectedMessage.trim()), `Message includes ` +
-      `the expected "${expectedMessage}" content - "${message.textContent.trim()}"`);
+    ok(
+      message.textContent.trim().includes(expectedMessage.trim()),
+      `Message includes ` +
+        `the expected "${expectedMessage}" content - "${message.textContent.trim()}"`
+    );
   });
 }
 
@@ -1370,10 +1445,15 @@ async function checkMessageStack(hud, text, frameLines) {
 
   const framesNode = await waitFor(() => msgNode.querySelector(".frames"));
   const frameNodes = framesNode.querySelectorAll(".frame");
-  ok(frameNodes.length == frameLines.length, `Found ${frameLines.length} frames`);
+  ok(
+    frameNodes.length == frameLines.length,
+    `Found ${frameLines.length} frames`
+  );
   for (let i = 0; i < frameLines.length; i++) {
-    ok(frameNodes[i].querySelector(".line").textContent == "" + frameLines[i],
-       `Found line ${frameLines[i]} for frame #${i}`);
+    ok(
+      frameNodes[i].querySelector(".line").textContent == "" + frameLines[i],
+      `Found line ${frameLines[i]} for frame #${i}`
+    );
   }
 }
 
@@ -1384,9 +1464,40 @@ async function checkMessageStack(hud, text, frameLines) {
  */
 function reloadPage() {
   const onLoad = BrowserTestUtils.waitForContentEvent(
-    gBrowser.selectedBrowser, "load", true);
+    gBrowser.selectedBrowser,
+    "load",
+    true
+  );
   ContentTask.spawn(gBrowser.selectedBrowser, null, () => {
     content.location.reload();
   });
   return onLoad;
+}
+
+/**
+ * Check if the editor mode is enabled (i.e. .webconsole-app has the expected class).
+ *
+ * @param {WebConsole} hud
+ * @returns {Boolean}
+ */
+function isEditorModeEnabled(hud) {
+  const { outputNode } = hud.ui;
+  const appNode = outputNode.querySelector(".webconsole-app");
+  return appNode.classList.contains("jsterm-editor");
+}
+
+/**
+ * Toggle the layout between in-line and editor.
+ *
+ * @param {WebConsole} hud
+ * @returns {Promise} A promise that resolves once the layout change was rendered.
+ */
+function toggleLayout(hud) {
+  const isMacOS = Services.appinfo.OS === "Darwin";
+  const enabled = isEditorModeEnabled(hud);
+
+  EventUtils.synthesizeKey("b", {
+    [isMacOS ? "metaKey" : "ctrlKey"]: true,
+  });
+  return waitFor(() => isEditorModeEnabled(hud) === !enabled);
 }

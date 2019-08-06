@@ -342,8 +342,12 @@ bool MediaConstraintsHelper::SomeSettingsFit(
 
 /* static */
 uint32_t MediaConstraintsHelper::GetMinimumFitnessDistance(
-    const NormalizedConstraintSet& aConstraints, const nsString& aDeviceId) {
-  return FitnessDistance(aDeviceId, aConstraints.mDeviceId);
+    const NormalizedConstraintSet& aConstraints, const nsString& aDeviceId,
+    const nsString& aGroupId) {
+  uint64_t distance =
+      uint64_t(FitnessDistance(Some(aDeviceId), aConstraints.mDeviceId)) +
+      uint64_t(FitnessDistance(Some(aGroupId), aConstraints.mGroupId));
+  return std::min<uint64_t>(distance, UINT32_MAX);
 }
 
 template <class ValueType, class NormalizedRange>
@@ -388,13 +392,14 @@ uint32_t MediaConstraintsHelper::FeasibilityDistance(
 
 /* static */
 uint32_t MediaConstraintsHelper::FitnessDistance(
-    const nsString& aN, const NormalizedConstraintSet::StringRange& aParams) {
+    const Maybe<nsString>& aN,
+    const NormalizedConstraintSet::StringRange& aParams) {
   if (!aParams.mExact.empty() &&
-      aParams.mExact.find(aN) == aParams.mExact.end()) {
+      (aN.isNothing() || aParams.mExact.find(*aN) == aParams.mExact.end())) {
     return UINT32_MAX;
   }
   if (!aParams.mIdeal.empty() &&
-      aParams.mIdeal.find(aN) == aParams.mIdeal.end()) {
+      (aN.isNothing() || aParams.mIdeal.find(*aN) == aParams.mIdeal.end())) {
     return 1000;
   }
   return 0;
@@ -483,6 +488,13 @@ uint32_t MediaConstraintsHelper::FitnessDistance(
   }
   {
     NormalizedConstraints fresh(empty);
+    fresh.mGroupId = c.mGroupId;
+    if (!SomeSettingsFit(fresh, aDevices)) {
+      return "groupId";
+    }
+  }
+  {
+    NormalizedConstraints fresh(empty);
     fresh.mWidth = c.mWidth;
     if (!SomeSettingsFit(fresh, aDevices)) {
       return "width";
@@ -515,11 +527,11 @@ uint32_t MediaConstraintsHelper::FitnessDistance(
 /* static */ const char* MediaConstraintsHelper::FindBadConstraint(
     const NormalizedConstraints& aConstraints,
     const RefPtr<MediaEngineSource>& aMediaEngineSource,
-    const nsString& aDeviceId) {
+    const nsString& aDeviceId, const nsString& aGroupId) {
   AutoTArray<RefPtr<MediaDevice>, 1> devices;
-  devices.AppendElement(MakeRefPtr<MediaDevice>(
-      aMediaEngineSource, aMediaEngineSource->GetName(), aDeviceId,
-      aMediaEngineSource->GetGroupId(), NS_LITERAL_STRING("")));
+  devices.AppendElement(
+      MakeRefPtr<MediaDevice>(aMediaEngineSource, aMediaEngineSource->GetName(),
+                              aDeviceId, aGroupId, NS_LITERAL_STRING("")));
   return FindBadConstraint(aConstraints, devices);
 }
 
@@ -579,6 +591,7 @@ void MediaConstraintsHelper::LogConstraints(
     LogConstraintStringRange(c.mMediaSource);
     LogConstraintStringRange(c.mFacingMode);
     LogConstraintStringRange(c.mDeviceId);
+    LogConstraintStringRange(c.mGroupId);
     LogConstraintRange(c.mEchoCancellation);
     LogConstraintRange(c.mAutoGainControl);
     LogConstraintRange(c.mNoiseSuppression);

@@ -13,7 +13,7 @@
 #include "mozilla/layers/ZoomConstraints.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/Event.h"
 #include "nsIFrame.h"
@@ -152,7 +152,8 @@ ZoomConstraintsClient::Observe(nsISupports* aSubject, const char* aTopic,
     ZCC_LOG("Got a pref-change event in %p\n", this);
     // We need to run this later because all the pref change listeners need
     // to execute before we can be guaranteed that
-    // StaticPrefs::ForceUserScalable() returns the updated value.
+    // StaticPrefs::browser_ui_zoom_force_user_scalable() returns the updated
+    // value.
 
     RefPtr<nsRunnableMethod<ZoomConstraintsClient>> event =
         NewRunnableMethod("ZoomConstraintsClient::RefreshZoomConstraints", this,
@@ -229,7 +230,7 @@ void ZoomConstraintsClient::RefreshZoomConstraints() {
 
   // We only ever create a ZoomConstraintsClient for an RCD, so the RSF of
   // the presShell must be the RCD-RSF (if it exists).
-  MOZ_ASSERT(mPresShell->GetPresContext()->IsRootContentDocument());
+  MOZ_ASSERT(mPresShell->GetPresContext()->IsRootContentDocumentCrossProcess());
   if (nsIScrollableFrame* rcdrsf =
           mPresShell->GetRootScrollFrameAsScrollable()) {
     ZCC_LOG("Notifying RCD-RSF that it is zoomable: %d\n",

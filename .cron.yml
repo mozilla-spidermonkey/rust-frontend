@@ -69,19 +69,22 @@ jobs:
           - mozilla-central
       when: []  # never (hook only)
 
-    - name: nightly-geckoview
+    - name: ship-geckoview
       job:
           type: decision-task
-          treeherder-symbol: Ngv
-          target-tasks-method: nightly_geckoview
+          treeherder-symbol: ship_geckoview
+          target-tasks-method: ship_geckoview
           include-push-tasks: true
       run-on-projects:
           - mozilla-central
+          - mozilla-beta
+          - mozilla-release
       when:
           by-project:
-              # Match buildbot starts for now
               mozilla-central: [{hour: 10, minute: 0}]
-              # No default
+              mozilla-beta:
+                  - {weekday: 'Monday', hour: 10, minute: 0}
+                  - {weekday: 'Thursday', hour: 10, minute: 0}
 
     - name: tp6m-fennec-v64
       job:
@@ -94,6 +97,17 @@ jobs:
       when:
           - {weekday: 'Saturday', hour: 5, minute: 0}
 
+    - name: android-power-tests
+      job:
+          type: decision-task
+          treeherder-symbol: apt
+          target-tasks-method: android_power
+          include-push-tasks: true
+      run-on-projects:
+          - mozilla-central
+      when:
+          - {weekday: 'Saturday', hour: 17, minute: 0}
+
     - name: searchfox-index
       job:
           type: decision-task
@@ -103,6 +117,7 @@ jobs:
           - mozilla-central
           - mozilla-beta
           - mozilla-release
+          - mozilla-esr68
       when:
           - {hour: 10, minute: 0}
 
@@ -161,21 +176,10 @@ jobs:
           - mozilla-beta
           - mozilla-release
           - mozilla-esr60
+          - mozilla-esr68
       when:
-          by-project:
-              # No default branch
-              mozilla-central:
-                  - {weekday: 'Monday', hour: 10, minute: 0}
-                  - {weekday: 'Thursday', hour: 10, minute: 0}
-              mozilla-beta:
-                  - {weekday: 'Monday', hour: 10, minute: 0}
-                  - {weekday: 'Thursday', hour: 10, minute: 0}
-              mozilla-release:
-                  - {weekday: 'Monday', hour: 10, minute: 0}
-                  - {weekday: 'Thursday', hour: 10, minute: 0}
-              mozilla-esr60:
-                  - {weekday: 'Monday', hour: 10, minute: 0}
-                  - {weekday: 'Thursday', hour: 10, minute: 0}
+          - {weekday: 'Monday', hour: 10, minute: 0}
+          - {weekday: 'Thursday', hour: 10, minute: 0}
 
     - name: pipfile-update
       job:
@@ -189,3 +193,20 @@ jobs:
               # No default branch
               mozilla-central:
                   - {weekday: 'Monday', hour: 10, minute: 0}
+
+    - name: raptor-tp6m
+      job:
+          type: decision-task
+          treeherder-symbol: tp6m
+          target-tasks-method: raptor_tp6m
+          include-push-tasks: true
+      run-on-projects:
+          - mozilla-central
+      when:
+          - {weekday: 'Monday', hour: 3, minute: 0}
+          - {weekday: 'Tuesday', hour: 3, minute: 0}
+          - {weekday: 'Wednesday', hour: 3, minute: 0}
+          - {weekday: 'Thursday', hour: 3, minute: 0}
+          - {weekday: 'Friday', hour: 3, minute: 0}
+          - {weekday: 'Saturday', hour: 3, minute: 0}
+          - {weekday: 'Sunday', hour: 3, minute: 0}

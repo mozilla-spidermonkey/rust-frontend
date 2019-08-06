@@ -35,6 +35,11 @@ const actionTypes = {
   WATERFALL_RESIZE: "WATERFALL_RESIZE",
   SET_COLUMNS_WIDTH: "SET_COLUMNS_WIDTH",
   WS_ADD_FRAME: "WS_ADD_FRAME",
+  WS_SELECT_FRAME: "WS_SELECT_FRAME",
+  WS_OPEN_FRAME_DETAILS: "WS_OPEN_FRAME_DETAILS",
+  WS_CLEAR_FRAMES: "WS_CLEAR_FRAMES",
+  WS_TOGGLE_FRAME_FILTER_TYPE: "WS_TOGGLE_FRAME_FILTER_TYPE",
+  WS_SET_REQUEST_FILTER_TEXT: "WS_SET_REQUEST_FILTER_TEXT",
 };
 
 // Descriptions for what this frontend is currently doing.
@@ -161,7 +166,7 @@ const UPDATE_PROPS = [
 const PANELS = {
   COOKIES: "cookies",
   HEADERS: "headers",
-  WEBSOCKETS: "webSockets",
+  MESSAGES: "messages",
   PARAMS: "params",
   RESPONSE: "response",
   CACHE: "cache",
@@ -273,23 +278,22 @@ const HEADERS = [
     canFilter: false,
     subMenu: "timings",
   },
-  ...RESPONSE_HEADERS
-    .map(header => ({
-      name: header,
-      boxName: "response-header",
-      canFilter: false,
-      subMenu: "responseHeaders",
-      noLocalization: true,
-    })),
+  ...RESPONSE_HEADERS.map(header => ({
+    name: header,
+    boxName: "response-header",
+    canFilter: false,
+    subMenu: "responseHeaders",
+    noLocalization: true,
+  })),
   {
     name: "waterfall",
     canFilter: false,
   },
 ];
 
-const HEADER_FILTERS = HEADERS
-  .filter(h => h.canFilter)
-  .map(h => h.filterKey || h.name);
+const HEADER_FILTERS = HEADERS.filter(h => h.canFilter).map(
+  h => h.filterKey || h.name
+);
 
 const FILTER_FLAGS = [
   ...HEADER_FILTERS,
@@ -314,6 +318,33 @@ const FILTER_TAGS = [
   "media",
   "ws",
   "other",
+];
+
+const WS_FRAMES_HEADERS = [
+  {
+    name: "data",
+    width: "40%",
+  },
+  {
+    name: "size",
+    width: "12%",
+  },
+  {
+    name: "opCode",
+    width: "9%",
+  },
+  {
+    name: "maskBit",
+    width: "9%",
+  },
+  {
+    name: "finBit",
+    width: "9%",
+  },
+  {
+    name: "time",
+    width: "22%",
+  },
 ];
 
 const REQUESTS_WATERFALL = {
@@ -444,6 +475,7 @@ const general = {
   FILTER_SEARCH_DELAY: 200,
   UPDATE_PROPS,
   HEADERS,
+  WS_FRAMES_HEADERS,
   RESPONSE_HEADERS,
   FILTER_FLAGS,
   FILTER_TAGS,

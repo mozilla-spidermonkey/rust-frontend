@@ -16,6 +16,7 @@ slow script test262/built-ins/decodeURIComponent/S15.1.3.2_A2.5_T1.js
 skip-if((xulRuntime.XPCOMABI.match(/aarch64/))&&(xulRuntime.OS=="WINNT")) script non262/Math/fround.js
 skip-if((xulRuntime.XPCOMABI.match(/aarch64/))&&(xulRuntime.OS=="WINNT")) script non262/Math/log2-approx.js
 
+
 ###########################################################################
 # Generated jstests.list for test262 when inline |reftest| isn't possible #
 ###########################################################################
@@ -41,6 +42,8 @@ skip script test262/built-ins/Promise/reject-function-name.js
 skip script test262/built-ins/Promise/resolve-function-name.js
 skip script test262/built-ins/Promise/executor-function-name.js
 skip script test262/built-ins/Promise/all/resolve-element-function-name.js
+skip script test262/built-ins/Promise/allSettled/resolve-element-function-name.js
+skip script test262/built-ins/Promise/allSettled/reject-element-function-name.js
 
 
 #########################################################################
@@ -59,6 +62,10 @@ skip-if(!this.hasOwnProperty("Intl")) script test262/built-ins/String/prototype/
 
 # Skip intl402 tests when Intl isn't available.
 skip-if(!this.hasOwnProperty("Intl")) include test262/intl402/jstests.list
+
+# Skip Intl.Locale tests when the addIntlExtras helper isn't available.
+skip-if(!this.hasOwnProperty('addIntlExtras')) include test262/intl402/Locale/jstests.list
+skip-if(!this.hasOwnProperty('addIntlExtras')) script test262/intl402/Intl/getCanonicalLocales/Locale-object.js
 
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1415303
 skip-if(!this.hasOwnProperty("Atomics")) include test262/built-ins/Atomics/jstests.list
@@ -143,23 +150,6 @@ skip-if(!xulRuntime.shell) script test262/language/global-code/decl-var.js
 
 # %ThrowTypeError% should be anonymous
 skip script test262/built-ins/ThrowTypeError/name.js
-
-# BigInt typed arrays -- BigInt64Array, BigUint64Array -- aren't implemented
-# yet -- bug 1456569.
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-returns-throws.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-use-default-ctor.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-custom-ctor-throws.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-custom-ctor-invocation.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-custom-ctor-returns-another-instance.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-ctor-inherited.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-ctor.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-custom-ctor-length.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-custom-ctor-length-throws.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-ctor-returns-throws.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-custom-ctor.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-abrupt.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-ctor-abrupt.js
 
 # Anonymous functions have own name property in SpiderMonkey
 skip script test262/language/expressions/assignment/fn-name-lhs-cover.js
@@ -394,35 +384,6 @@ skip script test262/intl402/Collator/prototype/compare/compare-function-name.js
 skip script test262/intl402/DateTimeFormat/prototype/format/format-function-name.js
 skip script test262/intl402/NumberFormat/prototype/format/format-function-name.js
 
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1340307
-skip script test262/language/module-code/instn-resolve-empty-export.js
-skip script test262/language/module-code/instn-resolve-empty-import.js
-skip script test262/language/module-code/instn-resolve-err-reference.js
-skip script test262/language/module-code/instn-resolve-order-depth.js
-skip script test262/language/module-code/instn-resolve-order-src.js
-skip script test262/language/module-code/parse-err-reference.js
-skip script test262/language/expressions/postfix-increment/target-cover-yieldexpr.js
-skip script test262/language/expressions/postfix-increment/target-newtarget.js
-skip script test262/language/expressions/postfix-increment/target-cover-newtarget.js
-skip script test262/language/expressions/postfix-increment/non-simple.js
-skip script test262/language/expressions/postfix-decrement/target-cover-yieldexpr.js
-skip script test262/language/expressions/postfix-decrement/target-newtarget.js
-skip script test262/language/expressions/postfix-decrement/target-cover-newtarget.js
-skip script test262/language/expressions/postfix-decrement/non-simple.js
-skip script test262/language/expressions/prefix-increment/target-cover-yieldexpr.js
-skip script test262/language/expressions/prefix-increment/target-newtarget.js
-skip script test262/language/expressions/prefix-increment/target-cover-newtarget.js
-skip script test262/language/expressions/prefix-increment/non-simple.js
-skip script test262/language/expressions/prefix-decrement/target-cover-yieldexpr.js
-skip script test262/language/expressions/prefix-decrement/target-newtarget.js
-skip script test262/language/expressions/prefix-decrement/target-cover-newtarget.js
-skip script test262/language/expressions/prefix-decrement/non-simple.js
-skip script test262/language/asi/S7.9_A5.7_T1.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-asssignmenttargettype-reference-error-1-update-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-asssignmenttargettype-reference-error-2-update-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-asssignmenttargettype-reference-error-3-update-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-asssignmenttargettype-reference-error-4-update-expression.js
-
 # Dependent on evalInWorker, setSharedArrayBuffer, and
 # getSharedArrayBuffer, plus the test cases can't actually run in the
 # browser even if that were fixed, https://bugzil.la/1349863
@@ -459,18 +420,10 @@ skip script test262/language/statements/for-await-of/ticks-with-async-iter-resol
 skip script test262/language/statements/for-await-of/ticks-with-sync-iter-resolved-promise-and-constructor-lookup.js
 
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1321616
-skip script test262/annexB/built-ins/Function/createdynfn-html-close-comment-params.js
 skip script test262/annexB/built-ins/Function/createdynfn-no-line-terminator-html-close-comment-body.js
 
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1462745
 skip script test262/annexB/language/function-code/block-decl-nested-blocks-with-fun-decl.js
-
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1473229
-skip include test262/intl402/RelativeTimeFormat/prototype/formatToParts/jstests.list
-
-# Need to add "numberingSystem" to resolvedOptions() to address
-# https://github.com/tc39/test262/pull/2011 apparently -- bug 1521819.
-skip script test262/intl402/RelativeTimeFormat/prototype/resolvedOptions/order.js
 
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1508683
 skip script test262/built-ins/RegExp/prototype/multiline/cross-realm.js
@@ -479,21 +432,6 @@ skip script test262/built-ins/RegExp/prototype/sticky/cross-realm.js
 skip script test262/built-ins/RegExp/prototype/ignoreCase/cross-realm.js
 skip script test262/built-ins/RegExp/prototype/unicode/cross-realm.js
 skip script test262/built-ins/RegExp/prototype/source/cross-realm.js
-
-# The Intl spec recently changed from canonicalizing locales using RFC 5646 to
-# using UTS 35.  This still needs to be implemented in bug 1522070.  See also
-# <https://github.com/tc39/ecma402/commit/77cd7634e6aef828b0d0a4d97dece622c5f8e01f>.
-skip script test262/intl402/Intl/getCanonicalLocales/non-iana-canon.js
-
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1508684
-skip script test262/language/expressions/import.meta/syntax/invalid-assignment-target-update-expr.js
-
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1543677
-skip script test262/intl402/BigInt/prototype/toLocaleString/de-DE.js
-skip script test262/intl402/BigInt/prototype/toLocaleString/returns-same-results-as-NumberFormat.js
-skip script test262/intl402/BigInt/prototype/toLocaleString/en-US.js
-skip script test262/intl402/BigInt/prototype/toLocaleString/default-options-object-prototype.js
-skip script test262/intl402/BigInt/prototype/toLocaleString/throws-same-exceptions-as-NumberFormat.js
 
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1545038
 # All of these tests pass except with --more-compartments.
@@ -518,59 +456,16 @@ skip script test262/built-ins/Proxy/construct/return-not-object-throws-null-real
 skip script test262/built-ins/Proxy/construct/return-not-object-throws-boolean-realm.js
 skip script test262/built-ins/Proxy/construct/return-not-object-throws-boolean-realm.js
 
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1556818
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-assignmenttargettype-syntax-error-5-lhs-equals-assignment-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-assignmenttargettype-syntax-error-12-lhs-assignment-operator-assignment-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-assignmenttargettype-syntax-error-10-lhs-assignment-operator-assignment-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-assignmenttargettype-syntax-error-16-lhs-assignment-operator-assignment-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-assignmenttargettype-syntax-error-14-lhs-assignment-operator-assignment-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-assignmenttargettype-syntax-error-9-lhs-assignment-operator-assignment-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-assignmenttargettype-syntax-error-6-lhs-assignment-operator-assignment-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-assignmenttargettype-syntax-error-13-lhs-assignment-operator-assignment-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-assignmenttargettype-syntax-error-11-lhs-assignment-operator-assignment-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-assignmenttargettype-syntax-error-17-lhs-assignment-operator-assignment-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-assignmenttargettype-syntax-error-8-lhs-assignment-operator-assignment-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-assignmenttargettype-syntax-error-15-lhs-assignment-operator-assignment-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-assignmenttargettype-syntax-error-7-lhs-assignment-operator-assignment-expression.js
-skip script test262/language/expressions/async-function/early-errors-expression-not-simple-assignment-target.js
-skip script test262/language/expressions/async-generator/early-errors-expression-not-simple-assignment-target.js
-skip script test262/language/expressions/await/early-errors-await-not-simple-assignment-target.js
-skip script test262/language/expressions/assignment/non-simple-target.js
-skip script test262/language/expressions/compound-assignment/mod-div-non-simple.js
-skip script test262/language/expressions/compound-assignment/btws-and-non-simple.js
-skip script test262/language/expressions/compound-assignment/left-shift-non-simple.js
-skip script test262/language/expressions/compound-assignment/add-non-simple.js
-skip script test262/language/expressions/compound-assignment/u-right-shift-non-simple.js
-skip script test262/language/expressions/compound-assignment/mult-non-simple.js
-skip script test262/language/expressions/compound-assignment/right-shift-non-simple.js
-skip script test262/language/expressions/compound-assignment/div-non-simple.js
-skip script test262/language/expressions/compound-assignment/btws-or-non-simple.js
-skip script test262/language/expressions/compound-assignment/btws-xor-non-simple.js
-skip script test262/language/expressions/compound-assignment/subtract-non-simple.js
-skip script test262/language/expressions/assignment/target-cover-yieldexpr.js
-skip script test262/language/expressions/assignment/target-newtarget.js
-skip script test262/language/expressions/assignment/target-string.js
-skip script test262/language/expressions/assignment/target-boolean.js
-skip script test262/language/expressions/assignment/target-null.js
-skip script test262/language/expressions/assignment/target-number.js
-skip script test262/language/expressions/assignment/target-cover-newtarget.js
-skip script test262/language/expressions/import.meta/syntax/invalid-assignment-target-assignment-expr.js
-skip script test262/language/expressions/this/S11.1.1_A1.js
-skip script test262/language/types/boolean/S8.3_A2.2.js
-skip script test262/language/types/boolean/S8.3_A2.1.js
-skip script test262/language/types/reference/S8.7.2_A1_T1.js
-skip script test262/language/types/reference/S8.7.2_A1_T2.js
-
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1560300
-skip script test262/built-ins/Promise/all/invoke-resolve-get-error-close.js
-skip script test262/built-ins/Promise/all/invoke-resolve-get-once-multiple-calls.js
-skip script test262/built-ins/Promise/race/invoke-resolve-get-once-no-calls.js
-skip script test262/built-ins/Promise/race/invoke-resolve-get-error-close.js
-skip script test262/built-ins/Promise/race/invoke-resolve-get-once-multiple-calls.js
-
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1560355
 skip script test262/intl402/DateTimeFormat/numbering-system-calendar-options.js
 skip script test262/intl402/NumberFormat/numbering-system-options.js
+
+# https://bugzilla.mozilla.org/show_bug.cgi?id=1570245
+skip script test262/intl402/RelativeTimeFormat/prototype/format/en-us-numeric-auto.js
+skip script test262/intl402/RelativeTimeFormat/prototype/formatToParts/en-us-numeric-auto.js
+
+# https://bugzilla.mozilla.org/show_bug.cgi?id=1277801
+skip script test262/built-ins/Object/prototype/toString/symbol-tag-non-str-builtin.js
 
 
 ###########################################################
@@ -585,30 +480,5 @@ skip script test262/harness/detachArrayBuffer.js
 # Tests disabled due to invalid test expectations  #
 ####################################################
 
-# zh-Hans-CN and zh are supported by ICU, but the test requires that ICU also
-# explicitly supports zh-Hans. That isn't the case and it rather looks like the
-# shouldn't require that zh-Hans is explicitly supported without a fallback to
-# zh.
-skip script test262/intl402/fallback-locales-are-supported.js
-
-# https://github.com/tc39/test262/pull/2097
-#
-# "zh-hak-CN" no longer allowed, because it contains an extlang subtag.
-skip script test262/intl402/language-tags-canonicalized.js
-skip script test262/intl402/Intl/getCanonicalLocales/canonicalized-tags.js
-
-# Irregular grandfathered tags no longer allowed: "i-klingon"
-skip script test262/intl402/language-tags-valid.js
-
-# Irregular grandfathered tags no longer allowed: "en-GB-oed"
-skip script test262/intl402/Intl/getCanonicalLocales/preferred-grandfathered.js
-skip script test262/intl402/RelativeTimeFormat/constructor/constructor/locales-valid.js
-
-# Privateuse-only tags no longer allowed: "x-u-foo"
-skip script test262/intl402/Intl/getCanonicalLocales/weird-cases.js
-
-# https://github.com/tc39/test262/issues/2205
-skip script test262/intl402/RelativeTimeFormat/prototype/format/en-us-numeric-auto.js
-
-# Test requires minimumFractionDigits and maximumFractionDigits options not to exist.
-skip script test262/intl402/NumberFormat/prototype/resolvedOptions/order.js
+# See review notes for https://github.com/tc39/ecma402/pull/347
+skip script test262/intl402/DateTimeFormat/constructor-options-fractionalSecondDigits-valid.js

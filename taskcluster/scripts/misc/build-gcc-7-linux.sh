@@ -3,16 +3,12 @@ set -e
 
 # This script is for building GCC 7 for Linux.
 
-WORKSPACE=$HOME/workspace
-HOME_DIR=$WORKSPACE/build
-UPLOAD_DIR=$HOME/artifacts
-
-root_dir=$HOME_DIR
-data_dir=$HOME_DIR/src/build/unix/build-gcc
+root_dir=$MOZ_FETCHES_DIR
+data_dir=$GECKO_PATH/build/unix/build-gcc
 
 . $data_dir/build-gcc.sh
 
-gcc_version=7.3.0
+gcc_version=7.4.0
 gcc_ext=xz
 binutils_version=2.31.1
 binutils_ext=xz
@@ -29,4 +25,4 @@ build_gcc
 
 # Put a tarball in the artifacts dir
 mkdir -p $UPLOAD_DIR
-cp $HOME_DIR/gcc.tar.* $UPLOAD_DIR
+cp $MOZ_FETCHES_DIR/gcc.tar.* $UPLOAD_DIR

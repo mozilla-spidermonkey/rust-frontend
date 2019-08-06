@@ -12,7 +12,7 @@ typedef CustomEventInit TestDictionaryTypedef;
 interface TestExternalInterface;
 
 // We need a pref name that's in StaticPrefList.h here.
-[Pref="abc.def"]
+[Pref="dom.webidl.test1"]
 interface TestRenamedInterface {
 };
 
@@ -635,8 +635,8 @@ interface TestInterface {
   void passUnion7((object or DOMString or long) arg);
   void passUnion8((object or DOMString or boolean) arg);
   void passUnion9((object or DOMString or long or boolean) arg);
-  void passUnion10(optional (EventInit or long) arg);
-  void passUnion11(optional (CustomEventInit or long) arg);
+  void passUnion10(optional (EventInit or long) arg = {});
+  void passUnion11(optional (CustomEventInit or long) arg = {});
   void passUnion12(optional (EventInit or long) arg = 5);
   void passUnion13(optional (object or long?) arg = null);
   void passUnion14(optional (object or long?) arg = 5);
@@ -652,8 +652,8 @@ interface TestInterface {
   void passUnion24((sequence<ImageData?> or long) arg);
   void passUnion25((sequence<sequence<ImageData>> or long) arg);
   void passUnion26((sequence<sequence<ImageData?>> or long) arg);
-  void passUnion27(optional (sequence<DOMString> or EventInit) arg);
-  void passUnion28(optional (EventInit or sequence<DOMString>) arg);
+  void passUnion27(optional (sequence<DOMString> or EventInit) arg = {});
+  void passUnion28(optional (EventInit or sequence<DOMString>) arg = {});
   void passUnionWithCallback((EventHandler or long) arg);
   void passUnionWithByteString((ByteString or long) arg);
   void passUnionWithRecord((record<DOMString, DOMString> or DOMString) arg);
@@ -780,7 +780,7 @@ interface TestInterface {
   [BinaryName="otherAttributeRenamedTo"]
   attribute byte otherAttributeRenamedFrom;
 
-  void passDictionary(optional Dict x);
+  void passDictionary(optional Dict x = {});
   void passDictionary2(Dict x);
   [Cached, Pure]
   readonly attribute Dict readonlyDictionary;
@@ -796,16 +796,16 @@ interface TestInterface {
   attribute Dict writableFrozenDictionary;
   Dict receiveDictionary();
   Dict? receiveNullableDictionary();
-  void passOtherDictionary(optional GrandparentDict x);
+  void passOtherDictionary(optional GrandparentDict x = {});
   void passSequenceOfDictionaries(sequence<Dict> x);
   void passRecordOfDictionaries(record<DOMString, GrandparentDict> x);
   // No support for nullable dictionaries inside a sequence (nor should there be)
   //  void passSequenceOfNullableDictionaries(sequence<Dict?> x);
-  void passDictionaryOrLong(optional Dict x);
+  void passDictionaryOrLong(optional Dict x = {});
   void passDictionaryOrLong(long x);
 
-  void passDictContainingDict(optional DictContainingDict arg);
-  void passDictContainingSequence(optional DictContainingSequence arg);
+  void passDictContainingDict(optional DictContainingDict arg = {});
+  void passDictContainingSequence(optional DictContainingSequence arg = {});
   DictContainingSequence receiveDictContainingSequence();
   void passVariadicDictionary(Dict... arg);
 
@@ -851,7 +851,7 @@ interface TestInterface {
   boolean overload1(TestInterface arg);
   TestInterface overload1(DOMString strs, TestInterface arg);
   void overload2(TestInterface arg);
-  void overload2(optional Dict arg);
+  void overload2(optional Dict arg = {});
   void overload2(boolean arg);
   void overload2(DOMString arg);
   void overload2(Date arg);
@@ -891,71 +891,71 @@ interface TestInterface {
   void overload18(record<DOMString, DOMString> arg);
   void overload18(sequence<DOMString> arg);
   void overload19(sequence<long> arg);
-  void overload19(optional Dict arg);
-  void overload20(optional Dict arg);
+  void overload19(optional Dict arg = {});
+  void overload20(optional Dict arg = {});
   void overload20(sequence<long> arg);
 
   // Variadic handling
   void passVariadicThirdArg(DOMString arg1, long arg2, TestInterface... arg3);
 
   // Conditionally exposed methods/attributes
-  [Pref="abc.def"]
+  [Pref="dom.webidl.test1"]
   readonly attribute boolean prefable1;
-  [Pref="abc.def"]
+  [Pref="dom.webidl.test1"]
   readonly attribute boolean prefable2;
-  [Pref="ghi.jkl"]
+  [Pref="dom.webidl.test2"]
   readonly attribute boolean prefable3;
-  [Pref="ghi.jkl"]
+  [Pref="dom.webidl.test2"]
   readonly attribute boolean prefable4;
-  [Pref="abc.def"]
+  [Pref="dom.webidl.test1"]
   readonly attribute boolean prefable5;
-  [Pref="abc.def", Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
+  [Pref="dom.webidl.test1", Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
   readonly attribute boolean prefable6;
-  [Pref="abc.def", Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
+  [Pref="dom.webidl.test1", Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
   readonly attribute boolean prefable7;
-  [Pref="ghi.jkl", Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
+  [Pref="dom.webidl.test2", Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
   readonly attribute boolean prefable8;
-  [Pref="abc.def", Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
+  [Pref="dom.webidl.test1", Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
   readonly attribute boolean prefable9;
-  [Pref="abc.def"]
+  [Pref="dom.webidl.test1"]
   void prefable10();
-  [Pref="abc.def", Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
+  [Pref="dom.webidl.test1", Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
   void prefable11();
-  [Pref="abc.def", Func="TestFuncControlledMember"]
+  [Pref="dom.webidl.test1", Func="TestFuncControlledMember"]
   readonly attribute boolean prefable12;
-  [Pref="abc.def", Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
+  [Pref="dom.webidl.test1", Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
   void prefable13();
-  [Pref="abc.def", Func="TestFuncControlledMember"]
+  [Pref="dom.webidl.test1", Func="TestFuncControlledMember"]
   readonly attribute boolean prefable14;
   [Func="TestFuncControlledMember"]
   readonly attribute boolean prefable15;
   [Func="TestFuncControlledMember"]
   readonly attribute boolean prefable16;
-  [Pref="abc.def", Func="TestFuncControlledMember"]
+  [Pref="dom.webidl.test1", Func="TestFuncControlledMember"]
   void prefable17();
   [Func="TestFuncControlledMember"]
   void prefable18();
   [Func="TestFuncControlledMember"]
   void prefable19();
-  [Pref="abc.def", Func="TestFuncControlledMember", ChromeOnly]
+  [Pref="dom.webidl.test1", Func="TestFuncControlledMember", ChromeOnly]
   void prefable20();
 
   // Conditionally exposed methods/attributes involving [SecureContext]
   [SecureContext]
   readonly attribute boolean conditionalOnSecureContext1;
-  [SecureContext, Pref="abc.def"]
+  [SecureContext, Pref="dom.webidl.test1"]
   readonly attribute boolean conditionalOnSecureContext2;
-  [SecureContext, Pref="abc.def", Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
+  [SecureContext, Pref="dom.webidl.test1", Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
   readonly attribute boolean conditionalOnSecureContext3;
-  [SecureContext, Pref="abc.def", Func="TestFuncControlledMember"]
+  [SecureContext, Pref="dom.webidl.test1", Func="TestFuncControlledMember"]
   readonly attribute boolean conditionalOnSecureContext4;
   [SecureContext]
   void conditionalOnSecureContext5();
-  [SecureContext, Pref="abc.def"]
+  [SecureContext, Pref="dom.webidl.test1"]
   void conditionalOnSecureContext6();
-  [SecureContext, Pref="abc.def", Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
+  [SecureContext, Pref="dom.webidl.test1", Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
   void conditionalOnSecureContext7();
-  [SecureContext, Pref="abc.def", Func="TestFuncControlledMember"]
+  [SecureContext, Pref="dom.webidl.test1", Func="TestFuncControlledMember"]
   void conditionalOnSecureContext8();
 
   // Miscellania
@@ -990,7 +990,7 @@ interface TestInterface {
   legacycaller short(unsigned long arg1, TestInterface arg2);
   void passArgsWithDefaults(optional long arg1,
                             optional TestInterface? arg2 = null,
-                            optional Dict arg3, optional double arg4 = 5.0,
+                            optional Dict arg3 = {}, optional double arg4 = 5.0,
                             optional float arg5);
 
   attribute any toJSONShouldSkipThis;
@@ -1124,8 +1124,8 @@ dictionary Dict : ParentDict {
   // CustomEventInit is useful to test because it needs rooting.
   (CustomEventInit or long) eventInitOrLong2;
   (CustomEventInit or long)? nullableEventInitOrLong2;
-  (EventInit or long) eventInitOrLongWithDefaultValue = null;
-  (CustomEventInit or long) eventInitOrLongWithDefaultValue2 = null;
+  (EventInit or long) eventInitOrLongWithDefaultValue = {};
+  (CustomEventInit or long) eventInitOrLongWithDefaultValue2 = {};
   (EventInit or long) eventInitOrLongWithDefaultValue3 = 5;
   (CustomEventInit or long) eventInitOrLongWithDefaultValue4 = 5;
   (EventInit or long)? nullableEventInitOrLongWithDefaultValue = null;
@@ -1221,9 +1221,9 @@ dictionary DictWithConditionalMembers {
   [ChromeOnly, Func="nsGenericHTMLElement::LegacyTouchAPIEnabled"]
   long chromeOnlyFuncControlledMember;
   // We need a pref name that's in StaticPrefList.h here.
-  [Pref="abc.def"]
+  [Pref="dom.webidl.test1"]
   long prefControlledMember;
-  [Pref="abc.def", ChromeOnly, Func="TestFuncControlledMember"]
+  [Pref="dom.webidl.test1", ChromeOnly, Func="TestFuncControlledMember"]
   long chromeOnlyFuncAndPrefControlledMember;
 };
 

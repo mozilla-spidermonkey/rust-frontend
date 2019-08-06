@@ -15,17 +15,11 @@
 
 using namespace mozilla;
 
-ProfileBuffer::ProfileBuffer(uint32_t aCapacity)
-    : mEntryIndexMask(0), mRangeStart(0), mRangeEnd(0), mCapacity(0) {
-  // Round aCapacity up to the nearest power of two, so that we can index
-  // mEntries with a simple mask and don't need to do a slow modulo operation.
-  const uint32_t UINT32_MAX_POWER_OF_TWO = 1 << 31;
-  MOZ_RELEASE_ASSERT(aCapacity <= UINT32_MAX_POWER_OF_TWO,
-                     "aCapacity is larger than what we support");
-  mCapacity = RoundUpPow2(aCapacity);
-  mEntryIndexMask = mCapacity - 1;
-  mEntries = MakeUnique<ProfileBufferEntry[]>(mCapacity);
-}
+ProfileBuffer::ProfileBuffer(PowerOfTwo32 aCapacity)
+    : mEntries(MakeUnique<ProfileBufferEntry[]>(aCapacity.Value())),
+      mEntryIndexMask(aCapacity.Mask()),
+      mRangeStart(0),
+      mRangeEnd(0) {}
 
 ProfileBuffer::~ProfileBuffer() {
   while (mStoredMarkers.peek()) {
@@ -38,8 +32,8 @@ void ProfileBuffer::AddEntry(const ProfileBufferEntry& aEntry) {
   GetEntry(mRangeEnd++) = aEntry;
 
   // The distance between mRangeStart and mRangeEnd must never exceed
-  // mCapacity, so advance mRangeStart if necessary.
-  if (mRangeEnd - mRangeStart > mCapacity) {
+  // capacity, so advance mRangeStart if necessary.
+  if (mRangeEnd - mRangeStart > mEntryIndexMask.MaskValue() + 1) {
     mRangeStart++;
   }
 }
@@ -112,6 +106,46 @@ size_t ProfileBuffer::SizeOfIncludingThis(
   // - mStoredMarkers
 
   return n;
+}
+
+void ProfileBuffer::CollectOverheadStats(TimeDuration aSamplingTime,
+                                         TimeDuration aLocking,
+                                         TimeDuration aCleaning,
+                                         TimeDuration aCounters,
+                                         TimeDuration aThreads) {
+  double time = aSamplingTime.ToMilliseconds() * 1000.0;
+  if (mFirstSamplingTimeNs == 0.0) {
+    mFirstSamplingTimeNs = time;
+  } else {
+    // Note that we'll have 1 fewer interval than other numbers (because
+    // we need both ends of an interval to know its duration). The final
+    // difference should be insignificant over the expected many thousands
+    // of iterations.
+    mIntervalsNs.Count(time - mLastSamplingTimeNs);
+  }
+  mLastSamplingTimeNs = time;
+  double locking = aLocking.ToMilliseconds() * 1000.0;
+  double cleaning = aCleaning.ToMilliseconds() * 1000.0;
+  double counters = aCounters.ToMilliseconds() * 1000.0;
+  double threads = aThreads.ToMilliseconds() * 1000.0;
+
+  mOverheadsNs.Count(locking + cleaning + counters + threads);
+  mLockingsNs.Count(locking);
+  mCleaningsNs.Count(cleaning);
+  mCountersNs.Count(counters);
+  mThreadsNs.Count(threads);
+
+  AddEntry(ProfileBufferEntry::ProfilerOverheadTime(time));
+  AddEntry(ProfileBufferEntry::ProfilerOverheadDuration(locking));
+  AddEntry(ProfileBufferEntry::ProfilerOverheadDuration(cleaning));
+  AddEntry(ProfileBufferEntry::ProfilerOverheadDuration(counters));
+  AddEntry(ProfileBufferEntry::ProfilerOverheadDuration(threads));
+}
+
+ProfilerBufferInfo ProfileBuffer::GetProfilerBufferInfo() const {
+  return {mRangeStart,  mRangeEnd,    mEntryIndexMask.MaskValue() + 1,
+          mIntervalsNs, mOverheadsNs, mLockingsNs,
+          mCleaningsNs, mCountersNs,  mThreadsNs};
 }
 
 /* ProfileBufferCollector */

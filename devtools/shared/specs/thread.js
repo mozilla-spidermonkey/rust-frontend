@@ -3,7 +3,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const {Arg, Option, RetVal, generateActorSpec, types} = require("devtools/shared/protocol");
+const {
+  Arg,
+  Option,
+  RetVal,
+  generateActorSpec,
+  types,
+} = require("devtools/shared/protocol");
 
 types.addDictType("available-breakpoint-group", {
   name: "string",
@@ -15,7 +21,7 @@ types.addDictType("available-breakpoint-event", {
 });
 
 const threadSpec = generateActorSpec({
-  typeName: "context",
+  typeName: "thread",
 
   events: {
     paused: {
@@ -36,6 +42,8 @@ const threadSpec = generateActorSpec({
     progress: {
       recording: Option(0, "json"),
       executionPoint: Option(0, "json"),
+      unscannedRegions: Option(0, "json"),
+      cachedPoints: Option(0, "json"),
     },
   },
 

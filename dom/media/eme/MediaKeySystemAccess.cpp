@@ -20,7 +20,7 @@
 #include "mozilla/EMEUtils.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_media.h"
 #include "nsDOMString.h"
 #include "nsIObserverService.h"
 #include "nsMimeTypes.h"
@@ -112,7 +112,8 @@ static MediaKeySystemStatus EnsureCDMInstalled(const nsAString& aKeySystem,
 /* static */
 MediaKeySystemStatus MediaKeySystemAccess::GetKeySystemStatus(
     const nsAString& aKeySystem, nsACString& aOutMessage) {
-  MOZ_ASSERT(StaticPrefs::MediaEmeEnabled() || IsClearkeyKeySystem(aKeySystem));
+  MOZ_ASSERT(StaticPrefs::media_eme_enabled() ||
+             IsClearkeyKeySystem(aKeySystem));
 
   if (IsClearkeyKeySystem(aKeySystem)) {
     return EnsureCDMInstalled(aKeySystem, aOutMessage);
@@ -255,7 +256,7 @@ static nsTArray<KeySystemConfig> GetSupportedKeySystems() {
       clearkey.mSessionTypes.AppendElement(MediaKeySessionType::Temporary);
       clearkey.mEncryptionSchemes.AppendElement(NS_LITERAL_STRING("cenc"));
       // We do not have support for cbcs in clearkey yet. See bug 1516673.
-      if (StaticPrefs::MediaClearkeyPersistentLicenseEnabled()) {
+      if (StaticPrefs::media_clearkey_persistent_license_enabled()) {
         clearkey.mSessionTypes.AppendElement(
             MediaKeySessionType::Persistent_license);
       }

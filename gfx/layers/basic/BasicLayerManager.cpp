@@ -29,6 +29,7 @@
 #include "gfxUtils.h"               // for gfxUtils
 #include "gfx2DGlue.h"              // for thebes --> moz2d transition
 #include "mozilla/Assertions.h"     // for MOZ_ASSERT, etc
+#include "mozilla/StaticPrefs_nglayout.h"
 #include "mozilla/WidgetUtils.h"    // for ScreenRotation
 #include "mozilla/gfx/2D.h"         // for DrawTarget
 #include "mozilla/gfx/BasePoint.h"  // for BasePoint
@@ -661,7 +662,7 @@ bool BasicLayerManager::EndTransactionInternal(
 }
 
 void BasicLayerManager::FlashWidgetUpdateArea(gfxContext* aContext) {
-  if (StaticPrefs::WidgetUpdateFlashing()) {
+  if (StaticPrefs::nglayout_debug_widget_update_flashing()) {
     float r = float(rand()) / RAND_MAX;
     float g = float(rand()) / RAND_MAX;
     float b = float(rand()) / RAND_MAX;

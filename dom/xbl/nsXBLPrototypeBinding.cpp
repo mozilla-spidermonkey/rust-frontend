@@ -1013,17 +1013,13 @@ nsresult nsXBLPrototypeBinding::ReadContentNode(nsIObjectInputStream* aStream,
   if (namespaceID == kNameSpaceID_XUL) {
     nsIURI* documentURI = aDocument->GetDocumentURI();
 
-    RefPtr<nsXULPrototypeElement> prototype = new nsXULPrototypeElement();
-
-    prototype->mNodeInfo = nodeInfo;
+    RefPtr<nsXULPrototypeElement> prototype =
+        new nsXULPrototypeElement(nodeInfo);
 
     nsXULPrototypeAttribute* attrs = nullptr;
     if (attrCount > 0) {
-      attrs = new nsXULPrototypeAttribute[attrCount];
+      attrs = prototype->mAttributes.AppendElements(attrCount);
     }
-
-    prototype->mAttributes = attrs;
-    prototype->mNumAttributes = attrCount;
 
     for (uint32_t i = 0; i < attrCount; i++) {
       rv = ReadNamespace(aStream, namespaceID);

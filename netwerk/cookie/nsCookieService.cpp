@@ -60,7 +60,8 @@
 #include "mozilla/AutoRestore.h"
 #include "mozilla/FileUtils.h"
 #include "mozilla/ScopeExit.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_network.h"
+#include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/Telemetry.h"
 #include "nsIConsoleService.h"
 #include "nsTPriorityQueue.h"
@@ -3864,6 +3865,9 @@ bool nsCookieService::ParseAttributes(nsCString& aCookieHeader,
     }
   }
 
+  // re-assign aCookieHeader, in case we need to process another cookie
+  aCookieHeader.Assign(Substring(cookieStart, cookieEnd));
+
   // If same-site is set to 'none' but this is not a secure context, let's abort
   // the parsing.
   if (StaticPrefs::network_cookie_sameSite_laxByDefault() &&
@@ -3875,9 +3879,6 @@ bool nsCookieService::ParseAttributes(nsCString& aCookieHeader,
 
   // Cookie accepted.
   aAcceptedByParser = true;
-
-  // re-assign aCookieHeader, in case we need to process another cookie
-  aCookieHeader.Assign(Substring(cookieStart, cookieEnd));
 
   MOZ_ASSERT(nsCookie::ValidateRawSame(aCookieData));
   return newCookie;
@@ -4004,12 +4005,12 @@ CookieStatus nsCookieService::CheckPrefs(
   }
 
   nsCOMPtr<nsIPrincipal> principal =
-      BasePrincipal::CreateCodebasePrincipal(aHostURI, aOriginAttrs);
+      BasePrincipal::CreateContentPrincipal(aHostURI, aOriginAttrs);
 
   if (!principal) {
     COOKIE_LOGFAILURE(aCookieHeader.IsVoid() ? GET_COOKIE : SET_COOKIE,
                       aHostURI, aCookieHeader,
-                      "non-codebase principals cannot get/set cookies");
+                      "non-content principals cannot get/set cookies");
     return STATUS_REJECTED_WITH_ERROR;
   }
 

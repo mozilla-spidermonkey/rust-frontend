@@ -7,8 +7,11 @@
  * Test the keyboard behavior of PanelViews.
  */
 
-const {PanelMultiView} = ChromeUtils.import("resource:///modules/PanelMultiView.jsm");
-const kEmbeddedDocUrl = 'data:text/html,<textarea id="docTextarea">value</textarea><button id="docButton"></button>';
+const { PanelMultiView } = ChromeUtils.import(
+  "resource:///modules/PanelMultiView.jsm"
+);
+const kEmbeddedDocUrl =
+  'data:text/html,<textarea id="docTextarea">value</textarea><button id="docButton"></button>';
 
 let gAnchor;
 let gPanel;
@@ -60,12 +63,17 @@ async function expectFocusAfterKey(aKey, aFocus) {
   }
   info("Waiting for focus on " + aFocus.id);
   let focused = BrowserTestUtils.waitForEvent(aFocus, "focus");
-  EventUtils.synthesizeKey(key, {shiftKey: shift});
+  EventUtils.synthesizeKey(key, { shiftKey: shift });
   await focused;
   ok(true, aFocus.id + " focused after " + aKey + " pressed");
 }
 
 add_task(async function setup() {
+  // This shouldn't be necessary - but it is, because we use same-process frames.
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=1565276 covers improving this.
+  await SpecialPowers.pushPrefEnv({
+    set: [["security.allow_unsafe_parent_loads", true]],
+  });
   let navBar = document.getElementById("nav-bar");
   gAnchor = document.createXULElement("toolbarbutton");
   navBar.appendChild(gAnchor);
@@ -110,8 +118,13 @@ add_task(async function setup() {
   gMainButton3 = document.createXULElement("button");
   gMainButton3.id = "gMainButton3";
   gMainView.appendChild(gMainButton3);
-  gMainTabOrder = [gMainButton1, gMainMenulist, gMainTextbox, gMainButton2,
-                   gMainButton3];
+  gMainTabOrder = [
+    gMainButton1,
+    gMainMenulist,
+    gMainTextbox,
+    gMainButton2,
+    gMainButton3,
+  ];
   gMainArrowOrder = [gMainButton1, gMainButton2, gMainButton3];
 
   gSubView = document.createXULElement("panelview");
@@ -119,8 +132,10 @@ add_task(async function setup() {
   gPanelMultiView.appendChild(gSubView);
   gSubButton = document.createXULElement("button");
   gSubView.appendChild(gSubButton);
-  gSubTextarea = document.createElementNS("http://www.w3.org/1999/xhtml",
-                                          "textarea");
+  gSubTextarea = document.createElementNS(
+    "http://www.w3.org/1999/xhtml",
+    "textarea"
+  );
   gSubTextarea.id = "gSubTextarea";
   gSubView.appendChild(gSubTextarea);
   gSubTextarea.value = "value";
@@ -168,8 +183,10 @@ add_task(async function testShiftTab() {
     await expectFocusAfterKey("Shift+Tab", gMainTabOrder[i]);
   }
   // Wrap around.
-  await expectFocusAfterKey("Shift+Tab",
-                            gMainTabOrder[gMainTabOrder.length - 1]);
+  await expectFocusAfterKey(
+    "Shift+Tab",
+    gMainTabOrder[gMainTabOrder.length - 1]
+  );
   await hidePopup();
 });
 
@@ -191,8 +208,10 @@ add_task(async function testUpArrow() {
     await expectFocusAfterKey("ArrowUp", gMainArrowOrder[i]);
   }
   // Wrap around.
-  await expectFocusAfterKey("ArrowUp",
-                            gMainArrowOrder[gMainArrowOrder.length - 1]);
+  await expectFocusAfterKey(
+    "ArrowUp",
+    gMainArrowOrder[gMainArrowOrder.length - 1]
+  );
   await hidePopup();
 });
 
@@ -200,8 +219,7 @@ add_task(async function testUpArrow() {
 add_task(async function testHomeEnd() {
   await openPopup();
   await expectFocusAfterKey("Home", gMainArrowOrder[0]);
-  await expectFocusAfterKey("End",
-                            gMainArrowOrder[gMainArrowOrder.length - 1]);
+  await expectFocusAfterKey("End", gMainArrowOrder[gMainArrowOrder.length - 1]);
   await hidePopup();
 });
 
@@ -228,15 +246,42 @@ add_task(async function testArrowsMenulist() {
     // On other platforms, down/up arrows change the value without opening the
     // menulist.
     EventUtils.synthesizeKey("KEY_ArrowDown");
-    is(document.activeElement, gMainMenulist,
-       "menulist still focused after ArrowDown");
+    is(
+      document.activeElement,
+      gMainMenulist,
+      "menulist still focused after ArrowDown"
+    );
     is(gMainMenulist.value, "2", "menulist value 2 after ArrowDown");
     EventUtils.synthesizeKey("KEY_ArrowUp");
-    is(document.activeElement, gMainMenulist,
-       "menulist still focused after ArrowUp");
+    is(
+      document.activeElement,
+      gMainMenulist,
+      "menulist still focused after ArrowUp"
+    );
     is(gMainMenulist.value, "1", "menulist value 1 after ArrowUp");
   }
   await hidePopup();
+});
+
+// Test that the tab key closes an open menu list.
+add_task(async function testTabOpenMenulist() {
+  await openPopup();
+  gMainMenulist.focus();
+  is(document.activeElement, gMainMenulist, "menulist focused");
+  let popup = gMainMenulist.menupopup;
+  let shown = BrowserTestUtils.waitForEvent(popup, "popupshown");
+  gMainMenulist.open = true;
+  await shown;
+  ok(gMainMenulist.open, "menulist open");
+  let menuHidden = BrowserTestUtils.waitForEvent(popup, "popuphidden");
+  let panelHidden = BrowserTestUtils.waitForEvent(gPanel, "popuphidden");
+  EventUtils.synthesizeKey("KEY_Tab");
+  await menuHidden;
+  ok(!gMainMenulist.open, "menulist closed after Tab");
+  // Tab in an open menulist closes the menulist, but also dismisses the panel
+  // above it (bug 1566673). So, we just wait for the panel to hide rather than
+  // using hidePopup().
+  await panelHidden;
 });
 
 // Test that pressing space in a textbox inserts a space (instead of trying to
@@ -291,16 +336,30 @@ add_task(async function testDynamicButton() {
 add_task(async function testActivation() {
   function checkActivated(elem, activationFn, reason) {
     let activated = false;
-    elem.onclick = function() { activated = true; };
+    elem.onclick = function() {
+      activated = true;
+    };
     activationFn();
     ok(activated, "Should have activated button after " + reason);
     elem.onclick = null;
   }
   await openPopup();
   await expectFocusAfterKey("ArrowDown", gMainButton1);
-  checkActivated(gMainButton1, () => EventUtils.synthesizeKey("KEY_Enter"), "pressing enter");
-  checkActivated(gMainButton1, () => EventUtils.synthesizeKey(" "), "pressing space");
-  checkActivated(gMainButton1, () => EventUtils.synthesizeKey("KEY_Enter", {code: "NumpadEnter"}), "pressing numpad enter");
+  checkActivated(
+    gMainButton1,
+    () => EventUtils.synthesizeKey("KEY_Enter"),
+    "pressing enter"
+  );
+  checkActivated(
+    gMainButton1,
+    () => EventUtils.synthesizeKey(" "),
+    "pressing space"
+  );
+  checkActivated(
+    gMainButton1,
+    () => EventUtils.synthesizeKey("KEY_Enter", { code: "NumpadEnter" }),
+    "pressing numpad enter"
+  );
   await hidePopup();
 });
 
@@ -311,7 +370,9 @@ add_task(async function testActivationMousedown() {
   await openPopup();
   await expectFocusAfterKey("ArrowDown", gMainButton1);
   let activated = false;
-  gMainButton1.onmousedown = function() { activated = true; };
+  gMainButton1.onmousedown = function() {
+    activated = true;
+  };
   EventUtils.synthesizeKey(" ");
   ok(activated, "mousedown activated after space");
   gMainButton1.onmousedown = null;
@@ -369,15 +430,22 @@ add_task(async function testArowsContext() {
   gMainContext.openPopup();
   await shown;
   let item = gMainContext.children[0];
-  ok(!item.getAttribute("_moz-menuactive"),
-     "First context menu item initially inactive");
+  ok(
+    !item.getAttribute("_moz-menuactive"),
+    "First context menu item initially inactive"
+  );
   let active = BrowserTestUtils.waitForEvent(item, "DOMMenuItemActive");
   EventUtils.synthesizeKey("KEY_ArrowDown");
   await active;
-  ok(item.getAttribute("_moz-menuactive"),
-     "First context menu item active after ArrowDown");
-  is(document.activeElement, gMainButton1,
-     "gMainButton1 still focused after ArrowDown");
+  ok(
+    item.getAttribute("_moz-menuactive"),
+    "First context menu item active after ArrowDown"
+  );
+  is(
+    document.activeElement,
+    gMainButton1,
+    "gMainButton1 still focused after ArrowDown"
+  );
   let hidden = BrowserTestUtils.waitForEvent(gMainContext, "popuphidden");
   gMainContext.hidePopup();
   await hidden;

@@ -27,10 +27,12 @@
 #include "nsJSUtils.h"
 #include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/ScriptDecoding.h"  // mozilla::dom::ScriptDecoding
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/SRILogHelper.h"
 #include "mozilla/net/UrlClassifierFeatureFactory.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/StaticPrefs_network.h"
 #include "nsAboutProtocolUtils.h"
 #include "nsGkAtoms.h"
 #include "nsNetUtil.h"
@@ -344,9 +346,9 @@ nsresult ScriptLoader::CheckContentPolicy(Document* aDocument,
 
 /* static */
 bool ScriptLoader::IsAboutPageLoadingChromeURI(ScriptLoadRequest* aRequest) {
-  // if we are not dealing with a codebasePrincipal it can not be a
+  // if we are not dealing with a contentPrincipal it can not be a
   // Principal with a scheme of about: and there is nothing left to do
-  if (!aRequest->TriggeringPrincipal()->GetIsCodebasePrincipal()) {
+  if (!aRequest->TriggeringPrincipal()->GetIsContentPrincipal()) {
     return false;
   }
 
@@ -356,9 +358,7 @@ bool ScriptLoader::IsAboutPageLoadingChromeURI(ScriptLoadRequest* aRequest) {
       aRequest->TriggeringPrincipal()->GetURI(getter_AddRefs(triggeringURI));
   NS_ENSURE_SUCCESS(rv, false);
 
-  bool isAbout =
-      (NS_SUCCEEDED(triggeringURI->SchemeIs("about", &isAbout)) && isAbout);
-  if (!isAbout) {
+  if (!triggeringURI->SchemeIs("about")) {
     return false;
   }
 
@@ -376,9 +376,7 @@ bool ScriptLoader::IsAboutPageLoadingChromeURI(ScriptLoadRequest* aRequest) {
   }
 
   // if the uri to be loaded is not of scheme chrome:, there is nothing to do.
-  bool isChrome =
-      (NS_SUCCEEDED(aRequest->mURI->SchemeIs("chrome", &isChrome)) && isChrome);
-  if (!isChrome) {
+  if (!aRequest->mURI->SchemeIs("chrome")) {
     return false;
   }
 
@@ -1340,11 +1338,19 @@ nsresult ScriptLoader::StartLoad(ScriptLoadRequest* aRequest) {
     }
   }
 
+  nsCOMPtr<nsIScriptGlobalObject> globalObject = GetScriptGlobalObject();
+  if (!globalObject) {
+    return NS_ERROR_FAILURE;
+  }
+
   // To avoid decoding issues, the build-id is part of the JSBytecodeMimeType
   // constant.
   aRequest->mCacheInfo = nullptr;
   nsCOMPtr<nsICacheInfoChannel> cic(do_QueryInterface(channel));
   if (cic && StaticPrefs::dom_script_loader_bytecode_cache_enabled() &&
+      // Globals with instrumentation have modified script bytecode and can't
+      // use cached bytecode.
+      !js::GlobalHasInstrumentation(globalObject->GetGlobalJSObject()) &&
       // Bug 1436400: no bytecode cache support for modules yet.
       !aRequest->IsModuleRequest()) {
     if (!aRequest->IsLoadingSource()) {
@@ -3137,7 +3143,8 @@ bool ScriptLoader::ReadyToExecuteParserBlockingScripts() {
     return false;
   }
 
-  for (Document* doc = mDocument; doc; doc = doc->GetParentDocument()) {
+  for (Document* doc = mDocument; doc;
+       doc = doc->GetInProcessParentDocument()) {
     ScriptLoader* ancestor = doc->ScriptLoader();
     if (!ancestor->SelfReadyToExecuteParserBlockingScripts() &&
         ancestor->AddPendingChildLoader(this)) {
@@ -3148,67 +3155,6 @@ bool ScriptLoader::ReadyToExecuteParserBlockingScripts() {
 
   return true;
 }
-
-template <typename Unit>
-struct Conversion;
-
-template <>
-struct Conversion<char16_t> {
-  static CheckedInt<size_t> MaxBufferLength(
-      const UniquePtr<Decoder>& aUnicodeDecoder, size_t aByteLength) {
-    return aUnicodeDecoder->MaxUTF16BufferLength(aByteLength);
-  }
-
-  static size_t DecodeInto(const UniquePtr<Decoder>& aUnicodeDecoder,
-                           const Span<const uint8_t>& aData, char16_t* aDest,
-                           size_t aDestLength) {
-    uint32_t result;
-    size_t read;
-    size_t written;
-    bool hadErrors;
-    Tie(result, read, written, hadErrors) = aUnicodeDecoder->DecodeToUTF16(
-        aData, MakeSpan(aDest, aDestLength), true);
-    MOZ_ASSERT(result == kInputEmpty);
-    MOZ_ASSERT(read == aData.Length());
-    MOZ_ASSERT(written <= aDestLength);
-    Unused << hadErrors;
-
-    return written;
-  }
-};
-
-template <>
-struct Conversion<Utf8Unit> {
-  static CheckedInt<size_t> MaxBufferLength(
-      const UniquePtr<Decoder>& aUnicodeDecoder, size_t aByteLength) {
-    return aUnicodeDecoder->MaxUTF8BufferLength(aByteLength);
-  }
-
-  static size_t DecodeInto(const UniquePtr<Decoder>& aUnicodeDecoder,
-                           const Span<const uint8_t>& aData, Utf8Unit* aDest,
-                           size_t aDestLength) {
-    uint32_t result;
-    size_t read;
-    size_t written;
-    bool hadErrors;
-    // Until C++ char8_t happens, our decoder APIs deal in |uint8_t| while
-    // |Utf8Unit| internally deals with |char|, so there's inevitable impedance
-    // mismatch.  :-(  The written memory will be interpreted through
-    // |char Utf8Unit::mValue| which is *permissible* because any object's
-    // memory can be interpreted as |char|.  Unfortunately, until
-    // twos-complement is mandated, we have to play fast and loose and *hope*
-    // interpreting memory storing |uint8_t| as |char| will pick up the desired
-    // wrapped-around value.  ¯\_(ツ)_/¯
-    Tie(result, read, written, hadErrors) = aUnicodeDecoder->DecodeToUTF8(
-        aData, MakeSpan(reinterpret_cast<uint8_t*>(aDest), aDestLength), true);
-    MOZ_ASSERT(result == kInputEmpty);
-    MOZ_ASSERT(read == aData.Length());
-    MOZ_ASSERT(written <= aDestLength);
-    Unused << hadErrors;
-
-    return written;
-  }
-};
 
 template <typename Unit>
 static nsresult ConvertToUnicode(nsIChannel* aChannel, const uint8_t* aData,
@@ -3269,7 +3215,7 @@ static nsresult ConvertToUnicode(nsIChannel* aChannel, const uint8_t* aData,
   });
 
   CheckedInt<size_t> bufferLength =
-      Conversion<Unit>::MaxBufferLength(unicodeDecoder, aLength);
+      ScriptDecoding<Unit>::MaxBufferLength(unicodeDecoder, aLength);
   if (!bufferLength.isValid()) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
@@ -3285,8 +3231,9 @@ static nsresult ConvertToUnicode(nsIChannel* aChannel, const uint8_t* aData,
   }
 
   signalOOM.release();
-  aLengthOut = Conversion<Unit>::DecodeInto(unicodeDecoder, data, aBufOut,
-                                            bufferLength.value());
+  aLengthOut = ScriptDecoding<Unit>::DecodeInto(
+      unicodeDecoder, data, MakeSpan(aBufOut, bufferLength.value()),
+      /* aEndOfSource = */ true);
   return NS_OK;
 }
 
@@ -3586,22 +3533,8 @@ uint32_t ScriptLoader::NumberOfProcessors() {
 }
 
 static bool IsInternalURIScheme(nsIURI* uri) {
-  bool isWebExt;
-  if (NS_SUCCEEDED(uri->SchemeIs("moz-extension", &isWebExt)) && isWebExt) {
-    return true;
-  }
-
-  bool isResource;
-  if (NS_SUCCEEDED(uri->SchemeIs("resource", &isResource)) && isResource) {
-    return true;
-  }
-
-  bool isChrome;
-  if (NS_SUCCEEDED(uri->SchemeIs("chrome", &isChrome)) && isChrome) {
-    return true;
-  }
-
-  return false;
+  return uri->SchemeIs("moz-extension") || uri->SchemeIs("resource") ||
+         uri->SchemeIs("chrome");
 }
 
 nsresult ScriptLoader::PrepareLoadedRequest(ScriptLoadRequest* aRequest,

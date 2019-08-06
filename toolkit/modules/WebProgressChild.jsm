@@ -6,11 +6,16 @@
 
 var EXPORTED_SYMBOLS = ["WebProgressChild"];
 
-const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
 
-XPCOMUtils.defineLazyServiceGetter(this, "serializationHelper",
-                                   "@mozilla.org/network/serialization-helper;1",
-                                   "nsISerializationHelper");
+XPCOMUtils.defineLazyServiceGetter(
+  this,
+  "serializationHelper",
+  "@mozilla.org/network/serialization-helper;1",
+  "nsISerializationHelper"
+);
 
 class WebProgressChild {
   constructor(mm) {
@@ -18,27 +23,31 @@ class WebProgressChild {
 
     // NOTIFY_PROGRESS, NOTIFY_STATE_ALL, NOTIFY_STATUS, NOTIFY_LOCATION, NOTIFY_REFRESH, and
     // NOTIFY_CONTENT_BLOCKING are handled by PBrowser.
-    let notifyCode = Ci.nsIWebProgress.NOTIFY_ALL &
-                        ~Ci.nsIWebProgress.NOTIFY_STATE_ALL &
-                        ~Ci.nsIWebProgress.NOTIFY_PROGRESS &
-                        ~Ci.nsIWebProgress.NOTIFY_STATUS &
-                        ~Ci.nsIWebProgress.NOTIFY_LOCATION &
-                        ~Ci.nsIWebProgress.NOTIFY_REFRESH &
-                        ~Ci.nsIWebProgress.NOTIFY_CONTENT_BLOCKING;
+    let notifyCode =
+      Ci.nsIWebProgress.NOTIFY_ALL &
+      ~Ci.nsIWebProgress.NOTIFY_STATE_ALL &
+      ~Ci.nsIWebProgress.NOTIFY_PROGRESS &
+      ~Ci.nsIWebProgress.NOTIFY_STATUS &
+      ~Ci.nsIWebProgress.NOTIFY_LOCATION &
+      ~Ci.nsIWebProgress.NOTIFY_REFRESH &
+      ~Ci.nsIWebProgress.NOTIFY_CONTENT_BLOCKING;
 
-    this._filter = Cc["@mozilla.org/appshell/component/browser-status-filter;1"]
-                     .createInstance(Ci.nsIWebProgress);
+    this._filter = Cc[
+      "@mozilla.org/appshell/component/browser-status-filter;1"
+    ].createInstance(Ci.nsIWebProgress);
     this._filter.addProgressListener(this, notifyCode);
     this._filter.target = this.mm.tabEventTarget;
 
-    let webProgress = this.mm.docShell.QueryInterface(Ci.nsIInterfaceRequestor)
-                              .getInterface(Ci.nsIWebProgress);
+    let webProgress = this.mm.docShell
+      .QueryInterface(Ci.nsIInterfaceRequestor)
+      .getInterface(Ci.nsIWebProgress);
     webProgress.addProgressListener(this._filter, notifyCode);
   }
 
   _requestSpec(aRequest, aPropertyName) {
-    if (!aRequest || !(aRequest instanceof Ci.nsIChannel))
+    if (!aRequest || !(aRequest instanceof Ci.nsIChannel)) {
       return null;
+    }
     return aRequest[aPropertyName].spec;
   }
 
@@ -85,12 +94,17 @@ class WebProgressChild {
     let json = this._setupJSON(aWebProgress, aRequest);
 
     json.state = aState;
-    json.secInfo = this.getSecInfoAsString();
+
+    if (aWebProgress.isTopLevel) {
+      json.secInfo = this.getSecInfoAsString();
+      json.isSecureContext = this.mm.content.isSecureContext;
+    }
 
     this._send("Content:SecurityChange", json);
   }
 }
 
-WebProgressChild.prototype.QueryInterface =
-  ChromeUtils.generateQI(["nsIWebProgressListener",
-                          "nsISupportsWeakReference"]);
+WebProgressChild.prototype.QueryInterface = ChromeUtils.generateQI([
+  "nsIWebProgressListener",
+  "nsISupportsWeakReference",
+]);

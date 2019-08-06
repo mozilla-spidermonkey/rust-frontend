@@ -13,7 +13,8 @@
 #include "nsString.h"
 #include "nsXULAppAPI.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_gfx.h"
+#include "mozilla/StaticPrefs_webgl.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/Services.h"
 #include "mozilla/gfx/Logging.h"
@@ -406,8 +407,8 @@ bool D3D11LayersCrashGuard::UpdateEnvironment() {
   bool changed = false;
   // Feature status.
 #if defined(XP_WIN)
-  bool d2dEnabled = StaticPrefs::Direct2DForceEnabled() ||
-                    (!StaticPrefs::Direct2DDisabled() &&
+  bool d2dEnabled = StaticPrefs::gfx_direct2d_force_enabled_AtStartup() ||
+                    (!StaticPrefs::gfx_direct2d_disabled_AtStartup() &&
                      FeatureEnabled(nsIGfxInfo::FEATURE_DIRECT2D));
   changed |= CheckAndUpdateBoolPref("feature-d2d", d2dEnabled);
 
@@ -509,11 +510,11 @@ bool GLContextCrashGuard::UpdateEnvironment() {
 
 #if defined(XP_WIN)
   changed |= CheckAndUpdateBoolPref("gfx.driver-init.webgl-angle-force-d3d11",
-                                    StaticPrefs::WebGLANGLEForceD3D11());
+                                    StaticPrefs::webgl_angle_force_d3d11());
   changed |= CheckAndUpdateBoolPref("gfx.driver-init.webgl-angle-try-d3d11",
-                                    StaticPrefs::WebGLANGLETryD3D11());
+                                    StaticPrefs::webgl_angle_try_d3d11());
   changed |= CheckAndUpdateBoolPref("gfx.driver-init.webgl-angle-force-warp",
-                                    StaticPrefs::WebGLANGLEForceWARP());
+                                    StaticPrefs::webgl_angle_force_warp());
   changed |= CheckAndUpdateBoolPref(
       "gfx.driver-init.webgl-angle",
       FeatureEnabled(nsIGfxInfo::FEATURE_WEBGL_ANGLE, false));

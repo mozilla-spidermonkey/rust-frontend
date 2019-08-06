@@ -12,14 +12,10 @@ import org.hamcrest.Matchers.*
 import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.ReuseSession
-import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.WithDevToolsAPI
 import kotlin.math.roundToInt
-import org.junit.Assume.assumeThat
 
 @RunWith(AndroidJUnit4::class)
 @MediumTest
-@ReuseSession(false)
 class RuntimeSettingsTest : BaseSessionTest() {
 
     @Ignore("disable test for frequently failing Bug 1538430")
@@ -42,7 +38,7 @@ class RuntimeSettingsTest : BaseSessionTest() {
         assertThat("Gecko font scale should match system font scale",
                 settings.fontSizeFactor.toDouble(), closeTo(expectedFontSizeFactor.toDouble(), 0.05))
         assertThat("font inflation enabled",
-                settings.fontInflationEnabled, `is`(true))
+                settings.fontInflationEnabled, `is`(initialFontInflation))
 
         settings.automaticFontSizeAdjustment = false
         assertThat("Gecko font scale restored to previous value",
@@ -66,7 +62,7 @@ class RuntimeSettingsTest : BaseSessionTest() {
         assertThat("Gecko font scale should match system font scale",
                 settings.fontSizeFactor.toDouble(), closeTo(expectedFontSizeFactor.toDouble(), 0.05))
         assertThat("font inflation enabled",
-                settings.fontInflationEnabled, `is`(true))
+                settings.fontInflationEnabled, `is`(initialFontInflation))
 
         settings.automaticFontSizeAdjustment = false
         assertThat("Gecko font scale restored to previous value",
@@ -75,10 +71,8 @@ class RuntimeSettingsTest : BaseSessionTest() {
                 settings.fontInflationEnabled, `is`(initialFontInflation))
     }
 
-    @WithDevToolsAPI
-    // disable test on pgo for frequently failing #Bug 1546297
+    @Ignore // Bug 1546297 disabled test on pgo for frequent failures
     @Test fun fontSize() {
-        assumeThat(sessionRule.env.isDebugBuild, equalTo(true))
         val settings = sessionRule.runtime.settings
         settings.fontSizeFactor = 1.0f
         sessionRule.session.loadTestPath(HELLO_HTML_PATH)
@@ -104,42 +98,42 @@ class RuntimeSettingsTest : BaseSessionTest() {
                 fontSize, closeTo(initialFontSize, 0.1))
     }
 
-    @WithDevToolsAPI
     @Test fun fontInflation() {
         val baseFontInflationMinTwips = 120
         val settings = sessionRule.runtime.settings
 
         settings.fontInflationEnabled = false;
         settings.fontSizeFactor = 1.0f
-        val fontInflationPrefJs = "Services.prefs.getIntPref('font.size.inflation.minTwips')"
-        var prefValue = (sessionRule.evaluateChromeJS(fontInflationPrefJs) as Double).roundToInt()
+        val fontInflationPref = "font.size.inflation.minTwips"
+
+        var prefValue = (sessionRule.getPrefs(fontInflationPref)[0] as Int)
         assertThat("Gecko font inflation pref should be turned off",
                 prefValue, `is`(0))
 
         settings.fontInflationEnabled = true;
-        prefValue = (sessionRule.evaluateChromeJS(fontInflationPrefJs) as Double).roundToInt()
+        prefValue = (sessionRule.getPrefs(fontInflationPref)[0] as Int)
         assertThat("Gecko font inflation pref should be turned on",
                 prefValue, `is`(baseFontInflationMinTwips))
 
         settings.fontSizeFactor = 2.0f
-        prefValue = (sessionRule.evaluateChromeJS(fontInflationPrefJs) as Double).roundToInt()
+        prefValue = (sessionRule.getPrefs(fontInflationPref)[0] as Int)
         assertThat("Gecko font inflation pref should scale with increased font size factor",
                 prefValue, greaterThan(baseFontInflationMinTwips))
 
         settings.fontSizeFactor = 0.5f
-        prefValue = (sessionRule.evaluateChromeJS(fontInflationPrefJs) as Double).roundToInt()
+        prefValue = (sessionRule.getPrefs(fontInflationPref)[0] as Int)
         assertThat("Gecko font inflation pref should scale with decreased font size factor",
                 prefValue, lessThan(baseFontInflationMinTwips))
 
         settings.fontSizeFactor = 0.0f
-        prefValue = (sessionRule.evaluateChromeJS(fontInflationPrefJs) as Double).roundToInt()
+        prefValue = (sessionRule.getPrefs(fontInflationPref)[0] as Int)
         assertThat("setting font size factor to 0 turns off font inflation",
                 prefValue, `is`(0))
         assertThat("GeckoRuntimeSettings returns new font inflation state, too",
                 settings.fontInflationEnabled, `is`(false))
 
         settings.fontSizeFactor = 1.0f
-        prefValue = (sessionRule.evaluateChromeJS(fontInflationPrefJs) as Double).roundToInt()
+        prefValue = (sessionRule.getPrefs(fontInflationPref)[0] as Int)
         assertThat("Gecko font inflation pref remains turned off",
                 prefValue, `is`(0))
         assertThat("GeckoRuntimeSettings remains turned off",

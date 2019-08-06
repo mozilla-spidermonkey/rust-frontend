@@ -9,7 +9,9 @@
 #include "gfxEnv.h"              // for gfxEnv
 #include "mozilla/Assertions.h"  // for MOZ_ASSERT, etc
 #include "mozilla/Hal.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_apz.h"
+#include "mozilla/StaticPrefs_gfx.h"
+#include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/dom/BrowserChild.h"  // for BrowserChild
 #include "mozilla/dom/TabGroup.h"      // for TabGroup
 #include "mozilla/hal_sandbox/PHal.h"  // for ScreenConfiguration
@@ -79,6 +81,36 @@ ClientLayerManager::~ClientLayerManager() {
   mRoot = nullptr;
 
   MOZ_COUNT_DTOR(ClientLayerManager);
+}
+
+bool ClientLayerManager::Initialize(
+    PCompositorBridgeChild* aCBChild, bool aShouldAccelerate,
+    TextureFactoryIdentifier* aTextureFactoryIdentifier) {
+  MOZ_ASSERT(mForwarder);
+  MOZ_ASSERT(aTextureFactoryIdentifier);
+
+  nsTArray<LayersBackend> backendHints;
+  gfxPlatform::GetPlatform()->GetCompositorBackends(aShouldAccelerate,
+                                                    backendHints);
+  if (backendHints.IsEmpty()) {
+    gfxCriticalNote << "Failed to get backend hints.";
+    return false;
+  }
+
+  PLayerTransactionChild* shadowManager =
+      aCBChild->SendPLayerTransactionConstructor(backendHints, LayersId{0});
+
+  TextureFactoryIdentifier textureFactoryIdentifier;
+  shadowManager->SendGetTextureFactoryIdentifier(&textureFactoryIdentifier);
+  if (textureFactoryIdentifier.mParentBackend == LayersBackend::LAYERS_NONE) {
+    gfxCriticalNote << "Failed to create an OMT compositor.";
+    return false;
+  }
+
+  mForwarder->SetShadowManager(shadowManager);
+  UpdateTextureFactoryIdentifier(textureFactoryIdentifier);
+  *aTextureFactoryIdentifier = textureFactoryIdentifier;
+  return true;
 }
 
 void ClientLayerManager::Destroy() {
@@ -282,7 +314,7 @@ bool ClientLayerManager::EndTransactionInternal(
   PerfStats::AutoMetricRecording<PerfStats::Metric::Rasterizing> autoRecording;
 
   Maybe<TimeStamp> startTime;
-  if (StaticPrefs::LayersDrawFPS()) {
+  if (StaticPrefs::layers_acceleration_draw_fps()) {
     startTime = Some(TimeStamp::Now());
   }
 
@@ -312,7 +344,7 @@ bool ClientLayerManager::EndTransactionInternal(
 
   // Skip the painting if the device is in device-reset status.
   if (!gfxPlatform::GetPlatform()->DidRenderingDeviceReset()) {
-    if (StaticPrefs::AlwaysPaint() && XRE_IsContentProcess()) {
+    if (StaticPrefs::gfx_content_always_paint() && XRE_IsContentProcess()) {
       TimeStamp start = TimeStamp::Now();
       root->RenderLayer();
       mLastPaintTime = TimeStamp::Now() - start;
@@ -617,7 +649,7 @@ void ClientLayerManager::FlushRendering() {
   if (mWidget) {
     if (CompositorBridgeChild* remoteRenderer = mWidget->GetRemoteRenderer()) {
       if (mWidget->SynchronouslyRepaintOnResize() ||
-          StaticPrefs::LayersForceSynchronousResize()) {
+          StaticPrefs::layers_force_synchronous_resize()) {
         remoteRenderer->SendFlushRendering();
       } else {
         remoteRenderer->SendFlushRenderingAsync();
@@ -700,7 +732,7 @@ void ClientLayerManager::ForwardTransaction(bool aScheduleComposite) {
     refreshStart = mTransactionStart;
   }
 
-  if (StaticPrefs::AlwaysPaint() && XRE_IsContentProcess()) {
+  if (StaticPrefs::gfx_content_always_paint() && XRE_IsContentProcess()) {
     mForwarder->SendPaintTime(mLatestTransactionId, mLastPaintTime);
   }
 

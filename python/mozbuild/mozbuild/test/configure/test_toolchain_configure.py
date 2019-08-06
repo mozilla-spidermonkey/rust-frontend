@@ -21,6 +21,7 @@ from mozpack import path as mozpath
 from test_toolchain_helpers import (
     FakeCompiler,
     CompilerResult,
+    PrependFlags,
 )
 
 
@@ -196,6 +197,14 @@ CLANG_4_0 = CLANG('4.0.2') + DEFAULT_C11 + {
 CLANGXX_4_0 = CLANGXX('4.0.2') + {
     '__has_attribute(diagnose_if)': '1',
 }
+CLANG_5_0 = CLANG('5.0.1') + DEFAULT_C11 + {
+    '__has_attribute(diagnose_if)': '1',
+    '__has_warning("-Wunguarded-availability")': '1',
+}
+CLANGXX_5_0 = CLANGXX('5.0.1') + {
+    '__has_attribute(diagnose_if)': '1',
+    '__has_warning("-Wunguarded-availability")': '1',
+}
 DEFAULT_CLANG = CLANG_4_0
 DEFAULT_CLANGXX = CLANGXX_4_0
 
@@ -231,6 +240,7 @@ def VS(version):
             '_MSC_VER': '%02d%02d' % (version.major, version.minor),
             '_MSC_FULL_VER': '%02d%02d%05d' % (version.major, version.minor,
                                                version.patch),
+            '_MT': '1',
         },
         '*.cpp': DEFAULT_CXX_97,
     })
@@ -636,7 +646,6 @@ class LinuxToolchainTest(BaseToolchainTest):
         })
 
     def test_unsupported_clang(self):
-        # clang 3.3 C compiler is perfectly fine, but we need more for C++.
         self.do_toolchain_test(self.PATHS, {
             'c_compiler': self.CLANG_3_3_RESULT,
             'cxx_compiler': self.CLANGXX_3_3_RESULT,
@@ -796,6 +805,13 @@ class LinuxX86_64CrossToolchainTest(BaseToolchainTest):
         })
 
 
+def xcrun(stdin, args):
+    if args == ('--show-sdk-path',):
+        return 0, os.path.join(os.path.abspath(os.path.dirname(__file__)),
+                               'fake_macos_sdk'), ''
+    raise NotImplementedError()
+
+
 class OSXToolchainTest(BaseToolchainTest):
     HOST = 'x86_64-apple-darwin11.2.0'
     PATHS = {
@@ -803,27 +819,45 @@ class OSXToolchainTest(BaseToolchainTest):
         '/usr/bin/g++-5': GXX_5 + GCC_PLATFORM_X86_64_OSX,
         '/usr/bin/gcc-7': GCC_7 + GCC_PLATFORM_X86_64_OSX,
         '/usr/bin/g++-7': GXX_7 + GCC_PLATFORM_X86_64_OSX,
-        '/usr/bin/clang': DEFAULT_CLANG + CLANG_PLATFORM_X86_64_OSX,
-        '/usr/bin/clang++': DEFAULT_CLANGXX + CLANG_PLATFORM_X86_64_OSX,
+        '/usr/bin/clang': CLANG_5_0 + CLANG_PLATFORM_X86_64_OSX,
+        '/usr/bin/clang++': CLANGXX_5_0 + CLANG_PLATFORM_X86_64_OSX,
         '/usr/bin/clang-4.0': CLANG_4_0 + CLANG_PLATFORM_X86_64_OSX,
         '/usr/bin/clang++-4.0': CLANGXX_4_0 + CLANG_PLATFORM_X86_64_OSX,
         '/usr/bin/clang-3.3': CLANG_3_3 + CLANG_PLATFORM_X86_64_OSX,
         '/usr/bin/clang++-3.3': CLANGXX_3_3 + CLANG_PLATFORM_X86_64_OSX,
+        '/usr/bin/xcrun': xcrun,
     }
-    CLANG_3_3_RESULT = LinuxToolchainTest.CLANG_3_3_RESULT
-    CLANGXX_3_3_RESULT = LinuxToolchainTest.CLANGXX_3_3_RESULT
-    DEFAULT_CLANG_RESULT = LinuxToolchainTest.DEFAULT_CLANG_RESULT
-    DEFAULT_CLANGXX_RESULT = LinuxToolchainTest.DEFAULT_CLANGXX_RESULT
+    CLANG_3_3_RESULT = 'Only clang/llvm 5.0 or newer is supported.'
+    CLANGXX_3_3_RESULT = 'Only clang/llvm 5.0 or newer is supported.'
+    CLANG_4_0_RESULT = 'Only clang/llvm 5.0 or newer is supported.'
+    CLANGXX_4_0_RESULT = 'Only clang/llvm 5.0 or newer is supported.'
+    DEFAULT_CLANG_RESULT = CompilerResult(
+        flags=['-std=gnu99'],
+        version='5.0.1',
+        type='clang',
+        compiler='/usr/bin/clang',
+        language='C',
+    )
+    DEFAULT_CLANGXX_RESULT = CompilerResult(
+        flags=['-std=gnu++14'],
+        version='5.0.1',
+        type='clang',
+        compiler='/usr/bin/clang++',
+        language='C++',
+    )
     GCC_5_RESULT = LinuxToolchainTest.GCC_5_RESULT
     GXX_5_RESULT = LinuxToolchainTest.GXX_5_RESULT
     GCC_7_RESULT = LinuxToolchainTest.GCC_7_RESULT
     GXX_7_RESULT = LinuxToolchainTest.GXX_7_RESULT
+    SYSROOT_FLAGS = {
+        'flags': PrependFlags(['-isysroot', xcrun('', ('--show-sdk-path',))[1]]),
+    }
 
     def test_clang(self):
         # We only try clang because gcc is known not to work.
         self.do_toolchain_test(self.PATHS, {
-            'c_compiler': self.DEFAULT_CLANG_RESULT,
-            'cxx_compiler': self.DEFAULT_CLANGXX_RESULT,
+            'c_compiler': self.DEFAULT_CLANG_RESULT + self.SYSROOT_FLAGS,
+            'cxx_compiler': self.DEFAULT_CLANGXX_RESULT + self.SYSROOT_FLAGS,
         })
 
     def test_not_gcc(self):
@@ -837,7 +871,6 @@ class OSXToolchainTest(BaseToolchainTest):
         })
 
     def test_unsupported_clang(self):
-        # clang 3.3 C compiler is perfectly fine, but we need more for C++.
         self.do_toolchain_test(self.PATHS, {
             'c_compiler': self.CLANG_3_3_RESULT,
             'cxx_compiler': self.CLANGXX_3_3_RESULT,
@@ -845,12 +878,20 @@ class OSXToolchainTest(BaseToolchainTest):
             'CC': 'clang-3.3',
             'CXX': 'clang++-3.3',
         })
+        # When targeting mac, we require at least version 5.
+        self.do_toolchain_test(self.PATHS, {
+            'c_compiler': self.CLANG_4_0_RESULT,
+            'cxx_compiler': self.CLANGXX_4_0_RESULT,
+        }, environ={
+            'CC': 'clang-4.0',
+            'CXX': 'clang++-4.0',
+        })
 
     def test_forced_gcc(self):
         # GCC can still be forced if the user really wants it.
         self.do_toolchain_test(self.PATHS, {
-            'c_compiler': self.GCC_7_RESULT,
-            'cxx_compiler': self.GXX_7_RESULT,
+            'c_compiler': self.GCC_7_RESULT + self.SYSROOT_FLAGS,
+            'cxx_compiler': self.GXX_7_RESULT + self.SYSROOT_FLAGS,
         }, environ={
             'CC': 'gcc-7',
             'CXX': 'g++-7',
@@ -1316,23 +1357,27 @@ class LinuxCrossCompileToolchainTest(BaseToolchainTest):
 
 class OSXCrossToolchainTest(BaseToolchainTest):
     TARGET = 'i686-apple-darwin11.2.0'
-    PATHS = LinuxToolchainTest.PATHS
-    DEFAULT_CLANG_RESULT = LinuxToolchainTest.DEFAULT_CLANG_RESULT
-    DEFAULT_CLANGXX_RESULT = LinuxToolchainTest.DEFAULT_CLANGXX_RESULT
+    PATHS = dict(LinuxToolchainTest.PATHS)
+    PATHS.update({
+        '/usr/bin/clang': CLANG_5_0 + CLANG_PLATFORM_X86_64_LINUX,
+        '/usr/bin/clang++': CLANGXX_5_0 + CLANG_PLATFORM_X86_64_LINUX,
+    })
+    DEFAULT_CLANG_RESULT = OSXToolchainTest.DEFAULT_CLANG_RESULT
+    DEFAULT_CLANGXX_RESULT = OSXToolchainTest.DEFAULT_CLANGXX_RESULT
 
     def test_osx_cross(self):
         self.do_toolchain_test(self.PATHS, {
-            'c_compiler': self.DEFAULT_CLANG_RESULT + {
+            'c_compiler': self.DEFAULT_CLANG_RESULT + OSXToolchainTest.SYSROOT_FLAGS + {
                 'flags': ['--target=i686-apple-darwin11.2.0'],
             },
-            'cxx_compiler': self.DEFAULT_CLANGXX_RESULT + {
+            'cxx_compiler': self.DEFAULT_CLANGXX_RESULT + OSXToolchainTest.SYSROOT_FLAGS + {
                 'flags': ['--target=i686-apple-darwin11.2.0'],
             },
             'host_c_compiler': self.DEFAULT_CLANG_RESULT,
             'host_cxx_compiler': self.DEFAULT_CLANGXX_RESULT,
         }, environ={
             'CC': 'clang',
-        })
+        }, args=['--with-macos-sdk=%s' % OSXToolchainTest.SYSROOT_FLAGS['flags'][1]])
 
     def test_cannot_osx_cross(self):
         self.do_toolchain_test(self.PATHS, {
@@ -1340,7 +1385,7 @@ class OSXCrossToolchainTest(BaseToolchainTest):
                           'match --target kernel (Darwin)',
         }, environ={
             'CC': 'gcc',
-        })
+        }, args=['--with-macos-sdk=%s' % OSXToolchainTest.SYSROOT_FLAGS['flags'][1]])
 
 
 class WindowsCrossToolchainTest(BaseToolchainTest):

@@ -7,8 +7,7 @@
 
 "use strict";
 
-const TEST_URI =
-`data:text/html;charset=utf8,
+const TEST_URI = `data:text/html;charset=utf8,
 <title>browser_console_nsiconsolemessage.js</title>
 <p>hello world<p>
 nsIConsoleMessages ftw!`;
@@ -41,23 +40,29 @@ add_task(async function() {
 
   // Ensure the "liveBrowserConsoleMessage" and "cachedBrowserConsoleMessage"
   // messages are not displayed.
-  text = hud.outputNode.textContent;
-  ok(!text.includes("cachedBrowserConsoleMessage"),
-    "cached nsIConsoleMessages are not displayed");
-  ok(!text.includes("liveBrowserConsoleMessage"),
-    "nsIConsoleMessages are not displayed");
+  text = hud.ui.outputNode.textContent;
+  ok(
+    !text.includes("cachedBrowserConsoleMessage"),
+    "cached nsIConsoleMessages are not displayed"
+  );
+  ok(
+    !text.includes("liveBrowserConsoleMessage"),
+    "nsIConsoleMessages are not displayed"
+  );
 
   await closeConsole();
 
   info("web console closed");
-  hud = await HUDService.toggleBrowserConsole();
+  hud = await BrowserConsoleManager.toggleBrowserConsole();
   ok(hud, "browser console opened");
 
   await waitFor(() => findMessage(hud, "cachedBrowserConsoleMessage"));
   Services.console.logStringMessage("liveBrowserConsoleMessage2");
   await waitFor(() => findMessage(hud, "liveBrowserConsoleMessage2"));
 
-  const msg = await waitFor(() => findMessage(hud, "liveBrowserConsoleMessage"));
+  const msg = await waitFor(() =>
+    findMessage(hud, "liveBrowserConsoleMessage")
+  );
   ok(msg, "message element for liveBrowserConsoleMessage (nsIConsoleMessage)");
 
   // Disable the log filter.
@@ -66,9 +71,15 @@ add_task(async function() {
   });
 
   // And then checking that the log messages are hidden.
-  await waitFor(() => findMessages(hud, "cachedBrowserConsoleMessage").length === 0);
-  await waitFor(() => findMessages(hud, "liveBrowserConsoleMessage").length === 0);
-  await waitFor(() => findMessages(hud, "liveBrowserConsoleMessage2").length === 0);
+  await waitFor(
+    () => findMessages(hud, "cachedBrowserConsoleMessage").length === 0
+  );
+  await waitFor(
+    () => findMessages(hud, "liveBrowserConsoleMessage").length === 0
+  );
+  await waitFor(
+    () => findMessages(hud, "liveBrowserConsoleMessage2").length === 0
+  );
 
   resetFilters(hud);
 });

@@ -144,6 +144,7 @@ enum class OpKind {
   End,
   Wait,
   Wake,
+  Fence,
   AtomicLoad,
   AtomicStore,
   AtomicBinOp,
@@ -442,6 +443,7 @@ class MOZ_STACK_CLASS OpIter : private Policy {
   MOZ_MUST_USE bool readWait(LinearMemoryAddress<Value>* addr,
                              ValType resultType, uint32_t byteSize,
                              Value* value, Value* timeout);
+  MOZ_MUST_USE bool readFence();
   MOZ_MUST_USE bool readAtomicLoad(LinearMemoryAddress<Value>* addr,
                                    ValType resultType, uint32_t byteSize);
   MOZ_MUST_USE bool readAtomicStore(LinearMemoryAddress<Value>* addr,
@@ -762,7 +764,7 @@ inline bool OpIter<Policy>::readBlockType(ExprType* type) {
     case uint8_t(ExprType::FuncRef):
     case uint8_t(ExprType::AnyRef):
 #ifdef ENABLE_WASM_REFTYPES
-      known = true;
+      known = env_.refTypesEnabled();
 #endif
       break;
     case uint8_t(ExprType::Ref):
@@ -1479,7 +1481,8 @@ inline bool OpIter<Policy>::readRefNull() {
 
 template <typename Policy>
 inline bool OpIter<Policy>::readValType(ValType* type) {
-  return d_.readValType(env_.types, env_.gcTypesEnabled(), type);
+  return d_.readValType(env_.types, env_.refTypesEnabled(),
+                        env_.gcTypesEnabled(), type);
 }
 
 template <typename Policy>
@@ -1699,6 +1702,19 @@ inline bool OpIter<Policy>::readWait(LinearMemoryAddress<Value>* addr,
   }
 
   infalliblePush(ValType::I32);
+  return true;
+}
+
+template <typename Policy>
+inline bool OpIter<Policy>::readFence() {
+  MOZ_ASSERT(Classify(op_) == OpKind::Fence);
+  uint8_t flags;
+  if (!readFixedU8(&flags)) {
+    return fail("expected memory order after fence");
+  }
+  if (flags != 0) {
+    return fail("non-zero memory order not supported yet");
+  }
   return true;
 }
 

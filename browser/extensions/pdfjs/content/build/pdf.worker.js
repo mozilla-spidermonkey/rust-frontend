@@ -123,8 +123,8 @@ return /******/ (function(modules) { // webpackBootstrap
 "use strict";
 
 
-const pdfjsVersion = '2.2.207';
-const pdfjsBuild = '73482750';
+const pdfjsVersion = '2.3.57';
+const pdfjsBuild = 'd909b86b';
 
 const pdfjsCoreWorker = __w_pdfjs_require__(1);
 
@@ -151,6 +151,8 @@ var _pdf_manager = __w_pdfjs_require__(8);
 var _is_node = _interopRequireDefault(__w_pdfjs_require__(47));
 
 var _message_handler = __w_pdfjs_require__(48);
+
+var _worker_stream = __w_pdfjs_require__(49);
 
 var _core_utils = __w_pdfjs_require__(10);
 
@@ -187,146 +189,6 @@ var WorkerTask = function WorkerTaskClosure() {
 }();
 
 exports.WorkerTask = WorkerTask;
-
-var PDFWorkerStream = function PDFWorkerStreamClosure() {
-  function PDFWorkerStream(msgHandler) {
-    this._msgHandler = msgHandler;
-    this._contentLength = null;
-    this._fullRequestReader = null;
-    this._rangeRequestReaders = [];
-  }
-
-  PDFWorkerStream.prototype = {
-    getFullReader() {
-      (0, _util.assert)(!this._fullRequestReader);
-      this._fullRequestReader = new PDFWorkerStreamReader(this._msgHandler);
-      return this._fullRequestReader;
-    },
-
-    getRangeReader(begin, end) {
-      let reader = new PDFWorkerStreamRangeReader(begin, end, this._msgHandler);
-
-      this._rangeRequestReaders.push(reader);
-
-      return reader;
-    },
-
-    cancelAllRequests(reason) {
-      if (this._fullRequestReader) {
-        this._fullRequestReader.cancel(reason);
-      }
-
-      let readers = this._rangeRequestReaders.slice(0);
-
-      readers.forEach(function (reader) {
-        reader.cancel(reason);
-      });
-    }
-
-  };
-
-  function PDFWorkerStreamReader(msgHandler) {
-    this._msgHandler = msgHandler;
-    this._contentLength = null;
-    this._isRangeSupported = false;
-    this._isStreamingSupported = false;
-
-    let readableStream = this._msgHandler.sendWithStream('GetReader');
-
-    this._reader = readableStream.getReader();
-    this._headersReady = this._msgHandler.sendWithPromise('ReaderHeadersReady').then(data => {
-      this._isStreamingSupported = data.isStreamingSupported;
-      this._isRangeSupported = data.isRangeSupported;
-      this._contentLength = data.contentLength;
-    });
-  }
-
-  PDFWorkerStreamReader.prototype = {
-    get headersReady() {
-      return this._headersReady;
-    },
-
-    get contentLength() {
-      return this._contentLength;
-    },
-
-    get isStreamingSupported() {
-      return this._isStreamingSupported;
-    },
-
-    get isRangeSupported() {
-      return this._isRangeSupported;
-    },
-
-    read() {
-      return this._reader.read().then(function ({
-        value,
-        done
-      }) {
-        if (done) {
-          return {
-            value: undefined,
-            done: true
-          };
-        }
-
-        return {
-          value: value.buffer,
-          done: false
-        };
-      });
-    },
-
-    cancel(reason) {
-      this._reader.cancel(reason);
-    }
-
-  };
-
-  function PDFWorkerStreamRangeReader(begin, end, msgHandler) {
-    this._msgHandler = msgHandler;
-    this.onProgress = null;
-
-    let readableStream = this._msgHandler.sendWithStream('GetRangeReader', {
-      begin,
-      end
-    });
-
-    this._reader = readableStream.getReader();
-  }
-
-  PDFWorkerStreamRangeReader.prototype = {
-    get isStreamingSupported() {
-      return false;
-    },
-
-    read() {
-      return this._reader.read().then(function ({
-        value,
-        done
-      }) {
-        if (done) {
-          return {
-            value: undefined,
-            done: true
-          };
-        }
-
-        return {
-          value: value.buffer,
-          done: false
-        };
-      });
-    },
-
-    cancel(reason) {
-      this._reader.cancel(reason);
-    }
-
-  };
-  return PDFWorkerStream;
-}();
-
 var WorkerMessageHandler = {
   setup(handler, port) {
     var testMessageProcessed = false;
@@ -378,7 +240,7 @@ var WorkerMessageHandler = {
     var WorkerTasks = [];
     const verbosity = (0, _util.getVerbosityLevel)();
     let apiVersion = docParams.apiVersion;
-    let workerVersion = '2.2.207';
+    let workerVersion = '2.3.57';
 
     if (apiVersion !== workerVersion) {
       throw new Error(`The API version "${apiVersion}" does not match ` + `the Worker version "${workerVersion}".`);
@@ -442,7 +304,7 @@ var WorkerMessageHandler = {
           cachedChunks = [];
 
       try {
-        pdfStream = new PDFWorkerStream(handler);
+        pdfStream = new _worker_stream.PDFWorkerStream(handler);
       } catch (ex) {
         pdfManagerCapability.reject(ex);
         return pdfManagerCapability.promise;
@@ -888,7 +750,7 @@ Object.defineProperty(exports, "URL", {
     return _url_polyfill.URL;
   }
 });
-exports.createObjectURL = exports.FormatError = exports.Util = exports.UnknownErrorException = exports.UnexpectedResponseException = exports.TextRenderingMode = exports.StreamType = exports.PermissionFlag = exports.PasswordResponses = exports.PasswordException = exports.NativeImageDecoding = exports.MissingPDFException = exports.InvalidPDFException = exports.AbortException = exports.CMapCompressionType = exports.ImageKind = exports.FontType = exports.AnnotationType = exports.AnnotationFlag = exports.AnnotationFieldFlag = exports.AnnotationBorderStyleType = exports.UNSUPPORTED_FEATURES = exports.VerbosityLevel = exports.OPS = exports.IDENTITY_MATRIX = exports.FONT_IDENTITY_MATRIX = void 0;
+exports.createObjectURL = exports.FormatError = exports.Util = exports.UnknownErrorException = exports.UnexpectedResponseException = exports.TextRenderingMode = exports.StreamType = exports.PermissionFlag = exports.PasswordResponses = exports.PasswordException = exports.NativeImageDecoding = exports.MissingPDFException = exports.InvalidPDFException = exports.AbortException = exports.CMapCompressionType = exports.ImageKind = exports.FontType = exports.AnnotationType = exports.AnnotationStateModelType = exports.AnnotationReviewState = exports.AnnotationReplyType = exports.AnnotationMarkedState = exports.AnnotationFlag = exports.AnnotationFieldFlag = exports.AnnotationBorderStyleType = exports.UNSUPPORTED_FEATURES = exports.VerbosityLevel = exports.OPS = exports.IDENTITY_MATRIX = exports.FONT_IDENTITY_MATRIX = void 0;
 
 __w_pdfjs_require__(3);
 
@@ -965,6 +827,29 @@ const AnnotationType = {
   REDACT: 26
 };
 exports.AnnotationType = AnnotationType;
+const AnnotationStateModelType = {
+  MARKED: 'Marked',
+  REVIEW: 'Review'
+};
+exports.AnnotationStateModelType = AnnotationStateModelType;
+const AnnotationMarkedState = {
+  MARKED: 'Marked',
+  UNMARKED: 'Unmarked'
+};
+exports.AnnotationMarkedState = AnnotationMarkedState;
+const AnnotationReviewState = {
+  ACCEPTED: 'Accepted',
+  REJECTED: 'Rejected',
+  CANCELLED: 'Cancelled',
+  COMPLETED: 'Completed',
+  NONE: 'None'
+};
+exports.AnnotationReviewState = AnnotationReviewState;
+const AnnotationReplyType = {
+  GROUP: 'Group',
+  REPLY: 'R'
+};
+exports.AnnotationReplyType = AnnotationReplyType;
 const AnnotationFlag = {
   INVISIBLE: 0x01,
   HIDDEN: 0x02,
@@ -2436,7 +2321,10 @@ class ChunkedStream {
       return -1;
     }
 
-    this.ensureByte(pos);
+    if (pos >= this.progressiveDataLength) {
+      this.ensureByte(pos);
+    }
+
     return this.bytes[this.pos++];
   }
 
@@ -2465,7 +2353,10 @@ class ChunkedStream {
     const strEnd = this.end;
 
     if (!length) {
-      this.ensureRange(pos, strEnd);
+      if (strEnd > this.progressiveDataLength) {
+        this.ensureRange(pos, strEnd);
+      }
+
       const subarray = bytes.subarray(pos, strEnd);
       return forceClamped ? new Uint8ClampedArray(subarray) : subarray;
     }
@@ -2476,7 +2367,10 @@ class ChunkedStream {
       end = strEnd;
     }
 
-    this.ensureRange(pos, end);
+    if (end > this.progressiveDataLength) {
+      this.ensureRange(pos, end);
+    }
+
     this.pos = end;
     const subarray = bytes.subarray(pos, end);
     return forceClamped ? new Uint8ClampedArray(subarray) : subarray;
@@ -2495,7 +2389,18 @@ class ChunkedStream {
   }
 
   getByteRange(begin, end) {
-    this.ensureRange(begin, end);
+    if (begin < 0) {
+      begin = 0;
+    }
+
+    if (end > this.end) {
+      end = this.end;
+    }
+
+    if (end > this.progressiveDataLength) {
+      this.ensureRange(begin, end);
+    }
+
     return this.bytes.subarray(begin, end);
   }
 
@@ -2517,9 +2422,13 @@ class ChunkedStream {
 
   makeSubStream(start, length, dict) {
     if (length) {
-      this.ensureRange(start, start + length);
+      if (start + length > this.progressiveDataLength) {
+        this.ensureRange(start, start + length);
+      }
     } else {
-      this.ensureByte(start);
+      if (start >= this.progressiveDataLength) {
+        this.ensureByte(start);
+      }
     }
 
     function ChunkedStreamSubstream() {}
@@ -3314,22 +3223,9 @@ exports.Page = Page;
 const FINGERPRINT_FIRST_BYTES = 1024;
 const EMPTY_FINGERPRINT = '\x00\x00\x00\x00\x00\x00\x00' + '\x00\x00\x00\x00\x00\x00\x00\x00\x00';
 
-function find(stream, needle, limit, backwards) {
-  const pos = stream.pos;
-  const end = stream.end;
-
-  if (pos + limit > end) {
-    limit = end - pos;
-  }
-
-  const strBuf = [];
-
-  for (let i = 0; i < limit; ++i) {
-    strBuf.push(String.fromCharCode(stream.getByte()));
-  }
-
-  const str = strBuf.join('');
-  stream.pos = pos;
+function find(stream, needle, limit, backwards = false) {
+  (0, _util.assert)(limit > 0, 'The "limit" must be a positive integer.');
+  const str = (0, _util.bytesToString)(stream.peekBytes(limit));
   const index = backwards ? str.lastIndexOf(needle) : str.indexOf(needle);
 
   if (index === -1) {
@@ -3591,21 +3487,17 @@ class PDFDocument {
     if (Array.isArray(idArray) && idArray[0] && (0, _util.isString)(idArray[0]) && idArray[0] !== EMPTY_FINGERPRINT) {
       hash = (0, _util.stringToBytes)(idArray[0]);
     } else {
-      if (this.stream.ensureRange) {
-        this.stream.ensureRange(0, Math.min(FINGERPRINT_FIRST_BYTES, this.stream.end));
-      }
-
-      hash = (0, _crypto.calculateMD5)(this.stream.bytes.subarray(0, FINGERPRINT_FIRST_BYTES), 0, FINGERPRINT_FIRST_BYTES);
+      hash = (0, _crypto.calculateMD5)(this.stream.getByteRange(0, FINGERPRINT_FIRST_BYTES), 0, FINGERPRINT_FIRST_BYTES);
     }
 
-    let fingerprint = '';
+    const fingerprintBuf = [];
 
     for (let i = 0, ii = hash.length; i < ii; i++) {
       const hex = hash[i].toString(16);
-      fingerprint += hex.length === 1 ? '0' + hex : hex;
+      fingerprintBuf.push(hex.padStart(2, '0'));
     }
 
-    return (0, _util.shadow)(this, 'fingerprint', fingerprint);
+    return (0, _util.shadow)(this, 'fingerprint', fingerprintBuf.join(''));
   }
 
   _getLinearizationPage(pageIndex) {
@@ -4909,10 +4801,16 @@ var XRef = function XRefClosure() {
           entry.gen = parser.getObj();
           var type = parser.getObj();
 
-          if ((0, _primitives.isCmd)(type, 'f')) {
-            entry.free = true;
-          } else if ((0, _primitives.isCmd)(type, 'n')) {
-            entry.uncompressed = true;
+          if (type instanceof _primitives.Cmd) {
+            switch (type.cmd) {
+              case 'f':
+                entry.free = true;
+                break;
+
+              case 'n':
+                entry.uncompressed = true;
+                break;
+            }
           }
 
           if (!Number.isInteger(entry.offset) || !Number.isInteger(entry.gen) || !(entry.free || entry.uncompressed)) {
@@ -5196,7 +5094,12 @@ var XRef = function XRefClosure() {
 
       for (i = 0, ii = trailers.length; i < ii; ++i) {
         stream.pos = trailers[i];
-        var parser = new _parser.Parser(new _parser.Lexer(stream), true, this, true);
+        const parser = new _parser.Parser({
+          lexer: new _parser.Lexer(stream),
+          xref: this,
+          allowStreams: true,
+          recoveryMode: true
+        });
         var obj = parser.getObj();
 
         if (!(0, _primitives.isCmd)(obj, 'trailer')) {
@@ -5254,7 +5157,11 @@ var XRef = function XRefClosure() {
 
           startXRefParsedCache[startXRef] = true;
           stream.pos = startXRef + stream.start;
-          var parser = new _parser.Parser(new _parser.Lexer(stream), true, this);
+          const parser = new _parser.Parser({
+            lexer: new _parser.Lexer(stream),
+            xref: this,
+            allowStreams: true
+          });
           var obj = parser.getObj();
           var dict;
 
@@ -5382,7 +5289,11 @@ var XRef = function XRefClosure() {
       }
 
       var stream = this.stream.makeSubStream(xrefEntry.offset + this.stream.start);
-      var parser = new _parser.Parser(new _parser.Lexer(stream), true, this);
+      const parser = new _parser.Parser({
+        lexer: new _parser.Lexer(stream),
+        xref: this,
+        allowStreams: true
+      });
       var obj1 = parser.getObj();
       var obj2 = parser.getObj();
       var obj3 = parser.getObj();
@@ -5395,7 +5306,7 @@ var XRef = function XRefClosure() {
         obj2 = parseInt(obj2, 10);
       }
 
-      if (obj1 !== num || obj2 !== gen || !(0, _primitives.isCmd)(obj3)) {
+      if (obj1 !== num || obj2 !== gen || !(obj3 instanceof _primitives.Cmd)) {
         throw new _core_utils.XRefEntryException(`Bad (uncompressed) XRef entry: ${ref}`);
       }
 
@@ -5439,8 +5350,11 @@ var XRef = function XRefClosure() {
         throw new _util.FormatError('invalid first and n parameters for ObjStm stream');
       }
 
-      var parser = new _parser.Parser(new _parser.Lexer(stream), false, this);
-      parser.allowStreams = true;
+      const parser = new _parser.Parser({
+        lexer: new _parser.Lexer(stream),
+        xref: this,
+        allowStreams: true
+      });
       var i,
           entries = [],
           num,
@@ -5950,10 +5864,15 @@ function computeAdler32(bytes) {
 }
 
 class Parser {
-  constructor(lexer, allowStreams, xref, recoveryMode = false) {
+  constructor({
+    lexer,
+    xref,
+    allowStreams = false,
+    recoveryMode = false
+  }) {
     this.lexer = lexer;
-    this.allowStreams = allowStreams;
     this.xref = xref;
+    this.allowStreams = allowStreams;
     this.recoveryMode = recoveryMode;
     this.imageCache = Object.create(null);
     this.refill();
@@ -5965,7 +5884,7 @@ class Parser {
   }
 
   shift() {
-    if ((0, _primitives.isCmd)(this.buf2, 'ID')) {
+    if (this.buf2 instanceof _primitives.Cmd && this.buf2.cmd === 'ID') {
       this.buf1 = this.buf2;
       this.buf2 = null;
     } else {
@@ -6648,7 +6567,7 @@ function toHexDigit(ch) {
 }
 
 class Lexer {
-  constructor(stream, knownCommands) {
+  constructor(stream, knownCommands = null) {
     this.stream = stream;
     this.nextChar();
     this.strBuf = [];
@@ -7155,7 +7074,10 @@ class Linearization {
       throw new Error('Hint array in the linearization dictionary is invalid.');
     }
 
-    const parser = new Parser(new Lexer(stream), false, null);
+    const parser = new Parser({
+      lexer: new Lexer(stream),
+      xref: null
+    });
     const obj1 = parser.getObj();
     const obj2 = parser.getObj();
     const obj3 = parser.getObj();
@@ -7273,6 +7195,18 @@ var Stream = function StreamClosure() {
       var bytes = this.getBytes(length, forceClamped);
       this.pos -= bytes.length;
       return bytes;
+    },
+
+    getByteRange(begin, end) {
+      if (begin < 0) {
+        begin = 0;
+      }
+
+      if (end > this.end) {
+        end = this.end;
+      }
+
+      return this.bytes.subarray(begin, end);
     },
 
     skip: function Stream_skip(n) {
@@ -7435,6 +7369,11 @@ var DecodeStream = function DecodeStreamClosure() {
 
       return new Stream(this.buffer, start, length, dict);
     },
+
+    getByteRange(begin, end) {
+      (0, _util.unreachable)('Should not call DecodeStream.getByteRange');
+    },
+
     skip: function DecodeStream_skip(n) {
       if (!n) {
         n = 1;
@@ -18685,14 +18624,51 @@ class MarkupAnnotation extends Annotation {
     super(parameters);
     const dict = parameters.dict;
 
-    if (!dict.has('C')) {
-      this.data.color = null;
+    if (dict.has('IRT')) {
+      const rawIRT = dict.getRaw('IRT');
+      this.data.inReplyTo = (0, _primitives.isRef)(rawIRT) ? rawIRT.toString() : null;
+      const rt = dict.get('RT');
+      this.data.replyType = (0, _primitives.isName)(rt) ? rt.name : _util.AnnotationReplyType.REPLY;
     }
 
-    this.setCreationDate(dict.get('CreationDate'));
-    this.data.creationDate = this.creationDate;
-    this.data.hasPopup = dict.has('Popup');
-    this.data.title = (0, _util.stringToPDFString)(dict.get('T') || '');
+    if (this.data.replyType === _util.AnnotationReplyType.GROUP) {
+      const parent = dict.get('IRT');
+      this.data.title = (0, _util.stringToPDFString)(parent.get('T') || '');
+      this.setContents(parent.get('Contents'));
+      this.data.contents = this.contents;
+
+      if (!parent.has('CreationDate')) {
+        this.data.creationDate = null;
+      } else {
+        this.setCreationDate(parent.get('CreationDate'));
+        this.data.creationDate = this.creationDate;
+      }
+
+      if (!parent.has('M')) {
+        this.data.modificationDate = null;
+      } else {
+        this.setModificationDate(parent.get('M'));
+        this.data.modificationDate = this.modificationDate;
+      }
+
+      this.data.hasPopup = parent.has('Popup');
+
+      if (!parent.has('C')) {
+        this.data.color = null;
+      } else {
+        this.setColor(parent.getArray('C'));
+        this.data.color = this.color;
+      }
+    } else {
+      this.data.title = (0, _util.stringToPDFString)(dict.get('T') || '');
+      this.setCreationDate(dict.get('CreationDate'));
+      this.data.creationDate = this.creationDate;
+      this.data.hasPopup = dict.has('Popup');
+
+      if (!dict.has('C')) {
+        this.data.color = null;
+      }
+    }
   }
 
   setCreationDate(creationDate) {
@@ -18976,6 +18952,7 @@ class TextAnnotation extends MarkupAnnotation {
   constructor(parameters) {
     const DEFAULT_ICON_SIZE = 22;
     super(parameters);
+    const dict = parameters.dict;
     this.data.annotationType = _util.AnnotationType.TEXT;
 
     if (this.data.hasAppearance) {
@@ -18983,7 +18960,15 @@ class TextAnnotation extends MarkupAnnotation {
     } else {
       this.data.rect[1] = this.data.rect[3] - DEFAULT_ICON_SIZE;
       this.data.rect[2] = this.data.rect[0] + DEFAULT_ICON_SIZE;
-      this.data.name = parameters.dict.has('Name') ? parameters.dict.get('Name').name : 'Note';
+      this.data.name = dict.has('Name') ? dict.get('Name').name : 'Note';
+    }
+
+    if (dict.has('State')) {
+      this.data.state = dict.get('State') || null;
+      this.data.stateModel = dict.get('StateModel') || null;
+    } else {
+      this.data.state = null;
+      this.data.stateModel = null;
     }
   }
 
@@ -19017,9 +19002,13 @@ class PopupAnnotation extends Annotation {
 
     let parentSubtype = parentItem.get('Subtype');
     this.data.parentType = (0, _primitives.isName)(parentSubtype) ? parentSubtype.name : null;
-    this.data.parentId = dict.getRaw('Parent').toString();
-    this.data.title = (0, _util.stringToPDFString)(parentItem.get('T') || '');
-    this.data.contents = (0, _util.stringToPDFString)(parentItem.get('Contents') || '');
+    const rawParent = dict.getRaw('Parent');
+    this.data.parentId = (0, _primitives.isRef)(rawParent) ? rawParent.toString() : null;
+    const rt = parentItem.get('RT');
+
+    if ((0, _primitives.isName)(rt, _util.AnnotationReplyType.GROUP)) {
+      parentItem = parentItem.get('IRT');
+    }
 
     if (!parentItem.has('M')) {
       this.data.modificationDate = null;
@@ -19042,6 +19031,9 @@ class PopupAnnotation extends Annotation {
         this.setFlags(parentFlags);
       }
     }
+
+    this.data.title = (0, _util.stringToPDFString)(parentItem.get('T') || '');
+    this.data.contents = (0, _util.stringToPDFString)(parentItem.get('Contents') || '');
   }
 
 }
@@ -23015,7 +23007,10 @@ var EvaluatorPreprocessor = function EvaluatorPreprocessorClosure() {
 
   function EvaluatorPreprocessor(stream, xref, stateManager) {
     this.opMap = getOPMap();
-    this.parser = new _parser.Parser(new _parser.Lexer(stream, this.opMap), false, xref);
+    this.parser = new _parser.Parser({
+      lexer: new _parser.Lexer(stream, this.opMap),
+      xref
+    });
     this.stateManager = stateManager;
     this.nonProcessedArgs = [];
     this._numInvalidPathOPS = 0;
@@ -23032,7 +23027,7 @@ var EvaluatorPreprocessor = function EvaluatorPreprocessorClosure() {
       while (true) {
         var obj = this.parser.getObj();
 
-        if ((0, _primitives.isCmd)(obj)) {
+        if (obj instanceof _primitives.Cmd) {
           var cmd = obj.cmd;
           var opSpec = this.opMap[cmd];
 
@@ -23089,7 +23084,7 @@ var EvaluatorPreprocessor = function EvaluatorPreprocessorClosure() {
           return true;
         }
 
-        if ((0, _primitives.isEOF)(obj)) {
+        if (obj === _primitives.EOF) {
           return false;
         }
 
@@ -30881,6 +30876,7 @@ var getGlyphsUnicode = getLookupTableFactory(function (t) {
  t['feicoptic'] = 0x03E5;
  t['female'] = 0x2640;
  t['ff'] = 0xFB00;
+ t['f_f'] = 0xFB00;
  t['ffi'] = 0xFB03;
  t['ffl'] = 0xFB04;
  t['fi'] = 0xFB01;
@@ -38061,6 +38057,14 @@ Shadings.RadialAxial = function RadialAxialClosure() {
     var cs = dict.get('ColorSpace', 'CS');
     cs = _colorspace.ColorSpace.parse(cs, xref, res, pdfFunctionFactory);
     this.cs = cs;
+    const bbox = dict.getArray('BBox');
+
+    if (Array.isArray(bbox) && bbox.length === 4) {
+      this.bbox = _util.Util.normalizeRect(bbox);
+    } else {
+      this.bbox = null;
+    }
+
     var t0 = 0.0,
         t1 = 1.0;
 
@@ -38176,7 +38180,7 @@ Shadings.RadialAxial = function RadialAxialClosure() {
         }
       }
 
-      return ['RadialAxial', type, this.colorStops, p0, p1, r0, r1];
+      return ['RadialAxial', type, this.bbox, this.colorStops, p0, p1, r0, r1];
     }
   };
   return RadialAxial;
@@ -38793,7 +38797,14 @@ Shadings.Mesh = function MeshClosure() {
     this.matrix = matrix;
     this.shadingType = dict.get('ShadingType');
     this.type = 'Pattern';
-    this.bbox = dict.getArray('BBox');
+    const bbox = dict.getArray('BBox');
+
+    if (Array.isArray(bbox) && bbox.length === 4) {
+      this.bbox = _util.Util.normalizeRect(bbox);
+    } else {
+      this.bbox = null;
+    }
+
     var cs = dict.get('ColorSpace', 'CS');
     cs = _colorspace.ColorSpace.parse(cs, xref, res, pdfFunctionFactory);
     this.cs = cs;
@@ -44689,16 +44700,12 @@ function makeReasonSerializable(reason) {
   return new _util.UnknownErrorException(reason.message, reason.toString());
 }
 
-function resolveOrReject(capability, success, reason) {
-  if (success) {
+function resolveOrReject(capability, data) {
+  if (data.success) {
     capability.resolve();
   } else {
-    capability.reject(reason);
+    capability.reject(wrapReason(data.reason));
   }
-}
-
-function finalize(promise) {
-  return Promise.resolve(promise).catch(() => {});
 }
 
 function MessageHandler(sourceName, targetName, comObj) {
@@ -44985,7 +44992,7 @@ MessageHandler.prototype = {
 
     let deleteStreamController = () => {
       Promise.all([this.streamControllers[data.streamId].startCall, this.streamControllers[data.streamId].pullCall, this.streamControllers[data.streamId].cancelCall].map(function (capability) {
-        return capability && finalize(capability.promise);
+        return capability && capability.promise.catch(function () {});
       })).then(() => {
         delete this.streamControllers[data.streamId];
       });
@@ -44993,11 +45000,11 @@ MessageHandler.prototype = {
 
     switch (data.stream) {
       case 'start_complete':
-        resolveOrReject(this.streamControllers[data.streamId].startCall, data.success, wrapReason(data.reason));
+        resolveOrReject(this.streamControllers[data.streamId].startCall, data);
         break;
 
       case 'pull_complete':
-        resolveOrReject(this.streamControllers[data.streamId].pullCall, data.success, wrapReason(data.reason));
+        resolveOrReject(this.streamControllers[data.streamId].pullCall, data);
         break;
 
       case 'pull':
@@ -45056,7 +45063,7 @@ MessageHandler.prototype = {
         break;
 
       case 'cancel_complete':
-        resolveOrReject(this.streamControllers[data.streamId].cancelCall, data.success, wrapReason(data.reason));
+        resolveOrReject(this.streamControllers[data.streamId].cancelCall, data);
         deleteStreamController();
         break;
 
@@ -45100,6 +45107,159 @@ MessageHandler.prototype = {
   }
 
 };
+
+/***/ }),
+/* 49 */
+/***/ (function(module, exports, __w_pdfjs_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.PDFWorkerStream = void 0;
+
+var _util = __w_pdfjs_require__(2);
+
+class PDFWorkerStream {
+  constructor(msgHandler) {
+    this._msgHandler = msgHandler;
+    this._contentLength = null;
+    this._fullRequestReader = null;
+    this._rangeRequestReaders = [];
+  }
+
+  getFullReader() {
+    (0, _util.assert)(!this._fullRequestReader);
+    this._fullRequestReader = new PDFWorkerStreamReader(this._msgHandler);
+    return this._fullRequestReader;
+  }
+
+  getRangeReader(begin, end) {
+    const reader = new PDFWorkerStreamRangeReader(begin, end, this._msgHandler);
+
+    this._rangeRequestReaders.push(reader);
+
+    return reader;
+  }
+
+  cancelAllRequests(reason) {
+    if (this._fullRequestReader) {
+      this._fullRequestReader.cancel(reason);
+    }
+
+    const readers = this._rangeRequestReaders.slice(0);
+
+    readers.forEach(function (reader) {
+      reader.cancel(reason);
+    });
+  }
+
+}
+
+exports.PDFWorkerStream = PDFWorkerStream;
+
+class PDFWorkerStreamReader {
+  constructor(msgHandler) {
+    this._msgHandler = msgHandler;
+    this.onProgress = null;
+    this._contentLength = null;
+    this._isRangeSupported = false;
+    this._isStreamingSupported = false;
+
+    const readableStream = this._msgHandler.sendWithStream('GetReader');
+
+    this._reader = readableStream.getReader();
+    this._headersReady = this._msgHandler.sendWithPromise('ReaderHeadersReady').then(data => {
+      this._isStreamingSupported = data.isStreamingSupported;
+      this._isRangeSupported = data.isRangeSupported;
+      this._contentLength = data.contentLength;
+    });
+  }
+
+  get headersReady() {
+    return this._headersReady;
+  }
+
+  get contentLength() {
+    return this._contentLength;
+  }
+
+  get isStreamingSupported() {
+    return this._isStreamingSupported;
+  }
+
+  get isRangeSupported() {
+    return this._isRangeSupported;
+  }
+
+  async read() {
+    const {
+      value,
+      done
+    } = await this._reader.read();
+
+    if (done) {
+      return {
+        value: undefined,
+        done: true
+      };
+    }
+
+    return {
+      value: value.buffer,
+      done: false
+    };
+  }
+
+  cancel(reason) {
+    this._reader.cancel(reason);
+  }
+
+}
+
+class PDFWorkerStreamRangeReader {
+  constructor(begin, end, msgHandler) {
+    this._msgHandler = msgHandler;
+    this.onProgress = null;
+
+    const readableStream = this._msgHandler.sendWithStream('GetRangeReader', {
+      begin,
+      end
+    });
+
+    this._reader = readableStream.getReader();
+  }
+
+  get isStreamingSupported() {
+    return false;
+  }
+
+  async read() {
+    const {
+      value,
+      done
+    } = await this._reader.read();
+
+    if (done) {
+      return {
+        value: undefined,
+        done: true
+      };
+    }
+
+    return {
+      value: value.buffer,
+      done: false
+    };
+  }
+
+  cancel(reason) {
+    this._reader.cancel(reason);
+  }
+
+}
 
 /***/ })
 /******/ ]);

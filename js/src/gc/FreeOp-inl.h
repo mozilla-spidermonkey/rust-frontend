@@ -17,7 +17,7 @@ namespace js {
 inline void FreeOp::free_(gc::Cell* cell, void* p, size_t nbytes,
                           MemoryUse use) {
   if (p) {
-    RemoveCellMemory(cell, nbytes, use);
+    removeCellMemory(cell, nbytes, use);
     js_free(p);
   }
 }
@@ -25,12 +25,12 @@ inline void FreeOp::free_(gc::Cell* cell, void* p, size_t nbytes,
 inline void FreeOp::freeLater(gc::Cell* cell, void* p, size_t nbytes,
                               MemoryUse use) {
   if (p) {
-    RemoveCellMemory(cell, nbytes, use);
-    freeLater(p);
+    removeCellMemory(cell, nbytes, use);
+    queueForFreeLater(p);
   }
 }
 
-inline void FreeOp::freeLater(void* p) {
+inline void FreeOp::queueForFreeLater(void* p) {
   // Default FreeOps are not constructed on the stack, and will hold onto the
   // pointers to free indefinitely.
   MOZ_ASSERT(!isDefaultFreeOp());
@@ -44,11 +44,17 @@ inline void FreeOp::freeLater(void* p) {
 }
 
 template <class T>
-inline void FreeOp::release(gc::Cell* cell, T* p, size_t nbytes, MemoryUse use) {
+inline void FreeOp::release(gc::Cell* cell, T* p, size_t nbytes,
+                            MemoryUse use) {
   if (p) {
-    RemoveCellMemory(cell, nbytes, use);
+    removeCellMemory(cell, nbytes, use);
     p->Release();
   }
+}
+
+inline void FreeOp::removeCellMemory(gc::Cell* cell, size_t nbytes,
+                                     MemoryUse use) {
+  RemoveCellMemory(cell, nbytes, use, isCollecting());
 }
 
 }  // namespace js

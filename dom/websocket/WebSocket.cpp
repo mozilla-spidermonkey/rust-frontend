@@ -10,6 +10,7 @@
 
 #include "jsapi.h"
 #include "jsfriendapi.h"
+#include "mozilla/Atomics.h"
 #include "mozilla/DOMEventTargetHelper.h"
 #include "mozilla/net/WebSocketChannel.h"
 #include "mozilla/dom/File.h"
@@ -176,7 +177,7 @@ class WebSocketImpl final : public nsIInterfaceRequestor,
 
   bool mOnCloseScheduled;
   bool mFailed;
-  bool mDisconnectingOrDisconnected;
+  Atomic<bool> mDisconnectingOrDisconnected;
 
   // Set attributes of DOM 'onclose' message
   bool mCloseEventWasClean;
@@ -231,9 +232,42 @@ class WebSocketImpl final : public nsIInterfaceRequestor,
   }
 };
 
-NS_IMPL_ISUPPORTS(WebSocketImpl, nsIInterfaceRequestor, nsIWebSocketListener,
-                  nsIObserver, nsISupportsWeakReference, nsIRequest,
-                  nsIEventTarget)
+NS_IMPL_ADDREF(WebSocketImpl)
+NS_IMPL_QUERY_INTERFACE(WebSocketImpl, nsIInterfaceRequestor,
+                        nsIWebSocketListener, nsIObserver,
+                        nsISupportsWeakReference, nsIRequest, nsIEventTarget)
+
+NS_IMETHODIMP_(MozExternalRefCountType) WebSocketImpl::Release(void) {
+  MOZ_ASSERT(int32_t(mRefCnt) > 0, "dup release");
+
+  if (!mRefCnt.isThreadSafe) {
+    NS_ASSERT_OWNINGTHREAD(WebSocketImpl);
+  }
+
+  nsrefcnt count = mRefCnt - 1;
+  // If WebSocketImpl::Disconnect is not called, the last release of
+  // WebSocketImpl should be on the right thread.
+  if (count == 0 && !IsTargetThread() && !mDisconnectingOrDisconnected) {
+    DebugOnly<nsresult> rv = Dispatch(NewNonOwningRunnableMethod(
+        "dom::WebSocketImpl::Release", this, &WebSocketImpl::Release));
+    MOZ_ASSERT(NS_SUCCEEDED(rv));
+    return count;
+  }
+
+  count = --mRefCnt;
+  NS_LOG_RELEASE(this, count, "WebSocketImpl");
+
+  if (count == 0) {
+    if (!mRefCnt.isThreadSafe) {
+      NS_ASSERT_OWNINGTHREAD(WebSocketImpl);
+    }
+
+    mRefCnt = 1; /* stabilize */
+    delete (this);
+    return 0;
+  }
+  return count;
+}
 
 class CallDispatchConnectionCloseEvents final : public CancelableRunnable {
  public:
@@ -1144,7 +1178,8 @@ class AsyncOpenRunnable final : public WebSocketMainThreadRunnable {
     }
 
     uint64_t windowID = 0;
-    nsCOMPtr<nsPIDOMWindowOuter> topWindow = aWindow->GetScriptableTop();
+    nsCOMPtr<nsPIDOMWindowOuter> topWindow =
+        aWindow->GetInProcessScriptableTop();
     nsCOMPtr<nsPIDOMWindowInner> topInner;
     if (topWindow) {
       topInner = topWindow->GetCurrentInnerWindow();
@@ -1366,7 +1401,8 @@ already_AddRefed<WebSocket> WebSocket::ConstructorCommon(
     }
 
     uint64_t windowID = 0;
-    nsCOMPtr<nsPIDOMWindowOuter> topWindow = outerWindow->GetScriptableTop();
+    nsCOMPtr<nsPIDOMWindowOuter> topWindow =
+        outerWindow->GetInProcessScriptableTop();
     nsCOMPtr<nsPIDOMWindowInner> topInner;
     if (topWindow) {
       topInner = topWindow->GetCurrentInnerWindow();
@@ -1611,14 +1647,8 @@ nsresult WebSocketImpl::Init(JSContext* aCx, nsIPrincipal* aLoadingPrincipal,
       aLoadingPrincipal->GetURI(getter_AddRefs(originURI));
     }
 
-    if (originURI) {
-      bool originIsHttps = false;
-      rv = originURI->SchemeIs("https", &originIsHttps);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      if (originIsHttps) {
-        return NS_ERROR_DOM_SECURITY_ERR;
-      }
+    if (originURI && originURI->SchemeIs("https")) {
+      return NS_ERROR_DOM_SECURITY_ERR;
     }
   }
 
@@ -2685,7 +2715,7 @@ nsresult WebSocketImpl::GetLoadingPrincipal(nsIPrincipal** aPrincipal) {
     }
 
     nsCOMPtr<nsPIDOMWindowOuter> parentWindow =
-        innerWindow->GetScriptableParent();
+        innerWindow->GetInProcessScriptableParent();
     if (NS_WARN_IF(!parentWindow)) {
       return NS_ERROR_DOM_SECURITY_ERR;
     }
@@ -2710,7 +2740,8 @@ nsresult WebSocketImpl::GetLoadingPrincipal(nsIPrincipal** aPrincipal) {
         break;
       }
 
-      if (parentWindow->GetScriptableTop() == innerWindow->GetScriptableTop()) {
+      if (parentWindow->GetInProcessScriptableTop() ==
+          innerWindow->GetInProcessScriptableTop()) {
         break;
       }
 

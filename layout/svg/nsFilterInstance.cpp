@@ -23,6 +23,7 @@
 #include "mozilla/gfx/Filters.h"
 #include "mozilla/gfx/Helpers.h"
 #include "mozilla/gfx/PatternHelpers.h"
+#include "mozilla/StaticPrefs_gfx.h"
 #include "nsCSSFilterInstance.h"
 #include "nsSVGDisplayableFrame.h"
 #include "nsSVGFilterInstance.h"
@@ -146,7 +147,7 @@ bool nsFilterInstance::BuildWebRenderFilters(nsIFrame* aFilteredFrame,
   // If there are too many filters to render, then just pretend that we
   // succeeded, and don't render any of them.
   if (instance.mFilterDescription.mPrimitives.Length() >
-      StaticPrefs::WebRenderMaxFilterOpsPerChain()) {
+      StaticPrefs::gfx_webrender_max_filter_ops_per_chain()) {
     return true;
   }
 

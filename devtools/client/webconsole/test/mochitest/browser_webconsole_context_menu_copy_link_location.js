@@ -8,9 +8,10 @@
 
 "use strict";
 
-const TEST_URI = "http://example.com/browser/devtools/client/webconsole/" +
-                 "test/mochitest/test-console.html?_date=" +
-                 Date.now();
+const TEST_URI =
+  "http://example.com/browser/devtools/client/webconsole/" +
+  "test/mochitest/test-console.html?_date=" +
+  Date.now();
 const CONTEXT_MENU_ID = "#console-menu-copy-url";
 
 add_task(async function() {
@@ -37,7 +38,9 @@ add_task(async function() {
   ok(!copyURLItem, "Copy URL menu item is hidden for a simple text message");
 
   info("Open and check the context menu for the logged text message");
-  const locationElement = message.node.querySelector(".frame-link-source-inner");
+  const locationElement = message.node.querySelector(
+    ".frame-link-source-inner"
+  );
   menuPopup = await openContextMenu(hud, locationElement);
   copyURLItem = menuPopup.querySelector(CONTEXT_MENU_ID);
   ok(copyURLItem, "The Copy Link Location entry is displayed");
@@ -67,6 +70,31 @@ add_task(async function() {
 
   info("Click on Copy URL menu item and wait for clipboard to be updated");
   await waitForClipboardPromise(() => copyURLItem.click(), TEST_URI);
+  ok(true, "Expected text was copied to the clipboard.");
+
+  await hideContextMenu(hud);
+  hud.ui.clearOutput();
+
+  info("Test Copy URL menu item from [Learn More] link");
+
+  info("Generate a Reference Error in the JS Console");
+  message = await executeAndWaitForMessage(
+    hud,
+    "area51.aliens",
+    "ReferenceError:"
+  );
+  ok(message, "Error log found in the console");
+
+  const learnMoreElement = message.node.querySelector(".learn-more-link");
+  menuPopup = await openContextMenu(hud, learnMoreElement);
+  copyURLItem = menuPopup.querySelector(CONTEXT_MENU_ID);
+  ok(copyURLItem, "Copy url menu item is available in context menu");
+
+  info("Click on Copy URL menu item and wait for clipboard to be updated");
+  await waitForClipboardPromise(
+    () => copyURLItem.click(),
+    learnMoreElement.href
+  );
   ok(true, "Expected text was copied to the clipboard.");
 
   await hideContextMenu(hud);

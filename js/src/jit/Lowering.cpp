@@ -1568,14 +1568,7 @@ void LIRGenerator::visitSign(MSign* ins) {
 
 void LIRGenerator::visitMathFunction(MMathFunction* ins) {
   MOZ_ASSERT(IsFloatingPointType(ins->type()));
-  MOZ_ASSERT_IF(ins->input()->type() != MIRType::SinCosDouble,
-                ins->type() == ins->input()->type());
-
-  if (ins->input()->type() == MIRType::SinCosDouble) {
-    MOZ_ASSERT(ins->type() == MIRType::Double);
-    redefine(ins, ins->input(), ins->function());
-    return;
-  }
+  MOZ_ASSERT(ins->type() == ins->input()->type());
 
   LInstruction* lir;
   if (ins->type() == MIRType::Double) {
@@ -2855,25 +2848,6 @@ void LIRGenerator::visitTypedArrayElementShift(MTypedArrayElementShift* ins) {
          ins);
 }
 
-void LIRGenerator::visitSetDisjointTypedElements(
-    MSetDisjointTypedElements* ins) {
-  MOZ_ASSERT(ins->type() == MIRType::None);
-
-  MDefinition* target = ins->target();
-  MOZ_ASSERT(target->type() == MIRType::Object);
-
-  MDefinition* targetOffset = ins->targetOffset();
-  MOZ_ASSERT(targetOffset->type() == MIRType::Int32);
-
-  MDefinition* source = ins->source();
-  MOZ_ASSERT(source->type() == MIRType::Object);
-
-  auto lir = new (alloc())
-      LSetDisjointTypedElements(useRegister(target), useRegister(targetOffset),
-                                useRegister(source), temp());
-  add(lir, ins);
-}
-
 void LIRGenerator::visitTypedObjectDescr(MTypedObjectDescr* ins) {
   MOZ_ASSERT(ins->type() == MIRType::Object);
   define(new (alloc()) LTypedObjectDescr(useRegisterAtStart(ins->object())),
@@ -3407,18 +3381,6 @@ void LIRGenerator::visitArrayJoin(MArrayJoin* ins) {
                                useRegisterAtStart(ins->sep()), tempDef);
   defineReturn(lir, ins);
   assignSafepoint(lir, ins);
-}
-
-void LIRGenerator::visitSinCos(MSinCos* ins) {
-  MOZ_ASSERT(ins->type() == MIRType::SinCosDouble);
-  MOZ_ASSERT(ins->input()->type() == MIRType::Double ||
-             ins->input()->type() == MIRType::Float32 ||
-             ins->input()->type() == MIRType::Int32);
-
-  LSinCos* lir = new (alloc()) LSinCos(useRegisterAtStart(ins->input()),
-                                       tempFixed(CallTempNonArgRegs[0]),
-                                       tempFixed(CallTempNonArgRegs[1]));
-  defineSinCos(lir, ins);
 }
 
 void LIRGenerator::visitStringSplit(MStringSplit* ins) {
@@ -5088,6 +5050,10 @@ void LIRGenerator::visitWasmSelect(MWasmSelect* ins) {
                   useRegister(ins->condExpr()));
 
   defineReuseInput(lir, ins, LWasmSelect::TrueExprIndex);
+}
+
+void LIRGenerator::visitWasmFence(MWasmFence* ins) {
+  add(new (alloc()) LWasmFence, ins);
 }
 
 static_assert(!std::is_polymorphic<LIRGenerator>::value,

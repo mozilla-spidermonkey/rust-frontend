@@ -8,7 +8,7 @@
 #include "base/thread.h"
 #include "mozilla/dom/ContentChild.h"  // for launching RDD w/ ContentChild
 #include "mozilla/layers/SynchronousTask.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_media.h"
 #include "mozilla/SyncRunnable.h"
 
 #ifdef MOZ_AV1
@@ -18,7 +18,9 @@
 #include "RemoteDecoderManagerChild.h"
 #include "RemoteMediaDataDecoder.h"
 #include "RemoteVideoDecoder.h"
+#include "OpusDecoder.h"
 #include "VorbisDecoder.h"
+#include "WAVDecoder.h"
 
 namespace mozilla {
 
@@ -26,6 +28,8 @@ using base::Thread;
 using dom::ContentChild;
 using namespace ipc;
 using namespace layers;
+
+StaticMutex RemoteDecoderModule::sLaunchMonitor;
 
 RemoteDecoderModule::RemoteDecoderModule()
     : mManagerThread(RemoteDecoderManagerChild::GetManagerThread()) {}
@@ -35,12 +39,18 @@ bool RemoteDecoderModule::SupportsMimeType(
   bool supports = false;
 
 #ifdef MOZ_AV1
-  if (StaticPrefs::MediaAv1Enabled()) {
+  if (StaticPrefs::media_av1_enabled()) {
     supports |= AOMDecoder::IsAV1(aMimeType);
   }
 #endif
-  if (StaticPrefs::MediaRddVorbisEnabled()) {
+  if (StaticPrefs::media_rdd_vorbis_enabled()) {
     supports |= VorbisDataDecoder::IsVorbis(aMimeType);
+  }
+  if (StaticPrefs::media_rdd_wav_enabled()) {
+    supports |= WaveDataDecoder::IsWave(aMimeType);
+  }
+  if (StaticPrefs::media_rdd_opus_enabled()) {
+    supports |= OpusDataDecoder::IsOpus(aMimeType);
   }
 
   MOZ_LOG(
@@ -53,6 +63,8 @@ void RemoteDecoderModule::LaunchRDDProcessIfNeeded() {
   if (!XRE_IsContentProcess()) {
     return;
   }
+
+  StaticMutexAutoLock mon(sLaunchMonitor);
 
   // We have a couple possible states here.  We are in a content process
   // and:
@@ -146,8 +158,11 @@ already_AddRefed<MediaDataDecoder> RemoteDecoderModule::CreateVideoDecoder(
   // thread during this single dispatch.
   RefPtr<Runnable> task =
       NS_NewRunnableFunction("RemoteDecoderModule::CreateVideoDecoder", [&]() {
-        result = child->InitIPDL(aParams.VideoConfig(), aParams.mRate.mValue,
-                                 aParams.mOptions);
+        result = child->InitIPDL(
+            aParams.VideoConfig(), aParams.mRate.mValue, aParams.mOptions,
+            aParams.mKnowsCompositor
+                ? &aParams.mKnowsCompositor->GetTextureFactoryIdentifier()
+                : nullptr);
         if (NS_FAILED(result)) {
           // Release RemoteVideoDecoderChild here, while we're on
           // manager thread.  Don't just let the RefPtr go out of scope.

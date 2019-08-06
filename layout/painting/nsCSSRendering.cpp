@@ -686,6 +686,23 @@ ImgDrawResult nsCSSRendering::CreateWebRenderCommandsForBorder(
       aDisplayListBuilder, *styleBorder);
 }
 
+void nsCSSRendering::CreateWebRenderCommandsForNullBorder(
+    nsDisplayItem* aItem, nsIFrame* aForFrame, const nsRect& aBorderArea,
+    mozilla::wr::DisplayListBuilder& aBuilder,
+    mozilla::wr::IpcResourceUpdateQueue& aResources,
+    const mozilla::layers::StackingContextHelper& aSc,
+    const nsStyleBorder& aStyleBorder) {
+  bool borderIsEmpty = false;
+  Maybe<nsCSSBorderRenderer> br =
+      nsCSSRendering::CreateNullBorderRendererWithStyleBorder(
+          aForFrame->PresContext(), nullptr, aForFrame, nsRect(), aBorderArea,
+          aStyleBorder, aForFrame->Style(), &borderIsEmpty,
+          aForFrame->GetSkipSides());
+  if (!borderIsEmpty && br) {
+    br->CreateWebRenderCommands(aItem, aBuilder, aResources, aSc);
+  }
+}
+
 ImgDrawResult nsCSSRendering::CreateWebRenderCommandsForBorderWithStyleBorder(
     nsDisplayItem* aItem, nsIFrame* aForFrame, const nsRect& aBorderArea,
     mozilla::wr::DisplayListBuilder& aBuilder,
@@ -694,38 +711,17 @@ ImgDrawResult nsCSSRendering::CreateWebRenderCommandsForBorderWithStyleBorder(
     mozilla::layers::RenderRootStateManager* aManager,
     nsDisplayListBuilder* aDisplayListBuilder,
     const nsStyleBorder& aStyleBorder) {
-  // First try to draw a normal border
-  {
-    bool borderIsEmpty = false;
-    Maybe<nsCSSBorderRenderer> br =
-        nsCSSRendering::CreateBorderRendererWithStyleBorder(
-            aForFrame->PresContext(), nullptr, aForFrame, nsRect(), aBorderArea,
-            aStyleBorder, aForFrame->Style(), &borderIsEmpty,
-            aForFrame->GetSkipSides());
-    if (borderIsEmpty) {
-      return ImgDrawResult::SUCCESS;
-    }
-
-    if (br) {
-      br->CreateWebRenderCommands(aItem, aBuilder, aResources, aSc);
-      return ImgDrawResult::SUCCESS;
-    }
+  // First try to create commands for simple borders.
+  nsStyleImageType type = aStyleBorder.mBorderImageSource.GetType();
+  if (type == eStyleImageType_Null) {
+    CreateWebRenderCommandsForNullBorder(
+        aItem, aForFrame, aBorderArea, aBuilder, aResources, aSc, aStyleBorder);
+    return ImgDrawResult::SUCCESS;
   }
 
-  // Next try to draw an image border
-  const nsStyleImage* image = &aStyleBorder.mBorderImageSource;
-
-  // Filter out unsupported image/border types
-  if (!image) {
-    return ImgDrawResult::NOT_SUPPORTED;
-  }
-
-  // All this code bitrotted too much (but is almost right); disabled for now.
-  bool imageTypeSupported = false;
-  // FIXME(1409773): fix this: image->GetType() == eStyleImageType_Image
-  // FIXME(1409774): fix this: image->GetType() == eStyleImageType_Gradient;
-
-  if (!imageTypeSupported) {
+  // Next we try image and gradient borders. Gradients are not supported at
+  // this very moment.
+  if (type != eStyleImageType_Image) {
     return ImgDrawResult::NOT_SUPPORTED;
   }
 
@@ -737,6 +733,9 @@ ImgDrawResult nsCSSRendering::CreateWebRenderCommandsForBorderWithStyleBorder(
   }
 
   uint32_t flags = 0;
+  if (aDisplayListBuilder->IsPaintingToWindow()) {
+    flags |= nsImageRenderer::FLAG_PAINTING_TO_WINDOW;
+  }
   if (aDisplayListBuilder->ShouldSyncDecodeImages()) {
     flags |= nsImageRenderer::FLAG_SYNC_DECODE_IMAGES;
   }
@@ -748,6 +747,10 @@ ImgDrawResult nsCSSRendering::CreateWebRenderCommandsForBorderWithStyleBorder(
           aItem->GetPaintRect(), aForFrame->GetSkipSides(), flags, &result);
 
   if (!bir) {
+    // We aren't ready. Try to fallback to the null border image if present but
+    // return the draw result for the border image renderer.
+    CreateWebRenderCommandsForNullBorder(
+        aItem, aForFrame, aBorderArea, aBuilder, aResources, aSc, aStyleBorder);
     return result;
   }
 
@@ -919,6 +922,20 @@ Maybe<nsCSSBorderRenderer> nsCSSRendering::CreateBorderRendererWithStyleBorder(
     const nsRect& aDirtyRect, const nsRect& aBorderArea,
     const nsStyleBorder& aStyleBorder, ComputedStyle* aComputedStyle,
     bool* aOutBorderIsEmpty, Sides aSkipSides) {
+  if (aStyleBorder.mBorderImageSource.GetType() != eStyleImageType_Null) {
+    return Nothing();
+  }
+  return CreateNullBorderRendererWithStyleBorder(
+      aPresContext, aDrawTarget, aForFrame, aDirtyRect, aBorderArea,
+      aStyleBorder, aComputedStyle, aOutBorderIsEmpty, aSkipSides);
+}
+
+Maybe<nsCSSBorderRenderer>
+nsCSSRendering::CreateNullBorderRendererWithStyleBorder(
+    nsPresContext* aPresContext, DrawTarget* aDrawTarget, nsIFrame* aForFrame,
+    const nsRect& aDirtyRect, const nsRect& aBorderArea,
+    const nsStyleBorder& aStyleBorder, ComputedStyle* aComputedStyle,
+    bool* aOutBorderIsEmpty, Sides aSkipSides) {
   const nsStyleDisplay* displayData = aComputedStyle->StyleDisplay();
   if (displayData->HasAppearance()) {
     nsITheme* theme = aPresContext->GetTheme();
@@ -926,10 +943,6 @@ Maybe<nsCSSBorderRenderer> nsCSSRendering::CreateBorderRendererWithStyleBorder(
                                             displayData->mAppearance)) {
       return Nothing();
     }
-  }
-
-  if (aStyleBorder.mBorderImageSource.GetType() != eStyleImageType_Null) {
-    return Nothing();
   }
 
   nsMargin border = aStyleBorder.GetComputedBorder();
@@ -4062,6 +4075,8 @@ gfxRect nsCSSRendering::GetTextDecorationRectInternal(
 
   gfxFloat lineThickness = NS_round(aParams.lineSize.height);
   lineThickness = std::max(lineThickness, 1.0);
+  gfxFloat defaultLineThickness = NS_round(aParams.defaultLineThickness);
+  defaultLineThickness = std::max(defaultLineThickness, 1.0);
 
   gfxFloat ascent = NS_round(aParams.ascent);
   gfxFloat descentLimit = floor(aParams.descentLimit);
@@ -4154,18 +4169,22 @@ gfxRect nsCSSRendering::GetTextDecorationRectInternal(
       }
     }
   } else if (aParams.decoration == StyleTextDecorationLine_OVERLINE) {
-    // For overline, we adjust the offset by lineThickness (the thickness of
-    // a single decoration line) because empirically it looks better to draw
-    // the overline just inside rather than outside the font's ascent, which
-    // is what nsTextFrame passes as aParams.offset (as fonts don't provide
-    // an explicit overline-offset).
-    offset = aParams.offset - lineThickness + r.Height();
+    // For overline, we adjust the offset by defaultlineThickness (the default
+    // thickness of a single decoration line) because empirically it looks
+    // better to draw the overline just inside rather than outside the font's
+    // ascent, which is what nsTextFrame passes as aParams.offset (as fonts
+    // don't provide an explicit overline-offset).
+    offset = aParams.offset - defaultLineThickness + r.Height();
   } else if (aParams.decoration == StyleTextDecorationLine_LINE_THROUGH) {
     // To maintain a consistent mid-point for line-through decorations,
     // we adjust the offset by half of the decoration rect's height.
     gfxFloat extra = floor(r.Height() / 2.0 + 0.5);
     extra = std::max(extra, lineThickness);
-    offset = aParams.offset - lineThickness + extra;
+    // computes offset for when user specifies a decoration width since
+    // aParams.offset is derived from the font metric's line height
+    gfxFloat decorationThicknessOffset =
+        (lineThickness - defaultLineThickness) / 2.0;
+    offset = aParams.offset - lineThickness + extra + decorationThicknessOffset;
   } else {
     MOZ_ASSERT_UNREACHABLE("Invalid text decoration value");
   }

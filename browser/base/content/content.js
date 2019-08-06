@@ -9,7 +9,9 @@
 /* eslint-env mozilla/frame-script */
 /* eslint no-unused-vars: ["error", {args: "none"}] */
 
-var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+var { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
 
 // BrowserChildGlobal
 var global = this;
@@ -32,11 +34,16 @@ addMessageListener("PasswordManager:fillForm", function(message) {
   // intercept if ContextMenu.jsm had sent a plain object for remote targets
   LoginManagerContent.receiveMessage(message, content);
 });
+addMessageListener("PasswordManager:fillGeneratedPassword", function(message) {
+  // forward message to LMC
+  LoginManagerContent.receiveMessage(message, content);
+});
 
 function shouldIgnoreLoginManagerEvent(event) {
+  let nodePrincipal = event.target.nodePrincipal;
   // If we have a null principal then prevent any more password manager code from running and
-  // incorrectly using the document `location`.
-  return event.target.nodePrincipal.isNullPrincipal;
+  // incorrectly using the document `location`. Also skip password manager for about: pages.
+  return nodePrincipal.isNullPrincipal || nodePrincipal.URI.schemeIs("about");
 }
 
 addEventListener("DOMFormBeforeSubmit", function(event) {

@@ -11,13 +11,14 @@
  * by perfherder via logs.
  */
 
-const TEST_URL = "data:text/html;charset=UTF-8,<div>Inspector modules load test</div>";
+const TEST_URL =
+  "data:text/html;charset=UTF-8,<div>Inspector modules load test</div>";
 
 add_task(async function() {
   await openNewTabAndToolbox(TEST_URL, "inspector");
 
   // The inspector does not use a dedicated browser loader.
-  const loaders = [loader.provider.loader];
+  const loaders = [loader.loader];
 
   runMetricsTest({
     filterString: "devtools/client/inspector",

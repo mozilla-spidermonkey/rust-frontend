@@ -6,8 +6,13 @@
 
 const { gDevTools } = require("devtools/client/framework/devtools");
 const { TargetFactory } = require("devtools/client/framework/target");
-const { addTab, removeTab } = require("devtools/client/performance/test/helpers/tab-utils");
-const { once } = require("devtools/client/performance/test/helpers/event-utils");
+const {
+  addTab,
+  removeTab,
+} = require("devtools/client/performance/test/helpers/tab-utils");
+const {
+  once,
+} = require("devtools/client/performance/test/helpers/event-utils");
 
 /**
  * Initializes a toolbox panel in a new tab.
@@ -76,11 +81,10 @@ exports.initConsoleInTab = async function({ tab }) {
   const consoleMethod = async function(method, label, event) {
     const performanceFront = await toolbox.target.getFront("performance");
     const recordingEventReceived = once(performanceFront, event);
-    if (label === undefined) {
-      await panel.hud.jsterm.execute(`console.${method}()`);
-    } else {
-      await panel.hud.jsterm.execute(`console.${method}("${label}")`);
-    }
+    const expression = label
+      ? `console.${method}("${label}")`
+      : `console.${method}()`;
+    await panel.hud.ui.wrapper.dispatchEvaluateExpression(expression);
     await recordingEventReceived;
   };
 

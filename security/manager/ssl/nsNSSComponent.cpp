@@ -1004,6 +1004,7 @@ static const bool ALPN_ENABLED_DEFAULT = false;
 static const bool ENABLED_0RTT_DATA_DEFAULT = false;
 static const bool HELLO_DOWNGRADE_CHECK_DEFAULT = false;
 static const bool ENABLED_POST_HANDSHAKE_AUTH_DEFAULT = false;
+static const bool DELEGATED_CREDENTIALS_ENABLED_DEFAULT = false;
 
 static void ConfigureTLSSessionIdentifiers() {
   bool disableSessionIdentifiers =
@@ -1570,7 +1571,10 @@ static nsresult InitializeNSSWithFallbacks(const nsACString& profilePath,
 #ifndef ANDROID
   PRErrorCode savedPRErrorCode1;
 #endif  // ifndef ANDROID
-  SECStatus srv = ::mozilla::psm::InitializeNSS(profilePath, false, !safeMode);
+  PKCS11DBConfig safeModeDBConfig =
+      safeMode ? PKCS11DBConfig::DoNotLoadModules : PKCS11DBConfig::LoadModules;
+  SECStatus srv = ::mozilla::psm::InitializeNSS(
+      profilePath, NSSDBConfig::ReadWrite, safeModeDBConfig);
   if (srv == SECSuccess) {
     MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("initialized NSS in r/w mode"));
 #ifndef ANDROID
@@ -1583,7 +1587,8 @@ static nsresult InitializeNSSWithFallbacks(const nsACString& profilePath,
   PRErrorCode savedPRErrorCode2;
 #endif  // ifndef ANDROID
   // That failed. Try read-only mode.
-  srv = ::mozilla::psm::InitializeNSS(profilePath, true, !safeMode);
+  srv = ::mozilla::psm::InitializeNSS(profilePath, NSSDBConfig::ReadOnly,
+                                      safeModeDBConfig);
   if (srv == SECSuccess) {
     MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("initialized NSS in r-o mode"));
     return NS_OK;
@@ -1610,7 +1615,8 @@ static nsresult InitializeNSSWithFallbacks(const nsACString& profilePath,
     // problem, but for some reason the combination of read-only and no-moddb
     // flags causes NSS initialization to fail, so unfortunately we have to use
     // read-write mode.
-    srv = ::mozilla::psm::InitializeNSS(profilePath, false, false);
+    srv = ::mozilla::psm::InitializeNSS(profilePath, NSSDBConfig::ReadWrite,
+                                        PKCS11DBConfig::DoNotLoadModules);
     if (srv == SECSuccess) {
       MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("FIPS may be the problem"));
       // Unload NSS so we can attempt to fix this situation for the user.
@@ -1636,12 +1642,14 @@ static nsresult InitializeNSSWithFallbacks(const nsACString& profilePath,
 #  endif
         return rv;
       }
-      srv = ::mozilla::psm::InitializeNSS(profilePath, false, true);
+      srv = ::mozilla::psm::InitializeNSS(profilePath, NSSDBConfig::ReadWrite,
+                                          PKCS11DBConfig::LoadModules);
       if (srv == SECSuccess) {
         MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("initialized in r/w mode"));
         return NS_OK;
       }
-      srv = ::mozilla::psm::InitializeNSS(profilePath, true, true);
+      srv = ::mozilla::psm::InitializeNSS(profilePath, NSSDBConfig::ReadOnly,
+                                          PKCS11DBConfig::LoadModules);
       if (srv == SECSuccess) {
         MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("initialized in r-o mode"));
         return NS_OK;
@@ -1760,6 +1768,11 @@ nsresult nsNSSComponent::InitializeNSS() {
       Preferences::GetBool("security.tls.enable_post_handshake_auth",
                            ENABLED_POST_HANDSHAKE_AUTH_DEFAULT));
 
+  SSL_OptionSetDefault(
+      SSL_ENABLE_DELEGATED_CREDENTIALS,
+      Preferences::GetBool("security.tls.enable_delegated_credentials",
+                           DELEGATED_CREDENTIALS_ENABLED_DEFAULT));
+
   rv = InitializeCipherSuite();
   MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(rv));
   if (NS_FAILED(rv)) {
@@ -1769,10 +1782,6 @@ nsresult nsNSSComponent::InitializeNSS() {
   }
 
   mozilla::pkix::RegisterErrorTable();
-
-  if (PK11_IsFIPS()) {
-    Telemetry::Accumulate(Telemetry::FIPS_ENABLED, true);
-  }
 
   MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("NSS Initialization done\n"));
 
@@ -1936,6 +1945,12 @@ nsNSSComponent::Observe(nsISupports* aSubject, const char* aTopic,
           SSL_ENABLE_POST_HANDSHAKE_AUTH,
           Preferences::GetBool("security.tls.enable_post_handshake_auth",
                                ENABLED_POST_HANDSHAKE_AUTH_DEFAULT));
+    } else if (prefName.EqualsLiteral(
+                   "security.tls.enable_delegated_credentials")) {
+      SSL_OptionSetDefault(
+          SSL_ENABLE_DELEGATED_CREDENTIALS,
+          Preferences::GetBool("security.tls.enable_delegated_credentials",
+                               DELEGATED_CREDENTIALS_ENABLED_DEFAULT));
     } else if (prefName.EqualsLiteral(
                    "security.ssl.disable_session_identifiers")) {
       ConfigureTLSSessionIdentifiers();

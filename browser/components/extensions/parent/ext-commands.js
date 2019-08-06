@@ -1,9 +1,16 @@
 /* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* vim: set sts=2 sw=2 et tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
-ChromeUtils.defineModuleGetter(this, "ExtensionShortcuts",
-                               "resource://gre/modules/ExtensionShortcuts.jsm");
+ChromeUtils.defineModuleGetter(
+  this,
+  "ExtensionShortcuts",
+  "resource://gre/modules/ExtensionShortcuts.jsm"
+);
 
 this.commands = class extends ExtensionAPI {
   static onUninstall(extensionId) {
@@ -13,7 +20,7 @@ this.commands = class extends ExtensionAPI {
   async onManifestEntry(entryName) {
     let shortcuts = new ExtensionShortcuts({
       extension: this.extension,
-      onCommand: (name) => this.emit("command", name),
+      onCommand: name => this.emit("command", name),
     });
     this.extension.shortcuts = shortcuts;
     await shortcuts.loadCommands();
@@ -28,8 +35,8 @@ this.commands = class extends ExtensionAPI {
     return {
       commands: {
         getAll: () => this.extension.shortcuts.allCommands(),
-        update: (args) => this.extension.shortcuts.updateCommand(args),
-        reset: (name) => this.extension.shortcuts.resetCommand(name),
+        update: args => this.extension.shortcuts.updateCommand(args),
+        reset: name => this.extension.shortcuts.resetCommand(name),
         onCommand: new EventManager({
           context,
           name: "commands.onCommand",

@@ -14,7 +14,8 @@
 
 #include "AnimationCommon.h"
 #include "mozilla/DebugOnly.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/dom/Animation.h"
 #include "mozilla/dom/Attr.h"
 #include "mozilla/dom/BindContext.h"
@@ -30,7 +31,6 @@
 #include "mozilla/dom/DocumentTimeline.h"
 #include "nsFlexContainerFrame.h"
 #include "nsFocusManager.h"
-#include "nsILinkHandler.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIURL.h"
 #include "nsContainerFrame.h"
@@ -167,6 +167,10 @@
 #include "nsBlockFrame.h"
 
 #include "DOMMatrix.h"
+
+#if defined(ACCESSIBILITY) && defined(DEBUG)
+#  include "nsAccessibilityService.h"
+#endif
 
 using mozilla::gfx::Matrix4x4;
 
@@ -786,15 +790,9 @@ void Element::Scroll(const CSSIntPoint& aScroll,
                      const ScrollOptions& aOptions) {
   nsIScrollableFrame* sf = GetScrollFrame();
   if (sf) {
-    ScrollMode scrollMode = ScrollMode::Instant;
-    if (aOptions.mBehavior == ScrollBehavior::Smooth) {
-      scrollMode = ScrollMode::SmoothMsd;
-    } else if (aOptions.mBehavior == ScrollBehavior::Auto) {
-      ScrollStyles styles = sf->GetScrollStyles();
-      if (styles.mScrollBehavior == NS_STYLE_SCROLL_BEHAVIOR_SMOOTH) {
-        scrollMode = ScrollMode::SmoothMsd;
-      }
-    }
+    ScrollMode scrollMode = sf->IsSmoothScroll(aOptions.mBehavior)
+                                ? ScrollMode::SmoothMsd
+                                : ScrollMode::Instant;
 
     sf->ScrollToCSSPixels(aScroll, scrollMode);
   }
@@ -849,15 +847,9 @@ void Element::ScrollBy(const ScrollToOptions& aOptions) {
       scrollDelta.y = mozilla::ToZeroIfNonfinite(aOptions.mTop.Value());
     }
 
-    ScrollMode scrollMode = ScrollMode::Instant;
-    if (aOptions.mBehavior == ScrollBehavior::Smooth) {
-      scrollMode = ScrollMode::SmoothMsd;
-    } else if (aOptions.mBehavior == ScrollBehavior::Auto) {
-      ScrollStyles styles = sf->GetScrollStyles();
-      if (styles.mScrollBehavior == NS_STYLE_SCROLL_BEHAVIOR_SMOOTH) {
-        scrollMode = ScrollMode::SmoothMsd;
-      }
-    }
+    ScrollMode scrollMode = sf->IsSmoothScroll(aOptions.mBehavior)
+                                ? ScrollMode::SmoothMsd
+                                : ScrollMode::Instant;
 
     sf->ScrollByCSSPixels(scrollDelta, scrollMode, nsGkAtoms::relative);
   }
@@ -879,11 +871,9 @@ void Element::SetScrollTop(int32_t aScrollTop) {
   FlushType flushType = aScrollTop == 0 ? FlushType::Frames : FlushType::Layout;
   nsIScrollableFrame* sf = GetScrollFrame(nullptr, flushType);
   if (sf) {
-    ScrollMode scrollMode = ScrollMode::Instant;
-    if (sf->GetScrollStyles().mScrollBehavior ==
-        NS_STYLE_SCROLL_BEHAVIOR_SMOOTH) {
-      scrollMode = ScrollMode::SmoothMsd;
-    }
+    ScrollMode scrollMode =
+        sf->IsSmoothScroll() ? ScrollMode::SmoothMsd : ScrollMode::Instant;
+
     sf->ScrollToCSSPixels(
         CSSIntPoint(sf->GetScrollPositionCSSPixels().x, aScrollTop),
         scrollMode);
@@ -901,11 +891,8 @@ void Element::SetScrollLeft(int32_t aScrollLeft) {
   // range.  So we need to flush layout no matter what.
   nsIScrollableFrame* sf = GetScrollFrame();
   if (sf) {
-    ScrollMode scrollMode = ScrollMode::Instant;
-    if (sf->GetScrollStyles().mScrollBehavior ==
-        NS_STYLE_SCROLL_BEHAVIOR_SMOOTH) {
-      scrollMode = ScrollMode::SmoothMsd;
-    }
+    ScrollMode scrollMode =
+        sf->IsSmoothScroll() ? ScrollMode::SmoothMsd : ScrollMode::Instant;
 
     sf->ScrollToCSSPixels(
         CSSIntPoint(aScrollLeft, sf->GetScrollPositionCSSPixels().y),
@@ -1878,6 +1865,11 @@ void Element::UnbindFromTree(bool aNullParent) {
                  "propagated scrollbar styles) - that's dangerous...");
     }
   }
+
+#  ifdef ACCESSIBILITY
+  MOZ_ASSERT(!GetAccService() || !GetAccService()->HasAccessible(this),
+             "An accessible for this element still exists!");
+#  endif
 #endif
 
   // Ensure that CSS transitions don't continue on an element at a
@@ -1911,6 +1903,12 @@ void Element::UnbindFromTree(bool aNullParent) {
 
   ClearInDocument();
   SetIsConnected(false);
+  if (HasElementCreatedFromPrototypeAndHasUnmodifiedL10n()) {
+    if (document) {
+      document->mL10nProtoElements.Remove(this);
+    }
+    ClearElementCreatedFromPrototypeAndHasUnmodifiedL10n();
+  }
 
   if (aNullParent || !mParent->IsInShadowTree()) {
     UnsetFlags(NODE_IS_IN_SHADOW_TREE);
@@ -2189,12 +2187,14 @@ nsresult Element::DispatchClickEvent(nsPresContext* aPresContext,
 
 //----------------------------------------------------------------------
 nsresult Element::LeaveLink(nsPresContext* aPresContext) {
-  nsILinkHandler* handler = aPresContext->GetLinkHandler();
-  if (!handler) {
+  if (!aPresContext || !aPresContext->Document()->LinkHandlingEnabled()) {
     return NS_OK;
   }
-
-  return handler->OnLeaveLink();
+  nsIDocShell* shell = aPresContext->Document()->GetDocShell();
+  if (!shell) {
+    return NS_OK;
+  }
+  return nsDocShell::Cast(shell)->OnLeaveLink();
 }
 
 nsresult Element::SetEventHandler(nsAtom* aEventName, const nsAString& aValue,
@@ -2480,6 +2480,15 @@ nsresult Element::SetAttrAndNotify(
     RefPtr<nsXBLBinding> binding = GetXBLBinding();
     if (binding) {
       binding->AttributeChanged(aName, aNamespaceID, false, aNotify);
+    }
+  }
+
+  if (HasElementCreatedFromPrototypeAndHasUnmodifiedL10n() &&
+      aNamespaceID == kNameSpaceID_None &&
+      (aName == nsGkAtoms::datal10nid || aName == nsGkAtoms::datal10nargs)) {
+    ClearElementCreatedFromPrototypeAndHasUnmodifiedL10n();
+    if (aComposedDocument) {
+      aComposedDocument->mL10nProtoElements.Remove(this);
     }
   }
 
@@ -2992,7 +3001,6 @@ bool Element::CheckHandleEventForLinksPrecondition(EventChainVisitor& aVisitor,
        (aVisitor.mEvent->mMessage != eMouseClick) &&
        (aVisitor.mEvent->mMessage != eKeyPress) &&
        (aVisitor.mEvent->mMessage != eLegacyDOMActivate)) ||
-      !aVisitor.mPresContext ||
       aVisitor.mEvent->mFlags.mMultipleActionsPrevented) {
     return false;
   }
@@ -3033,7 +3041,7 @@ void Element::GetEventTargetParentForLinks(EventChainPreVisitor& aVisitor) {
       if (!focusEvent || !focusEvent->mIsRefocus) {
         nsAutoString target;
         GetLinkTarget(target);
-        nsContentUtils::TriggerLink(this, aVisitor.mPresContext, absURI, target,
+        nsContentUtils::TriggerLink(this, absURI, target,
                                     /* click */ false, /* isTrusted */ true);
         // Make sure any ancestor links don't also TriggerLink
         aVisitor.mEvent->mFlags.mMultipleActionsPrevented = true;
@@ -3081,27 +3089,29 @@ nsresult Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor) {
 
   switch (aVisitor.mEvent->mMessage) {
     case eMouseDown: {
-      if (aVisitor.mEvent->AsMouseEvent()->mButton == MouseButton::eLeft) {
-        // don't make the link grab the focus if there is no link handler
-        nsILinkHandler* handler = aVisitor.mPresContext->GetLinkHandler();
-        Document* document = GetComposedDoc();
-        if (handler && document) {
-          nsIFocusManager* fm = nsFocusManager::GetFocusManager();
-          if (fm) {
-            aVisitor.mEvent->mFlags.mMultipleActionsPrevented = true;
+      if (aVisitor.mEvent->AsMouseEvent()->mButton == MouseButton::eLeft &&
+          OwnerDoc()->LinkHandlingEnabled()) {
+        aVisitor.mEvent->mFlags.mMultipleActionsPrevented = true;
+
+        if (IsInComposedDoc()) {
+          if (nsIFocusManager* fm = nsFocusManager::GetFocusManager()) {
             RefPtr<Element> kungFuDeathGrip(this);
             fm->SetFocus(kungFuDeathGrip, nsIFocusManager::FLAG_BYMOUSE |
                                               nsIFocusManager::FLAG_NOSCROLL);
           }
+        }
 
+        if (aVisitor.mPresContext) {
           EventStateManager::SetActiveManager(
               aVisitor.mPresContext->EventStateManager(), this);
+        }
 
-          // OK, we're pretty sure we're going to load, so warm up a speculative
-          // connection to be sure we have one ready when we open the channel.
+        // OK, we're pretty sure we're going to load, so warm up a speculative
+        // connection to be sure we have one ready when we open the channel.
+        if (nsIDocShell* shell = OwnerDoc()->GetDocShell()) {
           nsCOMPtr<nsISpeculativeConnect> sc =
               do_QueryInterface(nsContentUtils::GetIOService());
-          nsCOMPtr<nsIInterfaceRequestor> ir = do_QueryInterface(handler);
+          nsCOMPtr<nsIInterfaceRequestor> ir = do_QueryInterface(shell);
           sc->SpeculativeConnect(absURI, NodePrincipal(), ir);
         }
       }
@@ -3116,19 +3126,16 @@ nsresult Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor) {
         }
 
         // The default action is simply to dispatch DOMActivate
-        if (RefPtr<PresShell> presShell =
-                aVisitor.mPresContext->GetPresShell()) {
-          // single-click
-          nsEventStatus status = nsEventStatus_eIgnore;
-          // DOMActive event should be trusted since the activation is actually
-          // occurred even if the cause is an untrusted click event.
-          InternalUIEvent actEvent(true, eLegacyDOMActivate, mouseEvent);
-          actEvent.mDetail = 1;
+        nsEventStatus status = nsEventStatus_eIgnore;
+        // DOMActive event should be trusted since the activation is actually
+        // occurred even if the cause is an untrusted click event.
+        InternalUIEvent actEvent(true, eLegacyDOMActivate, mouseEvent);
+        actEvent.mDetail = 1;
 
-          rv = presShell->HandleDOMEventWithTarget(this, &actEvent, &status);
-          if (NS_SUCCEEDED(rv)) {
-            aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
-          }
+        rv = EventDispatcher::Dispatch(this, aVisitor.mPresContext, &actEvent,
+                                       nullptr, &status);
+        if (NS_SUCCEEDED(rv)) {
+          aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
         }
       }
       break;
@@ -3139,8 +3146,7 @@ nsresult Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor) {
         GetLinkTarget(target);
         const InternalUIEvent* activeEvent = aVisitor.mEvent->AsUIEvent();
         MOZ_ASSERT(activeEvent);
-        nsContentUtils::TriggerLink(this, aVisitor.mPresContext, absURI, target,
-                                    /* click */ true,
+        nsContentUtils::TriggerLink(this, absURI, target, /* click */ true,
                                     activeEvent->IsTrustable());
         aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
       }

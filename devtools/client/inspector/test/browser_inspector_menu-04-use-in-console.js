@@ -26,23 +26,33 @@ add_task(async function() {
     await inspector.once("console-var-ready");
 
     const hud = toolbox.getPanel("webconsole").hud;
-    const jsterm = hud.jsterm;
+
+    const getConsoleResults = () =>
+      hud.ui.outputNode.querySelectorAll(".result");
 
     is(hud.getInputValue(), "temp0", "first console variable is named temp0");
+    hud.ui.wrapper.dispatchEvaluateExpression();
 
-    let result = await jsterm.execute();
-    isnot(result.textContent.indexOf('<p id="console-var">'), -1,
-          "variable temp0 references correct node");
+    await waitUntil(() => getConsoleResults().length === 1);
+    let result = getConsoleResults()[0];
+    ok(
+      result.textContent.includes('<p id="console-var">'),
+      "variable temp0 references correct node"
+    );
 
     await selectNode("#console-var-multi", inspector);
     menuItem.click();
     await inspector.once("console-var-ready");
 
     is(hud.getInputValue(), "temp1", "second console variable is named temp1");
+    hud.ui.wrapper.dispatchEvaluateExpression();
 
-    result = await jsterm.execute();
-    isnot(result.textContent.indexOf('<p id="console-var-multi">'), -1,
-          "variable temp1 references correct node");
+    await waitUntil(() => getConsoleResults().length === 2);
+    result = getConsoleResults()[1];
+    ok(
+      result.textContent.includes('<p id="console-var-multi">'),
+      "variable temp1 references correct node"
+    );
 
     hud.ui.wrapper.dispatchClearHistory();
   }

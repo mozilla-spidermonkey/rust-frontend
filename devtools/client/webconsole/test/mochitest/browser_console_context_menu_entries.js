@@ -5,8 +5,9 @@
 
 // Check that we display the expected context menu entries.
 
-const TEST_URI = "http://example.com/browser/devtools/client/webconsole/" +
-                 "test/mochitest/test-console.html";
+const TEST_URI =
+  "http://example.com/browser/devtools/client/webconsole/" +
+  "test/mochitest/test-console.html";
 
 add_task(async function() {
   await pushPref("devtools.browserconsole.contentMessages", true);
@@ -15,17 +16,8 @@ add_task(async function() {
   // This is required for testing the text input in the browser console:
   await pushPref("devtools.chrome.enabled", true);
 
-  // Run test with legacy JsTerm
-  await pushPref("devtools.webconsole.jsterm.codeMirror", false);
-  await performTests();
-  // And then run it with the CodeMirror-powered one.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", true);
-  await performTests();
-});
-
-async function performTests() {
   await addTab(TEST_URI);
-  const hud = await HUDService.toggleBrowserConsole();
+  const hud = await BrowserConsoleManager.toggleBrowserConsole();
 
   info("Reload the content window to produce a network log");
   const onNetworkMessage = waitForMessage(hud, "test-console.html");
@@ -46,9 +38,13 @@ async function performTests() {
     "#console-menu-copy-object (o) [disabled]",
     "#console-menu-select (A)",
     "#console-menu-export-clipboard ()",
+    "#console-menu-export-file ()",
   ]);
-  is(getSimplifiedContextMenu(menuPopup).join("\n"), expectedContextMenu.join("\n"),
-    "The context menu has the expected entries for a network message");
+  is(
+    getSimplifiedContextMenu(menuPopup).join("\n"),
+    expectedContextMenu.join("\n"),
+    "The context menu has the expected entries for a network message"
+  );
 
   info("Logging a text message in the content window");
   const onLogMessage = waitForMessage(hud, "simple text message");
@@ -66,14 +62,22 @@ async function performTests() {
     "#console-menu-copy-object (o) [disabled]",
     "#console-menu-select (A)",
     "#console-menu-export-clipboard ()",
+    "#console-menu-export-file ()",
   ]);
-  is(getSimplifiedContextMenu(menuPopup).join("\n"), expectedContextMenu.join("\n"),
-    "The context menu has the expected entries for a simple log message");
+  is(
+    getSimplifiedContextMenu(menuPopup).join("\n"),
+    expectedContextMenu.join("\n"),
+    "The context menu has the expected entries for a simple log message"
+  );
 
-  menuPopup = await openContextMenu(hud, hud.jsterm.node || hud.jsterm.inputNode);
+  menuPopup = await openContextMenu(hud, hud.jsterm.node);
 
   let actualEntries = getL10NContextMenu(menuPopup);
-  is(actualEntries.length, 6, "The context menu has the right number of entries.");
+  is(
+    actualEntries.length,
+    6,
+    "The context menu has the right number of entries."
+  );
   is(actualEntries[0], "#editmenu-undo (editmenu-undo) [disabled]");
   is(actualEntries[1], "#editmenu-cut (editmenu-cut) [disabled]");
   is(actualEntries[2], "#editmenu-copy (editmenu-copy) [disabled]");
@@ -83,12 +87,16 @@ async function performTests() {
   is(actualEntries[4], "#editmenu-delete (editmenu-delete) [disabled]");
   is(actualEntries[5], "#editmenu-selectAll (editmenu-select-all) [disabled]");
 
-  const node = hud.jsterm.inputNode || hud.jsterm.node;
+  const node = hud.jsterm.node;
   const inputContainer = node.closest(".jsterm-input-container");
   await openContextMenu(hud, inputContainer);
 
   actualEntries = getL10NContextMenu(menuPopup);
-  is(actualEntries.length, 6, "The context menu has the right number of entries.");
+  is(
+    actualEntries.length,
+    6,
+    "The context menu has the right number of entries."
+  );
   is(actualEntries[0], "#editmenu-undo (editmenu-undo) [disabled]");
   is(actualEntries[1], "#editmenu-cut (editmenu-cut) [disabled]");
   is(actualEntries[2], "#editmenu-copy (editmenu-copy) [disabled]");
@@ -100,8 +108,8 @@ async function performTests() {
 
   await hideContextMenu(hud);
   // Close the browser console.
-  await HUDService.toggleBrowserConsole();
-}
+  await BrowserConsoleManager.toggleBrowserConsole();
+});
 
 function addPrefBasedEntries(expectedEntries) {
   if (Services.prefs.getBoolPref("devtools.webconsole.sidebarToggle", false)) {
@@ -112,19 +120,17 @@ function addPrefBasedEntries(expectedEntries) {
 }
 
 function getL10NContextMenu(popupElement) {
-  return [...popupElement.querySelectorAll("menuitem")]
-    .map(entry => {
-      const l10nID = entry.getAttribute("data-l10n-id");
-      const disabled = entry.hasAttribute("disabled");
-      return `#${entry.id} (${l10nID})${disabled ? " [disabled]" : ""}`;
-    });
+  return [...popupElement.querySelectorAll("menuitem")].map(entry => {
+    const l10nID = entry.getAttribute("data-l10n-id");
+    const disabled = entry.hasAttribute("disabled");
+    return `#${entry.id} (${l10nID})${disabled ? " [disabled]" : ""}`;
+  });
 }
 
 function getSimplifiedContextMenu(popupElement) {
-  return [...popupElement.querySelectorAll("menuitem")]
-    .map(entry => {
-      const key = entry.getAttribute("accesskey");
-      const disabled = entry.hasAttribute("disabled");
-      return `#${entry.id} (${key})${disabled ? " [disabled]" : ""}`;
-    });
+  return [...popupElement.querySelectorAll("menuitem")].map(entry => {
+    const key = entry.getAttribute("accesskey");
+    const disabled = entry.hasAttribute("disabled");
+    return `#${entry.id} (${key})${disabled ? " [disabled]" : ""}`;
+  });
 }

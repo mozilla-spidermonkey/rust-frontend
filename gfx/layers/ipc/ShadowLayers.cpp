@@ -535,7 +535,7 @@ bool ShadowLayerForwarder::EndTransaction(
     const mozilla::TimeStamp& aRefreshStart,
     const mozilla::TimeStamp& aTransactionStart, bool aContainsSVG,
     const nsCString& aURL, bool* aSent,
-    const InfallibleTArray<CompositionPayload>& aPayload) {
+    const nsTArray<CompositionPayload>& aPayload) {
   *aSent = false;
 
   TransactionInfo info;
@@ -546,7 +546,7 @@ bool ShadowLayerForwarder::EndTransaction(
   }
 
   Maybe<TimeStamp> startTime;
-  if (StaticPrefs::LayersDrawFPS()) {
+  if (StaticPrefs::layers_acceleration_draw_fps()) {
     startTime = Some(TimeStamp::Now());
   }
 

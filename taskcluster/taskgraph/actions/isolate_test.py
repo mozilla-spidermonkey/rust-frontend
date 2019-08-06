@@ -16,7 +16,7 @@ from slugid import nice as slugid
 from taskgraph.util.taskcluster import list_artifacts, get_artifact, get_task_definition
 from ..util.parameterization import resolve_task_references
 from .registry import register_callback_action
-from .util import create_task_from_def, fetch_graph_and_labels
+from .util import create_task_from_def, fetch_graph_and_labels, add_args_to_command
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,24 @@ def get_failures(task_id):
                 # the lines out since on macosx and windows, the first
                 # line is empty.
                 for line in stream.read().split('\n'):
+                    if len(tests) > 4:
+                        # The number of tasks created is determined by
+                        # the `times` value and the number of distinct
+                        # tests and directories as:
+                        # times * (1 + len(tests) + len(dirs)).
+                        # Since the maximum value of `times`
+                        # specifiable in the Treeherder UI is 100, the
+                        # number of tasks created can reach a very
+                        # large value depending on the number of
+                        # unique tests.  During testing, it was found
+                        # that 10 distinct tests were sufficient to
+                        # cause the action task to exceed the
+                        # maxRunTime of 1800 seconds resulting in it
+                        # being aborted.  We limit the number of
+                        # distinct tests and thereby the number of
+                        # distinct test directories to a maximum of 5
+                        # to keep the action task from timing out.
+                        break
                     line = line.strip()
                     match = re_test.search(line)
                     if match:
@@ -75,49 +93,93 @@ def get_failures(task_id):
                             test_dir = os.path.dirname(test_path)
                             if test_dir:
                                 dirs.add(test_dir)
+            break
     return {'dirs': sorted(dirs), 'tests': sorted(tests)}
 
 
-def create_isolate_failure_tasks(task_definition, failures, level):
+def create_isolate_failure_tasks(task_definition, failures, level, times):
     """
-    Create tasks to re-run the original tasks plus tasks to test
+    Create tasks to re-run the original task plus tasks to test
     each failing test directory and individual path.
 
     """
-    # redo the original task...
-    logger.info("create_isolate_failure_tasks: task_definition: {},"
-                "failures: {}".format(task_definition, failures))
-    new_task_id = slugid()
-    new_task_definition = copy.deepcopy(task_definition)
-    th_dict = new_task_definition['extra']['treeherder']
+    logger.info("Isolate task:\n{}".format(json.dumps(task_definition, indent=2)))
+
+    task_name = task_definition['metadata']['name']
+    repeatable_task = False
+    if ('crashtest' in task_name or 'mochitest' in task_name or
+        'reftest' in task_name and 'jsreftest' not in task_name):
+        repeatable_task = True
+
+    th_dict = task_definition['extra']['treeherder']
+    symbol = th_dict['symbol']
+    is_windows = 'windows' in th_dict['machine']['platform']
+
+    suite = task_definition['extra']['suite']
+    if '-chunked' in suite:
+        suite = suite[:suite.index('-chunked')]
+    if '-coverage' in suite:
+        suite = suite[:suite.index('-coverage')]
+    is_wpt = 'web-platform-tests' in suite
+
+    # command is a copy of task_definition['payload']['command'] from the original task.
+    # It is used to create the new version containing the
+    # task_definition['payload']['command'] with repeat_args which is updated every time
+    # through the failure_group loop.
+
+    command = copy.deepcopy(task_definition['payload']['command'])
+
     th_dict['groupSymbol'] = th_dict['groupSymbol'] + '-I'
     th_dict['tier'] = 3
 
-    logger.info('Cloning original task')
-    create_task_from_def(new_task_id, new_task_definition, level)
+    for i in range(times):
+        create_task_from_def(slugid(), task_definition, level)
+
+    if repeatable_task:
+        task_definition['payload']['maxRunTime'] = 3600 * 3
 
     for failure_group in failures:
-        failure_group_suffix = '-id' if failure_group == 'dirs' else '-it'
+        if failure_group == 'dirs':
+            failure_group_suffix = '-id'
+            # execute 5 total loops
+            repeat_args = ['--repeat=4'] if repeatable_task else []
+        else:
+            failure_group_suffix = '-it'
+            # execute 20 total loops
+            repeat_args = ['--repeat=19'] if repeatable_task else []
+
+        if repeat_args:
+            task_definition['payload']['command'] = add_args_to_command(command,
+                                                                        extra_args=repeat_args)
+        else:
+            task_definition['payload']['command'] = command
+
+        # saved_command is a saved version of the
+        # task_definition['payload']['command'] with the repeat
+        # arguments. We need to save it since
+        # task_definition['payload']['command'] will be modified in the failure_path loop
+        # when we are isolating web-platform-tests.
+
+        saved_command = copy.deepcopy(task_definition['payload']['command'])
+
         for failure_path in failures[failure_group]:
-            new_task_id = slugid()
-            new_task_definition = copy.deepcopy(task_definition)
-            th_dict = new_task_definition['extra']['treeherder']
-            th_dict['groupSymbol'] = th_dict['groupSymbol'] + '-I'
-            th_dict['symbol'] = th_dict['symbol'] + failure_group_suffix
-            th_dict['tier'] = 3
-            suite = new_task_definition['extra']['suite']
-            if '-chunked' in suite:
-                suite = suite[:suite.index('-chunked')]
-            if '-coverage' in suite:
-                suite = suite[:suite.index('-coverage')]
-            env_dict = new_task_definition['payload']['env']
-            if 'MOZHARNESS_TEST_PATHS' not in env_dict:
-                env_dict['MOZHARNESS_TEST_PATHS'] = {}
-            if 'windows' in th_dict['machine']['platform']:
+            th_dict['symbol'] = symbol + failure_group_suffix
+            if is_windows and not is_wpt:
                 failure_path = '\\'.join(failure_path.split('/'))
-            env_dict['MOZHARNESS_TEST_PATHS'] = json.dumps({suite: [failure_path]})
-            logger.info('Creating task for {}'.format(failure_path))
-            create_task_from_def(new_task_id, new_task_definition, level)
+            if is_wpt:
+                include_args = ['--include={}'.format(failure_path)]
+                task_definition['payload']['command'] = add_args_to_command(
+                    saved_command,
+                    extra_args=include_args)
+            else:
+                task_definition['payload']['env']['MOZHARNESS_TEST_PATHS'] = json.dumps(
+                    {suite: [failure_path]})
+
+            logger.info("Creating task for path {} with command {}".format(
+                failure_path,
+                task_definition['payload']['command']))
+            for i in range(times):
+                create_task_from_def(slugid(), task_definition, level)
 
 
 @register_callback_action(
@@ -162,5 +224,7 @@ def isolate_test_failures(parameters, graph_config, input, task_group_id, task_i
 
     failures = get_failures(task_id)
     logger.info('isolate_test_failures: %s' % failures)
-    for i in range(input['times']):
-        create_isolate_failure_tasks(task_definition, failures, parameters['level'])
+    create_isolate_failure_tasks(task_definition,
+                                 failures,
+                                 parameters['level'],
+                                 input['times'])

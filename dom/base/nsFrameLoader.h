@@ -197,13 +197,11 @@ class nsFrameLoader final : public nsStubMutationObserver,
 
   bool RequestTabStateFlush(uint32_t aFlushId, bool aIsFinal = false);
 
+  void RequestEpochUpdate(uint32_t aEpoch);
+
   void Print(uint64_t aOuterWindowID, nsIPrintSettings* aPrintSettings,
              nsIWebProgressListener* aProgressListener,
              mozilla::ErrorResult& aRv);
-
-  already_AddRefed<mozilla::dom::Promise> DrawSnapshot(
-      double aX, double aY, double aW, double aH, double aScale,
-      const nsAString& aBackgroundColor, mozilla::ErrorResult& aRv);
 
   void StartPersistence(uint64_t aOuterWindowID,
                         nsIWebBrowserPersistDocumentReceiver* aRecv,
@@ -406,15 +404,6 @@ class nsFrameLoader final : public nsStubMutationObserver,
   void SetOwnerContent(mozilla::dom::Element* aContent);
 
   bool ShouldUseRemoteProcess();
-
-  /**
-   * Is this a frame loader for an isolated <iframe mozbrowser>?
-   *
-   * By default, mozbrowser frames are isolated.  Isolation can be disabled by
-   * setting the frame's noisolation attribute.  Disabling isolation is
-   * only allowed if the containing document is chrome.
-   */
-  bool OwnerIsIsolatedMozBrowserFrame();
 
   /**
    * Get our owning element's app manifest URL, or return the empty string if

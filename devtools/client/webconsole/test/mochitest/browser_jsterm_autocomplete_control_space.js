@@ -21,15 +21,6 @@ const TEST_URI = `data:text/html;charset=utf-8,
 <body>bug 585991 - autocomplete popup ctrl+space usage test</body>`;
 
 add_task(async function() {
-  // Run test with legacy JsTerm
-  await pushPref("devtools.webconsole.jsterm.codeMirror", false);
-  await performTests();
-  // And then run it with the CodeMirror-powered one.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", true);
-  // await performTests();
-});
-
-async function performTests() {
   const hud = await openNewTabAndConsole(TEST_URI);
   info("web console opened");
 
@@ -43,12 +34,12 @@ async function performTests() {
 
   await onPopUpOpen;
 
-  const {itemCount} = popup;
+  const { itemCount } = popup;
   ok(popup.isOpen, "popup is open");
   ok(itemCount > 0, "popup has items");
 
   info("Check that Ctrl+Space when the popup is opened has no effect");
-  EventUtils.synthesizeKey(" ", {ctrlKey: true});
+  EventUtils.synthesizeKey(" ", { ctrlKey: true });
   ok(popup.isOpen, "The popup wasn't closed on Ctrl+Space");
   is(popup.itemCount, itemCount, "The popup wasn't modified on Ctrl+Space");
 
@@ -60,9 +51,9 @@ async function performTests() {
 
   info("Check that Ctrl+Space opens the popup when it was closed");
   onPopUpOpen = popup.once("popup-opened");
-  EventUtils.synthesizeKey(" ", {ctrlKey: true});
+  EventUtils.synthesizeKey(" ", { ctrlKey: true });
   await onPopUpOpen;
 
   ok(popup.isOpen, "popup opens on Ctrl+Space");
   is(popup.itemCount, itemCount, "popup has the expected items");
-}
+});

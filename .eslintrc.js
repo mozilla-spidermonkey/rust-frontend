@@ -40,24 +40,23 @@ module.exports = {
     "plugin:mozilla/recommended"
   ],
   "plugins": [
-    "html",
     "mozilla"
   ],
-  // To avoid bad interactions of the html plugin with the xml preprocessor in
-  // eslint-plugin-mozilla, we turn off processing of the html plugin for .xml
-  // files.
-  "settings": {
-    "html/xml-extensions": [ ".xhtml" ]
-  },
-
   "overrides": [{
-    // eslint-plugin-html handles eol-last slightly different - it applies to
-    // each set of script tags, so we turn it off here.
-    "files": "**/*.*html",
-    "rules": {
-      "eol-last": "off",
-    }
-  }, {
+      "files": [
+        "*.html",
+        "*.xhtml",
+        "*.xul",
+        "*.xml",
+        "js/src/builtin/**/*.js",
+        "js/src/shell/**/*.js"
+      ],
+      "rules": {
+        // Curly brackets are required for all the tree via recommended.js,
+        // however these files aren't auto-fixable at the moment.
+        "curly": "off"
+      },
+    }, {
     // These xbl bindings are assumed to be in the browser-window environment,
     // we would mark it in the files, but ESLint made this more difficult with
     // our xml processor, so we list them here. Bug 1397874 & co are working
@@ -88,7 +87,6 @@ module.exports = {
     // This would be expensive and slow, and it isn't worth it for head files.
     // We could get developers to declare as exported, but that doesn't seem worth it.
     "files": xpcshellTestPaths.map(path => `${path}head*.js`),
-
     "rules": {
       "no-unused-vars": ["error", {
         "args": "none",
@@ -139,19 +137,6 @@ module.exports = {
       "no-unused-vars": "off",
       "no-redeclare": "off",
       "no-global-assign": "off",
-
-      // Not enabling the rules below for now pending prettier roll-out.
-      "brace-style": "off",
-      "comma-dangle": "off",
-      "linebreak-style": "off",
-      "no-tabs": "off",
-      "no-mixed-spaces-and-tabs": "off",
-      "no-multi-spaces": "off",
-      "no-trailing-spaces": "off",
-      "padded-blocks": "off",
-      "quotes": "off",
-      "semi": "off",
-      "space-infix-ops": "off",
     }
   }, {
     "files": [
@@ -169,23 +154,6 @@ module.exports = {
       "no-undef": "off",
       "no-unneeded-ternary": "off",
       "no-unused-vars": "off",
-
-      // Not enabling the rules below for now pending prettier roll-out.
-      "brace-style": "off",
-      "comma-dangle": "off",
-      "comma-spacing": "off",
-      "key-spacing": "off",
-      "keyword-spacing": "off",
-      "no-extra-semi": "off",
-      "no-tabs": "off",
-      "no-mixed-spaces-and-tabs": "off",
-      "no-multi-spaces": "off",
-      "no-trailing-spaces": "off",
-      "padded-blocks": "off",
-      "quotes": "off",
-      "semi": "off",
-      "space-before-function-paren": "off",
-      "space-infix-ops": "off",
     }
   }, {
     "files": [
@@ -215,34 +183,7 @@ module.exports = {
       "no-undef": "off",
       "no-unreachable": "off",
       "no-unused-vars": "off",
-
-      // Not enabling the rules below for now pending prettier roll-out.
-      "arrow-spacing": "off",
-      "block-spacing": "off",
-      "brace-style": "off",
-      "comma-dangle": "off",
-      "comma-spacing": "off",
-      "comma-style": "off",
-      "eol-last": "off",
-      "func-call-spacing": "off",
-      "generator-star-spacing": "off",
-      "key-spacing": "off",
-      "keyword-spacing": "off",
-      "no-extra-semi": "off",
-      "no-tabs": "off",
-      "no-mixed-spaces-and-tabs": "off",
-      "no-multi-spaces": "off",
-      "no-trailing-spaces": "off",
-      "no-whitespace-before-property": "off",
-      "padded-blocks": "off",
-      "quotes": "off",
-      "rest-spread-spacing": "off",
-      "semi": "off",
-      "space-before-blocks": "off",
-      "space-before-function-paren": "off",
-      "space-infix-ops": "off",
-      "space-unary-ops": "off",
-      "spaced-comment": "off",
+      "no-useless-return": "off",
     }
   }, {
     "files": [
@@ -255,23 +196,18 @@ module.exports = {
       "mozilla/reject-importGlobalProperties": "off",
       "mozilla/no-arbitrary-setTimeout": "off",
       "mozilla/no-define-cc-etc": "off",
-      "mozilla/no-useless-parameters": "off",
-      "mozilla/no-useless-run-test": "off",
       "mozilla/use-chromeutils-generateqi": "off",
-      "mozilla/use-chromeutils-import": "off",
       "mozilla/use-default-preference-values": "off",
       "mozilla/use-includes-instead-of-indexOf": "off",
       "mozilla/use-services": "off",
       "mozilla/use-ownerGlobal": "off",
       "complexity": "off",
       "consistent-return": "off",
-      "dot-notation": "off",
       "no-array-constructor": "off",
       "no-caller": "off",
       "no-cond-assign": "off",
       "no-extra-boolean-cast": "off",
       "no-eval": "off",
-      "no-else-return": "off",
       "no-func-assign": "off",
       "no-global-assign": "off",
       "no-implied-eval": "off",
@@ -291,36 +227,6 @@ module.exports = {
       "no-unsafe-negation": "off",
       "no-unused-vars": "off",
       "no-useless-return": "off",
-
-      // Not enabling the rules below for now pending prettier roll-out.
-      "arrow-spacing": "off",
-      "block-spacing": "off",
-      "brace-style": "off",
-      "comma-dangle": "off",
-      "comma-spacing": "off",
-      "comma-style": "off",
-      "eol-last": "off",
-      "func-call-spacing": "off",
-      "generator-star-spacing": "off",
-      "linebreak-style": "off",
-      "key-spacing": "off",
-      "keyword-spacing": "off",
-      "no-extra-semi": "off",
-      "no-tabs": "off",
-      "no-mixed-spaces-and-tabs": "off",
-      "no-multi-spaces": "off",
-      "no-trailing-spaces": "off",
-      "no-unexpected-multiline": "off",
-      "no-whitespace-before-property": "off",
-      "padded-blocks": "off",
-      "quotes": "off",
-      "rest-spread-spacing": "off",
-      "semi": "off",
-      "space-before-blocks": "off",
-      "space-before-function-paren": "off",
-      "space-infix-ops": "off",
-      "space-unary-ops": "off",
-      "spaced-comment": "off",
     }
   }, {
     "files": [
@@ -423,37 +329,6 @@ module.exports = {
       "no-useless-concat": "off",
       "no-useless-return": "off",
       "no-with": "off",
-
-      // Not enabling the rules below for now pending prettier roll-out.
-      "arrow-spacing": "off",
-      "block-spacing": "off",
-      "brace-style": "off",
-      "comma-dangle": "off",
-      "comma-spacing": "off",
-      "comma-style": "off",
-      "computed-property-spacing": "off",
-      "eol-last": "off",
-      "func-call-spacing": "off",
-      "generator-star-spacing": "off",
-      "linebreak-style": "off",
-      "key-spacing": "off",
-      "keyword-spacing": "off",
-      "no-extra-semi": "off",
-      "no-tabs": "off",
-      "no-mixed-spaces-and-tabs": "off",
-      "no-multi-spaces": "off",
-      "no-trailing-spaces": "off",
-      "no-unexpected-multiline": "off",
-      "no-whitespace-before-property": "off",
-      "padded-blocks": "off",
-      "quotes": "off",
-      "rest-spread-spacing": "off",
-      "semi": "off",
-      "space-before-blocks": "off",
-      "space-before-function-paren": "off",
-      "space-infix-ops": "off",
-      "space-unary-ops": "off",
-      "spaced-comment": "off",
     }
   }]
 };

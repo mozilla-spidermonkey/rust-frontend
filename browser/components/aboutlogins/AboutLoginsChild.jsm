@@ -6,48 +6,108 @@
 
 var EXPORTED_SYMBOLS = ["AboutLoginsChild"];
 
-const {ActorChild} = ChromeUtils.import("resource://gre/modules/ActorChild.jsm");
-const {LoginHelper} = ChromeUtils.import("resource://gre/modules/LoginHelper.jsm");
-const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { ActorChild } = ChromeUtils.import(
+  "resource://gre/modules/ActorChild.jsm"
+);
+const { LoginHelper } = ChromeUtils.import(
+  "resource://gre/modules/LoginHelper.jsm"
+);
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
-ChromeUtils.defineModuleGetter(this, "AppConstants",
-                               "resource://gre/modules/AppConstants.jsm");
+ChromeUtils.defineModuleGetter(
+  this,
+  "AppConstants",
+  "resource://gre/modules/AppConstants.jsm"
+);
+
+XPCOMUtils.defineLazyServiceGetter(
+  this,
+  "ClipboardHelper",
+  "@mozilla.org/widget/clipboardhelper;1",
+  "nsIClipboardHelper"
+);
+
 const TELEMETRY_EVENT_CATEGORY = "pwmgr";
+
+let masterPasswordPromise;
 
 class AboutLoginsChild extends ActorChild {
   handleEvent(event) {
     switch (event.type) {
       case "AboutLoginsInit": {
-        this.mm.sendAsyncMessage("AboutLogins:Subscribe");
+        let messageManager = this.mm;
+        messageManager.sendAsyncMessage("AboutLogins:Subscribe");
 
         let documentElement = this.content.document.documentElement;
-        documentElement.classList.toggle("official-branding", AppConstants.MOZILLA_OFFICIAL);
+        documentElement.classList.toggle(
+          "official-branding",
+          AppConstants.MOZILLA_OFFICIAL
+        );
 
         let waivedContent = Cu.waiveXrays(this.content);
         let AboutLoginsUtils = {
           doLoginsMatch(loginA, loginB) {
             return LoginHelper.doLoginsMatch(loginA, loginB, {});
           },
+          getLoginOrigin(uriString) {
+            return LoginHelper.getLoginOrigin(uriString);
+          },
+          promptForMasterPassword(resolve) {
+            masterPasswordPromise = {
+              resolve,
+            };
+
+            messageManager.sendAsyncMessage(
+              "AboutLogins:MasterPasswordRequest"
+            );
+          },
         };
-        waivedContent.AboutLoginsUtils = Cu.cloneInto(AboutLoginsUtils, waivedContent, {
-          cloneFunctions: true,
-        });
+        waivedContent.AboutLoginsUtils = Cu.cloneInto(
+          AboutLoginsUtils,
+          waivedContent,
+          {
+            cloneFunctions: true,
+          }
+        );
+        break;
+      }
+      case "AboutLoginsCopyLoginDetail": {
+        ClipboardHelper.copyString(event.detail);
         break;
       }
       case "AboutLoginsCreateLogin": {
-        this.mm.sendAsyncMessage("AboutLogins:CreateLogin", {login: event.detail});
+        this.mm.sendAsyncMessage("AboutLogins:CreateLogin", {
+          login: event.detail,
+        });
         break;
       }
       case "AboutLoginsDeleteLogin": {
-        this.mm.sendAsyncMessage("AboutLogins:DeleteLogin", {login: event.detail});
-        break;
-      }
-      case "AboutLoginsOpenFeedback": {
-        this.mm.sendAsyncMessage("AboutLogins:OpenFeedback");
+        this.mm.sendAsyncMessage("AboutLogins:DeleteLogin", {
+          login: event.detail,
+        });
         break;
       }
       case "AboutLoginsImport": {
         this.mm.sendAsyncMessage("AboutLogins:Import");
+        break;
+      }
+      case "AboutLoginsOpenFAQ": {
+        this.mm.sendAsyncMessage("AboutLogins:OpenFAQ");
+        break;
+      }
+      case "AboutLoginsOpenMobileAndroid": {
+        this.mm.sendAsyncMessage("AboutLogins:OpenMobileAndroid");
+        break;
+      }
+      case "AboutLoginsOpenMobileIos": {
+        this.mm.sendAsyncMessage("AboutLogins:OpenMobileIos");
+        break;
+      }
+      case "AboutLoginsOpenFeedback": {
+        this.mm.sendAsyncMessage("AboutLogins:OpenFeedback");
         break;
       }
       case "AboutLoginsOpenPreferences": {
@@ -55,23 +115,38 @@ class AboutLoginsChild extends ActorChild {
         break;
       }
       case "AboutLoginsOpenSite": {
-        this.mm.sendAsyncMessage("AboutLogins:OpenSite", {login: event.detail});
+        this.mm.sendAsyncMessage("AboutLogins:OpenSite", {
+          login: event.detail,
+        });
         break;
       }
       case "AboutLoginsRecordTelemetryEvent": {
-        let {method, object} = event.detail;
+        let { method, object } = event.detail;
         try {
           Services.telemetry.recordEvent(
             TELEMETRY_EVENT_CATEGORY,
             method,
-            object);
+            object
+          );
         } catch (ex) {
-          Cu.reportError("AboutLoginsChild: error recording telemetry event: " + ex.message);
+          Cu.reportError(
+            "AboutLoginsChild: error recording telemetry event: " + ex.message
+          );
         }
         break;
       }
+      case "AboutLoginsSyncEnable": {
+        this.mm.sendAsyncMessage("AboutLogins:SyncEnable");
+        break;
+      }
+      case "AboutLoginsSyncOptions": {
+        this.mm.sendAsyncMessage("AboutLogins:SyncOptions");
+        break;
+      }
       case "AboutLoginsUpdateLogin": {
-        this.mm.sendAsyncMessage("AboutLogins:UpdateLogin", {login: event.detail});
+        this.mm.sendAsyncMessage("AboutLogins:UpdateLogin", {
+          login: event.detail,
+        });
         break;
       }
     }
@@ -91,11 +166,21 @@ class AboutLoginsChild extends ActorChild {
       case "AboutLogins:LoginRemoved":
         this.sendToContent("LoginRemoved", message.data);
         break;
+      case "AboutLogins:MasterPasswordResponse":
+        if (masterPasswordPromise) {
+          masterPasswordPromise.resolve(message.data);
+        }
+      case "AboutLogins:SyncState":
+        this.sendToContent("SyncState", message.data);
+        break;
+      case "AboutLogins:UpdateBreaches":
+        this.sendToContent("UpdateBreaches", message.data);
+        break;
     }
   }
 
   sendToContent(messageType, detail) {
-    let message = Object.assign({messageType}, {value: detail});
+    let message = Object.assign({ messageType }, { value: detail });
     let event = new this.content.CustomEvent("AboutLoginsChromeToContent", {
       detail: Cu.cloneInto(message, this.content),
     });

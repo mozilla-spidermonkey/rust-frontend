@@ -14,6 +14,7 @@
 #include "gfxPlatform.h"              // for gfxPlatform
 #include "gfxRect.h"                  // for gfxRect
 #include "mozilla/MathAlgorithms.h"   // for Abs
+#include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/gfx/Point.h"        // for IntSize
 #include "mozilla/gfx/Rect.h"         // for Rect
 #include "mozilla/gfx/Tools.h"        // for BytesPerPixel
@@ -28,7 +29,8 @@
 #include "nsMathUtils.h"          // for NS_lroundf
 #include "LayersLogging.h"
 #include "UnitTransforms.h"  // for TransformTo
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_apz.h"
+#include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/UniquePtr.h"
 
 #ifdef GFX_TILEDLAYER_DEBUG_OVERLAY
@@ -600,7 +602,7 @@ Maybe<AcquiredBackBuffer> TileClient::AcquireBackBuffer(
     // later (copying pixels and texture upload). But this could increase
     // our memory usage and lead to OOM more frequently from spikes in usage,
     // so we have this behavior behind a pref.
-    if (!StaticPrefs::LayersTileRetainBackBuffer()) {
+    if (!StaticPrefs::layers_tiles_retain_back_buffer()) {
       DiscardBackBuffer();
     }
     Flip();
@@ -678,7 +680,7 @@ Maybe<AcquiredBackBuffer> TileClient::AcquireBackBuffer(
   RefPtr<DrawTargetCapture> capture;
   if (aFlags & TilePaintFlags::Async) {
     capture = Factory::CreateCaptureDrawTargetForTarget(
-        target, StaticPrefs::LayersOMTPCaptureLimit());
+        target, StaticPrefs::layers_omtp_capture_limit_AtStartup());
     target = capture;
   }
 

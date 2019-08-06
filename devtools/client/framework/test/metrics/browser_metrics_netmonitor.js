@@ -11,7 +11,8 @@
  * retrieved by perfherder via logs.
  */
 
-const TEST_URL = "data:text/html;charset=UTF-8,<div>Netmonitor modules load test</div>";
+const TEST_URL =
+  "data:text/html;charset=UTF-8,<div>Netmonitor modules load test</div>";
 
 add_task(async function() {
   const toolbox = await openNewTabAndToolbox(TEST_URL, "netmonitor");
@@ -19,7 +20,7 @@ add_task(async function() {
 
   // Retrieve the browser loader dedicated to the Netmonitor.
   const netmonitorLoader = panel.panelWin.getBrowserLoaderForWindow();
-  const loaders = [loader.provider.loader, netmonitorLoader.loader];
+  const loaders = [loader.loader, netmonitorLoader.loader];
 
   runMetricsTest({
     filterString: "devtools/client/netmonitor",

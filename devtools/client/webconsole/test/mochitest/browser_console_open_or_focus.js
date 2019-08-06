@@ -16,9 +16,9 @@ add_task(async function() {
 
   const mainWindow = Services.wm.getMostRecentWindow(null);
 
-  await HUDService.openBrowserConsoleOrFocus();
+  await BrowserConsoleManager.openBrowserConsoleOrFocus();
 
-  hud = HUDService.getBrowserConsole();
+  hud = BrowserConsoleManager.getBrowserConsole();
 
   ok(hud.ui.document.hasFocus(), "Focus in the document");
 
@@ -27,14 +27,20 @@ add_task(async function() {
   await waitFor(() => findMessage(hud, TEST_MESSAGE));
 
   currWindow = Services.wm.getMostRecentWindow(null);
-  is(currWindow.document.documentURI, Tools.webConsole.url,
-     "The Browser Console is open and has focus");
+  is(
+    currWindow.document.documentURI,
+    Tools.webConsole.url,
+    "The Browser Console is open and has focus"
+  );
   mainWindow.focus();
-  await HUDService.openBrowserConsoleOrFocus();
+  await BrowserConsoleManager.openBrowserConsoleOrFocus();
   currWindow = Services.wm.getMostRecentWindow(null);
-  is(currWindow.document.documentURI, Tools.webConsole.url,
-     "The Browser Console is open and has focus");
-  await HUDService.toggleBrowserConsole();
-  hud = HUDService.getBrowserConsole();
+  is(
+    currWindow.document.documentURI,
+    Tools.webConsole.url,
+    "The Browser Console is open and has focus"
+  );
+  await BrowserConsoleManager.toggleBrowserConsole();
+  hud = BrowserConsoleManager.getBrowserConsole();
   ok(!hud, "Browser Console has been closed");
 });

@@ -15,10 +15,11 @@ const PAGE_SIZE_ITEM_COUNT_RATIO = 5;
 /**
  * Select request with a given id.
  */
-function selectRequest(id) {
+function selectRequest(id, httpChannelId) {
   return {
     type: SELECT_REQUEST,
     id,
+    httpChannelId,
   };
 }
 
@@ -51,7 +52,9 @@ function selectDelta(delta) {
       return;
     }
 
-    const selIndex = requests.findIndex(r => r.id === state.requests.selectedId);
+    const selIndex = requests.findIndex(
+      r => r.id === state.requests.selectedId
+    );
 
     if (delta === "PAGE_DOWN") {
       delta = Math.ceil(requests.size / PAGE_SIZE_ITEM_COUNT_RATIO);

@@ -12,6 +12,7 @@ class Domain {
     this.name = this.constructor.name;
 
     this.eventListeners_ = new Set();
+    this._requestCounter = 0;
   }
 
   destructor() {}
@@ -30,6 +31,29 @@ class Domain {
     }
   }
 
+  /**
+   * Execute the provided method in the child domain that has the same domain
+   * name. eg. calling this.executeInChild from domains/parent/Input.jsm will
+   * attempt to execute the method in domains/content/Input.jsm.
+   *
+   * This can only be called from parent domains managed by a TabSession.
+   *
+   * @param {String} method
+   *        Name of the method to call on the child domain.
+   * @param {Object} params
+   *        Optional parameters. Must be serializable.
+   */
+  executeInChild(method, params) {
+    if (!this.session.executeInChild) {
+      throw new Error(
+        "executeInChild can only be used in Domains managed by a TabSession"
+      );
+    }
+    this._requestCounter++;
+    const id = this.name + "-" + this._requestCounter;
+    return this.session.executeInChild(id, this.name, method, params);
+  }
+
   addEventListener(listener) {
     if (typeof listener != "function" && !isEventHandler(listener)) {
       throw new TypeError();
@@ -45,7 +69,7 @@ class Domain {
 }
 
 function isEventHandler(listener) {
-  return listener &&
-      "onEvent" in listener &&
-      typeof listener.onEvent == "function";
+  return (
+    listener && "onEvent" in listener && typeof listener.onEvent == "function"
+  );
 }

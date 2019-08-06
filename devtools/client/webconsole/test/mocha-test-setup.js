@@ -23,11 +23,12 @@ pref("devtools.webconsole.inputHistoryCount", 300);
 pref("devtools.webconsole.persistlog", false);
 pref("devtools.webconsole.timestampMessages", false);
 pref("devtools.webconsole.sidebarToggle", true);
-pref("devtools.webconsole.jsterm.codeMirror", true);
 pref("devtools.webconsole.groupWarningMessages", false);
 pref("devtools.webconsole.input.editor", false);
 pref("devtools.webconsole.input.autocomplete", true);
 pref("devtools.browserconsole.contentMessages", true);
+pref("devtools.webconsole.features.editor", true);
+pref("devtools.webconsole.input.editorWidth", 800);
 
 global.loader = {
   lazyServiceGetter: () => {},

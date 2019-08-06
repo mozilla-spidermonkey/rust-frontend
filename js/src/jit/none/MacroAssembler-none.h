@@ -37,6 +37,7 @@ struct ScratchDoubleScope : FloatRegister {
 
 static constexpr Register OsrFrameReg{Registers::invalid_reg};
 static constexpr Register PreBarrierReg{Registers::invalid_reg};
+static constexpr Register InterpreterPCReg{Registers::invalid_reg};
 static constexpr Register CallTempReg0{Registers::invalid_reg};
 static constexpr Register CallTempReg1{Registers::invalid_reg};
 static constexpr Register CallTempReg2{Registers::invalid_reg};
@@ -486,10 +487,6 @@ class MacroAssemblerNone : public Assembler {
   }
   template <typename T>
   void unboxDouble(T, FloatRegister) {
-    MOZ_CRASH();
-  }
-  template <typename T>
-  void unboxPrivate(T, Register) {
     MOZ_CRASH();
   }
   void unboxValue(const ValueOperand&, AnyRegister, JSValueType) {

@@ -11,6 +11,9 @@
 #include "mozilla/EventStateManager.h"      // for EventStateManager
 #include "mozilla/layers/APZThreadUtils.h"  // for AssertOnControllerThread, etc
 #include "mozilla/MouseEvents.h"            // for WidgetMouseEvent
+#include "mozilla/StaticPrefs_apz.h"
+#include "mozilla/StaticPrefs_general.h"
+#include "mozilla/StaticPrefs_test.h"
 #include "mozilla/TextEvents.h"             // for WidgetKeyboardEvent
 #include "mozilla/TouchEvents.h"            // for WidgetTouchEvent
 #include "mozilla/WheelHandlingHelper.h"    // for WheelDeltaHorizontalizer,
@@ -22,7 +25,7 @@ namespace layers {
 static bool WillHandleMouseEvent(const WidgetMouseEventBase& aEvent) {
   return aEvent.mMessage == eMouseMove || aEvent.mMessage == eMouseDown ||
          aEvent.mMessage == eMouseUp || aEvent.mMessage == eDragEnd ||
-         (StaticPrefs::TestEventsAsyncEnabled() &&
+         (StaticPrefs::test_events_async_enabled() &&
           aEvent.mMessage == eMouseHitTest);
 }
 
@@ -115,13 +118,13 @@ nsEventStatus APZInputBridge::ReceiveInputEvent(
       if (Maybe<APZWheelAction> action = ActionForWheelEvent(&wheelEvent)) {
         ScrollWheelInput::ScrollMode scrollMode =
             ScrollWheelInput::SCROLLMODE_INSTANT;
-        if (StaticPrefs::SmoothScrollEnabled() &&
+        if (StaticPrefs::general_smoothScroll() &&
             ((wheelEvent.mDeltaMode ==
                   dom::WheelEvent_Binding::DOM_DELTA_LINE &&
-              StaticPrefs::WheelSmoothScrollEnabled()) ||
+              StaticPrefs::general_smoothScroll_mouseWheel()) ||
              (wheelEvent.mDeltaMode ==
                   dom::WheelEvent_Binding::DOM_DELTA_PAGE &&
-              StaticPrefs::PageSmoothScrollEnabled()))) {
+              StaticPrefs::general_smoothScroll_pages()))) {
           scrollMode = ScrollWheelInput::SCROLLMODE_SMOOTH;
         }
 

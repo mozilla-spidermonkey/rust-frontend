@@ -2,41 +2,50 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import {recordTelemetryEvent} from "./aboutLoginsUtils.js";
-
 let gElements = {};
+let numberOfLogins = 0;
 
-document.addEventListener("DOMContentLoaded", () => {
-  gElements.loginList = document.querySelector("login-list");
-  gElements.loginItem = document.querySelector("login-item");
-  gElements.loginFilter = document.querySelector("login-filter");
-  gElements.newLoginButton = document.querySelector("#create-login-button");
+document.addEventListener(
+  "DOMContentLoaded",
+  () => {
+    gElements.fxAccountsButton = document.querySelector("fxaccounts-button");
+    gElements.loginList = document.querySelector("login-list");
+    gElements.loginIntro = document.querySelector("login-intro");
+    gElements.loginItem = document.querySelector("login-item");
+    gElements.loginFilter = document.querySelector("login-filter");
 
-  let {searchParams} = new URL(document.location);
-  if (searchParams.get("filter")) {
-    gElements.loginFilter.value = searchParams.get("filter");
-  }
+    let { searchParams } = new URL(document.location);
+    if (searchParams.get("filter")) {
+      gElements.loginFilter.value = searchParams.get("filter");
+    }
 
-  gElements.newLoginButton.addEventListener("click", () => {
-    window.dispatchEvent(new CustomEvent("AboutLoginsLoginSelected", {
-      detail: {},
-    }));
+    document.dispatchEvent(
+      new CustomEvent("AboutLoginsInit", { bubbles: true })
+    );
 
-    recordTelemetryEvent({object: "new_login", method: "new"});
-  });
+    gElements.loginFilter.focus();
+  },
+  { once: true }
+);
 
-  document.dispatchEvent(new CustomEvent("AboutLoginsInit", {bubbles: true}));
-}, {once: true});
+function updateNoLogins() {
+  document.documentElement.classList.toggle("no-logins", numberOfLogins == 0);
+  gElements.loginList.classList.toggle("no-logins", numberOfLogins == 0);
+}
 
 window.addEventListener("AboutLoginsChromeToContent", event => {
   switch (event.detail.messageType) {
     case "AllLogins": {
       gElements.loginList.setLogins(event.detail.value);
+      numberOfLogins = event.detail.value.length;
+      updateNoLogins();
       break;
     }
     case "LoginAdded": {
       gElements.loginList.loginAdded(event.detail.value);
       gElements.loginItem.loginAdded(event.detail.value);
+      numberOfLogins++;
+      updateNoLogins();
       break;
     }
     case "LoginModified": {
@@ -47,6 +56,17 @@ window.addEventListener("AboutLoginsChromeToContent", event => {
     case "LoginRemoved": {
       gElements.loginList.loginRemoved(event.detail.value);
       gElements.loginItem.loginRemoved(event.detail.value);
+      numberOfLogins--;
+      updateNoLogins();
+      break;
+    }
+    case "SyncState": {
+      gElements.fxAccountsButton.updateState(event.detail.value);
+      break;
+    }
+    case "UpdateBreaches": {
+      gElements.loginList.updateBreaches(event.detail.value);
+      gElements.loginItem.updateBreaches(event.detail.value);
       break;
     }
   }

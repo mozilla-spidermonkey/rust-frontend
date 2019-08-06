@@ -215,14 +215,18 @@ input:-moz-focusring {
   #toolbar.user-agent {
     background-image: linear-gradient(to bottom,
       transparent var(--toolbar-row-height),
-      var(--separator-border-color) var(--toolbar-row-height),
-      var(--separator-border-color) calc(var(--toolbar-row-height) + 1px),
+      var(--theme-splitter-color) var(--toolbar-row-height),
+      var(--theme-splitter-color) calc(var(--toolbar-row-height) + 1px),
       transparent 0);
   }
 }
 
 #rotate-button::before {
   background-image: url("./images/rotate-viewport.svg");
+}
+
+#rotate-button.viewport-orientation-landscape::before {
+  transform: rotate(90deg) scaleX(-1);
 }
 
 #touch-simulation-button::before {

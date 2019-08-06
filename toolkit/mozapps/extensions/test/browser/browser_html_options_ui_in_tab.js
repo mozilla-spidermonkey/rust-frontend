@@ -6,18 +6,15 @@
 
 add_task(async function enableHtmlViews() {
   await SpecialPowers.pushPrefEnv({
-    set: [
-      ["extensions.htmlaboutaddons.enabled", true],
-      ["extensions.htmlaboutaddons.inline-options.enabled", true],
-    ],
+    set: [["extensions.htmlaboutaddons.inline-options.enabled", true]],
   });
 });
 
-async function testOptionsInTab({id, options_ui_options}) {
+async function testOptionsInTab({ id, options_ui_options }) {
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
       name: "Prefs extension",
-      applications: {gecko: {id}},
+      applications: { gecko: { id } },
       options_ui: {
         page: "options.html",
         ...options_ui_options,
@@ -25,7 +22,9 @@ async function testOptionsInTab({id, options_ui_options}) {
     },
     background() {
       browser.test.sendMessage(
-        "options-url", browser.runtime.getURL("options.html"));
+        "options-url",
+        browser.runtime.getURL("options.html")
+      );
     },
     files: {
       "options.html": `<script src="options.js"></script>`,
@@ -86,7 +85,7 @@ async function testOptionsInTab({id, options_ui_options}) {
 
 add_task(async function testPreferencesLink() {
   let id = "prefs@mochi.test";
-  await testOptionsInTab({id, options_ui_options: {open_in_tab: true}});
+  await testOptionsInTab({ id, options_ui_options: { open_in_tab: true } });
 });
 
 add_task(async function testPreferencesInlineDisabled() {
@@ -95,7 +94,7 @@ add_task(async function testPreferencesInlineDisabled() {
   });
 
   let id = "inline-disabled@mochi.test";
-  await testOptionsInTab({id, options_ui_options: {}});
+  await testOptionsInTab({ id, options_ui_options: {} });
 
   await SpecialPowers.popPrefEnv();
 });
@@ -105,7 +104,7 @@ add_task(async function testNoPreferences() {
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
       name: "No Prefs extension",
-      applications: {gecko: {id}},
+      applications: { gecko: { id } },
     },
     useAddonManager: "temporary",
   });

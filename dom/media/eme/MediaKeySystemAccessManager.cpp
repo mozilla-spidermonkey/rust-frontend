@@ -9,7 +9,7 @@
 #include "nsComponentManagerUtils.h"
 #include "nsIObserverService.h"
 #include "mozilla/Services.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_media.h"
 #include "mozilla/DetailedPromise.h"
 #ifdef XP_WIN
 #  include "mozilla/WindowsVersion.h"
@@ -101,7 +101,7 @@ void MediaKeySystemAccessManager::Request(
     return;
   }
 
-  if (!StaticPrefs::MediaEmeEnabled() && !IsClearkeyKeySystem(aKeySystem)) {
+  if (!StaticPrefs::media_eme_enabled() && !IsClearkeyKeySystem(aKeySystem)) {
     // EME disabled by user, send notification to chrome so UI can inform user.
     // Clearkey is allowed even when EME is disabled because we want the pref
     // "media.eme.enabled" only taking effect on proprietary DRMs.
@@ -190,25 +190,6 @@ void MediaKeySystemAccessManager::Request(
     aPromise->MaybeResolve(access);
     diagnostics.StoreMediaKeySystemAccess(mWindow->GetExtantDoc(), aKeySystem,
                                           true, __func__);
-
-    // Accumulate telemetry to report whether we hit deprecation warnings.
-    if (warnings.Get("MediaEMENoCapabilitiesDeprecatedWarning")) {
-      Telemetry::Accumulate(
-          Telemetry::HistogramID::MEDIA_EME_REQUEST_DEPRECATED_WARNINGS, 1);
-      EME_LOG(
-          "MEDIA_EME_REQUEST_DEPRECATED_WARNINGS "
-          "MediaEMENoCapabilitiesDeprecatedWarning");
-    } else if (warnings.Get("MediaEMENoCodecsDeprecatedWarning")) {
-      Telemetry::Accumulate(
-          Telemetry::HistogramID::MEDIA_EME_REQUEST_DEPRECATED_WARNINGS, 2);
-      EME_LOG(
-          "MEDIA_EME_REQUEST_DEPRECATED_WARNINGS "
-          "MediaEMENoCodecsDeprecatedWarning");
-    } else {
-      Telemetry::Accumulate(
-          Telemetry::HistogramID::MEDIA_EME_REQUEST_DEPRECATED_WARNINGS, 0);
-      EME_LOG("MEDIA_EME_REQUEST_DEPRECATED_WARNINGS No warnings");
-    }
     return;
   }
   // Not to inform user, because nothing to do if the corresponding keySystem

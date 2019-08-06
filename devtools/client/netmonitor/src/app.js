@@ -5,14 +5,17 @@
 "use strict";
 
 const { createFactory } = require("devtools/client/shared/vendor/react");
-const { render, unmountComponentAtNode } = require("devtools/client/shared/vendor/react-dom");
-const Provider = createFactory(require("devtools/client/shared/vendor/react-redux").Provider);
+const {
+  render,
+  unmountComponentAtNode,
+} = require("devtools/client/shared/vendor/react-dom");
+const Provider = createFactory(
+  require("devtools/client/shared/vendor/react-redux").Provider
+);
 const App = createFactory(require("./components/App"));
 const { EVENTS } = require("./constants");
 
-const {
-  getDisplayedRequestById,
-} = require("./selectors/index");
+const { getDisplayedRequestById } = require("./selectors/index");
 
 /**
  * Global App object for Network panel. This object depends
@@ -32,24 +35,22 @@ NetMonitorApp.prototype = {
     // Get the root element for mounting.
     this.mount = document.querySelector("#mount");
 
-    const openLink = (link) => {
+    const openLink = link => {
       const parentDoc = toolbox.doc;
-      const iframe = parentDoc.getElementById("toolbox-panel-iframe-netmonitor");
+      const iframe = parentDoc.getElementById(
+        "toolbox-panel-iframe-netmonitor"
+      );
       const top = iframe.ownerDocument.defaultView.top;
       top.openWebLinkIn(link, "tab");
     };
 
-    const openSplitConsole = (err) => {
+    const openSplitConsole = err => {
       toolbox.openSplitConsole().then(() => {
         toolbox.target.logErrorInPage(err, "har");
       });
     };
 
-    const {
-      actions,
-      connector,
-      store,
-    } = this.api;
+    const { actions, connector, store } = this.api;
 
     const sourceMapService = toolbox.sourceMapURLService;
     const app = App({
@@ -67,14 +68,14 @@ NetMonitorApp.prototype = {
   /**
    * Clean up (unmount from DOM, remove listeners, disconnect).
    */
-  async destroy() {
+  destroy() {
     unmountComponentAtNode(this.mount);
 
     // Make sure to destroy the API object. It's usually destroyed
     // in the Toolbox destroy method, but we need it here for case
     // where the Network panel is initialized without the toolbox
     // and running in a tab (see initialize.js for details).
-    await this.api.destroy();
+    this.api.destroy();
   },
 
   /**
@@ -86,14 +87,11 @@ NetMonitorApp.prototype = {
    * @return {object} A promise resolved once the task finishes.
    */
   async inspectRequest(requestId) {
-    const {
-      actions,
-      store,
-    } = this.api;
+    const { actions, store } = this.api;
 
     // Look for the request in the existing ones or wait for it to appear,
     // if the network monitor is still loading.
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       let request = null;
       const inspector = () => {
         request = getDisplayedRequestById(store.getState(), requestId);

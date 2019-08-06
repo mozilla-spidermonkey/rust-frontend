@@ -504,13 +504,6 @@ mozilla::Keyframe* Gecko_GetOrCreateFinalKeyframe(
 mozilla::PropertyValuePair* Gecko_AppendPropertyValuePair(
     nsTArray<mozilla::PropertyValuePair>*, nsCSSPropertyID aProperty);
 
-// Clean up pointer-based coordinates
-void Gecko_ResetStyleCoord(nsStyleUnit* unit, nsStyleUnion* value);
-
-// Set an nsStyleCoord to a computed `calc()` value
-void Gecko_SetStyleCoordCalcValue(nsStyleUnit* unit, nsStyleUnion* value,
-                                  nsStyleCoord::CalcValue calc);
-
 void Gecko_CopyShapeSourceFrom(mozilla::StyleShapeSource* dst,
                                const mozilla::StyleShapeSource* src);
 
@@ -526,14 +519,6 @@ void Gecko_SetToSVGPath(
 void Gecko_ResetFilters(nsStyleEffects* effects, size_t new_len);
 
 void Gecko_CopyFiltersFrom(nsStyleEffects* aSrc, nsStyleEffects* aDest);
-
-void Gecko_nsStyleSVGPaint_CopyFrom(nsStyleSVGPaint* dest,
-                                    const nsStyleSVGPaint* src);
-
-void Gecko_nsStyleSVGPaint_SetURLValue(nsStyleSVGPaint* paint,
-                                       const mozilla::StyleComputedUrl* url);
-
-void Gecko_nsStyleSVGPaint_Reset(nsStyleSVGPaint* paint);
 
 void Gecko_nsStyleSVG_SetDashArrayLength(nsStyleSVG* svg, uint32_t len);
 
@@ -552,11 +537,13 @@ void Gecko_GetComputedImageURLSpec(const mozilla::StyleComputedUrl* url,
 
 void Gecko_nsIURI_Debug(nsIURI*, nsCString* spec);
 
+void Gecko_nsIReferrerInfo_Debug(nsIReferrerInfo* aReferrerInfo,
+                                 nsCString* aOut);
+
 NS_DECL_THREADSAFE_FFI_REFCOUNTING(mozilla::URLExtraData, URLExtraData);
+NS_DECL_THREADSAFE_FFI_REFCOUNTING(nsIReferrerInfo, nsIReferrerInfo);
 
 void Gecko_FillAllImageLayers(nsStyleImageLayers* layers, uint32_t max_len);
-
-NS_DECL_THREADSAFE_FFI_REFCOUNTING(nsStyleCoord::Calc, Calc);
 
 float Gecko_FontStretch_ToFloat(mozilla::FontStretch aStretch);
 
@@ -731,6 +718,8 @@ bool Gecko_MediaFeatures_HasSystemMetric(const mozilla::dom::Document*,
 bool Gecko_MediaFeatures_IsResourceDocument(const mozilla::dom::Document*);
 nsAtom* Gecko_MediaFeatures_GetOperatingSystemVersion(
     const mozilla::dom::Document*);
+
+void Gecko_PrintfStderr(const nsCString*);
 
 }  // extern "C"
 

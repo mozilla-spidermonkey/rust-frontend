@@ -35,14 +35,13 @@ class RenderCompositorANGLE : public RenderCompositor {
   static UniquePtr<RenderCompositor> Create(
       RefPtr<widget::CompositorWidget>&& aWidget);
 
-  explicit RenderCompositorANGLE(RefPtr<widget::CompositorWidget>&& aWidget,
-                                 gl::GLLibraryEGL*);
+  explicit RenderCompositorANGLE(RefPtr<widget::CompositorWidget>&& aWidget);
   virtual ~RenderCompositorANGLE();
   bool Initialize();
 
   bool BeginFrame() override;
   void EndFrame() override;
-  void WaitForGPU() override;
+  bool WaitForGPU() override;
   void Pause() override;
   bool Resume() override;
 
@@ -58,9 +57,11 @@ class RenderCompositorANGLE : public RenderCompositor {
 
   LayoutDeviceIntSize GetBufferSize() override;
 
+  bool IsContextLost() override;
+
  protected:
   void InsertPresentWaitQuery();
-  void WaitForPreviousPresentQuery();
+  bool WaitForPreviousPresentQuery();
   bool ResizeBufferIfNeeded();
   void DestroyEGLSurface();
   ID3D11Device* GetDeviceOfEGLDisplay();
@@ -68,7 +69,6 @@ class RenderCompositorANGLE : public RenderCompositor {
   bool SutdownEGLLibraryIfNecessary();
   RefPtr<ID3D11Query> GetD3D11Query();
 
-  RefPtr<gl::GLLibraryEGL> mEgl;
   EGLConfig mEGLConfig;
   EGLSurface mEGLSurface;
 

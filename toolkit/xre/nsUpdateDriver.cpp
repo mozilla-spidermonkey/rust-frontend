@@ -62,14 +62,10 @@ static LazyLogModule sUpdateLog("updatedriver");
 #  define UPDATER_BIN "updater.exe"
 #  define MAINTENANCE_SVC_NAME L"MozillaMaintenance"
 #elif XP_MACOSX
+#  define UPDATER_APP "updater.app"
 #  define UPDATER_BIN "org.mozilla.updater"
 #else
 #  define UPDATER_BIN "updater"
-#endif
-// On Mac OS X these files are copied into the update directory.
-#ifdef XP_MACOSX
-#  define UPDATER_INI "updater.ini"
-#  define UPDATER_APP "updater.app"
 #endif
 
 #ifdef XP_MACOSX
@@ -118,11 +114,15 @@ static nsresult GetCurrentWorkingDir(char* buf, size_t size) {
 
 #if defined(XP_WIN)
   wchar_t wpath[MAX_PATH];
-  if (!_wgetcwd(wpath, size)) return NS_ERROR_FAILURE;
+  if (!_wgetcwd(wpath, size)) {
+    return NS_ERROR_FAILURE;
+  }
   NS_ConvertUTF16toUTF8 path(wpath);
   strncpy(buf, path.get(), size);
 #else
-  if (!getcwd(buf, size)) return NS_ERROR_FAILURE;
+  if (!getcwd(buf, size)) {
+    return NS_ERROR_FAILURE;
+  }
 #endif
   return NS_OK;
 }
@@ -139,27 +139,20 @@ static nsresult GetInstallDirPath(nsIFile* appDir, nsACString& installDirPath) {
 #ifdef XP_MACOSX
   nsCOMPtr<nsIFile> parentDir1, parentDir2;
   rv = appDir->GetParent(getter_AddRefs(parentDir1));
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
+  NS_ENSURE_SUCCESS(rv, rv);
   rv = parentDir1->GetParent(getter_AddRefs(parentDir2));
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
+  NS_ENSURE_SUCCESS(rv, rv);
   rv = parentDir2->GetNativePath(installDirPath);
+  NS_ENSURE_SUCCESS(rv, rv);
 #elif XP_WIN
   nsAutoString installDirPathW;
   rv = appDir->GetPath(installDirPathW);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
+  NS_ENSURE_SUCCESS(rv, rv);
   installDirPath = NS_ConvertUTF16toUTF8(installDirPathW);
 #else
   rv = appDir->GetNativePath(installDirPath);
+  NS_ENSURE_SUCCESS(rv, rv);
 #endif
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
   return NS_OK;
 }
 
@@ -169,10 +162,14 @@ static bool GetFile(nsIFile* dir, const nsACString& name,
 
   nsCOMPtr<nsIFile> file;
   rv = dir->Clone(getter_AddRefs(file));
-  if (NS_FAILED(rv)) return false;
+  if (NS_FAILED(rv)) {
+    return false;
+  }
 
   rv = file->AppendNative(name);
-  if (NS_FAILED(rv)) return false;
+  if (NS_FAILED(rv)) {
+    return false;
+  }
 
   result = file;
   return true;
@@ -183,7 +180,10 @@ static bool GetStatusFile(nsIFile* dir, nsCOMPtr<nsIFile>& result) {
 }
 
 /**
- * Get the contents of the update.status file.
+ * Get the contents of the update.status file when the update.status file can
+ * be opened with read and write access. The reason it is opened for both read
+ * and write is to prevent trying to update when the user doesn't have write
+ * access to the update directory.
  *
  * @param statusFile the status file object.
  * @param buf        the buffer holding the file contents
@@ -197,8 +197,10 @@ static bool GetStatusFileContents(nsIFile* statusFile, char (&buf)[Size]) {
       "Buffer needs to be large enough to hold the known status codes");
 
   PRFileDesc* fd = nullptr;
-  nsresult rv = statusFile->OpenNSPRFileDesc(PR_RDONLY, 0660, &fd);
-  if (NS_FAILED(rv)) return false;
+  nsresult rv = statusFile->OpenNSPRFileDesc(PR_RDWR, 0660, &fd);
+  if (NS_FAILED(rv)) {
+    return false;
+  }
 
   const int32_t n = PR_Read(fd, buf, Size);
   PR_Close(fd);
@@ -263,72 +265,32 @@ static bool GetVersionFile(nsIFile* dir, nsCOMPtr<nsIFile>& result) {
 static bool IsOlderVersion(nsIFile* versionFile, const char* appVersion) {
   PRFileDesc* fd = nullptr;
   nsresult rv = versionFile->OpenNSPRFileDesc(PR_RDONLY, 0660, &fd);
-  if (NS_FAILED(rv)) return true;
+  if (NS_FAILED(rv)) {
+    return true;
+  }
 
   char buf[32];
   const int32_t n = PR_Read(fd, buf, sizeof(buf));
   PR_Close(fd);
 
-  if (n < 0) return false;
+  if (n < 0) {
+    return false;
+  }
 
   // Trim off the trailing newline
-  if (buf[n - 1] == '\n') buf[n - 1] = '\0';
+  if (buf[n - 1] == '\n') {
+    buf[n - 1] = '\0';
+  }
 
   // If the update xml doesn't provide the application version the file will
   // contain the string "null" and it is assumed that the update is not older.
   const char kNull[] = "null";
-  if (strncmp(buf, kNull, sizeof(kNull) - 1) == 0) return false;
-
-  if (mozilla::Version(appVersion) > buf) return true;
-
-  return false;
-}
-
-#if defined(XP_MACOSX)
-static bool CopyFileIntoUpdateDir(nsIFile* parentDir, const nsACString& leaf,
-                                  nsIFile* updateDir) {
-  nsCOMPtr<nsIFile> file;
-
-  // Make sure there is not an existing file in the target location.
-  nsresult rv = updateDir->Clone(getter_AddRefs(file));
-  if (NS_FAILED(rv)) return false;
-  rv = file->AppendNative(leaf);
-  if (NS_FAILED(rv)) return false;
-  file->Remove(true);
-
-  // Now, copy into the target location.
-  rv = parentDir->Clone(getter_AddRefs(file));
-  if (NS_FAILED(rv)) return false;
-  rv = file->AppendNative(leaf);
-  if (NS_FAILED(rv)) return false;
-  rv = file->CopyToNative(updateDir, EmptyCString());
-  if (NS_FAILED(rv)) return false;
-
-  return true;
-}
-
-static bool CopyUpdaterIntoUpdateDir(nsIFile* greDir, nsIFile* appDir,
-                                     nsIFile* updateDir,
-                                     nsCOMPtr<nsIFile>& updater) {
-  // Copy the updater application from the GRE and the updater ini from the app.
-  if (!CopyFileIntoUpdateDir(appDir, NS_LITERAL_CSTRING(UPDATER_APP),
-                             updateDir))
+  if (strncmp(buf, kNull, sizeof(kNull) - 1) == 0) {
     return false;
-  CopyFileIntoUpdateDir(greDir, NS_LITERAL_CSTRING(UPDATER_INI), updateDir);
-  // Finally, return the location of the updater binary.
-  nsresult rv = updateDir->Clone(getter_AddRefs(updater));
-  if (NS_FAILED(rv)) return false;
-  rv = updater->AppendNative(NS_LITERAL_CSTRING(UPDATER_APP));
-  nsresult tmp = updater->AppendNative(NS_LITERAL_CSTRING("Contents"));
-  if (NS_FAILED(tmp)) {
-    rv = tmp;
   }
-  tmp = updater->AppendNative(NS_LITERAL_CSTRING("MacOS"));
-  if (NS_FAILED(tmp) || NS_FAILED(rv)) return false;
-  rv = updater->AppendNative(NS_LITERAL_CSTRING(UPDATER_BIN));
-  return NS_SUCCEEDED(rv);
+
+  return mozilla::Version(appVersion) > buf;
 }
-#endif
 
 /**
  * Applies, switches, or stages an update.
@@ -381,46 +343,24 @@ static void ApplyUpdate(nsIFile* greDir, nsIFile* updateDir, nsIFile* appDir,
   }
   updateDirPath = NS_ConvertUTF16toUTF8(updateDirPathW);
 #elif defined(XP_MACOSX)
-  if (isStaged) {
-    nsCOMPtr<nsIFile> mozUpdaterDir;
-    rv = updateDir->Clone(getter_AddRefs(mozUpdaterDir));
-    if (NS_FAILED(rv)) {
-      LOG(("failed cloning update dir\n"));
-      return;
-    }
-
-    // Create a new directory named MozUpdater in the updates/0 directory to
-    // copy the updater files to that will be used to replace the installation
-    // with the staged application that has been updated. Note that we don't
-    // check for directory creation errors since the call to
-    // CopyUpdaterIntoUpdateDir will fail if the creation of the directory
-    // fails. A unique directory is created in MozUpdater in case a previous
-    // attempt locked the directory or files.
-    mozUpdaterDir->Append(NS_LITERAL_STRING("MozUpdater"));
-    mozUpdaterDir->Append(NS_LITERAL_STRING("bgupdate"));
-    rv = mozUpdaterDir->CreateUnique(nsIFile::DIRECTORY_TYPE, 0755);
-    if (NS_FAILED(rv)) {
-      LOG(("failed creating unique dir\n"));
-      return;
-    }
-
-    // Copy the updater and files needed to update into the MozUpdater/bgupdate
-    // directory in the update dir and get an nsIFile reference to the copied
-    // updater.
-    if (!CopyUpdaterIntoUpdateDir(greDir, appDir, mozUpdaterDir, updater)) {
-      LOG(("failed copying updater\n"));
-      return;
-    }
-  } else {
-    // Copy the updater and files needed to update into the update directory and
-    // get an nsIFile reference to the copied updater.
-    if (!CopyUpdaterIntoUpdateDir(greDir, appDir, updateDir, updater)) {
-      LOG(("failed copying updater\n"));
-      return;
-    }
+  // Get an nsIFile reference for the updater in the installation dir.
+  if (!GetFile(appDir, NS_LITERAL_CSTRING(UPDATER_APP), updater)) {
+    return;
+  }
+  rv = updater->AppendNative(NS_LITERAL_CSTRING("Contents"));
+  if (NS_FAILED(rv)) {
+    return;
+  }
+  rv = updater->AppendNative(NS_LITERAL_CSTRING("MacOS"));
+  if (NS_FAILED(rv)) {
+    return;
+  }
+  rv = updater->AppendNative(NS_LITERAL_CSTRING(UPDATER_BIN));
+  if (NS_FAILED(rv)) {
+    return;
   }
 
-  // Get the path to the updater that will be used.
+  // Get the path to the updater.
   rv = updater->GetNativePath(updaterPath);
   if (NS_FAILED(rv)) {
     return;
@@ -437,7 +377,7 @@ static void ApplyUpdate(nsIFile* greDir, nsIFile* updateDir, nsIFile* appDir,
     return;
   }
 
-  // Get the path to the updater that will be used.
+  // Get the path to the updater.
   rv = updater->GetNativePath(updaterPath);
   if (NS_FAILED(rv)) {
     return;
@@ -717,19 +657,11 @@ nsresult ProcessUpdates(nsIFile* greDir, nsIFile* appDir, nsIFile* updRootDir,
 
   nsCOMPtr<nsIFile> updatesDir;
   rv = updRootDir->Clone(getter_AddRefs(updatesDir));
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-
+  NS_ENSURE_SUCCESS(rv, rv);
   rv = updatesDir->AppendNative(NS_LITERAL_CSTRING("updates"));
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-
+  NS_ENSURE_SUCCESS(rv, rv);
   rv = updatesDir->AppendNative(NS_LITERAL_CSTRING("0"));
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
+  NS_ENSURE_SUCCESS(rv, rv);
 
   // Return early since there isn't a valid update when the update application
   // version file doesn't exist or if the update's application version is less
@@ -832,7 +764,7 @@ nsUpdateProcessor::ProcessUpdate() {
 }
 
 NS_IMETHODIMP
-nsUpdateProcessor::FixUpdateDirectoryPerms(bool aShouldUseService) {
+nsUpdateProcessor::FixUpdateDirectoryPerms(bool aUseServiceOnFailure) {
 #ifndef XP_WIN
   return NS_ERROR_NOT_IMPLEMENTED;
 #else
@@ -845,10 +777,11 @@ nsUpdateProcessor::FixUpdateDirectoryPerms(bool aShouldUseService) {
 
   class FixUpdateDirectoryPermsRunnable final : public mozilla::Runnable {
    public:
-    FixUpdateDirectoryPermsRunnable(const char* aName, bool aShouldUseService,
+    FixUpdateDirectoryPermsRunnable(const char* aName,
+                                    bool aUseServiceOnFailure,
                                     const nsAutoString& aInstallPath)
         : Runnable(aName),
-          mShouldUseService(aShouldUseService),
+          mUseServiceOnFailure(aUseServiceOnFailure),
           mState(State::Initializing) {
       size_t installPathSize = aInstallPath.Length() + 1;
       mInstallPath = mozilla::MakeUnique<wchar_t[]>(installPathSize);
@@ -887,7 +820,7 @@ nsUpdateProcessor::FixUpdateDirectoryPerms(bool aShouldUseService) {
         if (SUCCEEDED(permResult)) {
           LOG(("Successfully fixed permissions from within Firefox\n"));
           return NS_OK;
-        } else if (!mShouldUseService) {
+        } else if (!mUseServiceOnFailure) {
           LOG(
               ("Error: Unable to fix permissions within Firefox and "
                "maintenance service is disabled\n"));
@@ -1005,7 +938,7 @@ nsUpdateProcessor::FixUpdateDirectoryPerms(bool aShouldUseService) {
     }
 
    private:
-    bool mShouldUseService;
+    bool mUseServiceOnFailure;
     unsigned int mCurrentTry;
     State mState;
     mozilla::UniquePtr<wchar_t[]> mInstallPath;
@@ -1059,7 +992,7 @@ nsUpdateProcessor::FixUpdateDirectoryPerms(bool aShouldUseService) {
   NS_ENSURE_TRUE(eventTarget, NS_ERROR_FAILURE);
 
   nsCOMPtr<nsIRunnable> runnable = new FixUpdateDirectoryPermsRunnable(
-      "FixUpdateDirectoryPermsRunnable", aShouldUseService, installPath);
+      "FixUpdateDirectoryPermsRunnable", aUseServiceOnFailure, installPath);
   rv = eventTarget->Dispatch(runnable.forget());
   NS_ENSURE_SUCCESS(rv, rv);
 #endif

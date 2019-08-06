@@ -1,15 +1,29 @@
 /* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* vim: set sts=2 sw=2 et tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
-var {Constructor: CC} = Components;
+var { Constructor: CC } = Components;
 
-ChromeUtils.defineModuleGetter(this, "CommonUtils",
-                               "resource://services-common/utils.js");
-XPCOMUtils.defineLazyPreferenceGetter(this, "redirectDomain",
-                                      "extensions.webextensions.identity.redirectDomain");
+ChromeUtils.defineModuleGetter(
+  this,
+  "CommonUtils",
+  "resource://services-common/utils.js"
+);
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "redirectDomain",
+  "extensions.webextensions.identity.redirectDomain"
+);
 
-let CryptoHash = CC("@mozilla.org/security/hash;1", "nsICryptoHash", "initWithString");
+let CryptoHash = CC(
+  "@mozilla.org/security/hash;1",
+  "nsICryptoHash",
+  "initWithString"
+);
 
 XPCOMUtils.defineLazyGlobalGetters(this, ["URL", "TextEncoder"]);
 
@@ -22,7 +36,7 @@ const computeHash = str => {
 
 this.identity = class extends ExtensionAPI {
   getAPI(context) {
-    let {extension} = context;
+    let { extension } = context;
     return {
       identity: {
         getRedirectURL: function(path = "") {
@@ -37,15 +51,20 @@ this.identity = class extends ExtensionAPI {
           try {
             url = new URL(details.url);
           } catch (e) {
-            return Promise.reject({message: "details.url is invalid"});
+            return Promise.reject({ message: "details.url is invalid" });
           }
           try {
-            redirectURI = new URL(url.searchParams.get("redirect_uri") || this.getRedirectURL());
+            redirectURI = new URL(
+              url.searchParams.get("redirect_uri") || this.getRedirectURL()
+            );
           } catch (e) {
-            return Promise.reject({message: "redirect_uri is invalid"});
+            return Promise.reject({ message: "redirect_uri is invalid" });
           }
 
-          return context.childManager.callParentAsyncFunction("identity.launchWebAuthFlowInParent", [details, redirectURI.href]);
+          return context.childManager.callParentAsyncFunction(
+            "identity.launchWebAuthFlowInParent",
+            [details, redirectURI.href]
+          );
         },
       },
     };

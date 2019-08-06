@@ -8,9 +8,10 @@
 
 "use strict";
 
-const TEST_URI = "http://example.com/browser/devtools/client/webconsole/" +
-                 "test/mochitest/" +
-                 "test-closure-optimized-out.html";
+const TEST_URI =
+  "http://example.com/browser/devtools/client/webconsole/" +
+  "test/mochitest/" +
+  "test-closure-optimized-out.html";
 
 add_task(async function() {
   const breakpointLine = 18;
@@ -29,12 +30,8 @@ add_task(async function() {
   await toolbox.selectTool("webconsole");
 
   // This is the meat of the test: evaluate the optimized out variable.
-  const onMessage = waitForMessage(hud, "optimized out");
-  hud.jsterm.execute("upvar");
-
   info("Waiting for optimized out message");
-  await onMessage;
-
+  await executeAndWaitForMessage(hud, "upvar", "optimized out", ".result");
   ok(true, "Optimized out message logged");
 
   info("Open the debugger");

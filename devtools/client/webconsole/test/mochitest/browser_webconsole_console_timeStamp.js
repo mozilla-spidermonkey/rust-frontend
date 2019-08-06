@@ -11,10 +11,12 @@ add_task(async function() {
   // We open the console and an empty tab, as we only want to evaluate something.
   const hud = await openNewTabAndConsole(TEST_URI);
   // We execute `console.timeStamp('test')` from the console input.
-  await hud.jsterm.execute("console.timeStamp('test')");
+  execute(hud, "console.timeStamp('test')");
   info(`Checking size`);
   await waitFor(() => findMessages(hud, "").length == 2);
-  const [first, second] = findMessages(hud, "").map(message=>message.textContent.trim());
+  const [first, second] = findMessages(hud, "").map(message =>
+    message.textContent.trim()
+  );
   info(`Checking first message`);
   is(first, "console.timeStamp('test')", "First message has expected text");
   info(`Checking second message`);

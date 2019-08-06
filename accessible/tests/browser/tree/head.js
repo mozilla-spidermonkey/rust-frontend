@@ -10,11 +10,15 @@
 /* import-globals-from ../shared-head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/accessible/tests/browser/shared-head.js",
-  this);
+  this
+);
 
 // Loading and common.js from accessible/tests/mochitest/ for all tests, as
-// well as events.js.
-loadScripts({ name: "common.js", dir: MOCHITESTS_DIR }, "events.js");
+// well as promisified-events.js.
+loadScripts(
+  { name: "common.js", dir: MOCHITESTS_DIR },
+  { name: "promisified-events.js", dir: MOCHITESTS_DIR }
+);
 
 /*
  * A test function for comparing the IDs of an accessible's children
@@ -22,6 +26,9 @@ loadScripts({ name: "common.js", dir: MOCHITESTS_DIR }, "events.js");
  */
 function testChildrenIds(acc, expectedIds) {
   let ids = arrayFromChildren(acc).map(child => getAccessibleDOMNodeID(child));
-  Assert.deepEqual(ids, expectedIds,
-    `Children for ${getAccessibleDOMNodeID(acc)} are wrong.`);
+  Assert.deepEqual(
+    ids,
+    expectedIds,
+    `Children for ${getAccessibleDOMNodeID(acc)} are wrong.`
+  );
 }

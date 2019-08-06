@@ -9,7 +9,7 @@ from __future__ import absolute_import
 from mozlog.proxy import ProxyLogger
 
 
-class RaptorLogger(ProxyLogger):
+class RaptorLogger():
 
     def __init__(self, component=None):
         self.logger = ProxyLogger(component)
@@ -37,3 +37,6 @@ class RaptorLogger(ProxyLogger):
 
     def process_output(self, *args, **kwargs):
         return self.logger.process_output(*args, **kwargs)
+
+    def crash(self, *args, **kwargs):
+        return self.logger.crash(*args, **kwargs)

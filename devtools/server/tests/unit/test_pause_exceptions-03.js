@@ -9,20 +9,28 @@
  * when an exception is thrown.
  */
 
-add_task(threadClientTest(async ({ threadClient, debuggee }) => {
-  await executeOnNextTickAndWaitForPause(() => evaluateTestCode(debuggee), threadClient);
+add_task(
+  threadFrontTest(
+    async ({ threadFront, debuggee }) => {
+      await executeOnNextTickAndWaitForPause(
+        () => evaluateTestCode(debuggee),
+        threadFront
+      );
 
-  threadClient.pauseOnExceptions(true, false);
-  await resume(threadClient);
-  const paused = await waitForPause(threadClient);
-  Assert.equal(paused.why.type, "exception");
-  equal(paused.frame.where.line, 4, "paused at throw");
+      threadFront.pauseOnExceptions(true, false);
+      await resume(threadFront);
+      const paused = await waitForPause(threadFront);
+      Assert.equal(paused.why.type, "exception");
+      equal(paused.frame.where.line, 4, "paused at throw");
 
-  await resume(threadClient);
-}, {
-  // Bug 1508289, exception tests fails in worker scope
-  doNotRunWorker: true,
-}));
+      await resume(threadFront);
+    },
+    {
+      // Bug 1508289, exception tests fails in worker scope
+      doNotRunWorker: true,
+    }
+  )
+);
 
 function evaluateTestCode(debuggee) {
   /* eslint-disable */

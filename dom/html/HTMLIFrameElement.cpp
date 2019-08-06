@@ -9,7 +9,7 @@
 #include "mozilla/dom/FeaturePolicy.h"
 #include "mozilla/MappedDeclarations.h"
 #include "mozilla/NullPrincipal.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "nsMappedAttributes.h"
 #include "nsAttrValueInlines.h"
 #include "nsError.h"
@@ -54,7 +54,7 @@ HTMLIFrameElement::HTMLIFrameElement(
     FromParser aFromParser)
     : nsGenericHTMLFrameElement(std::move(aNodeInfo), aFromParser) {
   // We always need a featurePolicy, even if not exposed.
-  mFeaturePolicy = new FeaturePolicy(this);
+  mFeaturePolicy = new mozilla::dom::FeaturePolicy(this);
 
   nsCOMPtr<nsIPrincipal> origin = GetFeaturePolicyDefaultOrigin();
   MOZ_ASSERT(origin);
@@ -84,16 +84,16 @@ bool HTMLIFrameElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
                                        nsAttrValue& aResult) {
   if (aNamespaceID == kNameSpaceID_None) {
     if (aAttribute == nsGkAtoms::marginwidth) {
-      return aResult.ParseSpecialIntValue(aValue);
+      return aResult.ParseNonNegativeIntValue(aValue);
     }
     if (aAttribute == nsGkAtoms::marginheight) {
-      return aResult.ParseSpecialIntValue(aValue);
+      return aResult.ParseNonNegativeIntValue(aValue);
     }
     if (aAttribute == nsGkAtoms::width) {
-      return aResult.ParseSpecialIntValue(aValue);
+      return aResult.ParseHTMLDimension(aValue);
     }
     if (aAttribute == nsGkAtoms::height) {
-      return aResult.ParseSpecialIntValue(aValue);
+      return aResult.ParseHTMLDimension(aValue);
     }
     if (aAttribute == nsGkAtoms::frameborder) {
       return ParseFrameborderValue(aValue, aResult);
@@ -224,7 +224,9 @@ JSObject* HTMLIFrameElement::WrapNode(JSContext* aCx,
   return HTMLIFrameElement_Binding::Wrap(aCx, this, aGivenProto);
 }
 
-FeaturePolicy* HTMLIFrameElement::Policy() const { return mFeaturePolicy; }
+mozilla::dom::FeaturePolicy* HTMLIFrameElement::FeaturePolicy() const {
+  return mFeaturePolicy;
+}
 
 already_AddRefed<nsIPrincipal>
 HTMLIFrameElement::GetFeaturePolicyDefaultOrigin() const {
@@ -237,7 +239,7 @@ HTMLIFrameElement::GetFeaturePolicyDefaultOrigin() const {
 
   nsCOMPtr<nsIURI> nodeURI;
   if (GetURIAttr(nsGkAtoms::src, nullptr, getter_AddRefs(nodeURI)) && nodeURI) {
-    principal = BasePrincipal::CreateCodebasePrincipal(
+    principal = BasePrincipal::CreateContentPrincipal(
         nodeURI, BasePrincipal::Cast(NodePrincipal())->OriginAttributesRef());
   }
 
@@ -268,7 +270,7 @@ void HTMLIFrameElement::RefreshFeaturePolicy(bool aParseAllowAttribute) {
                                         origin);
     }
 
-    mFeaturePolicy->InheritPolicy(OwnerDoc()->Policy());
+    mFeaturePolicy->InheritPolicy(OwnerDoc()->FeaturePolicy());
   }
 
   if (AllowPaymentRequest()) {

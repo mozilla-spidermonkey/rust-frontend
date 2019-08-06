@@ -36,7 +36,6 @@
 #include "nsIObserverService.h"
 #include "nsIObjectFrame.h"
 #include "nsBindingManager.h"
-#include "nsStyleCoord.h"
 #include "BrowserChild.h"
 #include "nsFrameLoader.h"
 #include "nsHTMLDocument.h"
@@ -363,6 +362,8 @@ InputContextAction::Cause nsFocusManager::GetFocusMoveActionCause(
     return InputContextAction::CAUSE_MOUSE;
   } else if (aFlags & nsIFocusManager::FLAG_BYKEY) {
     return InputContextAction::CAUSE_KEY;
+  } else if (aFlags & nsIFocusManager::FLAG_BYLONGPRESS) {
+    return InputContextAction::CAUSE_LONGPRESS;
   }
   return InputContextAction::CAUSE_UNKNOWN;
 }
@@ -683,6 +684,9 @@ nsFocusManager::WindowRaised(mozIDOMWindowProxy* aWindow) {
   // Events for child process windows will be sent when ParentActivated
   // is called.
   if (XRE_IsParentProcess()) {
+    // Popping upon lowering was inhibited to accommodate ATOK,
+    // so we need to do it here.
+    BrowserParent::PopFocusAll();
     ActivateOrDeactivate(window, true);
   }
 
@@ -969,7 +973,7 @@ nsFocusManager::WindowHidden(mozIDOMWindowProxy* aWindow) {
         mFocusedWindow ? mFocusedWindow->GetDocShell() : nullptr;
     if (dsti) {
       nsCOMPtr<nsIDocShellTreeItem> parentDsti;
-      dsti->GetParent(getter_AddRefs(parentDsti));
+      dsti->GetInProcessParent(getter_AddRefs(parentDsti));
       if (parentDsti) {
         if (nsCOMPtr<nsPIDOMWindowOuter> parentWindow = parentDsti->GetWindow())
           parentWindow->SetFocusedElement(nullptr);
@@ -1184,7 +1188,7 @@ void nsFocusManager::SetFocusInner(Element* aNewContent, int32_t aFlags,
     if (beingDestroyed) return;
 
     nsCOMPtr<nsIDocShellTreeItem> parentDsti;
-    docShell->GetParent(getter_AddRefs(parentDsti));
+    docShell->GetInProcessParent(getter_AddRefs(parentDsti));
     docShell = do_QueryInterface(parentDsti);
   }
 
@@ -1354,7 +1358,7 @@ bool nsFocusManager::IsSameOrAncestor(nsPIDOMWindowOuter* aPossibleAncestor,
   while (dsti) {
     if (dsti == ancestordsti) return true;
     nsCOMPtr<nsIDocShellTreeItem> parentDsti;
-    dsti->GetParent(getter_AddRefs(parentDsti));
+    dsti->GetInProcessParent(getter_AddRefs(parentDsti));
     dsti.swap(parentDsti);
   }
 
@@ -1375,13 +1379,13 @@ already_AddRefed<nsPIDOMWindowOuter> nsFocusManager::GetCommonAncestor(
   do {
     parents1.AppendElement(dsti1);
     nsCOMPtr<nsIDocShellTreeItem> parentDsti1;
-    dsti1->GetParent(getter_AddRefs(parentDsti1));
+    dsti1->GetInProcessParent(getter_AddRefs(parentDsti1));
     dsti1.swap(parentDsti1);
   } while (dsti1);
   do {
     parents2.AppendElement(dsti2);
     nsCOMPtr<nsIDocShellTreeItem> parentDsti2;
-    dsti2->GetParent(getter_AddRefs(parentDsti2));
+    dsti2->GetInProcessParent(getter_AddRefs(parentDsti2));
     dsti2.swap(parentDsti2);
   } while (dsti2);
 
@@ -1415,7 +1419,7 @@ void nsFocusManager::AdjustWindowFocus(nsPIDOMWindowOuter* aWindow,
     nsCOMPtr<nsIDocShellTreeItem> dsti = window->GetDocShell();
     if (!dsti) return;
     nsCOMPtr<nsIDocShellTreeItem> parentDsti;
-    dsti->GetParent(getter_AddRefs(parentDsti));
+    dsti->GetInProcessParent(getter_AddRefs(parentDsti));
     if (!parentDsti) {
       return;
     }
@@ -2311,7 +2315,8 @@ void nsFocusManager::MoveCaretToFocus(PresShell* aPresShell,
           newRange->SetStartBefore(*aContent, IgnoreErrors());
           newRange->SetEndBefore(*aContent, IgnoreErrors());
         }
-        domSelection->AddRange(*newRange, IgnoreErrors());
+        domSelection->AddRangeAndSelectFramesAndNotifyListeners(*newRange,
+                                                                IgnoreErrors());
         domSelection->CollapseToStart(IgnoreErrors());
       }
     }
@@ -2708,11 +2713,11 @@ nsresult nsFocusManager::DetermineElementToMoveFocus(
       // The common case here is the urlbar where focus is on the anonymous
       // input inside the textbox, but the retargetdocumentfocus attribute
       // refers to the textbox. The Contains check will return false and the
-      // ContentIsDescendantOf check will return true in this case.
-      if (retargetElement && (retargetElement == startContent ||
-                              (!retargetElement->Contains(startContent) &&
-                               nsContentUtils::ContentIsDescendantOf(
-                                   startContent, retargetElement)))) {
+      // IsInclusiveDescendantOf check will return true in this case.
+      if (retargetElement &&
+          (retargetElement == startContent ||
+           (!retargetElement->Contains(startContent) &&
+            startContent->IsInclusiveDescendantOf(retargetElement)))) {
         startContent = rootContent;
       }
     }
@@ -3375,22 +3380,20 @@ nsresult nsFocusManager::GetNextTabbableContent(
       } else {
         currentTopLevelScopeOwner = currentContent;
       }
-      if (currentTopLevelScopeOwner) {
-        if (currentTopLevelScopeOwner == oldTopLevelScopeOwner) {
-          // We're within non-document scope, continue.
-          do {
-            if (aForward) {
-              frameTraversal->Next();
-            } else {
-              frameTraversal->Prev();
-            }
-            frame = static_cast<nsIFrame*>(frameTraversal->CurrentItem());
-            // For the usage of GetPrevContinuation, see the comment
-            // at the end of while (frame) loop.
-          } while (frame && frame->GetPrevContinuation());
-          continue;
-        }
-        currentContent = currentTopLevelScopeOwner;
+      if (currentTopLevelScopeOwner &&
+          currentTopLevelScopeOwner == oldTopLevelScopeOwner) {
+        // We're within non-document scope, continue.
+        do {
+          if (aForward) {
+            frameTraversal->Next();
+          } else {
+            frameTraversal->Prev();
+          }
+          frame = static_cast<nsIFrame*>(frameTraversal->CurrentItem());
+          // For the usage of GetPrevContinuation, see the comment
+          // at the end of while (frame) loop.
+        } while (frame && frame->GetPrevContinuation());
+        continue;
       }
 
       // For document navigation, check if this element is an open panel. Since
@@ -3442,18 +3445,18 @@ nsresult nsFocusManager::GetNextTabbableContent(
       //  append ELEMENT to NAVIGATION-ORDER."
       // and later in "For each element ELEMENT in NAVIGATION-ORDER: "
       // hosts and slots are handled before other elements.
-      if (IsHostOrSlot(currentContent)) {
+      if (IsHostOrSlot(currentTopLevelScopeOwner)) {
         bool focusableHostSlot;
-        int32_t tabIndex =
-            HostOrSlotTabIndexValue(currentContent, &focusableHostSlot);
+        int32_t tabIndex = HostOrSlotTabIndexValue(currentTopLevelScopeOwner,
+                                                   &focusableHostSlot);
         // Host or slot itself isn't focusable or going backwards, enter its
         // scope.
         if ((!aForward || !focusableHostSlot) && tabIndex >= 0 &&
             (aIgnoreTabIndex || aCurrentTabIndex == tabIndex)) {
           nsIContent* contentToFocus = GetNextTabbableContentInScope(
-              currentContent, currentContent, aOriginalStartContent, aForward,
-              aForward ? 1 : 0, aIgnoreTabIndex, aForDocumentNavigation,
-              true /* aSkipOwner */);
+              currentTopLevelScopeOwner, currentTopLevelScopeOwner,
+              aOriginalStartContent, aForward, aForward ? 1 : 0,
+              aIgnoreTabIndex, aForDocumentNavigation, true /* aSkipOwner */);
           if (contentToFocus) {
             NS_ADDREF(*aResultContent = contentToFocus);
             return NS_OK;
@@ -4017,7 +4020,7 @@ void nsFocusManager::SetFocusedWindowInternal(nsPIDOMWindowOuter* aWindow) {
   if (aWindow && aWindow != mFocusedWindow) {
     const TimeStamp now(TimeStamp::Now());
     for (Document* doc = aWindow->GetExtantDoc(); doc;
-         doc = doc->GetParentDocument()) {
+         doc = doc->GetInProcessParentDocument()) {
       doc->SetLastFocusTime(now);
     }
   }

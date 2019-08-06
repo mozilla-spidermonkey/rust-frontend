@@ -193,6 +193,13 @@ struct nsCSSRendering {
       const nsStyleBorder& aBorderStyle, mozilla::ComputedStyle* aComputedStyle,
       bool* aOutBorderIsEmpty, Sides aSkipSides = Sides());
 
+  static mozilla::Maybe<nsCSSBorderRenderer>
+  CreateNullBorderRendererWithStyleBorder(
+      nsPresContext* aPresContext, DrawTarget* aDrawTarget, nsIFrame* aForFrame,
+      const nsRect& aDirtyRect, const nsRect& aBorderArea,
+      const nsStyleBorder& aBorderStyle, mozilla::ComputedStyle* aComputedStyle,
+      bool* aOutBorderIsEmpty, Sides aSkipSides = Sides());
+
   static mozilla::Maybe<nsCSSBorderRenderer> CreateBorderRendererForOutline(
       nsPresContext* aPresContext, gfxContext* aRenderingContext,
       nsIFrame* aForFrame, const nsRect& aDirtyRect, const nsRect& aBorderArea,
@@ -205,6 +212,13 @@ struct nsCSSRendering {
       const mozilla::layers::StackingContextHelper& aSc,
       mozilla::layers::RenderRootStateManager* aManager,
       nsDisplayListBuilder* aDisplayListBuilder);
+
+  static void CreateWebRenderCommandsForNullBorder(
+      nsDisplayItem* aItem, nsIFrame* aForFrame, const nsRect& aBorderArea,
+      mozilla::wr::DisplayListBuilder& aBuilder,
+      mozilla::wr::IpcResourceUpdateQueue& aResources,
+      const mozilla::layers::StackingContextHelper& aSc,
+      const nsStyleBorder& aStyleBorder);
 
   static ImgDrawResult CreateWebRenderCommandsForBorderWithStyleBorder(
       nsDisplayItem* aItem, nsIFrame* aForFrame, const nsRect& aBorderArea,
@@ -559,6 +573,12 @@ struct nsCSSRendering {
     // for a vertical textrun, width will actually be a physical height;
     // and conversely, height will be a physical width.
     Size lineSize;
+    // The default height [thickness] of the line given by the font metrics.
+    // This is used for obtaining the correct offset for the decoration line
+    // when CSS specifies a unique thickness for a text-decoration,
+    // since the offset given by the font is derived from the font metric's
+    // assumed line height
+    Float defaultLineThickness = 0.0f;
     // The ascent of the text.
     Float ascent = 0.0f;
     // The offset of the decoration line from the baseline of the text

@@ -46,18 +46,25 @@
 using namespace mozilla;
 using namespace mozilla::dom;
 
-/* static */ const int32_t nsStyleGridLine::kMinLine;
-/* static */ const int32_t nsStyleGridLine::kMaxLine;
-
 static const nscoord kMediumBorderWidth = nsPresContext::CSSPixelsToAppUnits(3);
 
 // We set the size limit of style structs to 504 bytes so that when they
 // are allocated by Servo side with Arc, the total size doesn't exceed
 // 512 bytes, which minimizes allocator slop.
 static constexpr size_t kStyleStructSizeLimit = 504;
-#define STYLE_STRUCT(name_)                                      \
-  static_assert(sizeof(nsStyle##name_) <= kStyleStructSizeLimit, \
-                "nsStyle" #name_ " became larger than the size limit");
+
+template <typename Struct, size_t Actual, size_t Limit>
+struct AssertSizeIsLessThan {
+  static_assert(Actual == sizeof(Struct), "Bogus invocation");
+  static_assert(Actual <= Limit,
+                "Style struct became larger than the size limit");
+  static constexpr bool instantiate = true;
+};
+
+#define STYLE_STRUCT(name_)                                                  \
+  static_assert(AssertSizeIsLessThan<nsStyle##name_, sizeof(nsStyle##name_), \
+                                     kStyleStructSizeLimit>::instantiate,    \
+                "");
 #include "nsStyleStructList.h"
 #undef STYLE_STRUCT
 
@@ -112,8 +119,7 @@ already_AddRefed<nsIURI> StyleComputedUrl::ResolveLocalRef(nsIURI* aURI) const {
 
 already_AddRefed<nsIURI> StyleComputedUrl::ResolveLocalRef(
     const nsIContent* aContent) const {
-  nsCOMPtr<nsIURI> url = aContent->GetBaseURI();
-  return ResolveLocalRef(url);
+  return ResolveLocalRef(aContent->GetBaseURI());
 }
 
 imgRequestProxy* StyleComputedUrl::LoadImage(Document& aDocument) {
@@ -535,7 +541,7 @@ nsChangeHint nsStyleOutline::CalcDifference(
 //
 nsStyleList::nsStyleList(const Document& aDocument)
     : mListStylePosition(NS_STYLE_LIST_STYLE_POSITION_OUTSIDE),
-      mQuotes{StyleArcSlice<StyleQuotePair>(Servo_Quotes_GetInitialValue())},
+      mQuotes(StyleQuotes::Auto()),
       mMozListReversed(StyleMozListReversed::False) {
   MOZ_COUNT_CTOR(nsStyleList);
   MOZ_ASSERT(NS_IsMainThread());
@@ -722,12 +728,15 @@ nsChangeHint nsStyleColumn::CalcDifference(
   return nsChangeHint(0);
 }
 
+using SVGPaintFallback = StyleGenericSVGPaintFallback<StyleColor>;
+
 // --------------------
 // nsStyleSVG
 //
 nsStyleSVG::nsStyleSVG(const Document& aDocument)
-    : mFill(eStyleSVGPaintType_Color),  // Will be initialized to NS_RGB(0,0,0)
-      mStroke(eStyleSVGPaintType_None),
+    : mFill{StyleSVGPaintKind::Color(StyleColor::Black()),
+            SVGPaintFallback::Unset()},
+      mStroke{StyleSVGPaintKind::None(), SVGPaintFallback::Unset()},
       mMarkerEnd(StyleUrlOrNone::None()),
       mMarkerMid(StyleUrlOrNone::None()),
       mMarkerStart(StyleUrlOrNone::None()),
@@ -745,6 +754,7 @@ nsStyleSVG::nsStyleSVG(const Document& aDocument)
       mShapeRendering(NS_STYLE_SHAPE_RENDERING_AUTO),
       mStrokeLinecap(NS_STYLE_STROKE_LINECAP_BUTT),
       mStrokeLinejoin(NS_STYLE_STROKE_LINEJOIN_MITER),
+      mDominantBaseline(NS_STYLE_DOMINANT_BASELINE_AUTO),
       mTextAnchor(NS_STYLE_TEXT_ANCHOR_START),
       mContextFlags(
           (eStyleSVGOpacitySource_Normal << FILL_OPACITY_SOURCE_SHIFT) |
@@ -775,19 +785,19 @@ nsStyleSVG::nsStyleSVG(const nsStyleSVG& aSource)
       mShapeRendering(aSource.mShapeRendering),
       mStrokeLinecap(aSource.mStrokeLinecap),
       mStrokeLinejoin(aSource.mStrokeLinejoin),
+      mDominantBaseline(aSource.mDominantBaseline),
       mTextAnchor(aSource.mTextAnchor),
       mContextFlags(aSource.mContextFlags) {
   MOZ_COUNT_CTOR(nsStyleSVG);
 }
 
-static bool PaintURIChanged(const nsStyleSVGPaint& aPaint1,
-                            const nsStyleSVGPaint& aPaint2) {
-  if (aPaint1.Type() != aPaint2.Type()) {
-    return aPaint1.Type() == eStyleSVGPaintType_Server ||
-           aPaint2.Type() == eStyleSVGPaintType_Server;
+static bool PaintURIChanged(const StyleSVGPaint& aPaint1,
+                            const StyleSVGPaint& aPaint2) {
+  if (aPaint1.kind.IsPaintServer() != aPaint2.kind.IsPaintServer()) {
+    return true;
   }
-  return aPaint1.Type() == eStyleSVGPaintType_Server &&
-         aPaint1.GetPaintServer() != aPaint2.GetPaintServer();
+  return aPaint1.kind.IsPaintServer() &&
+         aPaint1.kind.AsPaintServer() != aPaint2.kind.AsPaintServer();
 }
 
 nsChangeHint nsStyleSVG::CalcDifference(const nsStyleSVG& aNewData) const {
@@ -828,11 +838,13 @@ nsChangeHint nsStyleSVG::CalcDifference(const nsStyleSVG& aNewData) const {
   // we need a reflow here. No intrinsic sizes need to change, so
   // nsChangeHint_NeedReflow is sufficient.
   // Note that stroke-dashoffset does not affect SVGGeometryFrame::mRect.
-  // text-anchor changes also require a reflow since it changes frames' rects.
+  // text-anchor and dominant-baseline changes also require a reflow since
+  // they change frames' rects.
   if (mStrokeWidth != aNewData.mStrokeWidth ||
       mStrokeMiterlimit != aNewData.mStrokeMiterlimit ||
       mStrokeLinecap != aNewData.mStrokeLinecap ||
       mStrokeLinejoin != aNewData.mStrokeLinejoin ||
+      mDominantBaseline != aNewData.mDominantBaseline ||
       mTextAnchor != aNewData.mTextAnchor) {
     return hint | nsChangeHint_NeedReflow |
            nsChangeHint_NeedDirtyReflow |  // XXX remove me: bug 876085
@@ -1027,7 +1039,6 @@ nsStyleSVGReset::nsStyleSVGReset(const Document& aDocument)
       mLightingColor(StyleColor::White()),
       mStopOpacity(1.0f),
       mFloodOpacity(1.0f),
-      mDominantBaseline(NS_STYLE_DOMINANT_BASELINE_AUTO),
       mVectorEffect(NS_STYLE_VECTOR_EFFECT_NONE),
       mMaskType(NS_STYLE_MASK_TYPE_LUMINANCE) {
   MOZ_COUNT_CTOR(nsStyleSVGReset);
@@ -1050,7 +1061,6 @@ nsStyleSVGReset::nsStyleSVGReset(const nsStyleSVGReset& aSource)
       mLightingColor(aSource.mLightingColor),
       mStopOpacity(aSource.mStopOpacity),
       mFloodOpacity(aSource.mFloodOpacity),
-      mDominantBaseline(aSource.mDominantBaseline),
       mVectorEffect(aSource.mVectorEffect),
       mMaskType(aSource.mMaskType) {
   MOZ_COUNT_CTOR(nsStyleSVGReset);
@@ -1106,10 +1116,7 @@ nsChangeHint nsStyleSVGReset::CalcDifference(
     hint |= nsChangeHint_UpdateEffects | nsChangeHint_RepaintFrame;
   }
 
-  if (mDominantBaseline != aNewData.mDominantBaseline) {
-    // XXXjwatt: why NS_STYLE_HINT_REFLOW? Isn't that excessive?
-    hint |= NS_STYLE_HINT_REFLOW;
-  } else if (mVectorEffect != aNewData.mVectorEffect) {
+  if (mVectorEffect != aNewData.mVectorEffect) {
     // Stroke currently affects SVGGeometryFrame::mRect, and
     // vector-effect affect stroke. As a result we need to reflow if
     // vector-effect changes in order to have SVGGeometryFrame::
@@ -1143,126 +1150,6 @@ bool nsStyleSVGReset::HasMask() const {
   return false;
 }
 
-// nsStyleSVGPaint implementation
-nsStyleSVGPaint::nsStyleSVGPaint(nsStyleSVGPaintType aType)
-    : mPaint(StyleColor::Black()),
-      mType(aType),
-      mFallbackType(eStyleSVGFallbackType_NotSet),
-      mFallbackColor(StyleColor::Black()) {
-  MOZ_ASSERT(aType == nsStyleSVGPaintType(0) ||
-             aType == eStyleSVGPaintType_None ||
-             aType == eStyleSVGPaintType_Color);
-}
-
-nsStyleSVGPaint::nsStyleSVGPaint(const nsStyleSVGPaint& aSource)
-    : nsStyleSVGPaint(nsStyleSVGPaintType(0)) {
-  Assign(aSource);
-}
-
-nsStyleSVGPaint::~nsStyleSVGPaint() { Reset(); }
-
-void nsStyleSVGPaint::Reset() {
-  switch (mType) {
-    case eStyleSVGPaintType_None:
-      break;
-    case eStyleSVGPaintType_Color:
-      mPaint.mColor = StyleColor::Black();
-      break;
-    case eStyleSVGPaintType_Server:
-      mPaint.mPaintServer.~StyleComputedUrl();
-      MOZ_FALLTHROUGH;
-    case eStyleSVGPaintType_ContextFill:
-    case eStyleSVGPaintType_ContextStroke:
-      mFallbackType = eStyleSVGFallbackType_NotSet;
-      mFallbackColor = StyleColor::Black();
-      break;
-  }
-  mType = nsStyleSVGPaintType(0);
-}
-
-nsStyleSVGPaint& nsStyleSVGPaint::operator=(const nsStyleSVGPaint& aOther) {
-  if (this != &aOther) {
-    Assign(aOther);
-  }
-  return *this;
-}
-
-void nsStyleSVGPaint::Assign(const nsStyleSVGPaint& aOther) {
-  MOZ_ASSERT(aOther.mType != nsStyleSVGPaintType(0),
-             "shouldn't copy uninitialized nsStyleSVGPaint");
-
-  switch (aOther.mType) {
-    case eStyleSVGPaintType_None:
-      SetNone();
-      break;
-    case eStyleSVGPaintType_Color:
-      SetColor(aOther.mPaint.mColor);
-      break;
-    case eStyleSVGPaintType_Server:
-      SetPaintServer(aOther.mPaint.mPaintServer, aOther.mFallbackType,
-                     aOther.mFallbackColor);
-      break;
-    case eStyleSVGPaintType_ContextFill:
-    case eStyleSVGPaintType_ContextStroke:
-      SetContextValue(aOther.mType, aOther.mFallbackType,
-                      aOther.mFallbackColor);
-      break;
-  }
-}
-
-void nsStyleSVGPaint::SetNone() {
-  Reset();
-  mType = eStyleSVGPaintType_None;
-}
-
-void nsStyleSVGPaint::SetContextValue(nsStyleSVGPaintType aType,
-                                      nsStyleSVGFallbackType aFallbackType,
-                                      StyleColor aFallbackColor) {
-  MOZ_ASSERT(aType == eStyleSVGPaintType_ContextFill ||
-             aType == eStyleSVGPaintType_ContextStroke);
-  Reset();
-  mType = aType;
-  mFallbackType = aFallbackType;
-  mFallbackColor = aFallbackColor;
-}
-
-void nsStyleSVGPaint::SetColor(StyleColor aColor) {
-  Reset();
-  mType = eStyleSVGPaintType_Color;
-  mPaint.mColor = aColor;
-}
-
-void nsStyleSVGPaint::SetPaintServer(const StyleComputedUrl& aPaintServer,
-                                     nsStyleSVGFallbackType aFallbackType,
-                                     StyleColor aFallbackColor) {
-  Reset();
-  mType = eStyleSVGPaintType_Server;
-  new (&mPaint.mPaintServer) StyleComputedUrl(aPaintServer);
-  mFallbackType = aFallbackType;
-  mFallbackColor = aFallbackColor;
-}
-
-bool nsStyleSVGPaint::operator==(const nsStyleSVGPaint& aOther) const {
-  if (mType != aOther.mType) {
-    return false;
-  }
-  switch (mType) {
-    case eStyleSVGPaintType_Color:
-      return mPaint.mColor == aOther.mPaint.mColor;
-    case eStyleSVGPaintType_Server:
-      return mPaint.mPaintServer == aOther.mPaint.mPaintServer &&
-             mFallbackType == aOther.mFallbackType &&
-             mFallbackColor == aOther.mFallbackColor;
-    case eStyleSVGPaintType_ContextFill:
-    case eStyleSVGPaintType_ContextStroke:
-      return mFallbackType == aOther.mFallbackType &&
-             mFallbackColor == aOther.mFallbackColor;
-    default:
-      MOZ_ASSERT(mType == eStyleSVGPaintType_None, "Unexpected SVG paint type");
-      return true;
-  }
-}
-
 // --------------------
 // nsStylePosition
 //
@@ -1276,10 +1163,9 @@ nsStylePosition::nsStylePosition(const Document& aDocument)
       mMinHeight(StyleSize::Auto()),
       mMaxHeight(StyleMaxSize::None()),
       mFlexBasis(StyleFlexBasis::Size(StyleSize::Auto())),
-      mGridAutoColumnsMin(eStyleUnit_Auto),
-      mGridAutoColumnsMax(eStyleUnit_Auto),
-      mGridAutoRowsMin(eStyleUnit_Auto),
-      mGridAutoRowsMax(eStyleUnit_Auto),
+      mGridAutoColumns(StyleTrackSize::Breadth(StyleTrackBreadth::Auto())),
+      mGridAutoRows(StyleTrackSize::Breadth(StyleTrackBreadth::Auto())),
+      mAspectRatio(0.0f),
       mGridAutoFlow(NS_STYLE_GRID_AUTO_FLOW_ROW),
       mBoxSizing(StyleBoxSizing::Content),
       mAlignContent(NS_STYLE_ALIGN_NORMAL),
@@ -1322,10 +1208,9 @@ nsStylePosition::nsStylePosition(const nsStylePosition& aSource)
       mMinHeight(aSource.mMinHeight),
       mMaxHeight(aSource.mMaxHeight),
       mFlexBasis(aSource.mFlexBasis),
-      mGridAutoColumnsMin(aSource.mGridAutoColumnsMin),
-      mGridAutoColumnsMax(aSource.mGridAutoColumnsMax),
-      mGridAutoRowsMin(aSource.mGridAutoRowsMin),
-      mGridAutoRowsMax(aSource.mGridAutoRowsMax),
+      mGridAutoColumns(aSource.mGridAutoColumns),
+      mGridAutoRows(aSource.mGridAutoRows),
+      mAspectRatio(aSource.mAspectRatio),
       mGridAutoFlow(aSource.mGridAutoFlow),
       mBoxSizing(aSource.mBoxSizing),
       mAlignContent(aSource.mAlignContent),
@@ -1442,10 +1327,8 @@ nsChangeHint nsStylePosition::CalcDifference(
                            aNewData.mGridTemplateColumns) ||
       !IsGridTemplateEqual(mGridTemplateRows, aNewData.mGridTemplateRows) ||
       mGridTemplateAreas != aNewData.mGridTemplateAreas ||
-      mGridAutoColumnsMin != aNewData.mGridAutoColumnsMin ||
-      mGridAutoColumnsMax != aNewData.mGridAutoColumnsMax ||
-      mGridAutoRowsMin != aNewData.mGridAutoRowsMin ||
-      mGridAutoRowsMax != aNewData.mGridAutoRowsMax ||
+      mGridAutoColumns != aNewData.mGridAutoColumns ||
+      mGridAutoRows != aNewData.mGridAutoRows ||
       mGridAutoFlow != aNewData.mGridAutoFlow) {
     return hint | nsChangeHint_AllReflowHints;
   }
@@ -1500,6 +1383,11 @@ nsChangeHint nsStylePosition::CalcDifference(
     hint |= nsChangeHint_ReflowHintsForISizeChange;
   }
 
+  if (mAspectRatio != aNewData.mAspectRatio) {
+    hint |= nsChangeHint_ReflowHintsForISizeChange |
+            nsChangeHint_ReflowHintsForBSizeChange;
+  }
+
   // If any of the offsets have changed, then return the respective hints
   // so that we would hopefully be able to avoid reflowing.
   // Note that it is possible that we'll need to reflow when processing
@@ -1512,7 +1400,8 @@ nsChangeHint nsStylePosition::CalcDifference(
       hint |=
           nsChangeHint_RecomputePosition | nsChangeHint_UpdateParentOverflow;
     } else {
-      hint |= nsChangeHint_NeedReflow | nsChangeHint_ReflowChangesSizeOrPosition;
+      hint |=
+          nsChangeHint_NeedReflow | nsChangeHint_ReflowChangesSizeOrPosition;
     }
   }
   return hint;
@@ -1908,9 +1797,9 @@ void nsStyleImage::DoCopy(const nsStyleImage& aOther) {
     SetElementId(do_AddRef(aOther.mElementId));
   }
 
-  UniquePtr<nsStyleSides> cropRectCopy;
+  UniquePtr<CropRect> cropRectCopy;
   if (aOther.mCropRect) {
-    cropRectCopy = MakeUnique<nsStyleSides>(*aOther.mCropRect.get());
+    cropRectCopy = MakeUnique<CropRect>(*aOther.mCropRect.get());
   }
   SetCropRect(std::move(cropRectCopy));
 }
@@ -1968,23 +1857,18 @@ void nsStyleImage::SetElementId(already_AddRefed<nsAtom> aElementId) {
   }
 }
 
-void nsStyleImage::SetCropRect(UniquePtr<nsStyleSides> aCropRect) {
+void nsStyleImage::SetCropRect(UniquePtr<CropRect> aCropRect) {
   mCropRect = std::move(aCropRect);
 }
 
-static int32_t ConvertToPixelCoord(const nsStyleCoord& aCoord,
+static int32_t ConvertToPixelCoord(const StyleNumberOrPercentage& aCoord,
                                    int32_t aPercentScale) {
   double pixelValue;
-  switch (aCoord.GetUnit()) {
-    case eStyleUnit_Percent:
-      pixelValue = aCoord.GetPercentValue() * aPercentScale;
-      break;
-    case eStyleUnit_Factor:
-      pixelValue = aCoord.GetFactorValue();
-      break;
-    default:
-      MOZ_ASSERT_UNREACHABLE("unexpected unit for image crop rect");
-      return 0;
+  if (aCoord.IsNumber()) {
+    pixelValue = aCoord.AsNumber();
+  } else {
+    MOZ_ASSERT(aCoord.IsPercentage());
+    pixelValue = aCoord.AsPercentage()._0 * aPercentScale;
   }
   MOZ_ASSERT(pixelValue >= 0, "we ensured non-negative while parsing");
   pixelValue = std::min(pixelValue, double(INT32_MAX));  // avoid overflow
@@ -2031,11 +1915,13 @@ bool nsStyleImage::ComputeActualCropRect(nsIntRect& aActualCropRect,
     return false;
   }
 
-  int32_t left = ConvertToPixelCoord(mCropRect->GetLeft(), imageSize.width);
-  int32_t top = ConvertToPixelCoord(mCropRect->GetTop(), imageSize.height);
-  int32_t right = ConvertToPixelCoord(mCropRect->GetRight(), imageSize.width);
+  int32_t left =
+      ConvertToPixelCoord(mCropRect->Get(eSideLeft), imageSize.width);
+  int32_t top = ConvertToPixelCoord(mCropRect->Get(eSideTop), imageSize.height);
+  int32_t right =
+      ConvertToPixelCoord(mCropRect->Get(eSideRight), imageSize.width);
   int32_t bottom =
-      ConvertToPixelCoord(mCropRect->GetBottom(), imageSize.height);
+      ConvertToPixelCoord(mCropRect->Get(eSideBottom), imageSize.height);
 
   // IntersectRect() returns an empty rect if we get negative width or height
   nsIntRect cropRect(left, top, right - left, bottom - top);
@@ -2145,8 +2031,8 @@ bool nsStyleImage::IsLoaded() const {
   }
 }
 
-static inline bool EqualRects(const UniquePtr<nsStyleSides>& aRect1,
-                              const UniquePtr<nsStyleSides>& aRect2) {
+static inline bool EqualRects(const nsStyleImage::CropRect* aRect1,
+                              const nsStyleImage::CropRect* aRect2) {
   return aRect1 == aRect2 || /* handles null== null, and optimize */
          (aRect1 && aRect2 && *aRect1 == *aRect2);
 }
@@ -2156,7 +2042,7 @@ bool nsStyleImage::operator==(const nsStyleImage& aOther) const {
     return false;
   }
 
-  if (!EqualRects(mCropRect, aOther.mCropRect)) {
+  if (!EqualRects(mCropRect.get(), aOther.mCropRect.get())) {
     return false;
   }
 
@@ -2854,6 +2740,7 @@ nsStyleDisplay::nsStyleDisplay(const Document& aDocument)
       mOffsetPath(StyleOffsetPath::None()),
       mOffsetDistance(LengthPercentage::Zero()),
       mOffsetRotate{true, StyleAngle{0.0}},
+      mOffsetAnchor(StylePositionOrAuto::Auto()),
       mTransformOrigin{LengthPercentage::FromPercentage(0.5),
                        LengthPercentage::FromPercentage(0.5),
                        {0.}},
@@ -2919,6 +2806,7 @@ nsStyleDisplay::nsStyleDisplay(const nsStyleDisplay& aSource)
       mOffsetPath(aSource.mOffsetPath),
       mOffsetDistance(aSource.mOffsetDistance),
       mOffsetRotate(aSource.mOffsetRotate),
+      mOffsetAnchor(aSource.mOffsetAnchor),
       mTransformOrigin(aSource.mTransformOrigin),
       mChildPerspective(aSource.mChildPerspective),
       mPerspectiveOrigin(aSource.mPerspectiveOrigin),
@@ -2962,7 +2850,8 @@ static inline nsChangeHint CompareMotionValues(
     const nsStyleDisplay& aDisplay, const nsStyleDisplay& aNewDisplay) {
   if (aDisplay.mOffsetPath == aNewDisplay.mOffsetPath) {
     if (aDisplay.mOffsetDistance == aNewDisplay.mOffsetDistance &&
-        aDisplay.mOffsetRotate == aNewDisplay.mOffsetRotate) {
+        aDisplay.mOffsetRotate == aNewDisplay.mOffsetRotate &&
+        aDisplay.mOffsetAnchor == aNewDisplay.mOffsetAnchor) {
       return nsChangeHint(0);
     }
 
@@ -3180,7 +3069,8 @@ nsChangeHint nsStyleDisplay::CalcDifference(
     // reflow anyway.
     if (IsAbsolutelyPositionedStyle() &&
         aOldPosition.NeedsHypotheticalPositionIfAbsPos()) {
-      hint |= nsChangeHint_NeedReflow | nsChangeHint_ReflowChangesSizeOrPosition;
+      hint |=
+          nsChangeHint_NeedReflow | nsChangeHint_ReflowChangesSizeOrPosition;
     } else {
       hint |= nsChangeHint_NeutralChange;
     }
@@ -3448,7 +3338,7 @@ nsStyleTextReset::nsStyleTextReset(const Document& aDocument)
       mInitialLetterSink(0),
       mInitialLetterSize(0.0f),
       mTextDecorationColor(StyleColor::CurrentColor()),
-      mTextDecorationWidth(LengthOrAuto::Auto()) {
+      mTextDecorationThickness(LengthOrAuto::Auto()) {
   MOZ_COUNT_CTOR(nsStyleTextReset);
 }
 
@@ -3460,7 +3350,7 @@ nsStyleTextReset::nsStyleTextReset(const nsStyleTextReset& aSource)
       mInitialLetterSink(aSource.mInitialLetterSink),
       mInitialLetterSize(aSource.mInitialLetterSize),
       mTextDecorationColor(aSource.mTextDecorationColor),
-      mTextDecorationWidth(aSource.mTextDecorationWidth) {
+      mTextDecorationThickness(aSource.mTextDecorationThickness) {
   MOZ_COUNT_CTOR(nsStyleTextReset);
 }
 
@@ -3476,7 +3366,7 @@ nsChangeHint nsStyleTextReset::CalcDifference(
 
   if (mTextDecorationLine != aNewData.mTextDecorationLine ||
       mTextDecorationStyle != aNewData.mTextDecorationStyle ||
-      mTextDecorationWidth != aNewData.mTextDecorationWidth) {
+      mTextDecorationThickness != aNewData.mTextDecorationThickness) {
     // Changes to our text-decoration line can impact our overflow area &
     // also our descendants' overflow areas (particularly for text-frame
     // descendants).  So, we update those areas & trigger a repaint.
@@ -3531,6 +3421,7 @@ nsStyleText::nsStyleText(const Document& aDocument)
       mLineHeight(StyleLineHeight::Normal()),
       mTextIndent(LengthPercentage::Zero()),
       mTextUnderlineOffset(LengthOrAuto::Auto()),
+      mTextDecorationSkipInk(StyleTextDecorationSkipInk::Auto),
       mWebkitTextStrokeWidth(0) {
   MOZ_COUNT_CTOR(nsStyleText);
   RefPtr<nsAtom> language = aDocument.GetContentLanguageAsAtomForStyle();
@@ -3568,6 +3459,7 @@ nsStyleText::nsStyleText(const nsStyleText& aSource)
       mLineHeight(aSource.mLineHeight),
       mTextIndent(aSource.mTextIndent),
       mTextUnderlineOffset(aSource.mTextUnderlineOffset),
+      mTextDecorationSkipInk(aSource.mTextDecorationSkipInk),
       mWebkitTextStrokeWidth(aSource.mWebkitTextStrokeWidth),
       mTextShadow(aSource.mTextShadow),
       mTextEmphasisStyleString(aSource.mTextEmphasisStyleString) {
@@ -3602,6 +3494,7 @@ nsChangeHint nsStyleText::CalcDifference(const nsStyleText& aNewData) const {
       (mLineHeight != aNewData.mLineHeight) ||
       (mTextIndent != aNewData.mTextIndent) ||
       (mTextUnderlineOffset != aNewData.mTextUnderlineOffset) ||
+      (mTextDecorationSkipInk != aNewData.mTextDecorationSkipInk) ||
       (mTextJustify != aNewData.mTextJustify) ||
       (mWordSpacing != aNewData.mWordSpacing) ||
       (mMozTabSize != aNewData.mMozTabSize)) {
@@ -3886,6 +3779,7 @@ nsStyleEffects::nsStyleEffects(const Document&)
 nsStyleEffects::nsStyleEffects(const nsStyleEffects& aSource)
     : mFilters(aSource.mFilters),
       mBoxShadow(aSource.mBoxShadow),
+      mBackdropFilters(aSource.mBackdropFilters),
       mClip(aSource.mClip),
       mOpacity(aSource.mOpacity),
       mClipFlags(aSource.mClipFlags),
@@ -3948,9 +3842,72 @@ nsChangeHint nsStyleEffects::CalcDifference(
     hint |= nsChangeHint_RepaintFrame;
   }
 
+  if (mBackdropFilters != aNewData.mBackdropFilters) {
+    hint |= nsChangeHint_UpdateEffects | nsChangeHint_RepaintFrame;
+  }
+
   if (!hint && !mClip.IsEqualEdges(aNewData.mClip)) {
     hint |= nsChangeHint_NeutralChange;
   }
 
   return hint;
+}
+
+static bool TransformOperationHasPercent(const StyleTransformOperation& aOp) {
+  switch (aOp.tag) {
+    case StyleTransformOperation::Tag::TranslateX:
+      return aOp.AsTranslateX().HasPercent();
+    case StyleTransformOperation::Tag::TranslateY:
+      return aOp.AsTranslateY().HasPercent();
+    case StyleTransformOperation::Tag::TranslateZ:
+      return false;
+    case StyleTransformOperation::Tag::Translate3D: {
+      auto& translate = aOp.AsTranslate3D();
+      // NOTE(emilio): z translation is a `<length>`, so can't have percentages.
+      return translate._0.HasPercent() || translate._1.HasPercent();
+    }
+    case StyleTransformOperation::Tag::Translate: {
+      auto& translate = aOp.AsTranslate();
+      return translate._0.HasPercent() || translate._1.HasPercent();
+    }
+    case StyleTransformOperation::Tag::AccumulateMatrix: {
+      auto& accum = aOp.AsAccumulateMatrix();
+      return accum.from_list.HasPercent() || accum.to_list.HasPercent();
+    }
+    case StyleTransformOperation::Tag::InterpolateMatrix: {
+      auto& interpolate = aOp.AsInterpolateMatrix();
+      return interpolate.from_list.HasPercent() ||
+             interpolate.to_list.HasPercent();
+    }
+    case StyleTransformOperation::Tag::Perspective:
+    case StyleTransformOperation::Tag::RotateX:
+    case StyleTransformOperation::Tag::RotateY:
+    case StyleTransformOperation::Tag::RotateZ:
+    case StyleTransformOperation::Tag::Rotate:
+    case StyleTransformOperation::Tag::Rotate3D:
+    case StyleTransformOperation::Tag::SkewX:
+    case StyleTransformOperation::Tag::SkewY:
+    case StyleTransformOperation::Tag::Skew:
+    case StyleTransformOperation::Tag::ScaleX:
+    case StyleTransformOperation::Tag::ScaleY:
+    case StyleTransformOperation::Tag::ScaleZ:
+    case StyleTransformOperation::Tag::Scale:
+    case StyleTransformOperation::Tag::Scale3D:
+    case StyleTransformOperation::Tag::Matrix:
+    case StyleTransformOperation::Tag::Matrix3D:
+      return false;
+    default:
+      MOZ_ASSERT_UNREACHABLE("Unknown transform operation");
+      return false;
+  }
+}
+
+template <>
+bool StyleTransform::HasPercent() const {
+  for (const auto& op : Operations()) {
+    if (TransformOperationHasPercent(op)) {
+      return true;
+    }
+  }
+  return false;
 }

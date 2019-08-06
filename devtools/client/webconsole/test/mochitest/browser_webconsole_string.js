@@ -5,8 +5,9 @@
 
 "use strict";
 
-const TEST_URI = "http://example.com/browser/devtools/client/webconsole/" +
-                 "test/mochitest/test-console.html";
+const TEST_URI =
+  "http://example.com/browser/devtools/client/webconsole/" +
+  "test/mochitest/test-console.html";
 
 add_task(async function() {
   const hud = await openNewTabAndConsole(TEST_URI);
@@ -14,10 +15,12 @@ add_task(async function() {
   info("console.log with a string argument");
   const receivedMessages = waitForMessages({
     hud,
-    messages: [{
-      // Test that the output does not include quotes.
-      text: "stringLog",
-    }],
+    messages: [
+      {
+        // Test that the output does not include quotes.
+        text: "stringLog",
+      },
+    ],
   });
 
   await ContentTask.spawn(gBrowser.selectedBrowser, {}, function() {
@@ -27,11 +30,17 @@ add_task(async function() {
   await receivedMessages;
 
   info("evaluating a string constant");
-  const jsterm = hud.jsterm;
-  await jsterm.execute("\"string\\nconstant\"");
-  const msg = await waitFor(() => findMessage(hud, "constant"));
-  const body = msg.querySelector(".message-body");
+  const msg = await executeAndWaitForMessage(
+    hud,
+    '"string\\nconstant"',
+    "constant",
+    ".result"
+  );
+  const body = msg.node.querySelector(".message-body");
   // On the other hand, a string constant result should be quoted, but
   // newlines should be let through.
-  ok(body.textContent.includes("\"string\nconstant\""), "found expected text");
+  ok(
+    body.textContent.includes('"string\nconstant"'),
+    `found expected text - "${body.textContent}"`
+  );
 });

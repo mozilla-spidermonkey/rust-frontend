@@ -11,7 +11,7 @@
 #include "ReadbackManagerD3D11.h"
 #include "gfx2DGlue.h"
 #include "gfxContext.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_gfx.h"
 #include "gfxWindowsPlatform.h"
 #include "MainThreadUtils.h"
 #include "mozilla/gfx/DataSurfaceHelpers.h"
@@ -288,7 +288,8 @@ static void DestroyDrawTarget(RefPtr<DrawTarget>& aDT,
 
 D3D11TextureData::~D3D11TextureData() {
   if (mDrawTarget) {
-    if (PaintThread::Get() && StaticPrefs::Direct2DDestroyDTOnPaintThread()) {
+    if (PaintThread::Get() &&
+        StaticPrefs::gfx_direct2d_destroy_dt_on_paintthread()) {
       RefPtr<DrawTarget> dt = mDrawTarget;
       RefPtr<ID3D11Texture2D> tex = mTexture;
       RefPtr<Runnable> task = NS_NewRunnableFunction(
@@ -383,7 +384,7 @@ bool D3D11TextureData::SerializeSpecific(
   }
 
   *aOutDesc = SurfaceDescriptorD3D10((WindowsHandle)sharedHandle, mFormat,
-                                     mSize, mYUVColorSpace);
+                                     mSize, mYUVColorSpace, mColorRange);
   return true;
 }
 
@@ -571,7 +572,7 @@ DXGIYCbCrTextureData* DXGIYCbCrTextureData::Create(
     IDirect3DTexture9* aTextureCr, HANDLE aHandleY, HANDLE aHandleCb,
     HANDLE aHandleCr, const gfx::IntSize& aSize, const gfx::IntSize& aSizeY,
     const gfx::IntSize& aSizeCbCr, gfx::ColorDepth aColorDepth,
-    YUVColorSpace aYUVColorSpace) {
+    YUVColorSpace aYUVColorSpace, gfx::ColorRange aColorRange) {
   if (!aHandleY || !aHandleCb || !aHandleCr || !aTextureY || !aTextureCb ||
       !aTextureCr) {
     return nullptr;
@@ -589,6 +590,7 @@ DXGIYCbCrTextureData* DXGIYCbCrTextureData::Create(
   texture->mSizeCbCr = aSizeCbCr;
   texture->mColorDepth = aColorDepth;
   texture->mYUVColorSpace = aYUVColorSpace;
+  texture->mColorRange = aColorRange;
 
   return texture;
 }
@@ -597,7 +599,8 @@ DXGIYCbCrTextureData* DXGIYCbCrTextureData::Create(
     ID3D11Texture2D* aTextureY, ID3D11Texture2D* aTextureCb,
     ID3D11Texture2D* aTextureCr, const gfx::IntSize& aSize,
     const gfx::IntSize& aSizeY, const gfx::IntSize& aSizeCbCr,
-    gfx::ColorDepth aColorDepth, YUVColorSpace aYUVColorSpace) {
+    gfx::ColorDepth aColorDepth, YUVColorSpace aYUVColorSpace,
+    gfx::ColorRange aColorRange) {
   if (!aTextureY || !aTextureCb || !aTextureCr) {
     return nullptr;
   }
@@ -649,6 +652,7 @@ DXGIYCbCrTextureData* DXGIYCbCrTextureData::Create(
   texture->mSizeCbCr = aSizeCbCr;
   texture->mColorDepth = aColorDepth;
   texture->mYUVColorSpace = aYUVColorSpace;
+  texture->mColorRange = aColorRange;
 
   return texture;
 }
@@ -666,7 +670,7 @@ void DXGIYCbCrTextureData::SerializeSpecific(
   *aOutDesc = SurfaceDescriptorDXGIYCbCr(
       (WindowsHandle)mHandles[0], (WindowsHandle)mHandles[1],
       (WindowsHandle)mHandles[2], mSize, mSizeY, mSizeCbCr, mColorDepth,
-      mYUVColorSpace);
+      mYUVColorSpace, mColorRange);
 }
 
 bool DXGIYCbCrTextureData::Serialize(SurfaceDescriptor& aOutDescriptor) {
@@ -761,6 +765,7 @@ DXGITextureHostD3D11::DXGITextureHostD3D11(
       mHandle(aDescriptor.handle()),
       mFormat(aDescriptor.format()),
       mYUVColorSpace(aDescriptor.yUVColorSpace()),
+      mColorRange(aDescriptor.colorRange()),
       mIsLocked(false) {}
 
 bool DXGITextureHostD3D11::EnsureTexture() {
@@ -982,7 +987,7 @@ void DXGITextureHostD3D11::CreateRenderTexture(
                                                  texture.forget());
 }
 
-uint32_t DXGITextureHostD3D11::NumSubTextures() const {
+uint32_t DXGITextureHostD3D11::NumSubTextures() {
   switch (GetFormat()) {
     case gfx::SurfaceFormat::R8G8B8X8:
     case gfx::SurfaceFormat::R8G8B8A8:
@@ -1075,7 +1080,8 @@ void DXGITextureHostD3D11::PushDisplayItems(
                              GetFormat() == gfx::SurfaceFormat::NV12
                                  ? wr::ColorDepth::Color8
                                  : wr::ColorDepth::Color16,
-                             wr::ToWrYuvColorSpace(mYUVColorSpace), aFilter);
+                             wr::ToWrYuvColorSpace(mYUVColorSpace),
+                             wr::ToWrColorRange(mColorRange), aFilter);
       break;
     }
     default: {
@@ -1091,7 +1097,8 @@ DXGIYCbCrTextureHostD3D11::DXGIYCbCrTextureHostD3D11(
       mSizeCbCr(aDescriptor.sizeCbCr()),
       mIsLocked(false),
       mColorDepth(aDescriptor.colorDepth()),
-      mYUVColorSpace(aDescriptor.yUVColorSpace()) {
+      mYUVColorSpace(aDescriptor.yUVColorSpace()),
+      mColorRange(aDescriptor.colorRange()) {
   mHandles[0] = aDescriptor.handleY();
   mHandles[1] = aDescriptor.handleCb();
   mHandles[2] = aDescriptor.handleCr();
@@ -1242,7 +1249,7 @@ void DXGIYCbCrTextureHostD3D11::CreateRenderTexture(
                                                  texture.forget());
 }
 
-uint32_t DXGIYCbCrTextureHostD3D11::NumSubTextures() const {
+uint32_t DXGIYCbCrTextureHostD3D11::NumSubTextures() {
   // ycbcr use 3 sub textures.
   return 3;
 }
@@ -1284,10 +1291,10 @@ void DXGIYCbCrTextureHostD3D11::PushDisplayItems(
     const Range<wr::ImageKey>& aImageKeys) {
   MOZ_ASSERT(aImageKeys.length() == 3);
 
-  aBuilder.PushYCbCrPlanarImage(aBounds, aClip, true, aImageKeys[0],
-                                aImageKeys[1], aImageKeys[2],
-                                wr::ToWrColorDepth(mColorDepth),
-                                wr::ToWrYuvColorSpace(mYUVColorSpace), aFilter);
+  aBuilder.PushYCbCrPlanarImage(
+      aBounds, aClip, true, aImageKeys[0], aImageKeys[1], aImageKeys[2],
+      wr::ToWrColorDepth(mColorDepth), wr::ToWrYuvColorSpace(mYUVColorSpace),
+      wr::ToWrColorRange(mColorRange), aFilter);
 }
 
 bool DXGIYCbCrTextureHostD3D11::AcquireTextureSource(

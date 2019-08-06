@@ -65,7 +65,6 @@
 #include "util/Text.h"
 #include "vm/AsyncFunction.h"
 #include "vm/AsyncIteration.h"
-#include "vm/Debugger.h"
 #include "vm/GlobalObject.h"
 #include "vm/Interpreter.h"
 #include "vm/Iteration.h"
@@ -84,8 +83,8 @@
 #include "wasm/WasmTextToBinary.h"
 #include "wasm/WasmTypes.h"
 
+#include "debugger/DebugAPI-inl.h"
 #include "vm/Compartment-inl.h"
-#include "vm/Debugger-inl.h"
 #include "vm/EnvironmentObject-inl.h"
 #include "vm/JSContext-inl.h"
 #include "vm/JSObject-inl.h"
@@ -495,15 +494,15 @@ static bool MinorGC(JSContext* cx, unsigned argc, Value* vp) {
 
 #define FOR_EACH_GC_PARAM(_)                                                 \
   _("maxBytes", JSGC_MAX_BYTES, true)                                        \
-  _("maxMallocBytes", JSGC_MAX_MALLOC_BYTES, true)                           \
   _("minNurseryBytes", JSGC_MIN_NURSERY_BYTES, true)                         \
   _("maxNurseryBytes", JSGC_MAX_NURSERY_BYTES, true)                         \
   _("gcBytes", JSGC_BYTES, false)                                            \
+  _("nurseryBytes", JSGC_NURSERY_BYTES, false)                               \
   _("gcNumber", JSGC_NUMBER, false)                                          \
   _("mode", JSGC_MODE, true)                                                 \
   _("unusedChunks", JSGC_UNUSED_CHUNKS, false)                               \
   _("totalChunks", JSGC_TOTAL_CHUNKS, false)                                 \
-  _("sliceTimeBudget", JSGC_SLICE_TIME_BUDGET, true)                         \
+  _("sliceTimeBudgetMS", JSGC_SLICE_TIME_BUDGET_MS, true)                    \
   _("markStackLimit", JSGC_MARK_STACK_LIMIT, true)                           \
   _("highFrequencyTimeLimit", JSGC_HIGH_FREQUENCY_TIME_LIMIT, true)          \
   _("highFrequencyLowLimit", JSGC_HIGH_FREQUENCY_LOW_LIMIT, true)            \
@@ -527,7 +526,9 @@ static bool MinorGC(JSContext* cx, unsigned argc, Value* vp) {
     JSGC_NURSERY_FREE_THRESHOLD_FOR_IDLE_COLLECTION_PERCENT, true)           \
   _("pretenureThreshold", JSGC_PRETENURE_THRESHOLD, true)                    \
   _("pretenureGroupThreshold", JSGC_PRETENURE_GROUP_THRESHOLD, true)         \
-  _("zoneAllocDelayKB", JSGC_ZONE_ALLOC_DELAY_KB, true)
+  _("zoneAllocDelayKB", JSGC_ZONE_ALLOC_DELAY_KB, true)                      \
+  _("mallocThresholdBase", JSGC_MALLOC_THRESHOLD_BASE, true)                 \
+  _("mallocGrowthFactor", JSGC_MALLOC_GROWTH_FACTOR, true)
 
 static const struct ParamInfo {
   const char* name;
@@ -585,7 +586,6 @@ static bool GCParameter(JSContext* cx, unsigned argc, Value* vp) {
   if (disableOOMFunctions) {
     switch (param) {
       case JSGC_MAX_BYTES:
-      case JSGC_MAX_MALLOC_BYTES:
       case JSGC_MAX_NURSERY_BYTES:
         args.rval().setUndefined();
         return true;
@@ -730,7 +730,8 @@ static bool WasmBulkMemSupported(JSContext* cx, unsigned argc, Value* vp) {
   }
 #  endif
 #else
-  bool isSupported = false;
+  bool isSupported =
+      cx->realm()->creationOptions().getSharedMemoryAndAtomicsEnabled();
 #endif
   args.rval().setBoolean(isSupported);
   return true;
@@ -1466,10 +1467,11 @@ class HasChildTracer final : public JS::CallbackTracer {
   RootedValue child_;
   bool found_;
 
-  void onChild(const JS::GCCellPtr& thing) override {
+  bool onChild(const JS::GCCellPtr& thing) override {
     if (thing.asCell() == child_.toGCThing()) {
       found_ = true;
     }
+    return true;
   }
 
  public:
@@ -2033,8 +2035,6 @@ bool RunIterativeFailureTest(JSContext* cx,
 
       failureWasSimulated = simulator.stopSimulating();
 
-      MOZ_ASSERT_IF(ok, !cx->isExceptionPending());
-
       if (ok) {
         MOZ_ASSERT(!cx->isExceptionPending(),
                    "Thunk execution succeeded but an exception was raised - "
@@ -2323,7 +2323,7 @@ static bool SettlePromiseNow(JSContext* cx, unsigned argc, Value* vp) {
       Int32Value(flags | PROMISE_FLAG_RESOLVED | PROMISE_FLAG_FULFILLED));
   promise->setFixedSlot(PromiseSlot_ReactionsOrResult, UndefinedValue());
 
-  Debugger::onPromiseSettled(cx, promise);
+  DebugAPI::onPromiseSettled(cx, promise);
   return true;
 }
 
@@ -2811,7 +2811,7 @@ static_assert(JitWarmupResetLimit <=
 static bool testingFunc_inJit(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  if (!jit::IsBaselineEnabled(cx)) {
+  if (!jit::IsBaselineJitEnabled()) {
     return ReturnStringCopy(cx, args, "Baseline is disabled.");
   }
 
@@ -2839,7 +2839,7 @@ static bool testingFunc_inJit(JSContext* cx, unsigned argc, Value* vp) {
 static bool testingFunc_inIon(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  if (!jit::IsIonEnabled(cx)) {
+  if (!jit::IsIonEnabled()) {
     return ReturnStringCopy(cx, args, "Ion is disabled.");
   }
 
@@ -3675,7 +3675,7 @@ struct FindPathHandler {
     // Have we reached our final target node?
     if (edge.referent == target) {
       // Record the path that got us here, which must be a shortest path.
-      if (!recordPath(traversal)) {
+      if (!recordPath(traversal, backEdge)) {
         return false;
       }
       foundPath = true;
@@ -3688,17 +3688,24 @@ struct FindPathHandler {
   // We've found a path to our target. Walk the backlinks to produce the
   // (reversed) path, saving the path in |nodes| and |edges|. |nodes| is
   // rooted, so it can hold the path's nodes as we leave the scope of
-  // the AutoCheckCannotGC.
-  bool recordPath(Traversal& traversal) {
+  // the AutoCheckCannotGC. Note that nodes are added to |visited| after we
+  // return from operator() so we have to pass the target BackEdge* to this
+  // function.
+  bool recordPath(Traversal& traversal, BackEdge* targetBackEdge) {
     JS::ubi::Node here = target;
 
     do {
-      Traversal::NodeMap::Ptr p = traversal.visited.lookup(here);
-      MOZ_ASSERT(p);
-      JS::ubi::Node predecessor = p->value().predecessor();
+      BackEdge* backEdge = targetBackEdge;
+      if (here != target) {
+        Traversal::NodeMap::Ptr p = traversal.visited.lookup(here);
+        MOZ_ASSERT(p);
+        backEdge = &p->value();
+      }
+      JS::ubi::Node predecessor = backEdge->predecessor();
       if (!nodes.append(predecessor.exposeToJS()) ||
-          !edges.append(p->value().forgetName()))
+          !edges.append(backEdge->forgetName())) {
         return false;
+      }
       here = predecessor;
     } while (here != start);
 
@@ -5592,6 +5599,95 @@ static bool GlobalLexicals(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool MonitorType(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  RootedObject callee(cx, &args.callee());
+
+  // First argument must be either a scripted function or null/undefined (in
+  // this case we use the caller's script).
+  RootedFunction fun(cx);
+  RootedScript script(cx);
+  if (args.get(0).isNullOrUndefined()) {
+    script = cx->currentScript();
+    if (!script) {
+      ReportUsageErrorASCII(cx, callee, "No scripted caller");
+      return false;
+    }
+  } else {
+    if (!IsFunctionObject(args.get(0), fun.address()) ||
+        !fun->isInterpreted()) {
+      ReportUsageErrorASCII(
+          cx, callee,
+          "First argument must be a scripted function or null/undefined");
+      return false;
+    }
+
+    script = JSFunction::getOrCreateScript(cx, fun);
+    if (!script) {
+      return false;
+    }
+  }
+
+  int32_t index;
+  if (!ToInt32(cx, args.get(1), &index)) {
+    return false;
+  }
+
+  if (index < 0 || uint32_t(index) >= jit::JitScript::NumTypeSets(script)) {
+    ReportUsageErrorASCII(cx, callee, "Index out of range");
+    return false;
+  }
+
+  RootedValue val(cx, args.get(2));
+
+  // If val is "unknown" or "unknownObject" we mark the TypeSet as unknown or
+  // unknownObject, respectively.
+  bool unknown = false;
+  bool unknownObject = false;
+  if (val.isString()) {
+    if (!JS_StringEqualsAscii(cx, val.toString(), "unknown", &unknown)) {
+      return false;
+    }
+    if (!JS_StringEqualsAscii(cx, val.toString(), "unknownObject",
+                              &unknownObject)) {
+      return false;
+    }
+  }
+
+  // Avoid assertion failures if Baseline is disabled or we can't Baseline
+  // Interpret this script.
+  if (!jit::IsBaselineInterpreterEnabled() ||
+      !jit::CanBaselineInterpretScript(script)) {
+    args.rval().setUndefined();
+    return true;
+  }
+
+  AutoRealm ar(cx, script);
+
+  if (!cx->realm()->ensureJitRealmExists(cx)) {
+    return false;
+  }
+
+  jit::AutoKeepJitScripts keepJitScript(cx);
+  if (!script->ensureHasJitScript(cx, keepJitScript)) {
+    return false;
+  }
+
+  AutoEnterAnalysis enter(cx);
+  AutoSweepJitScript sweep(script);
+  StackTypeSet* typeSet = script->jitScript()->typeArray(sweep) + index;
+  if (unknown) {
+    typeSet->addType(sweep, cx, TypeSet::UnknownType());
+  } else if (unknownObject) {
+    typeSet->addType(sweep, cx, TypeSet::AnyObjectType());
+  } else {
+    typeSet->addType(sweep, cx, TypeSet::GetValueType(val));
+  }
+
+  args.rval().setUndefined();
+  return true;
+}
+
 JSScript* js::TestingFunctionArgumentToScript(
     JSContext* cx, HandleValue v, JSFunction** funp /* = nullptr */) {
   if (v.isString()) {
@@ -5709,7 +5805,7 @@ static bool BaselineCompile(JSContext* cx, unsigned argc, Value* vp) {
       return true;
     }
 
-    if (!jit::IsBaselineEnabled(cx)) {
+    if (!jit::IsBaselineJitEnabled()) {
       returnedStr = "baseline disabled";
       break;
     }
@@ -6586,6 +6682,14 @@ gc::ZealModeHelpText),
 "globalLexicals()",
 "  Returns an object containing a copy of all global lexical bindings.\n"
 "  Example use: let x = 1; assertEq(globalLexicals().x, 1);\n"),
+
+    JS_FN_HELP("monitorType", MonitorType, 3, 0,
+"monitorType(fun, index, val)",
+"  Adds val's type to the index'th StackTypeSet of the function's\n"
+"  JitScript.\n"
+"  If fun is null or undefined, the caller's script is used.\n"
+"  If the value is the string 'unknown' or 'unknownObject'\n"
+"  the TypeSet is marked as unknown or unknownObject, respectively.\n"),
 
     JS_FN_HELP("baselineCompile", BaselineCompile, 2, 0,
 "baselineCompile([fun/code], forceDebugInstrumentation=false)",

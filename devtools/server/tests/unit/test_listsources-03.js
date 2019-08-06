@@ -9,7 +9,7 @@
 
 var gDebuggee;
 var gClient;
-var gThreadClient;
+var gThreadFront;
 
 function run_test() {
   Services.prefs.setBoolPref("security.allow_eval_with_system_principal", true);
@@ -20,38 +20,46 @@ function run_test() {
   gDebuggee = addTestGlobal("test-sources");
   gClient = new DebuggerClient(DebuggerServer.connectPipe());
   gClient.connect().then(function() {
-    attachTestTabAndResume(gClient, "test-sources",
-                           function(response, targetFront, threadClient) {
-                             gThreadClient = threadClient;
-                             test_simple_listsources();
-                           });
+    attachTestTabAndResume(gClient, "test-sources", function(
+      response,
+      targetFront,
+      threadFront
+    ) {
+      gThreadFront = threadFront;
+      test_simple_listsources();
+    });
   });
   do_test_pending();
 }
 
 function test_simple_listsources() {
-  gThreadClient.once("paused", function(packet) {
-    gThreadClient.getSources().then(function(response) {
+  gThreadFront.once("paused", function(packet) {
+    gThreadFront.getSources().then(function(response) {
       Assert.ok(
         !response.error,
-        "There shouldn't be an error fetching large amounts of sources.");
+        "There shouldn't be an error fetching large amounts of sources."
+      );
 
-      Assert.ok(response.sources.some(function(s) {
-        return s.url.match(/foo-999.js$/);
-      }));
+      Assert.ok(
+        response.sources.some(function(s) {
+          return s.url.match(/foo-999.js$/);
+        })
+      );
 
-      gThreadClient.resume().then(function() {
+      gThreadFront.resume().then(function() {
         finishClient(gClient);
       });
     });
   });
 
   for (let i = 0; i < 1000; i++) {
-    Cu.evalInSandbox("function foo###() {return ###;}".replace(/###/g, i),
-                     gDebuggee,
-                     "1.8",
-                     "http://example.com/foo-" + i + ".js",
-                     1);
+    Cu.evalInSandbox(
+      "function foo###() {return ###;}".replace(/###/g, i),
+      gDebuggee,
+      "1.8",
+      "http://example.com/foo-" + i + ".js",
+      1
+    );
   }
   gDebuggee.eval("debugger;");
 }

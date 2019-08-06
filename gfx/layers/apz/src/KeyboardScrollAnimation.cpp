@@ -6,6 +6,7 @@
 
 #include "KeyboardScrollAnimation.h"
 #include "ScrollAnimationBezierPhysics.h"
+#include "mozilla/StaticPrefs_general.h"
 
 namespace mozilla {
 namespace layers {
@@ -18,25 +19,32 @@ static ScrollAnimationBezierPhysicsSettings SettingsForType(
   switch (aType) {
     case KeyboardScrollAction::eScrollCharacter:
     case KeyboardScrollAction::eScrollLine: {
-      maxMS = clamped(StaticPrefs::LineSmoothScrollMaxDurationMs(), 0, 10000);
-      minMS = clamped(StaticPrefs::LineSmoothScrollMinDurationMs(), 0, maxMS);
+      maxMS = clamped(StaticPrefs::general_smoothScroll_lines_durationMaxMS(),
+                      0, 10000);
+      minMS = clamped(StaticPrefs::general_smoothScroll_lines_durationMinMS(),
+                      0, maxMS);
       break;
     }
     case KeyboardScrollAction::eScrollPage: {
-      maxMS = clamped(StaticPrefs::PageSmoothScrollMaxDurationMs(), 0, 10000);
-      minMS = clamped(StaticPrefs::PageSmoothScrollMinDurationMs(), 0, maxMS);
+      maxMS = clamped(StaticPrefs::general_smoothScroll_pages_durationMaxMS(),
+                      0, 10000);
+      minMS = clamped(StaticPrefs::general_smoothScroll_pages_durationMinMS(),
+                      0, maxMS);
       break;
     }
     case KeyboardScrollAction::eScrollComplete: {
-      maxMS = clamped(StaticPrefs::OtherSmoothScrollMaxDurationMs(), 0, 10000);
-      minMS = clamped(StaticPrefs::OtherSmoothScrollMinDurationMs(), 0, maxMS);
+      maxMS = clamped(StaticPrefs::general_smoothScroll_other_durationMaxMS(),
+                      0, 10000);
+      minMS = clamped(StaticPrefs::general_smoothScroll_other_durationMinMS(),
+                      0, maxMS);
       break;
     }
   }
 
   // The pref is 100-based int percentage, while mIntervalRatio is 1-based ratio
   double intervalRatio =
-      ((double)StaticPrefs::SmoothScrollDurationToIntervalRatio()) / 100.0;
+      ((double)StaticPrefs::general_smoothScroll_durationToIntervalRatio()) /
+      100.0;
   intervalRatio = std::max(1.0, intervalRatio);
   return ScrollAnimationBezierPhysicsSettings{minMS, maxMS, intervalRatio};
 }

@@ -91,6 +91,14 @@ class DisplayListBuilder;
 namespace dom {
 class Selection;
 }  // namespace dom
+
+enum class DisplayListArenaObjectId {
+#define DISPLAY_LIST_ARENA_OBJECT(name_) name_,
+#include "nsDisplayListArenaTypes.h"
+#undef DISPLAY_LIST_ARENA_OBJECT
+  COUNT
+};
+
 }  // namespace mozilla
 
 /*
@@ -626,9 +634,7 @@ class nsDisplayListBuilder {
   void SetPartialUpdate(bool aPartial) { mPartialUpdate = aPartial; }
 
   bool IsBuilding() const { return mIsBuilding; }
-  void SetIsBuilding(bool aIsBuilding) {
-    mIsBuilding = aIsBuilding;
-  }
+  void SetIsBuilding(bool aIsBuilding) { mIsBuilding = aIsBuilding; }
 
   bool InInvalidSubtree() const { return mInInvalidSubtree; }
 
@@ -930,19 +936,7 @@ class nsDisplayListBuilder {
     return mNeedsDisplayListBuild[aRenderRoot];
   }
 
-  void ComputeDefaultRenderRootRect(LayoutDeviceIntSize aClientSize) {
-    nsRegion cutout;
-    nsRect clientRect(nsPoint(),
-                      mozilla::LayoutDevicePixel::ToAppUnits(aClientSize, 1));
-    cutout.OrWith(clientRect);
-    for (auto renderRoot : mozilla::wr::kRenderRoots) {
-      cutout.SubWith(mozilla::LayoutDevicePixel::ToAppUnits(
-          mRenderRootRects[renderRoot], 1));
-    }
-
-    mRenderRootRects[mozilla::wr::RenderRoot::Default] =
-        mozilla::LayoutDevicePixel::FromAppUnits(cutout.GetBounds(), 1);
-  }
+  void ComputeDefaultRenderRootRect(LayoutDeviceIntSize aClientSize);
 
   LayoutDeviceRect GetRenderRootRect(mozilla::wr::RenderRoot aRenderRoot) {
     return mRenderRootRects[aRenderRoot];
@@ -1052,12 +1046,33 @@ class nsDisplayListBuilder {
 
   /**
    * Allocate memory in our arena. It will only be freed when this display list
-   * builder is destroyed. This memory holds nsDisplayItems. nsDisplayItem
-   * destructors are called as soon as the item is no longer used.
+   * builder is destroyed. This memory holds nsDisplayItems and
+   * DisplayItemClipChain objects.
+   *
+   * Destructors are called as soon as the item is no longer used.
    */
-  void* Allocate(size_t aSize, DisplayItemType aType);
+  void* Allocate(size_t aSize, mozilla::DisplayListArenaObjectId aId) {
+    return mPool.Allocate(aId, aSize);
+  }
+  void* Allocate(size_t aSize, DisplayItemType aType) {
+    static_assert(size_t(DisplayItemType::TYPE_ZERO) ==
+                      size_t(mozilla::DisplayListArenaObjectId::CLIPCHAIN),
+                  "");
+#define DECLARE_DISPLAY_ITEM_TYPE(name_, ...)                         \
+  static_assert(size_t(DisplayItemType::TYPE_##name_) ==              \
+                    size_t(mozilla::DisplayListArenaObjectId::name_), \
+                "");
+#include "nsDisplayItemTypesList.h"
+#undef DECLARE_DISPLAY_ITEM_TYPE
+    return Allocate(aSize, mozilla::DisplayListArenaObjectId(size_t(aType)));
+  }
 
-  void Destroy(DisplayItemType aType, void* aPtr);
+  void Destroy(mozilla::DisplayListArenaObjectId aId, void* aPtr) {
+    return mPool.Free(aId, aPtr);
+  }
+  void Destroy(DisplayItemType aType, void* aPtr) {
+    return Destroy(mozilla::DisplayListArenaObjectId(size_t(aType)), aPtr);
+  }
 
   /**
    * Allocate a new ActiveScrolledRoot in the arena. Will be cleaned up
@@ -1112,6 +1127,8 @@ class nsDisplayListBuilder {
   const ActiveScrolledRoot* ActiveScrolledRootForRootScrollframe() const {
     return mActiveScrolledRootForRootScrollframe;
   }
+
+  const ActiveScrolledRoot* GetFilterASR() const { return mFilterASR; }
 
   /**
    * Transfer off main thread animations to the layer.  May be called
@@ -1598,19 +1615,21 @@ class nsDisplayListBuilder {
   /**
    * Accumulates opaque stuff into the window opaque region.
    */
-  void AddWindowOpaqueRegion(const nsRegion& bounds) {
-    mWindowOpaqueRegion.Or(mWindowOpaqueRegion, bounds);
+  void AddWindowOpaqueRegion(nsIFrame* aFrame, const nsRect& aBounds) {
+    if (IsRetainingDisplayList()) {
+      mRetainedWindowOpaqueRegion.Add(aFrame, aBounds);
+      return;
+    }
+    mWindowOpaqueRegion.Or(mWindowOpaqueRegion, aBounds);
   }
   /**
    * Returns the window opaque region built so far. This may be incomplete
    * since the opaque region is built during layer construction.
    */
-  const nsRegion& GetWindowOpaqueRegion() { return mWindowOpaqueRegion; }
-
-  /**
-   * Clears the window opaque region.
-   */
-  void ClearWindowOpaqueRegion() { mWindowOpaqueRegion.SetEmpty(); }
+  const nsRegion GetWindowOpaqueRegion() {
+    return IsRetainingDisplayList() ? mRetainedWindowOpaqueRegion.ToRegion()
+                                    : mWindowOpaqueRegion;
+  }
 
   void SetGlassDisplayItem(nsDisplayItem* aItem);
   void ClearGlassDisplayItem() { mGlassDisplayItem = nullptr; }
@@ -1862,7 +1881,10 @@ class nsDisplayListBuilder {
 
   nsIFrame* const mReferenceFrame;
   nsIFrame* mIgnoreScrollFrame;
-  nsPresArena<32768> mPool;
+
+  using Arena = nsPresArena<32768, mozilla::DisplayListArenaObjectId,
+                            size_t(mozilla::DisplayListArenaObjectId::COUNT)>;
+  Arena mPool;
 
   AutoTArray<PresShellState, 8> mPresShellStates;
   AutoTArray<nsIFrame*, 400> mFramesMarkedForDisplay;
@@ -1914,11 +1936,12 @@ class nsDisplayListBuilder {
   WeakFrameRegion mRetainedWindowDraggingRegion;
   WeakFrameRegion mRetainedWindowNoDraggingRegion;
 
+  // Window opaque region is calculated during layer building.
+  WeakFrameRegion mRetainedWindowOpaqueRegion;
+
   // Optimized versions for non-retained display list.
   LayoutDeviceIntRegion mWindowDraggingRegion;
   LayoutDeviceIntRegion mWindowNoDraggingRegion;
-
-  // Window opaque region is calculated during layer building.
   nsRegion mWindowOpaqueRegion;
 
   // The display item for the Windows window glass background, if any
@@ -2233,7 +2256,8 @@ class nsDisplayItemBase : public nsDisplayItemLink {
     // The middle 16 bits of the per frame key uniquely identify the display
     // item when there are more than one item of the same type for a frame.
     // The low 8 bits are the display item type.
-    return (static_cast<uint32_t>(mExtraPageForPageNum) << (TYPE_BITS + (sizeof(mKey) * 8))) |
+    return (static_cast<uint32_t>(mExtraPageForPageNum)
+            << (TYPE_BITS + (sizeof(mKey) * 8))) |
            (static_cast<uint32_t>(mKey) << TYPE_BITS) |
            static_cast<uint32_t>(mType);
   }
@@ -2683,6 +2707,8 @@ class nsDisplayItem : public nsDisplayItemBase {
    * of content completely obscures another so that we can do occlusion
    * culling.
    * This does not take clipping into account.
+   * This must return a simple region (1 rect) for painting display lists.
+   * It is only allowed to be a complex region for hit testing.
    */
   virtual nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
                                    bool* aSnap) const {
@@ -3429,6 +3455,11 @@ class nsDisplayList {
    */
   template <typename Item, typename Comparator>
   void Sort(const Comparator& aComparator) {
+    if (Count() < 2) {
+      // Only sort lists with more than one item.
+      return;
+    }
+
     // Some casual local browsing testing suggests that a local preallocated
     // array of 20 items should be able to avoid a lot of dynamic allocations
     // here.

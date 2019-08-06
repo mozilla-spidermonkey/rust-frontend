@@ -8,8 +8,12 @@
 
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
 const LongStringClient = require("devtools/shared/client/long-string-client");
-const { FrontClassWithSpec, registerFront } = require("devtools/shared/protocol");
+const {
+  FrontClassWithSpec,
+  registerFront,
+} = require("devtools/shared/protocol");
 const { webconsoleSpec } = require("devtools/shared/specs/webconsole");
+const { generateUUID } = require("devtools/shared/generate-uuid");
 
 /**
  * A WebConsoleClient is used as a front end for the WebConsoleActor that is
@@ -172,20 +176,6 @@ class WebConsoleFront extends FrontClassWithSpec(webconsoleSpec) {
    * @param object [options={}]
    *        Options for evaluation:
    *
-   *        - bindObjectActor: an ObjectActor ID. The OA holds a reference to
-   *        a Debugger.Object that wraps a content object. This option allows
-   *        you to bind |_self| to the D.O of the given OA, during string
-   *        evaluation.
-   *
-   *        See: Debugger.Object.executeInGlobalWithBindings() for information
-   *        about bindings.
-   *
-   *        Use case: the variable view needs to update objects and it does so
-   *        by knowing the ObjectActor it inspects and binding |_self| to the
-   *        D.O of the OA. As such, variable view sends strings like these for
-   *        eval:
-   *          _self["prop"] = value;
-   *
    *        - frameActor: a FrameActor ID. The FA holds a reference to
    *        a Debugger.Frame. This option allows you to evaluate the string in
    *        the frame of the given FA.
@@ -204,7 +194,6 @@ class WebConsoleFront extends FrontClassWithSpec(webconsoleSpec) {
   evaluateJS(string, opts = {}) {
     const options = {
       text: string,
-      bindObjectActor: opts.bindObjectActor,
       frameActor: opts.frameActor,
       url: opts.url,
       selectedNodeActor: opts.selectedNodeActor,
@@ -218,22 +207,23 @@ class WebConsoleFront extends FrontClassWithSpec(webconsoleSpec) {
    * See evaluateJS for parameter and response information.
    */
   evaluateJSAsync(string, opts = {}) {
+    const resultID = generateUUID().toString();
     const options = {
       text: string,
-      bindObjectActor: opts.bindObjectActor,
       frameActor: opts.frameActor,
       url: opts.url,
       selectedNodeActor: opts.selectedNodeActor,
       selectedObjectActor: opts.selectedObjectActor,
       mapped: opts.mapped,
+      resultID,
     };
 
     return new Promise(async (resolve, reject) => {
-      const response = await super.evaluateJSAsync(options);
-      // Null check this in case the client has been detached while waiting
-      // for a response.
+      await super.evaluateJSAsync(options);
+      // Null check this in case the client has been detached while sending
+      // the one way request
       if (this.pendingEvaluationResults) {
-        this.pendingEvaluationResults.set(response.resultID, resp => {
+        this.pendingEvaluationResults.set(resultID, resp => {
           if (resp.error) {
             reject(resp);
           } else {
@@ -256,9 +246,12 @@ class WebConsoleFront extends FrontClassWithSpec(webconsoleSpec) {
       onResponse(packet);
       this.pendingEvaluationResults.delete(packet.resultID);
     } else {
-      DevToolsUtils.reportException("onEvaluationResult",
+      DevToolsUtils.reportException(
+        "onEvaluationResult",
         "No response handler for an evaluateJSAsync result (resultID: " +
-                                    packet.resultID + ")");
+          packet.resultID +
+          ")"
+      );
     }
   }
 
@@ -488,8 +481,7 @@ class WebConsoleFront extends FrontClassWithSpec(webconsoleSpec) {
     }
     this.off("evaluationResult", this.onEvaluationResult);
     this.off("serverNetworkEvent", this.onNetworkEvent);
-    this._client.off("networkEventUpdate",
-                                this.onNetworkEventUpdate);
+    this._client.off("networkEventUpdate", this.onNetworkEventUpdate);
     this._longStrings = null;
     this._client = null;
     this.pendingEvaluationResults.clear();
@@ -532,8 +524,10 @@ class WebConsoleFront extends FrontClassWithSpec(webconsoleSpec) {
 
       longStringClient.substring(initial.length, length, response => {
         if (response.error) {
-          DevToolsUtils.reportException("getString",
-              response.error + ": " + response.message);
+          DevToolsUtils.reportException(
+            "getString",
+            response.error + ": " + response.message
+          );
           reject(response);
         }
         resolve(initial + response.substring);

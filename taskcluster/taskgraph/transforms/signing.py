@@ -42,6 +42,9 @@ signing_description_schema = schema.extend({
     # depname is used in taskref's to identify the taskID of the unsigned things
     Required('depname'): basestring,
 
+    # attributes for this task
+    Optional('attributes'): {basestring: object},
+
     # unique label to describe this signing task, defaults to {dep.label}-signing
     Optional('label'): basestring,
 
@@ -59,6 +62,9 @@ signing_description_schema = schema.extend({
     # Optional control for how long a task may run (aka maxRunTime)
     Optional('max-run-time'): int,
     Optional('extra'): {basestring: object},
+
+    # Max number of partner repacks per chunk
+    Optional('repacks-per-chunk'): int,
 })
 
 
@@ -80,12 +86,12 @@ def add_entitlements_link(config, jobs):
             "mac entitlements",
             {
                 'platform': job['primary-dependency'].attributes.get('build_platform'),
-                'project': config.params['project'],
+                'release-level': config.params.release_level(),
             },
         )
         if entitlements_path:
             job['entitlements-url'] = config.params.file_url(
-                entitlements_path, endpoint="raw-file"
+                entitlements_path,
             )
         yield job
 
@@ -137,7 +143,8 @@ def make_task_description(config, jobs):
             )
         )
 
-        attributes = copy_attributes_from_dependent_job(dep_job)
+        attributes = job['attributes'] if job.get('attributes') else \
+            copy_attributes_from_dependent_job(dep_job)
         attributes['signed'] = True
 
         if dep_job.attributes.get('chunk_locales'):

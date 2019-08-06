@@ -6,14 +6,26 @@
 
 var EXPORTED_SYMBOLS = ["TabTarget"];
 
-const {Target} = ChromeUtils.import("chrome://remote/content/targets/Target.jsm");
-const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const {TabSession} = ChromeUtils.import("chrome://remote/content/sessions/TabSession.jsm");
-const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-const {RemoteAgent} = ChromeUtils.import("chrome://remote/content/RemoteAgent.jsm");
+const { Target } = ChromeUtils.import(
+  "chrome://remote/content/targets/Target.jsm"
+);
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { TabSession } = ChromeUtils.import(
+  "chrome://remote/content/sessions/TabSession.jsm"
+);
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
+const { RemoteAgent } = ChromeUtils.import(
+  "chrome://remote/content/RemoteAgent.jsm"
+);
 
-XPCOMUtils.defineLazyServiceGetter(this, "Favicons",
-    "@mozilla.org/browser/favicon-service;1", "nsIFaviconService");
+XPCOMUtils.defineLazyServiceGetter(
+  this,
+  "Favicons",
+  "@mozilla.org/browser/favicon-service;1",
+  "nsIFaviconService"
+);
 
 /**
  * Target for a local tab or a remoted frame.
@@ -30,19 +42,21 @@ class TabTarget extends Target {
 
     // Define the HTTP path to query this target
     this.path = `/devtools/page/${this.id}`;
-  }
 
-  connect() {
     Services.obs.addObserver(this, "message-manager-disconnect");
   }
 
-  disconnect() {
+  destructor() {
     Services.obs.removeObserver(this, "message-manager-disconnect");
-    super.disconnect();
+    super.destructor();
   }
 
   get id() {
     return this.browsingContext.id;
+  }
+
+  get browserContextId() {
+    return parseInt(this.browser.getAttribute("usercontextid"));
   }
 
   get browsingContext() {
@@ -106,7 +120,7 @@ class TabTarget extends Target {
   }
 
   get wsDebuggerURL() {
-    const {host, port} = RemoteAgent;
+    const { host, port } = RemoteAgent;
     return `ws://${host}:${port}${this.path}`;
   }
 
@@ -143,9 +157,6 @@ class TabTarget extends Target {
   // XPCOM
 
   get QueryInterface() {
-    return ChromeUtils.generateQI([
-      Ci.nsIHttpRequestHandler,
-      Ci.nsIObserver,
-    ]);
+    return ChromeUtils.generateQI([Ci.nsIHttpRequestHandler, Ci.nsIObserver]);
   }
 }

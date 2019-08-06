@@ -26,16 +26,17 @@
 const CC = Components.Constructor;
 
 // Create a sandbox with the resources we need. require() doesn't work here.
-const sandbox = Cu.Sandbox(CC("@mozilla.org/systemprincipal;1", "nsIPrincipal")(), {
-  wantGlobalProperties: [
-    "InspectorUtils",
-    "CSSRule",
-  ],
-});
+const sandbox = Cu.Sandbox(
+  CC("@mozilla.org/systemprincipal;1", "nsIPrincipal")(),
+  {
+    wantGlobalProperties: ["InspectorUtils", "CSSRule"],
+  }
+);
 Cu.evalInSandbox(
   "Components.utils.import('resource://gre/modules/jsdebugger.jsm');" +
-  "Components.utils.import('resource://gre/modules/Services.jsm');" +
-  "addDebuggerToGlobal(this);",
+    "Components.utils.import('resource://gre/modules/Services.jsm');" +
+    "Components.utils.import('resource://devtools/shared/execution-point-utils.js');" +
+    "addDebuggerToGlobal(this);",
   sandbox
 );
 const {
@@ -44,19 +45,28 @@ const {
   Services,
   InspectorUtils,
   CSSRule,
+  pointPrecedes,
+  pointEquals,
+  findClosestPoint,
 } = sandbox;
 
 const dbg = new Debugger();
-const firstGlobal = dbg.makeGlobalObjectReference(sandbox);
+const gFirstGlobal = dbg.makeGlobalObjectReference(sandbox);
+const gAllGlobals = [];
 
 // We are interested in debugging all globals in the process.
 dbg.onNewGlobalObject = function(global) {
   try {
     dbg.addDebuggee(global);
+    gAllGlobals.push(global);
+
+    scanningOnNewGlobal(global);
   } catch (e) {
     // Ignore errors related to adding a same-compartment debuggee.
     // See bug 1523755.
-    if (!/debugger and debuggee must be in different compartments/.test("" + e)) {
+    if (
+      !/debugger and debuggee must be in different compartments/.test("" + e)
+    ) {
       throw e;
     }
   }
@@ -66,7 +76,9 @@ dbg.onNewGlobalObject = function(global) {
 // Utilities
 ///////////////////////////////////////////////////////////////////////////////
 
-const dump = RecordReplayControl.dump;
+const dump = str => {
+  RecordReplayControl.dump(`[Child #${RecordReplayControl.childId()}]: ${str}`);
+};
 
 function assert(v) {
   if (!v) {
@@ -82,7 +94,7 @@ function throwError(v) {
 
 // Bidirectional map between objects and IDs.
 function IdMap() {
-  this._idToObject = [ undefined ];
+  this._idToObject = [undefined];
   this._objectToId = new Map();
 }
 
@@ -97,7 +109,7 @@ IdMap.prototype = {
 
   getId(object) {
     const id = this._objectToId.get(object);
-    return (id === undefined) ? 0 : id;
+    return id === undefined ? 0 : id;
   },
 
   getObject(id) {
@@ -141,6 +153,24 @@ function isNonNullObject(obj) {
   return obj && (typeof obj == "object" || typeof obj == "function");
 }
 
+function getMemoryUsage() {
+  const memoryKinds = {
+    Generic: [1],
+    Snapshots: [2, 3, 4, 5, 6, 7],
+    ScriptHits: [8],
+  };
+
+  const rv = {};
+  for (const [name, kinds] of Object.entries(memoryKinds)) {
+    let total = 0;
+    kinds.forEach(kind => {
+      total += RecordReplayControl.memoryUsage(kind);
+    });
+    rv[name] = total;
+  }
+  return rv;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // Persistent Script State
 ///////////////////////////////////////////////////////////////////////////////
@@ -159,7 +189,8 @@ const gScripts = new IdMap();
 const gNewScripts = [];
 
 function addScript(script) {
-  gScripts.add(script);
+  const id = gScripts.add(script);
+  script.setInstrumentationId(id);
   script.getChildScripts().forEach(addScript);
 }
 
@@ -182,6 +213,11 @@ function considerScript(script) {
   return RecordReplayControl.shouldUpdateProgressCounter(script.url);
 }
 
+function setEmptyInstrumentationId(script) {
+  script.setInstrumentationId(0);
+  script.getChildScripts().foreach(setEmptyInstrumentationId);
+}
+
 dbg.onNewScript = function(script) {
   if (RecordReplayControl.areThreadEventsDisallowed()) {
     // This script is part of an eval on behalf of the debugger.
@@ -189,16 +225,12 @@ dbg.onNewScript = function(script) {
   }
 
   if (!considerScript(script)) {
+    setEmptyInstrumentationId(script);
     return;
   }
 
   addScript(script);
   addScriptSource(script.source);
-
-  // Each onNewScript call advances the progress counter, to preserve the
-  // ProgressCounter invariant when onNewScript is called multiple times
-  // without executing any scripts.
-  RecordReplayControl.advanceProgressCounter();
 
   if (gManifest.kind == "resume") {
     gNewScripts.push(getScriptData(gScripts.getId(script)));
@@ -208,6 +240,44 @@ dbg.onNewScript = function(script) {
   // created.
   installPendingHandlers();
 };
+
+// Listen to the content of all loaded HTML files, with similar logic to that
+// in TabSources.
+const gHtmlContent = new Map();
+
+getWindow().docShell.watchedByDevtools = true;
+
+Services.obs.addObserver(
+  {
+    observe(subject, topic, data) {
+      assert(topic == "webnavigation-create");
+      subject.watchedByDevtools = true;
+    },
+  },
+  "webnavigation-create"
+);
+
+Services.obs.addObserver(
+  {
+    observe(subject, topic, data) {
+      assert(topic == "devtools-html-content");
+      const { uri, offset, contents } = JSON.parse(data);
+      if (gHtmlContent.has(uri)) {
+        const existing = gHtmlContent.get(uri);
+        if (existing.content.length == offset) {
+          assert(!existing.complete);
+          existing.content = existing.content + contents;
+        }
+      } else {
+        gHtmlContent.set(uri, {
+          content: contents,
+          contentType: "text/html",
+        });
+      }
+    },
+  },
+  "devtools-html-content"
+);
 
 ///////////////////////////////////////////////////////////////////////////////
 // Object Snapshots
@@ -219,7 +289,7 @@ dbg.onNewScript = function(script) {
 // answers to the client about the object's contents, without having to consult
 // a child process.
 
-function snapshotObjectProperty([ name, desc ]) {
+function snapshotObjectProperty([name, desc]) {
   // Only capture primitive properties in object snapshots.
   if ("value" in desc && !convertedValueIsObject(desc.value)) {
     return { name, desc };
@@ -249,7 +319,9 @@ function makeObjectSnapshot(object) {
     isExtensible: object.isExtensible(),
     isSealed: object.isSealed(),
     isFrozen: object.isFrozen(),
-    properties: Object.entries(getObjectProperties(object)).map(snapshotObjectProperty),
+    properties: Object.entries(getObjectProperties(object)).map(
+      snapshotObjectProperty
+    ),
   };
 }
 
@@ -288,7 +360,7 @@ function convertStack(stack) {
 
 // Map from warp target values attached to messages to the associated execution
 // point.
-const gWarpTargetPoints = [ null ];
+const gWarpTargetPoints = [null];
 
 // Listen to all console messages in the process.
 Services.console.registerListener({
@@ -309,29 +381,32 @@ Services.console.registerListener({
 });
 
 // Listen to all console API messages in the process.
-Services.obs.addObserver({
-  QueryInterface: ChromeUtils.generateQI([Ci.nsIObserver]),
+Services.obs.addObserver(
+  {
+    QueryInterface: ChromeUtils.generateQI([Ci.nsIObserver]),
 
-  observe(message, topic, data) {
-    const apiMessage = message.wrappedJSObject;
+    observe(message, topic, data) {
+      const apiMessage = message.wrappedJSObject;
 
-    const contents = {};
-    for (const id in apiMessage) {
-      if (id != "wrappedJSObject" && id != "arguments") {
-        contents[id] = JSON.parse(JSON.stringify(apiMessage[id]));
+      const contents = {};
+      for (const id in apiMessage) {
+        if (id != "wrappedJSObject" && id != "arguments") {
+          contents[id] = JSON.parse(JSON.stringify(apiMessage[id]));
+        }
       }
-    }
 
-    // Message arguments are preserved as debuggee values.
-    if (apiMessage.arguments) {
-      contents.arguments = apiMessage.arguments.map(v => {
-        return convertValue(makeDebuggeeValue(v), { snapshot: true });
-      });
-    }
+      // Message arguments are preserved as debuggee values.
+      if (apiMessage.arguments) {
+        contents.arguments = apiMessage.arguments.map(v => {
+          return convertValue(makeDebuggeeValue(v), { snapshot: true });
+        });
+      }
 
-    newConsoleMessage("ConsoleAPI", null, contents);
+      newConsoleMessage("ConsoleAPI", null, contents);
+    },
   },
-}, "console-api-log-event");
+  "console-api-log-event"
+);
 
 // eslint-disable-next-line no-unused-vars
 function NewTimeWarpTarget() {
@@ -345,35 +420,225 @@ function NewTimeWarpTarget() {
 // Recording Scanning
 ///////////////////////////////////////////////////////////////////////////////
 
-const gScannedScripts = new Set();
+// The recording is scanned using the Debugger's instrumentation API. We need to
+// accumulate the execution points at which every breakpoint site is hit, and
+// use instrumentation both to invoke a callback at those breakpoint site hits
+// and to efficiently update the frame depth when no generators/async frames
+// or exception unwinds occur. In the latter case we fallback on the Debugger
+// API to make sure we maintain the correct frame depth.
+//
+// The Debugger API can also straightforwardly provide this information,
+// by setting EnterFrame/OnPop hooks and breakpoints on all appropriate sites
+// in content scripts. Unfortunately, this is extremely slow: setting a single
+// breakpoint in a script prevents it from being Ion compiled and causes it to
+// run several times slower than the normal baseline code. If the page being
+// debugged has much JS, scanning it will be extremely slow compared to the
+// normal execution speed, and many replaying processes will be needed to keep
+// scan data up to date.
 
-function startScanningScript(script) {
-  const id = gScripts.getId(script);
-  const offsets = script.getPossibleBreakpointOffsets();
-  let lastFrame = null, lastFrameIndex = 0;
-  for (const offset of offsets) {
-    const handler = {
-      hit(frame) {
-        let frameIndex;
-        if (frame == lastFrame) {
-          frameIndex = lastFrameIndex;
-        } else {
-          lastFrame = frame;
-          lastFrameIndex = frameIndex = countScriptFrames() - 1;
-        }
-        RecordReplayControl.addScriptHit(id, offset, frameIndex);
-      },
-    };
-    script.setBreakpoint(offset, handler);
+function scanningOnNewGlobal(global) {
+  global.setInstrumentation(
+    global.makeDebuggeeNativeFunction(
+      RecordReplayControl.instrumentationCallback
+    ),
+    ["main", "entry", "breakpoint", "exit"]
+  );
+
+  if (RecordReplayControl.isScanningScripts()) {
+    global.setInstrumentationActive(true);
   }
+}
+
+// eslint-disable-next-line no-unused-vars
+function ScriptResumeFrame(script) {
+  // At frame resumption points, sync the frame depth. These won't be hit very
+  // often, and handling them is tricky when e.g. catching exceptions thrown by
+  // an await, which could be either a resumption or a continuation of an
+  // existing frame.
+  RecordReplayControl.setFrameDepth(countScriptFrames() - 1);
+  RecordReplayControl.onResumeFrame("", script);
+}
+
+function startScanningAllScripts() {
+  if (RecordReplayControl.isScanningScripts()) {
+    return;
+  }
+  RecordReplayControl.setScanningScripts(true);
+
+  for (const global of gAllGlobals) {
+    global.setInstrumentationActive(true);
+  }
+
+  // The onExceptionUnwind hook gets called anytime an error needs to be handled
+  // for a frame. If there are try/catch or try/finally blocks in the script
+  // then the hook might be called multiple times, and the frame might finish
+  // normally. To avoid dealing with this complexity we just add an onPop hook
+  // to any frame that has had exceptions unwound in it, to make sure the frame
+  // index is set correctly when it finally unwinds.
+  dbg.onExceptionUnwind = frame => {
+    if (considerScript(frame.script)) {
+      frame.onPop = () => {
+        const script = gScripts.getId(frame.script);
+        RecordReplayControl.setFrameDepth(countScriptFrames());
+        RecordReplayControl.onExitFrame("", script);
+      };
+    }
+  };
+}
+
+function stopScanningAllScripts() {
+  if (!RecordReplayControl.isScanningScripts()) {
+    return;
+  }
+  RecordReplayControl.setScanningScripts(false);
+
+  for (const global of gAllGlobals) {
+    global.setInstrumentationActive(false);
+  }
+
+  dbg.onExceptionUnwind = undefined;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Scanning Queries
+///////////////////////////////////////////////////////////////////////////////
+
+function findScriptHits(position, startpoint, endpoint) {
+  const { kind, script, offset, frameIndex: bpFrameIndex } = position;
+  const hits = [];
+  for (let checkpoint = startpoint; checkpoint < endpoint; checkpoint++) {
+    const allHits = RecordReplayControl.findScriptHits(
+      checkpoint,
+      script,
+      offset
+    );
+    for (const { progress, frameIndex } of allHits) {
+      switch (kind) {
+        case "OnStep":
+          if (bpFrameIndex != frameIndex) {
+            continue;
+          }
+        // FALLTHROUGH
+        case "Break":
+          hits.push({
+            checkpoint,
+            progress,
+            position: { kind: "OnStep", script, offset, frameIndex },
+          });
+      }
+    }
+  }
+  return hits;
+}
+
+function findAllScriptHits(script, frameIndex, offsets, startpoint, endpoint) {
+  const allHits = [];
+  for (const offset of offsets) {
+    const position = {
+      kind: "OnStep",
+      script,
+      offset,
+      frameIndex,
+    };
+
+    const hits = findScriptHits(position, startpoint, endpoint);
+    allHits.push(...hits);
+  }
+  return allHits;
+}
+
+function findChangeFrames(checkpoint, which, kind, frameIndex, maybeScript) {
+  const hits = RecordReplayControl.findChangeFrames(checkpoint, which);
+  return hits
+    .filter(
+      hit =>
+        hit.frameIndex == frameIndex &&
+        (!maybeScript || hit.script == maybeScript)
+    )
+    .map(({ script, progress }) => ({
+      checkpoint,
+      progress,
+      position: { kind, script, frameIndex },
+    }));
+}
+
+function findFrameSteps({ targetPoint, breakpointOffsets }) {
+  const {
+    checkpoint,
+    position: { script, frameIndex: targetIndex },
+  } = targetPoint;
+
+  // Find the entry point of the frame whose steps contain |targetPoint|.
+  let entryPoint;
+  if (targetPoint.position.kind == "EnterFrame") {
+    entryPoint = targetPoint;
+  } else {
+    const entryHits = [
+      ...findChangeFrames(checkpoint, 0, "EnterFrame", targetIndex, script),
+      ...findChangeFrames(checkpoint, 2, "EnterFrame", targetIndex, script),
+    ];
+
+    // Find the last frame entry or resume for the frame's script preceding the
+    // target point. Since frames do not span checkpoints the hit must be in the
+    // range we are searching.
+    entryPoint = findClosestPoint(
+      entryHits,
+      targetPoint,
+      /* before */ true,
+      /* inclusive */ true
+    );
+    assert(entryPoint);
+  }
+
+  // Find the exit point of the frame.
+  const exitHits = findChangeFrames(
+    checkpoint,
+    1,
+    "OnPop",
+    targetIndex,
+    script
+  );
+  const exitPoint = findClosestPoint(
+    exitHits,
+    targetPoint,
+    /* before */ false,
+    /* inclusive */ true
+  );
+
+  // The steps in the frame are the hits in the script which have the right
+  // frame index and happen between the entry and exit points. Any EnterFrame
+  // points for immediate callees of the frame are also included.
+  const breakpointHits = findAllScriptHits(
+    script,
+    targetIndex,
+    breakpointOffsets,
+    checkpoint,
+    checkpoint + 1
+  );
+  const enterFrameHits = findChangeFrames(
+    checkpoint,
+    0,
+    "EnterFrame",
+    targetIndex + 1
+  );
+  const steps = breakpointHits.concat(enterFrameHits).filter(point => {
+    return pointPrecedes(entryPoint, point) && pointPrecedes(point, exitPoint);
+  });
+  steps.push(entryPoint, exitPoint);
+
+  steps.sort((pointA, pointB) => {
+    return pointPrecedes(pointB, pointA);
+  });
+
+  return steps;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // Position Handler State
 ///////////////////////////////////////////////////////////////////////////////
 
-// Position kinds we are expected to hit.
-let gPositionHandlerKinds = Object.create(null);
+// Whether EnterFrame positions should be hit.
+let gHasEnterFrameHandler = false;
 
 // Handlers we tried to install but couldn't due to a script not existing.
 // Breakpoints requested by the middleman --- which are preserved when
@@ -393,7 +658,7 @@ function clearPositionHandlers() {
   dbg.clearAllBreakpoints();
   dbg.onEnterFrame = undefined;
 
-  gPositionHandlerKinds = Object.create(null);
+  gHasEnterFrameHandler = false;
   gPendingPcHandlers.length = 0;
   gInstalledPcHandlers.length = 0;
   gOnPopFilters.length = 0;
@@ -404,14 +669,6 @@ function installPendingHandlers() {
   gPendingPcHandlers.length = 0;
 
   pending.forEach(ensurePositionHandler);
-}
-
-// Hit a position with the specified kind if we are expected to. This is for
-// use with position kinds that have no script/offset/frameIndex information.
-function hitGlobalHandler(kind, frame) {
-  if (gPositionHandlerKinds[kind]) {
-    positionHit({ kind }, frame);
-  }
 }
 
 // The completion state of any frame that is being popped.
@@ -429,7 +686,14 @@ function onPopFrame(completion) {
 
 function onEnterFrame(frame) {
   if (considerScript(frame.script)) {
-    hitGlobalHandler("EnterFrame", frame);
+    if (gHasEnterFrameHandler) {
+      ensurePositionHandler({
+        kind: "OnStep",
+        script: gScripts.getId(frame.script),
+        frameIndex: countScriptFrames() - 1,
+        offset: frame.script.mainOffset,
+      });
+    }
 
     gOnPopFilters.forEach(filter => {
       if (filter(frame)) {
@@ -453,49 +717,68 @@ function addOnPopFilter(filter) {
 }
 
 function ensurePositionHandler(position) {
-  gPositionHandlerKinds[position.kind] = true;
-
   switch (position.kind) {
-  case "Break":
-  case "OnStep":
-    let debugScript;
-    if (position.script) {
-      debugScript = gScripts.getObject(position.script);
-      if (!debugScript) {
-        // The script referred to in this position does not exist yet, so we
-        // can't install a handler for it. Add a pending handler so that we
-        // can install the handler once the script is created.
-        gPendingPcHandlers.push(position);
+    case "Break":
+    case "OnStep":
+      let debugScript;
+      if (position.script) {
+        debugScript = gScripts.getObject(position.script);
+        if (!debugScript) {
+          // The script referred to in this position does not exist yet, so we
+          // can't install a handler for it. Add a pending handler so that we
+          // can install the handler once the script is created.
+          gPendingPcHandlers.push(position);
+          return;
+        }
+
+        // Make sure the script is delazified and has been instrumented before
+        // we try to operate on it, so that we can compute the appropriate offsets
+        // to use. Accessing mainOffset here is a hack but ensures the script is
+        // not lazy.
+        debugScript.mainOffset;
+      }
+
+      const match = function({ script, offset }) {
+        return script == position.script && offset == position.offset;
+      };
+      if (gInstalledPcHandlers.some(match)) {
         return;
       }
-    }
+      gInstalledPcHandlers.push({
+        script: position.script,
+        offset: position.offset,
+      });
 
-    const match = function({script, offset}) {
-      return script == position.script && offset == position.offset;
-    };
-    if (gInstalledPcHandlers.some(match)) {
-      return;
-    }
-    gInstalledPcHandlers.push({ script: position.script, offset: position.offset });
+      debugScript.setBreakpoint(position.offset, {
+        hit(frame) {
+          if (position.offset == debugScript.mainOffset) {
+            positionHit({
+              kind: "EnterFrame",
+              script: position.script,
+              frameIndex: countScriptFrames() - 1,
+            });
+          }
 
-    debugScript.setBreakpoint(position.offset, {
-      hit(frame) {
-        positionHit({
-          kind: "OnStep",
-          script: position.script,
-          offset: position.offset,
-          frameIndex: countScriptFrames() - 1,
-        }, frame);
-      },
-    });
-    break;
-  case "OnPop":
-    assert(position.script);
-    addOnPopFilter(frame => gScripts.getId(frame.script) == position.script);
-    break;
-  case "EnterFrame":
-    dbg.onEnterFrame = onEnterFrame;
-    break;
+          positionHit(
+            {
+              kind: "OnStep",
+              script: position.script,
+              offset: position.offset,
+              frameIndex: countScriptFrames() - 1,
+            },
+            frame
+          );
+        },
+      });
+      break;
+    case "OnPop":
+      assert(position.script);
+      addOnPopFilter(frame => gScripts.getId(frame.script) == position.script);
+      break;
+    case "EnterFrame":
+      dbg.onEnterFrame = onEnterFrame;
+      gHasEnterFrameHandler = true;
+      break;
   }
 }
 
@@ -509,8 +792,9 @@ let gDereferencedObjects = new Map();
 function getObjectId(obj) {
   const id = gPausedObjects.getId(obj);
   if (!id && obj) {
-    assert((obj instanceof Debugger.Object) ||
-           (obj instanceof Debugger.Environment));
+    assert(
+      obj instanceof Debugger.Object || obj instanceof Debugger.Environment
+    );
 
     // There can be multiple Debugger.Objects for the same dereferenced object.
     // gDereferencedObjects is used to make sure the IDs we send to the
@@ -536,11 +820,13 @@ function convertValue(value, options) {
     }
     return { object: getObjectId(value) };
   }
-  if (value === undefined ||
-      value == Infinity ||
-      value == -Infinity ||
-      Object.is(value, NaN) ||
-      Object.is(value, -0)) {
+  if (
+    value === undefined ||
+    value == Infinity ||
+    value == -Infinity ||
+    Object.is(value, NaN) ||
+    Object.is(value, -0)
+  ) {
     return { special: "" + value };
   }
   return value;
@@ -567,11 +853,16 @@ function convertValueFromParent(value) {
       return gPausedObjects.getObject(value.object);
     }
     switch (value.special) {
-    case "undefined": return undefined;
-    case "Infinity": return Infinity;
-    case "-Infinity": return -Infinity;
-    case "NaN": return NaN;
-    case "0": return -0;
+      case "undefined":
+        return undefined;
+      case "Infinity":
+        return Infinity;
+      case "-Infinity":
+        return -Infinity;
+      case "NaN":
+        return NaN;
+      case "0":
+        return -0;
     }
   }
   return value;
@@ -588,7 +879,7 @@ function makeDebuggeeValue(value) {
       // Sometimes the global which Cu.getGlobalForObject finds has
       // isInvisibleToDebugger set. Wrap the object into the first global we
       // found in this case.
-      return firstGlobal.makeDebuggeeValue(value);
+      return gFirstGlobal.makeDebuggeeValue(value);
     }
   }
   return value;
@@ -615,16 +906,16 @@ function ClearPausedState() {
 // The manifest that is currently being processed.
 let gManifest;
 
-// When processing "resume" manifests this tracks the execution time when we
-// started execution from the initial checkpoint.
-let gTimeWhenResuming;
+// When processing certain manifests this tracks the execution time when the
+// manifest started executing.
+let gManifestStartTime;
 
 // Handlers that run when a manifest is first received. This must be specified
 // for all manifests.
 const gManifestStartHandlers = {
   resume({ breakpoints }) {
     RecordReplayControl.resumeExecution();
-    gTimeWhenResuming = RecordReplayControl.currentExecutionTime();
+    gManifestStartTime = RecordReplayControl.currentExecutionTime();
     breakpoints.forEach(ensurePositionHandler);
   },
 
@@ -641,47 +932,18 @@ const gManifestStartHandlers = {
   },
 
   scanRecording(manifest) {
+    gManifestStartTime = RecordReplayControl.currentExecutionTime();
     gManifestStartHandlers.runToPoint(manifest);
   },
 
   findHits({ position, startpoint, endpoint }) {
-    const { kind, script, offset, frameIndex: bpFrameIndex } = position;
-    const hits = [];
-    const allHits = RecordReplayControl.findScriptHits(script, offset);
-    for (const { checkpoint, progress, frameIndex } of allHits) {
-      if (checkpoint >= startpoint && checkpoint < endpoint) {
-        switch (kind) {
-        case "OnStep":
-          if (bpFrameIndex != frameIndex) {
-            continue;
-          }
-          // FALLTHROUGH
-        case "Break":
-          hits.push({
-            checkpoint,
-            progress,
-            position: { kind: "OnStep", script, offset, frameIndex },
-          });
-        }
-      }
-    }
-    RecordReplayControl.manifestFinished(hits);
+    RecordReplayControl.manifestFinished(
+      findScriptHits(position, startpoint, endpoint)
+    );
   },
 
-  findFrameSteps({ entryPoint }) {
-    assert(entryPoint.position.kind == "EnterFrame");
-    const frameIndex = countScriptFrames() - 1;
-    const script = getFrameData(frameIndex).script;
-    const offsets = gScripts.getObject(script).getPossibleBreakpointOffsets();
-    for (const offset of offsets) {
-      ensurePositionHandler({ kind: "OnStep", script, offset, frameIndex });
-    }
-    ensurePositionHandler({ kind: "EnterFrame" });
-    ensurePositionHandler({ kind: "OnPop", script, frameIndex });
-
-    gFrameSteps = [ entryPoint ];
-    gFrameStepsFrameIndex = frameIndex;
-    RecordReplayControl.resumeExecution();
+  findFrameSteps(info) {
+    RecordReplayControl.manifestFinished(findFrameSteps(info));
   },
 
   flushRecording() {
@@ -709,6 +971,13 @@ const gManifestStartHandlers = {
     RecordReplayControl.manifestFinished();
   },
 
+  getPauseData() {
+    divergeFromRecording();
+    const data = getPauseData();
+    data.paintData = RecordReplayControl.repaint();
+    RecordReplayControl.manifestFinished(data);
+  },
+
   hitLogpoint({ text, condition }) {
     divergeFromRecording();
 
@@ -723,7 +992,11 @@ const gManifestStartHandlers = {
 
     const rv = frame.eval(text);
     const converted = convertCompletionValue(rv, { snapshot: true });
-    RecordReplayControl.manifestFinished({ result: converted });
+
+    const data = getPauseData();
+    data.paintData = RecordReplayControl.repaint();
+
+    RecordReplayControl.manifestFinished({ result: converted, data });
   },
 };
 
@@ -745,7 +1018,7 @@ function ManifestStart(manifest) {
 // eslint-disable-next-line no-unused-vars
 function BeforeCheckpoint() {
   clearPositionHandlers();
-  gScannedScripts.clear();
+  stopScanningAllScripts();
 }
 
 const FirstCheckpointId = 1;
@@ -779,7 +1052,7 @@ const gManifestFinishedAfterCheckpointHandlers = {
   resume(_, point) {
     RecordReplayControl.manifestFinished({
       point,
-      duration: RecordReplayControl.currentExecutionTime() - gTimeWhenResuming,
+      duration: RecordReplayControl.currentExecutionTime() - gManifestStartTime,
       consoleMessages: gNewConsoleMessages,
       scripts: gNewScripts,
     });
@@ -788,6 +1061,7 @@ const gManifestFinishedAfterCheckpointHandlers = {
   },
 
   runToPoint({ endpoint }, point) {
+    assert(endpoint.checkpoint >= point.checkpoint);
     if (!endpoint.position && point.checkpoint == endpoint.checkpoint) {
       RecordReplayControl.manifestFinished({ point });
     }
@@ -795,7 +1069,13 @@ const gManifestFinishedAfterCheckpointHandlers = {
 
   scanRecording({ endpoint }, point) {
     if (point.checkpoint == endpoint) {
-      RecordReplayControl.manifestFinished({ point });
+      const duration =
+        RecordReplayControl.currentExecutionTime() - gManifestStartTime;
+      RecordReplayControl.manifestFinished({
+        point,
+        duration,
+        memoryUsage: getMemoryUsage(),
+      });
     }
   },
 };
@@ -815,12 +1095,7 @@ const gManifestPrepareAfterCheckpointHandlers = {
   },
 
   scanRecording() {
-    dbg.onEnterFrame = frame => {
-      if (considerScript(frame.script) && !gScannedScripts.has(frame.script)) {
-        startScanningScript(frame.script);
-        gScannedScripts.add(frame.script);
-      }
-    };
+    startScanningAllScripts();
   },
 };
 
@@ -828,10 +1103,7 @@ function processManifestAfterCheckpoint(point, restoredCheckpoint) {
   // After rewinding gManifest won't be correct, so we always mark the current
   // manifest as finished and rely on the middleman to give us a new one.
   if (restoredCheckpoint) {
-    RecordReplayControl.manifestFinished({
-      restoredCheckpoint,
-      point: currentExecutionPoint(),
-    });
+    RecordReplayControl.manifestFinished({ restoredCheckpoint, point });
   }
 
   if (!gManifest) {
@@ -861,15 +1133,11 @@ function AfterCheckpoint(id, restoredCheckpoint) {
   }
 }
 
-// In the findFrameSteps manifest, all steps that have been found.
-let gFrameSteps = null;
-
-let gFrameStepsFrameIndex = 0;
-
 // Handlers that run after reaching a position watched by ensurePositionHandler.
 // This must be specified for any manifest that uses ensurePositionHandler.
 const gManifestPositionHandlers = {
   resume(manifest, point) {
+    clearPositionHandlers();
     RecordReplayControl.manifestFinished({
       point,
       consoleMessages: gNewConsoleMessages,
@@ -878,28 +1146,9 @@ const gManifestPositionHandlers = {
   },
 
   runToPoint({ endpoint }, point) {
-    if (point.progress == endpoint.progress &&
-        point.position.frameIndex == endpoint.position.frameIndex) {
+    if (pointEquals(point, endpoint)) {
       clearPositionHandlers();
       RecordReplayControl.manifestFinished({ point });
-    }
-  },
-
-  findFrameSteps(_, point) {
-    switch (point.position.kind) {
-    case "OnStep":
-      gFrameSteps.push(point);
-      break;
-    case "EnterFrame":
-      if (countScriptFrames() == gFrameStepsFrameIndex + 2) {
-        gFrameSteps.push(point);
-      }
-      break;
-    case "OnPop":
-      gFrameSteps.push(point);
-      clearPositionHandlers();
-      RecordReplayControl.manifestFinished({ point, frameSteps: gFrameSteps });
-      break;
     }
   },
 };
@@ -930,7 +1179,6 @@ function getScriptData(id) {
     displayName: script.displayName,
     url: script.url,
     format: script.format,
-    firstBreakpointOffset: script.getPossibleBreakpointOffsets()[0],
   };
 }
 
@@ -944,7 +1192,9 @@ function getSourceData(id) {
     displayURL: source.displayURL,
     elementAttributeName: source.elementAttributeName,
     introductionScript,
-    introductionOffset: introductionScript ? source.introductionOffset : undefined,
+    introductionOffset: introductionScript
+      ? source.introductionOffset
+      : undefined,
     introductionType: source.introductionType,
     sourceMapURL: source.sourceMapURL,
   };
@@ -965,6 +1215,7 @@ function getFrameData(index) {
     }
   }
 
+  const script = gScripts.getId(frame.script);
   return {
     index,
     type: frame.type,
@@ -973,20 +1224,22 @@ function getFrameData(index) {
     generator: frame.generator,
     constructing: frame.constructing,
     this: convertValue(frame.this),
-    script: gScripts.getId(frame.script),
+    script,
     offset: frame.offset,
     arguments: _arguments,
   };
 }
 
 function unknownObjectProperties(why) {
-  return [{
-    name: "Unknown properties",
-    desc: {
-      value: why,
-      enumerable: true,
+  return [
+    {
+      name: "Unknown properties",
+      desc: {
+        value: why,
+        enumerable: true,
+      },
     },
-  }];
+  ];
 }
 
 function getObjectData(id) {
@@ -1035,7 +1288,7 @@ function getObjectData(id) {
       optimizedOut: object.optimizedOut,
     };
   }
-  throwError("Unknown object kind");
+  throwError(`Unknown object kind: ${object}`);
 }
 
 function getObjectProperties(object) {
@@ -1076,8 +1329,12 @@ function getEnvironmentNames(env) {
       return { name, value: convertValue(env.getVariable(name)) };
     });
   } catch (e) {
-    return [{name: "Unknown names",
-             value: "Exception thrown in getEnvironmentNames" }];
+    return [
+      {
+        name: "Unknown names",
+        value: "Exception thrown in getEnvironmentNames",
+      },
+    ];
   }
 }
 
@@ -1177,7 +1434,7 @@ function getPauseData() {
       // objects like Windows, most of which will not be used.
       const enumerableOwnProperties = Object.create(null);
       let enumerablePropertyCount = 0;
-      for (const [ name, desc ] of propertyEntries) {
+      for (const [name, desc] of propertyEntries) {
         if (desc.enumerable) {
           enumerableOwnProperties[name] = desc;
           addPropertyDescriptor(desc, false);
@@ -1214,6 +1471,7 @@ function getPauseData() {
     const names = getEnvironmentNames(env);
     rv.environments[id] = { data, names };
 
+    addObject(data.callee);
     addEnvironment(data.parent);
   }
 
@@ -1225,13 +1483,14 @@ function getPauseData() {
   }
 
   for (let i = 0; i < numFrames; i++) {
+    const dbgFrame = scriptFrameForIndex(i);
     const frame = getFrameData(i);
     const script = gScripts.getObject(frame.script);
     rv.frames.push(frame);
     rv.offsetMetadata.push({
       scriptId: frame.script,
       offset: frame.offset,
-      metadata: script.getOffsetMetadata(frame.offset),
+      metadata: script.getOffsetMetadata(dbgFrame.offset),
     });
     addScript(frame.script);
     addValue(frame.this, true);
@@ -1261,7 +1520,6 @@ function divergeFromRecording() {
 }
 
 const gRequestHandlers = {
-
   repaint() {
     divergeFromRecording();
     return RecordReplayControl.repaint();
@@ -1297,12 +1555,15 @@ const gRequestHandlers = {
   },
 
   getContent(request) {
+    if (gHtmlContent.has(request.url)) {
+      return gHtmlContent.get(request.url);
+    }
     return RecordReplayControl.getContent(request.url);
   },
 
   findSources(request) {
     const sources = [];
-    gScriptSources.forEach((id) => {
+    gScriptSources.forEach(id => {
       sources.push(getSourceData(id));
     });
     return sources;
@@ -1365,6 +1626,13 @@ const gRequestHandlers = {
   getPossibleBreakpoints: forwardToScript("getPossibleBreakpoints"),
   getPossibleBreakpointOffsets: forwardToScript("getPossibleBreakpointOffsets"),
 
+  frameStepsInfo(request) {
+    const script = gScripts.getObject(request.script);
+    return {
+      breakpointOffsets: script.getPossibleBreakpointOffsets(),
+    };
+  },
+
   frameEvaluate(request) {
     divergeFromRecording();
     const frame = scriptFrameForIndex(request.index);
@@ -1398,8 +1666,9 @@ const gRequestHandlers = {
 
   newDeepTreeWalker(request) {
     divergeFromRecording();
-    const walker = Cc["@mozilla.org/inspector/deep-tree-walker;1"]
-      .createInstance(Ci.inIDeepTreeWalker);
+    const walker = Cc[
+      "@mozilla.org/inspector/deep-tree-walker;1"
+    ].createInstance(Ci.inIDeepTreeWalker);
     return { id: getObjectId(makeDebuggeeValue(walker)) };
   },
 
@@ -1409,9 +1678,9 @@ const gRequestHandlers = {
 
     try {
       const rv = object.unsafeDereference()[request.name];
-      return { "return": convertValue(makeDebuggeeValue(rv)) };
+      return { return: convertValue(makeDebuggeeValue(rv)) };
     } catch (e) {
-      return { "throw": "" + e };
+      return { throw: "" + e };
     }
   },
 
@@ -1422,9 +1691,9 @@ const gRequestHandlers = {
 
     try {
       object.unsafeDereference()[request.name] = value;
-      return { "return": request.value };
+      return { return: request.value };
     } catch (e) {
-      return { "throw": "" + e };
+      return { throw: "" + e };
     }
   },
 
@@ -1435,8 +1704,10 @@ const gRequestHandlers = {
   },
 
   findEventTarget(request) {
-    const element =
-      getWindow().document.elementFromPoint(request.clientX, request.clientY);
+    const element = getWindow().document.elementFromPoint(
+      request.clientX,
+      request.clientY
+    );
     if (!element) {
       return { id: 0 };
     }
@@ -1473,4 +1744,5 @@ var EXPORTED_SYMBOLS = [
   "BeforeCheckpoint",
   "AfterCheckpoint",
   "NewTimeWarpTarget",
+  "ScriptResumeFrame",
 ];

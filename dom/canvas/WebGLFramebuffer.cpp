@@ -143,6 +143,9 @@ bool WebGLFBAttachPoint::IsComplete(WebGLContext* webgl,
     fnWriteErrorInfo(info.BeginReading());
     return false;
   }
+  if (!formatUsage->IsExplicitlyRenderable()) {
+    webgl->WarnIfImplicit(formatUsage->GetExtensionID());
+  }
 
   const auto format = formatUsage->format;
 
@@ -837,7 +840,7 @@ void WebGLFramebuffer::ResolveAttachmentData() const {
 
     for (const auto& cur : mAttachments) {
       const auto& imageInfo = cur->GetImageInfo();
-      if (!imageInfo || imageInfo->mHasData)
+      if (!imageInfo || !imageInfo->mUninitializedSlices)
         continue;  // Nothing attached, or already has data.
 
       const auto fnClearBuffer = [&]() {
@@ -877,16 +880,18 @@ void WebGLFramebuffer::ResolveAttachmentData() const {
         const auto& tex = cur->Texture();
         const gl::ScopedFramebuffer scopedFB(gl);
         const gl::ScopedBindFramebuffer scopedBindFB(gl, scopedFB.FB());
-        for (uint32_t z = 0; z < imageInfo->mDepth; z++) {
-          gl->fFramebufferTextureLayer(LOCAL_GL_FRAMEBUFFER,
-                                       cur->mAttachmentPoint, tex->mGLName,
-                                       cur->MipLevel(), z);
-          fnClearBuffer();
+        for (const auto z : IntegerRange(imageInfo->mDepth)) {
+          if ((*imageInfo->mUninitializedSlices)[z]) {
+            gl->fFramebufferTextureLayer(LOCAL_GL_FRAMEBUFFER,
+                                         cur->mAttachmentPoint, tex->mGLName,
+                                         cur->MipLevel(), z);
+            fnClearBuffer();
+          }
         }
       } else {
         fnClearBuffer();
       }
-      imageInfo->mHasData = true;
+      imageInfo->mUninitializedSlices = {};
     }
     return;
   }
@@ -897,10 +902,10 @@ void WebGLFramebuffer::ResolveAttachmentData() const {
   const auto fnGather = [&](const WebGLFBAttachPoint& attach,
                             const uint32_t attachClearBits) {
     const auto& imageInfo = attach.GetImageInfo();
-    if (!imageInfo || imageInfo->mHasData) return false;
+    if (!imageInfo || !imageInfo->mUninitializedSlices) return false;
 
     clearBits |= attachClearBits;
-    imageInfo->mHasData = true;  // Just mark it now.
+    imageInfo->mUninitializedSlices = {};  // Just mark it now.
     return true;
   };
 
@@ -934,13 +939,14 @@ void WebGLFramebuffer::ResolveAttachmentData() const {
 }
 
 WebGLFramebuffer::CompletenessInfo::~CompletenessInfo() {
-  const auto& fb = this->fb;
+  if (!this->fb) return;
+  const auto& fb = *this->fb;
   const auto& webgl = fb.mContext;
   fb.mNumFBStatusInvals++;
   if (fb.mNumFBStatusInvals > webgl->mMaxAcceptableFBStatusInvals) {
     webgl->GeneratePerfWarning(
         "FB was invalidated after being complete %u"
-        " times.",
+        " times. [webgl.perf.max-acceptable-fb-status-invals]",
         uint32_t(fb.mNumFBStatusInvals));
   }
 }
@@ -984,7 +990,7 @@ FBStatus WebGLFramebuffer::CheckFramebufferStatus() const {
     ResolveAttachmentData();
 
     // Sweet, let's cache that.
-    auto info = CompletenessInfo{*this, UINT32_MAX, UINT32_MAX};
+    auto info = CompletenessInfo{this, UINT32_MAX, UINT32_MAX};
     mCompletenessInfo.ResetInvalidators({});
     mCompletenessInfo.AddInvalidator(*this);
 
@@ -1013,6 +1019,7 @@ FBStatus WebGLFramebuffer::CheckFramebufferStatus() const {
       info.isMultiview = cur->IsMultiview();
     }
     mCompletenessInfo = Some(std::move(info));
+    info.fb = nullptr;  // Don't trigger the invalidation warning.
     return LOCAL_GL_FRAMEBUFFER_COMPLETE;
   } while (false);
 

@@ -18,9 +18,9 @@ pref("devtools.debugger.auto-pretty-print", false);
 pref("devtools.debugger.auto-black-box", true);
 pref("devtools.debugger.workers", false);
 
-// The default Debugger UI settings
-// This schema version needs to match that in devtools/client/debugger/src/utils/prefs.js.
-pref("devtools.debugger.prefs-schema-version", "1.0.10");
+// The debugger pref's schema defaults to 0 so that it can be managed
+// by utils/prefs.js in verifySchema. Bug 1565485
+pref("devtools.debugger.prefs-schema-version", 0);
 pref("devtools.debugger.ui.panes-workers-and-sources-width", 200);
 pref("devtools.debugger.ui.panes-instruments-width", 300);
 pref("devtools.debugger.ui.panes-visible-on-startup", false);
@@ -67,7 +67,7 @@ pref("devtools.debugger.features.code-coverage", false);
 pref("devtools.debugger.features.code-folding", false);
 pref("devtools.debugger.features.outline", true);
 pref("devtools.debugger.features.component-pane", false);
-pref("devtools.debugger.features.async-stepping", true);
+pref("devtools.debugger.features.async-stepping", false);
 pref("devtools.debugger.features.skip-pausing", true);
 pref("devtools.debugger.features.autocomplete-expressions", false);
 pref("devtools.debugger.features.map-expression-bindings", true);
@@ -76,3 +76,4 @@ pref("devtools.debugger.features.original-blackbox", true);
 pref("devtools.debugger.features.windowless-workers", true);
 pref("devtools.debugger.features.event-listeners-breakpoints", true);
 pref("devtools.debugger.features.log-points", true);
+pref("devtools.debugger.features.overlay-step-buttons", false);

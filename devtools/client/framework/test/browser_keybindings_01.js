@@ -7,13 +7,19 @@
 
 // Tests that the keybindings for opening and closing the inspector work as expected
 // Can probably make this a shared test that tests all of the tools global keybindings
-const TEST_URL = "data:text/html,<html><head><title>Test for the " +
-                 "highlighter keybindings</title></head><body>" +
-                 "<h1>Keybindings!</h1></body></html>";
+const TEST_URL =
+  "data:text/html,<html><head><title>Test for the " +
+  "highlighter keybindings</title></head><body>" +
+  "<h1>Keybindings!</h1></body></html>";
 
-const {gDevToolsBrowser} = require("devtools/client/framework/devtools-browser");
-ChromeUtils.defineModuleGetter(this, "AppConstants",
-  "resource://gre/modules/AppConstants.jsm");
+const {
+  gDevToolsBrowser,
+} = require("devtools/client/framework/devtools-browser");
+ChromeUtils.defineModuleGetter(
+  this,
+  "AppConstants",
+  "resource://gre/modules/AppConstants.jsm"
+);
 const isMac = AppConstants.platform == "macosx";
 
 const allKeys = [];
@@ -98,12 +104,12 @@ add_task(async function() {
   async function inspectorShouldBeOpenAndHighlighting(inspector) {
     is(toolbox.currentToolId, "inspector", "Correct tool has been loaded");
 
-    await toolbox.inspector.nodePicker.once("picker-started");
+    await toolbox.inspectorFront.nodePicker.once("picker-started");
 
     ok(true, "picker-started event received, highlighter started");
     inspector.synthesizeKey();
 
-    await toolbox.inspector.nodePicker.once("picker-stopped");
+    await toolbox.inspectorFront.nodePicker.once("picker-stopped");
     ok(true, "picker-stopped event received, highlighter stopped");
   }
 

@@ -1001,18 +1001,13 @@ nsXULAppInfo::GetServerURL(nsIURL** aServerURL) {
 
 NS_IMETHODIMP
 nsXULAppInfo::SetServerURL(nsIURL* aServerURL) {
-  bool schemeOk;
-  // only allow https or http URLs
-  nsresult rv = aServerURL->SchemeIs("https", &schemeOk);
-  NS_ENSURE_SUCCESS(rv, rv);
-  if (!schemeOk) {
-    rv = aServerURL->SchemeIs("http", &schemeOk);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    if (!schemeOk) return NS_ERROR_INVALID_ARG;
+  // Only allow https or http URLs
+  if (!aServerURL->SchemeIs("http") && !aServerURL->SchemeIs("https")) {
+    return NS_ERROR_INVALID_ARG;
   }
+
   nsAutoCString spec;
-  rv = aServerURL->GetSpec(spec);
+  nsresult rv = aServerURL->GetSpec(spec);
   NS_ENSURE_SUCCESS(rv, rv);
 
   return CrashReporter::SetServerURL(spec);
@@ -3601,15 +3596,12 @@ static void AnnotateWMIData() {
 }
 
 static void PR_CALLBACK AnnotateWMIData_ThreadStart(void*) {
-  HRESULT hr = CoInitialize(nullptr);
-
-  if (FAILED(hr)) {
+  mscom::MTARegion mta;
+  if (!mta.IsValid()) {
     return;
   }
 
   AnnotateWMIData();
-
-  CoUninitialize();
 }
 #endif  // XP_WIN
 
@@ -4704,12 +4696,8 @@ int XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig) {
   NS_ENSURE_SUCCESS(rv, 1);
 
   if (!mAppData->xreDirectory) {
-    nsCOMPtr<nsIFile> lf;
-    rv = XRE_GetBinaryPath(getter_AddRefs(lf));
-    if (NS_FAILED(rv)) return 2;
-
     nsCOMPtr<nsIFile> greDir;
-    rv = lf->GetParent(getter_AddRefs(greDir));
+    rv = binFile->GetParent(getter_AddRefs(greDir));
     if (NS_FAILED(rv)) return 2;
 
 #ifdef XP_MACOSX
@@ -4971,15 +4959,7 @@ bool XRE_UseNativeEventProcessing() {
   }
 #endif
   if (XRE_IsContentProcess()) {
-    static bool sInited = false;
-    static bool sUseNativeEventProcessing = false;
-    if (!sInited) {
-      Preferences::AddBoolVarCache(&sUseNativeEventProcessing,
-                                   "dom.ipc.useNativeEventProcessing.content");
-      sInited = true;
-    }
-
-    return sUseNativeEventProcessing;
+    return StaticPrefs::dom_ipc_useNativeEventProcessing_content();
   }
 
   return true;

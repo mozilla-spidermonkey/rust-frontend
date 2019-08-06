@@ -78,6 +78,7 @@
 #include "XULPopupElement.h"
 #include "XULTreeElement.h"
 
+#include "mozilla/dom/nsCSPUtils.h"
 #include "mozilla/dom/XULElementBinding.h"
 #include "mozilla/dom/XULBroadcastManager.h"
 #include "mozilla/dom/MouseEventBinding.h"
@@ -198,13 +199,13 @@ already_AddRefed<nsXULElement> nsXULElement::CreateFromPrototype(
       // Check each attribute on the prototype to see if we need to do
       // any additional processing and hookup that would otherwise be
       // done 'automagically' by SetAttr().
-      for (uint32_t i = 0; i < aPrototype->mNumAttributes; ++i) {
+      for (size_t i = 0; i < aPrototype->mAttributes.Length(); ++i) {
         element->AddListenerFor(aPrototype->mAttributes[i].mName);
       }
     }
 
     if (aIsRoot && aPrototype->mNodeInfo->Equals(nsGkAtoms::window)) {
-      for (uint32_t i = 0; i < aPrototype->mNumAttributes; ++i) {
+      for (size_t i = 0; i < aPrototype->mAttributes.Length(); ++i) {
         if (aPrototype->mAttributes[i].mName.Equals(nsGkAtoms::windowtype)) {
           element->MaybeUpdatePrivateLifetime();
         }
@@ -678,6 +679,29 @@ nsresult nsXULElement::BindToTree(BindContext& aContext, nsINode& aParent) {
         "Unexpected XUL element in non-XUL doc");
   }
 #endif
+
+  // Within Bug 1492063 and its dependencies we started to apply a
+  // CSP to system privileged about pages. Since some about: pages
+  // are implemented in *.xul files we added this workaround to
+  // apply a CSP to them. To do so, we check the introduced custom
+  // attribute 'csp' on the root element.
+  if (doc.GetRootElement() == this) {
+    nsAutoString cspPolicyStr;
+    GetAttr(kNameSpaceID_None, nsGkAtoms::csp, cspPolicyStr);
+
+#ifdef DEBUG
+    {
+      nsCOMPtr<nsIContentSecurityPolicy> docCSP = doc.GetCsp();
+      uint32_t policyCount = 0;
+      if (docCSP) {
+        docCSP->GetPolicyCount(&policyCount);
+      }
+      MOZ_ASSERT(policyCount == 0, "how come we already have a policy?");
+    }
+#endif
+
+    CSP_ApplyMetaCSPToDoc(doc, cspPolicyStr);
+  }
 
   if (NodeInfo()->Equals(nsGkAtoms::keyset, kNameSpaceID_XUL)) {
     // Create our XUL key listener and hook it up.
@@ -1240,9 +1264,9 @@ nsresult nsXULElement::MakeHeavyweight(nsXULPrototypeElement* aPrototype) {
     return NS_OK;
   }
 
-  uint32_t i;
+  size_t i;
   nsresult rv;
-  for (i = 0; i < aPrototype->mNumAttributes; ++i) {
+  for (i = 0; i < aPrototype->mAttributes.Length(); ++i) {
     nsXULPrototypeAttribute* protoattr = &aPrototype->mAttributes[i];
     nsAttrValue attrValue;
 
@@ -1473,8 +1497,8 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsXULPrototypeNode)
     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mNodeInfo");
     cb.NoteNativeChild(elem->mNodeInfo,
                        NS_CYCLE_COLLECTION_PARTICIPANT(NodeInfo));
-    uint32_t i;
-    for (i = 0; i < elem->mNumAttributes; ++i) {
+    size_t i;
+    for (i = 0; i < elem->mAttributes.Length(); ++i) {
       const nsAttrName& name = elem->mAttributes[i].mName;
       if (!name.IsAtom()) {
         NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb,
@@ -1527,14 +1551,14 @@ nsresult nsXULPrototypeElement::Serialize(
   }
 
   // Write Attributes
-  tmp = aStream->Write32(mNumAttributes);
+  tmp = aStream->Write32(mAttributes.Length());
   if (NS_FAILED(tmp)) {
     rv = tmp;
   }
 
   nsAutoString attributeValue;
-  uint32_t i;
-  for (i = 0; i < mNumAttributes; ++i) {
+  size_t i;
+  for (i = 0; i < mAttributes.Length(); ++i) {
     RefPtr<mozilla::dom::NodeInfo> ni;
     if (mAttributes[i].mName.IsAtom()) {
       ni = mNodeInfo->NodeInfoManager()->GetNodeInfo(
@@ -1636,16 +1660,13 @@ nsresult nsXULPrototypeElement::Deserialize(
   // Read Attributes
   rv = aStream->Read32(&number);
   if (NS_WARN_IF(NS_FAILED(rv))) return rv;
-  mNumAttributes = int32_t(number);
+  int32_t attributes = int32_t(number);
 
-  if (mNumAttributes > 0) {
-    mAttributes = new (fallible) nsXULPrototypeAttribute[mNumAttributes];
-    if (!mAttributes) {
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
+  if (attributes > 0) {
+    mAttributes.AppendElements(attributes);
 
     nsAutoString attributeValue;
-    for (uint32_t i = 0; i < mNumAttributes; ++i) {
+    for (size_t i = 0; i < mAttributes.Length(); ++i) {
       rv = aStream->Read32(&number);
       if (NS_WARN_IF(NS_FAILED(rv))) return rv;
       mozilla::dom::NodeInfo* ni = aNodeInfos->SafeElementAt(number, nullptr);
@@ -1744,7 +1765,7 @@ nsresult nsXULPrototypeElement::Deserialize(
 nsresult nsXULPrototypeElement::SetAttrAt(uint32_t aPos,
                                           const nsAString& aValue,
                                           nsIURI* aDocumentURI) {
-  MOZ_ASSERT(aPos < mNumAttributes, "out-of-bounds");
+  MOZ_ASSERT(aPos < mAttributes.Length(), "out-of-bounds");
 
   // WARNING!!
   // This code is largely duplicated in nsXULElement::SetAttr.
@@ -1796,8 +1817,11 @@ nsresult nsXULPrototypeElement::SetAttrAt(uint32_t aPos,
     // as has been discussed, the CSP should be checked here to see if
     // inline styles are allowed to be applied.
     // XXX No specific specs talk about xul and referrer policy, pass Unset
-    RefPtr<URLExtraData> data = new URLExtraData(
-        aDocumentURI, aDocumentURI, principal, mozilla::net::RP_Unset);
+    nsCOMPtr<nsIReferrerInfo> referrerInfo =
+        new mozilla::dom::ReferrerInfo(aDocumentURI, mozilla::net::RP_Unset);
+
+    RefPtr<URLExtraData> data =
+        new URLExtraData(aDocumentURI, referrerInfo, principal);
     RefPtr<DeclarationBlock> declaration = DeclarationBlock::FromCssText(
         aValue, data, eCompatibility_FullStandards, nullptr);
     if (declaration) {
@@ -1818,9 +1842,7 @@ nsresult nsXULPrototypeElement::SetAttrAt(uint32_t aPos,
 }
 
 void nsXULPrototypeElement::Unlink() {
-  mNumAttributes = 0;
-  delete[] mAttributes;
-  mAttributes = nullptr;
+  mAttributes.Clear();
   mChildren.Clear();
 }
 
@@ -1879,12 +1901,9 @@ nsresult nsXULPrototypeScript::Serialize(
 
 nsresult nsXULPrototypeScript::SerializeOutOfLine(
     nsIObjectOutputStream* aStream, nsXULPrototypeDocument* aProtoDoc) {
-  nsresult rv = NS_ERROR_NOT_IMPLEMENTED;
-
-  bool isChrome = false;
-  if (NS_FAILED(mSrcURI->SchemeIs("chrome", &isChrome)) || !isChrome)
+  if (!mSrcURI->SchemeIs("chrome"))
     // Don't cache scripts that don't come from chrome uris.
-    return rv;
+    return NS_ERROR_NOT_IMPLEMENTED;
 
   nsXULPrototypeCache* cache = nsXULPrototypeCache::GetInstance();
   if (!cache) return NS_ERROR_OUT_OF_MEMORY;
@@ -1902,7 +1921,7 @@ nsresult nsXULPrototypeScript::SerializeOutOfLine(
   if (exists) return NS_OK;
 
   nsCOMPtr<nsIObjectOutputStream> oos;
-  rv = cache->GetOutputStream(mSrcURI, getter_AddRefs(oos));
+  nsresult rv = cache->GetOutputStream(mSrcURI, getter_AddRefs(oos));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsresult tmp = Serialize(oos, aProtoDoc, nullptr);
@@ -1992,13 +2011,9 @@ nsresult nsXULPrototypeScript::DeserializeOutOfLine(
         rv = Deserialize(objectInput, aProtoDoc, nullptr, nullptr);
 
       if (NS_SUCCEEDED(rv)) {
-        if (useXULCache && mSrcURI) {
-          bool isChrome = false;
-          mSrcURI->SchemeIs("chrome", &isChrome);
-          if (isChrome) {
-            JS::Rooted<JSScript*> script(RootingCx(), GetScriptObject());
-            cache->PutScript(mSrcURI, script);
-          }
+        if (useXULCache && mSrcURI && mSrcURI->SchemeIs("chrome")) {
+          JS::Rooted<JSScript*> script(RootingCx(), GetScriptObject());
+          cache->PutScript(mSrcURI, script);
         }
         cache->FinishInputStream(mSrcURI);
       } else {

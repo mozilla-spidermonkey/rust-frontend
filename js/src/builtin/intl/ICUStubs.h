@@ -25,15 +25,20 @@
 #  include "unicode/ucal.h"
 #  include "unicode/ucol.h"
 #  include "unicode/udat.h"
+#  include "unicode/udata.h"
 #  include "unicode/udatpg.h"
 #  include "unicode/udisplaycontext.h"
 #  include "unicode/uenum.h"
+#  include "unicode/uformattedvalue.h"
 #  include "unicode/uloc.h"
 #  include "unicode/unum.h"
+#  include "unicode/unumberformatter.h"
 #  include "unicode/unumsys.h"
 #  include "unicode/upluralrules.h"
 #  include "unicode/ureldatefmt.h"
+#  include "unicode/ures.h"
 #  include "unicode/ustring.h"
+#  include "unicode/utypes.h"
 #endif
 
 /*
@@ -45,8 +50,6 @@
  */
 
 #if !ENABLE_INTL_API
-
-#  define U_ICU_VERSION_MAJOR_NUM 64
 
 enum UErrorCode {
   U_ZERO_ERROR,
@@ -71,6 +74,20 @@ inline int32_t uloc_countAvailable() {
 
 inline UBool uloc_isRightToLeft(const char* locale) {
   MOZ_CRASH("uloc_isRightToLeft: Intl API disabled");
+}
+
+inline int32_t uloc_addLikelySubtags(const char* localeID,
+                                     char* maximizedLocaleID,
+                                     int32_t maximizedLocaleIDCapacity,
+                                     UErrorCode* err) {
+  MOZ_CRASH("uloc_addLikelySubtags: Intl API disabled");
+}
+
+inline int32_t uloc_minimizeSubtags(const char* localeID,
+                                    char* minimizedLocaleID,
+                                    int32_t minimizedLocaleIDCapacity,
+                                    UErrorCode* err) {
+  MOZ_CRASH("uloc_minimizeSubtags: Intl API disabled");
 }
 
 struct UEnumeration;
@@ -162,58 +179,12 @@ struct UFieldPosition;
 struct UFieldPositionIterator;
 using UNumberFormat = void*;
 
-enum UNumberFormatStyle {
-  UNUM_DECIMAL = 1,
-  UNUM_CURRENCY,
-  UNUM_PERCENT,
-  UNUM_CURRENCY_ISO,
-  UNUM_CURRENCY_PLURAL,
-};
-
-enum UNumberFormatRoundingMode {
-  UNUM_ROUND_HALFUP,
-};
-
-enum UNumberFormatAttribute {
-  UNUM_GROUPING_USED,
-  UNUM_MIN_INTEGER_DIGITS,
-  UNUM_MAX_FRACTION_DIGITS,
-  UNUM_MIN_FRACTION_DIGITS,
-  UNUM_ROUNDING_MODE,
-  UNUM_SIGNIFICANT_DIGITS_USED,
-  UNUM_MIN_SIGNIFICANT_DIGITS,
-  UNUM_MAX_SIGNIFICANT_DIGITS,
-};
-
-enum UNumberFormatTextAttribute {
-  UNUM_CURRENCY_CODE,
-};
-
 inline int32_t unum_countAvailable() {
   MOZ_CRASH("unum_countAvailable: Intl API disabled");
 }
 
 inline const char* unum_getAvailable(int32_t localeIndex) {
   MOZ_CRASH("unum_getAvailable: Intl API disabled");
-}
-
-inline UNumberFormat* unum_open(UNumberFormatStyle style, const UChar* pattern,
-                                int32_t patternLength, const char* locale,
-                                UParseError* parseErr, UErrorCode* status) {
-  MOZ_CRASH("unum_open: Intl API disabled");
-}
-
-inline void unum_setAttribute(UNumberFormat* fmt, UNumberFormatAttribute attr,
-                              int32_t newValue) {
-  MOZ_CRASH("unum_setAttribute: Intl API disabled");
-}
-
-inline int32_t unum_formatDoubleForFields(const UNumberFormat* fmt,
-                                          double number, UChar* result,
-                                          int32_t resultLength,
-                                          UFieldPositionIterator* fpositer,
-                                          UErrorCode* status) {
-  MOZ_CRASH("unum_formatDoubleForFields: Intl API disabled");
 }
 
 enum UNumberFormatFields {
@@ -233,18 +204,7 @@ enum UNumberFormatFields {
   UNUM_FIELD_COUNT,
 };
 
-inline void unum_close(UNumberFormat* fmt) {
-  MOZ_CRASH("unum_close: Intl API disabled");
-}
-
-inline void unum_setTextAttribute(UNumberFormat* fmt,
-                                  UNumberFormatTextAttribute tag,
-                                  const UChar* newValue, int32_t newValueLength,
-                                  UErrorCode* status) {
-  MOZ_CRASH("unum_setTextAttribute: Intl API disabled");
-}
-
-using UNumberingSystem = void*;
+struct UNumberingSystem;
 
 inline UNumberingSystem* unumsys_open(const char* locale, UErrorCode* status) {
   MOZ_CRASH("unumsys_open: Intl API disabled");
@@ -256,6 +216,63 @@ inline const char* unumsys_getName(const UNumberingSystem* unumsys) {
 
 inline void unumsys_close(UNumberingSystem* unumsys) {
   MOZ_CRASH("unumsys_close: Intl API disabled");
+}
+
+struct UNumberFormatter;
+struct UFormattedNumber;
+
+inline UNumberFormatter* unumf_openForSkeletonAndLocale(const UChar* skeleton,
+                                                        int32_t skeletonLen,
+                                                        const char* locale,
+                                                        UErrorCode* status) {
+  MOZ_CRASH("unumf_openForSkeletonAndLocale: Intl API disabled");
+}
+
+inline void unumf_close(UNumberFormatter* f) {
+  MOZ_CRASH("unumf_close: Intl API disabled");
+}
+
+inline UFormattedNumber* unumf_openResult(UErrorCode* status) {
+  MOZ_CRASH("unumf_openResult: Intl API disabled");
+}
+
+inline void unumf_closeResult(UFormattedNumber* uresult) {
+  MOZ_CRASH("unumf_closeResult: Intl API disabled");
+}
+
+inline void unumf_formatInt(const UNumberFormatter* uformatter, int64_t value,
+                            UFormattedNumber* uresult, UErrorCode* status) {
+  MOZ_CRASH("unumf_formatInt: Intl API disabled");
+}
+
+inline void unumf_formatDouble(const UNumberFormatter* uformatter, double value,
+                               UFormattedNumber* uresult, UErrorCode* status) {
+  MOZ_CRASH("unumf_formatDouble: Intl API disabled");
+}
+
+inline void unumf_formatDecimal(const UNumberFormatter* uformatter,
+                                const char* value, int32_t valueLen,
+                                UFormattedNumber* uresult, UErrorCode* status) {
+  MOZ_CRASH("unumf_formatDecimal: Intl API disabled");
+}
+
+struct UFormattedValue;
+
+inline const UFormattedValue* unumf_resultAsValue(
+    const UFormattedNumber* uresult, UErrorCode* status) {
+  MOZ_CRASH("unumf_resultAsValue: Intl API disabled");
+}
+
+inline void unumf_resultGetAllFieldPositions(const UFormattedNumber* uresult,
+                                             UFieldPositionIterator* ufpositer,
+                                             UErrorCode* status) {
+  MOZ_CRASH("unumf_resultGetAllFieldPositions: Intl API disabled");
+}
+
+inline int32_t unumf_resultToString(const UFormattedNumber* uresult,
+                                    UChar* buffer, int32_t bufferCapacity,
+                                    UErrorCode* status) {
+  MOZ_CRASH("unumf_resultToString: Intl API disabled");
 }
 
 using UCalendar = void*;
@@ -419,7 +436,6 @@ inline void udatpg_close(UDateTimePatternGenerator* dtpg) {
   MOZ_CRASH("udatpg_close: Intl API disabled");
 }
 
-using UCalendar = void*;
 using UDateFormat = void*;
 
 enum UDateFormatField {
@@ -575,7 +591,7 @@ inline int32_t udat_getSymbols(const UDateFormat* fmt,
   MOZ_CRASH("udat_getSymbols: Intl API disabled");
 }
 
-using UPluralRules = void*;
+struct UPluralRules;
 
 enum UPluralType { UPLURAL_TYPE_CARDINAL, UPLURAL_TYPE_ORDINAL };
 
@@ -588,12 +604,11 @@ inline UPluralRules* uplrules_openForType(const char* locale, UPluralType type,
   MOZ_CRASH("uplrules_openForType: Intl API disabled");
 }
 
-inline int32_t uplrules_selectWithFormat(const UPluralRules* uplrules,
-                                         double number,
-                                         const UNumberFormat* fmt,
-                                         UChar* keyword, int32_t capacity,
-                                         UErrorCode* status) {
-  MOZ_CRASH("uplrules_selectWithFormat: Intl API disabled");
+inline int32_t uplrules_selectFormatted(const UPluralRules* uplrules,
+                                        const UFormattedNumber* number,
+                                        UChar* keyword, int32_t capacity,
+                                        UErrorCode* status) {
+  MOZ_CRASH("uplrules_selectFormatted: Intl API disabled");
 }
 
 inline UEnumeration* uplrules_getKeywords(const UPluralRules* uplrules,
@@ -647,7 +662,7 @@ enum UDisplayContext {
   UDISPCTX_LENGTH_SHORT
 };
 
-using URelativeDateTimeFormatter = void*;
+struct URelativeDateTimeFormatter;
 
 inline URelativeDateTimeFormatter* ureldatefmt_open(
     const char* locale, UNumberFormat* nfToAdopt,
@@ -672,6 +687,110 @@ inline int32_t ureldatefmt_formatNumeric(
     URelativeDateTimeUnit unit, UChar* result, int32_t resultCapacity,
     UErrorCode* status) {
   MOZ_CRASH("ureldatefmt_formatNumeric: Intl API disabled");
+}
+
+struct UFormattedRelativeDateTime;
+
+inline UFormattedRelativeDateTime* ureldatefmt_openResult(UErrorCode* status) {
+  MOZ_CRASH("ureldatefmt_openResult: Intl API disabled");
+}
+
+inline void ureldatefmt_closeResult(UFormattedRelativeDateTime* ufrdt) {
+  MOZ_CRASH("ureldatefmt_closeResult: Intl API disabled");
+}
+
+inline void ureldatefmt_formatToResult(
+    const URelativeDateTimeFormatter* reldatefmt, double offset,
+    URelativeDateTimeUnit unit, UFormattedRelativeDateTime* result,
+    UErrorCode* status) {
+  MOZ_CRASH("ureldatefmt_formatToResult: Intl API disabled");
+}
+
+inline void ureldatefmt_formatNumericToResult(
+    const URelativeDateTimeFormatter* reldatefmt, double offset,
+    URelativeDateTimeUnit unit, UFormattedRelativeDateTime* result,
+    UErrorCode* status) {
+  MOZ_CRASH("ureldatefmt_formatToResult: Intl API disabled");
+}
+
+struct UFormattedValue;
+
+inline const UFormattedValue* ureldatefmt_resultAsValue(
+    const UFormattedRelativeDateTime* ufrdt, UErrorCode* status) {
+  MOZ_CRASH("ureldatefmt_resultAsValue: Intl API disabled");
+}
+
+inline const UChar* ufmtval_getString(const UFormattedValue* ufmtval,
+                                      int32_t* pLength, UErrorCode* status) {
+  MOZ_CRASH("ufmtval_getString: Intl API disabled");
+}
+
+struct UConstrainedFieldPosition;
+
+inline UConstrainedFieldPosition* ucfpos_open(UErrorCode* status) {
+  MOZ_CRASH("ucfpos_open: Intl API disabled");
+}
+
+inline void ucfpos_close(UConstrainedFieldPosition* ucfpos) {
+  MOZ_CRASH("ucfpos_close: Intl API disabled");
+}
+
+typedef enum UFieldCategory { UFIELD_CATEGORY_NUMBER } UFieldCategory;
+
+inline void ucfpos_constrainCategory(UConstrainedFieldPosition* ucfpos,
+                                     int32_t category, UErrorCode* status) {
+  MOZ_CRASH("ucfpos_constrainCategory: Intl API disabled");
+}
+
+inline bool ufmtval_nextPosition(const UFormattedValue* ufmtval,
+                                 UConstrainedFieldPosition* ucfpos,
+                                 UErrorCode* status) {
+  MOZ_CRASH("ufmtval_nextPosition: Intl API disabled");
+}
+
+inline int32_t ucfpos_getField(const UConstrainedFieldPosition* ucfpos,
+                               UErrorCode* status) {
+  MOZ_CRASH("ucfpos_getField: Intl API disabled");
+}
+
+inline void ucfpos_getIndexes(const UConstrainedFieldPosition* ucfpos,
+                              int32_t* pStart, int32_t* pLimit,
+                              UErrorCode* status) {
+  MOZ_CRASH("ucfpos_getIndexes: Intl API disabled");
+}
+
+#  define U_ICUDATA_NAME ""
+#  define U_TREE_SEPARATOR_STRING ""
+
+struct UResourceBundle;
+
+inline UResourceBundle* ures_open(const char* packageName, const char* locale,
+                                  UErrorCode* status) {
+  MOZ_CRASH("ures_open: Intl API disabled");
+}
+
+inline void ures_close(UResourceBundle* resourceBundle) {
+  MOZ_CRASH("ures_close: Intl API disabled");
+}
+
+inline UResourceBundle* ures_getByKey(const UResourceBundle* resourceBundle,
+                                      const char* key, UResourceBundle* fillIn,
+                                      UErrorCode* status) {
+  MOZ_CRASH("ures_getByKey: Intl API disabled");
+}
+
+inline UResourceBundle* ures_getByIndex(const UResourceBundle* resourceBundle,
+                                        int32_t indexR, UResourceBundle* fillIn,
+                                        UErrorCode* status) {
+  MOZ_CRASH("ures_getByIndex: Intl API disabled");
+}
+
+inline int32_t ures_getSize(const UResourceBundle* resourceBundle) {
+  MOZ_CRASH("ures_getSize: Intl API disabled");
+}
+
+inline const char* ures_getKey(const UResourceBundle* resourceBundle) {
+  MOZ_CRASH("ures_getKey: Intl API disabled");
 }
 
 #endif  // !ENABLE_INTL_API

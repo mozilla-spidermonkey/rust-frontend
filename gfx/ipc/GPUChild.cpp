@@ -8,7 +8,7 @@
 #include "GPUProcessHost.h"
 #include "GPUProcessManager.h"
 #include "VRProcessManager.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TelemetryIPC.h"
 #include "mozilla/dom/CheckerboardReportService.h"
@@ -142,7 +142,7 @@ mozilla::ipc::IPCResult GPUChild::RecvInitCrashReporter(
 mozilla::ipc::IPCResult GPUChild::RecvCreateVRProcess() {
   // Make sure create VR process at the main process
   MOZ_ASSERT(XRE_IsParentProcess());
-  if (StaticPrefs::VRProcessEnabled()) {
+  if (StaticPrefs::dom_vr_process_enabled_AtStartup()) {
     VRProcessManager::Initialize();
     VRProcessManager* vr = VRProcessManager::Get();
     MOZ_ASSERT(vr, "VRProcessManager must be initialized first.");
@@ -158,7 +158,7 @@ mozilla::ipc::IPCResult GPUChild::RecvCreateVRProcess() {
 mozilla::ipc::IPCResult GPUChild::RecvShutdownVRProcess() {
   // Make sure stopping VR process at the main process
   MOZ_ASSERT(XRE_IsParentProcess());
-  if (StaticPrefs::VRProcessEnabled()) {
+  if (StaticPrefs::dom_vr_process_enabled_AtStartup()) {
     VRProcessManager::Shutdown();
   }
 
@@ -176,27 +176,27 @@ mozilla::ipc::IPCResult GPUChild::RecvNotifyUiObservers(
 }
 
 mozilla::ipc::IPCResult GPUChild::RecvAccumulateChildHistograms(
-    InfallibleTArray<HistogramAccumulation>&& aAccumulations) {
+    nsTArray<HistogramAccumulation>&& aAccumulations) {
   TelemetryIPC::AccumulateChildHistograms(Telemetry::ProcessID::Gpu,
                                           aAccumulations);
   return IPC_OK();
 }
 
 mozilla::ipc::IPCResult GPUChild::RecvAccumulateChildKeyedHistograms(
-    InfallibleTArray<KeyedHistogramAccumulation>&& aAccumulations) {
+    nsTArray<KeyedHistogramAccumulation>&& aAccumulations) {
   TelemetryIPC::AccumulateChildKeyedHistograms(Telemetry::ProcessID::Gpu,
                                                aAccumulations);
   return IPC_OK();
 }
 
 mozilla::ipc::IPCResult GPUChild::RecvUpdateChildScalars(
-    InfallibleTArray<ScalarAction>&& aScalarActions) {
+    nsTArray<ScalarAction>&& aScalarActions) {
   TelemetryIPC::UpdateChildScalars(Telemetry::ProcessID::Gpu, aScalarActions);
   return IPC_OK();
 }
 
 mozilla::ipc::IPCResult GPUChild::RecvUpdateChildKeyedScalars(
-    InfallibleTArray<KeyedScalarAction>&& aScalarActions) {
+    nsTArray<KeyedScalarAction>&& aScalarActions) {
   TelemetryIPC::UpdateChildKeyedScalars(Telemetry::ProcessID::Gpu,
                                         aScalarActions);
   return IPC_OK();

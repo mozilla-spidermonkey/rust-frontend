@@ -498,6 +498,52 @@ choose-bookmark =
     .label = Use Bookmark…
     .accesskey = B
 
+## Home Section - Firefox Home Content Customization
+
+home-prefs-content-header = Firefox Home Content
+home-prefs-content-description = Choose what content you want on your Firefox Home screen.
+
+home-prefs-search-header =
+    .label = Web Search
+home-prefs-topsites-header =
+    .label = Top Sites
+home-prefs-topsites-description = The sites you visit most
+
+# Variables:
+#  $provider (String): Name of the corresponding content provider, e.g "Pocket".
+home-prefs-recommended-by-header =
+    .label = Recommended by { $provider }
+home-prefs-recommended-by-description = Great content from around the web, personalized for you
+home-prefs-recommended-by-learn-more = How it works
+home-prefs-recommended-by-option-sponsored-stories =
+    .label = Sponsored Stories
+
+home-prefs-highlights-header =
+    .label = Highlights
+home-prefs-highlights-description = A selection of sites that you’ve saved or visited
+home-prefs-highlights-option-visited-pages =
+    .label = Visited Pages
+home-prefs-highlights-options-bookmarks =
+    .label = Bookmarks
+home-prefs-highlights-option-most-recent-download =
+    .label = Most Recent Download
+home-prefs-highlights-option-saved-to-pocket =
+    .label = Pages Saved to { -pocket-brand-name }
+
+# For the "Snippets" feature traditionally on about:home.
+# Alternative translation options: "Small Note" or something that
+# expresses the idea of "a small message, shortened from something else,
+# and non-essential but also not entirely trivial and useless.
+home-prefs-snippets-header =
+    .label = Snippets
+home-prefs-snippets-description = Updates from { -vendor-short-name } and { -brand-product-name }
+home-prefs-sections-rows-option =
+    .label =
+        { $num ->
+            [one] { $num } row
+           *[other] { $num } rows
+        }
+
 ## Search Section
 
 search-bar-header = Search Bar
@@ -702,6 +748,9 @@ forms-exceptions =
 forms-generate-passwords =
     .label = Suggest and generate strong passwords
     .accesskey = u
+forms-fill-logins-and-passwords =
+    .label = Autofill logins and passwords
+    .accesskey = i
 forms-saved-logins =
     .label = Saved Logins…
     .accesskey = L
@@ -868,7 +917,6 @@ content-blocking-fingerprinters = Fingerprinters
 
 content-blocking-warning-title = Heads up!
 content-blocking-warning-description = Blocking content can cause some websites to break. It’s easy to disable blocking for sites you trust.
-content-blocking-learn-how = Learn how
 
 content-blocking-reload-description = You will need to reload your tabs to apply these changes.
 content-blocking-reload-tabs-button =

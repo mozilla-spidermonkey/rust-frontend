@@ -96,8 +96,7 @@ class nsTextFrame : public nsFrame {
       GetContent()->UnsetFlags(NS_HAS_FLOWLENGTH_PROPERTY);
     }
   }
-  nsIFrame* GetNextInFlowVirtual() const final { return GetNextInFlow(); }
-  nsTextFrame* GetNextInFlow() const {
+  nsTextFrame* GetNextInFlow() const final {
     return mNextContinuation && (mNextContinuation->GetStateBits() &
                                  NS_FRAME_IS_FLUID_CONTINUATION)
                ? mNextContinuation
@@ -699,15 +698,20 @@ class nsTextFrame : public nsFrame {
     // This represents the offset from the initial position of the underline
     const mozilla::LengthOrAuto mTextUnderlineOffset;
 
+    // for CSS property text-decoration-thickness, the width refers to the
+    // thickness of the decoration line
+    const mozilla::LengthOrAuto mTextDecorationThickness;
     nscolor mColor;
     uint8_t mStyle;
 
     LineDecoration(nsIFrame* const aFrame, const nscoord aOff,
                    const mozilla::LengthOrAuto& aUnderline,
+                   const mozilla::LengthOrAuto& aDecThickness,
                    const nscolor aColor, const uint8_t aStyle)
         : mFrame(aFrame),
           mBaselineOffset(aOff),
           mTextUnderlineOffset(aUnderline),
+          mTextDecorationThickness(aDecThickness),
           mColor(aColor),
           mStyle(aStyle) {}
 
@@ -715,6 +719,7 @@ class nsTextFrame : public nsFrame {
         : mFrame(aOther.mFrame),
           mBaselineOffset(aOther.mBaselineOffset),
           mTextUnderlineOffset(aOther.mTextUnderlineOffset),
+          mTextDecorationThickness(aOther.mTextDecorationThickness),
           mColor(aOther.mColor),
           mStyle(aOther.mStyle) {}
 
@@ -722,7 +727,8 @@ class nsTextFrame : public nsFrame {
       return mFrame == aOther.mFrame && mStyle == aOther.mStyle &&
              mColor == aOther.mColor &&
              mBaselineOffset == aOther.mBaselineOffset &&
-             mTextUnderlineOffset == aOther.mTextUnderlineOffset;
+             mTextUnderlineOffset == aOther.mTextUnderlineOffset &&
+             mTextDecorationThickness == aOther.mTextDecorationThickness;
     }
 
     bool operator!=(const LineDecoration& aOther) const {

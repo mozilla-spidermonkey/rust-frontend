@@ -4,12 +4,12 @@
 
 "use strict";
 
-var EXPORTED_SYMBOLS = [
-  "UrlbarController",
-];
+var EXPORTED_SYMBOLS = ["UrlbarController"];
 
-const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 XPCOMUtils.defineLazyModuleGetters(this, {
   AppConstants: "resource://gre/modules/AppConstants.jsm",
   BrowserUsageTelemetry: "resource:///modules/BrowserUsageTelemetry.jsm",
@@ -22,12 +22,21 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 
 const TELEMETRY_1ST_RESULT = "PLACES_AUTOCOMPLETE_1ST_RESULT_TIME_MS";
 const TELEMETRY_6_FIRST_RESULTS = "PLACES_AUTOCOMPLETE_6_FIRST_RESULTS_TIME_MS";
+const NOTIFICATIONS = {
+  QUERY_STARTED: "onQueryStarted",
+  QUERY_RESULTS: "onQueryResults",
+  QUERY_RESULT_REMOVED: "onQueryResultRemoved",
+  QUERY_CANCELLED: "onQueryCancelled",
+  QUERY_FINISHED: "onQueryFinished",
+  VIEW_OPEN: "onViewOpen",
+  VIEW_CLOSE: "onViewClose",
+};
 
 /**
  * The address bar controller handles queries from the address bar, obtains
  * results and returns them to the UI for display.
  *
- * Listeners may be added to listen for the results. They must support the
+ * Listeners may be added to listen for the results. They may support the
  * following methods which may be called when a query is run:
  *
  * - onQueryStarted(queryContext)
@@ -35,6 +44,8 @@ const TELEMETRY_6_FIRST_RESULTS = "PLACES_AUTOCOMPLETE_6_FIRST_RESULTS_TIME_MS";
  * - onQueryCancelled(queryContext)
  * - onQueryFinished(queryContext)
  * - onQueryResultRemoved(index)
+ * - onViewOpen()
+ * - onViewClose()
  */
 class UrlbarController {
   /**
@@ -53,8 +64,10 @@ class UrlbarController {
     if (!options.browserWindow) {
       throw new Error("Missing options: browserWindow");
     }
-    if (!options.browserWindow.location ||
-        options.browserWindow.location.href != AppConstants.BROWSER_CHROME_URL) {
+    if (
+      !options.browserWindow.location ||
+      options.browserWindow.location.href != AppConstants.BROWSER_CHROME_URL
+    ) {
       throw new Error("browserWindow should be an actual browser window.");
     }
 
@@ -63,6 +76,12 @@ class UrlbarController {
 
     this._listeners = new Set();
     this._userSelectionBehavior = "none";
+
+    this.engagementEvent = new TelemetryEvent(options.eventTelemetryCategory);
+  }
+
+  get NOTIFICATIONS() {
+    return NOTIFICATIONS;
   }
 
   /**
@@ -100,7 +119,7 @@ class UrlbarController {
     // Note this can't be null-ed or deleted once a query is done, because it's
     // used by handleDeleteEntry and handleKeyNavigation, that can run after
     // a query is cancelled or finished.
-    let contextWrapper = this._lastQueryContextWrapper = {queryContext};
+    let contextWrapper = (this._lastQueryContextWrapper = { queryContext });
 
     queryContext.lastResultCount = 0;
     TelemetryStopwatch.start(TELEMETRY_1ST_RESULT, queryContext);
@@ -109,16 +128,18 @@ class UrlbarController {
     // For proper functionality we must ensure this notification is fired
     // synchronously, as soon as startQuery is invoked, but after any
     // notifications related to the previous query.
-    this._notify("onQueryStarted", queryContext);
+    this.notify(NOTIFICATIONS.QUERY_STARTED, queryContext);
     await this.manager.startQuery(queryContext, this);
     // If the query has been cancelled, onQueryFinished was notified already.
     // Note this._lastQueryContextWrapper may have changed in the meanwhile.
-    if (contextWrapper === this._lastQueryContextWrapper &&
-        !contextWrapper.done) {
+    if (
+      contextWrapper === this._lastQueryContextWrapper &&
+      !contextWrapper.done
+    ) {
       contextWrapper.done = true;
       // TODO (Bug 1549936) this is necessary to avoid leaks in PB tests.
       this.manager.cancelQuery(queryContext);
-      this._notify("onQueryFinished", queryContext);
+      this.notify(NOTIFICATIONS.QUERY_FINISHED, queryContext);
     }
     return queryContext;
   }
@@ -135,12 +156,12 @@ class UrlbarController {
 
     this._lastQueryContextWrapper.done = true;
 
-    let {queryContext} = this._lastQueryContextWrapper;
+    let { queryContext } = this._lastQueryContextWrapper;
     TelemetryStopwatch.cancel(TELEMETRY_1ST_RESULT, queryContext);
     TelemetryStopwatch.cancel(TELEMETRY_6_FIRST_RESULTS, queryContext);
     this.manager.cancelQuery(queryContext);
-    this._notify("onQueryCancelled", queryContext);
-    this._notify("onQueryFinished", queryContext);
+    this.notify(NOTIFICATIONS.QUERY_CANCELLED, queryContext);
+    this.notify(NOTIFICATIONS.QUERY_FINISHED, queryContext);
   }
 
   /**
@@ -162,10 +183,14 @@ class UrlbarController {
       }
       // The first time we receive results try to connect to the heuristic
       // result.
-      this.speculativeConnect(queryContext.results[0], queryContext, "resultsadded");
+      this.speculativeConnect(
+        queryContext.results[0],
+        queryContext,
+        "resultsadded"
+      );
     }
 
-    this._notify("onQueryResults", queryContext);
+    this.notify(NOTIFICATIONS.QUERY_RESULTS, queryContext);
     // Update lastResultCount after notifying, so the view can use it.
     queryContext.lastResultCount = queryContext.results.length;
   }
@@ -193,17 +218,6 @@ class UrlbarController {
   }
 
   /**
-   * When the containing context changes (for example when switching tabs),
-   * clear any caches that connects consecutive searches in the same context.
-   * For example it can be used to clear information used to improve autofill
-   * or save resourced on repeated searches.
-   */
-  viewContextChanged() {
-    this.cancelQuery();
-    this._notify("onViewContextChanged");
-  }
-
-  /**
    * Checks whether a keyboard event that would normally open the view should
    * instead be handled natively by the input field.
    * On certain platforms, the up and down keys can be used to move the caret,
@@ -220,8 +234,7 @@ class UrlbarController {
     if (this.view.isOpen) {
       return false;
     }
-    if (AppConstants.platform != "macosx" &&
-        AppConstants.platform != "linux") {
+    if (AppConstants.platform != "macosx" && AppConstants.platform != "linux") {
       return false;
     }
     let isArrowUp = event.keyCode == KeyEvent.DOM_VK_UP;
@@ -231,9 +244,11 @@ class UrlbarController {
     }
     let start = this.input.selectionStart;
     let end = this.input.selectionEnd;
-    if (end != start ||
-        (isArrowUp && start > 0) ||
-        (isArrowDown && end < this.input.textValue.length)) {
+    if (
+      end != start ||
+      (isArrowUp && start > 0) ||
+      (isArrowDown && end < this.input.textValue.length)
+    ) {
       return true;
     }
     return false;
@@ -254,10 +269,12 @@ class UrlbarController {
   handleKeyNavigation(event, executeAction = true) {
     const isMac = AppConstants.platform == "macosx";
     // Handle readline/emacs-style navigation bindings on Mac.
-    if (isMac &&
-        this.view.isOpen &&
-        event.ctrlKey &&
-        (event.key == "n" || event.key == "p")) {
+    if (
+      isMac &&
+      this.view.isOpen &&
+      event.ctrlKey &&
+      (event.key == "n" || event.key == "p")
+    ) {
       if (executeAction) {
         this.view.selectBy(1, { reverse: event.key == "p" });
       }
@@ -266,12 +283,13 @@ class UrlbarController {
     }
 
     if (this.view.isOpen && executeAction && this._lastQueryContextWrapper) {
-      let {queryContext} = this._lastQueryContextWrapper;
+      let { queryContext } = this._lastQueryContextWrapper;
       let handled = this.view.oneOffSearchButtons.handleKeyPress(
         event,
-        queryContext.results.length,
+        this.view.visibleItemCount,
         this.view.allowEmptySelection,
-        queryContext.searchString);
+        queryContext.searchString
+      );
       if (handled) {
         return;
       }
@@ -280,7 +298,11 @@ class UrlbarController {
     switch (event.keyCode) {
       case KeyEvent.DOM_VK_ESCAPE:
         if (executeAction) {
-          this.input.handleRevert();
+          if (this.view.isOpen) {
+            this.view.close();
+          } else {
+            this.input.handleRevert();
+          }
         }
         event.preventDefault();
         break;
@@ -311,10 +333,15 @@ class UrlbarController {
             this.userSelectionBehavior = "arrow";
             this.view.selectBy(
               event.keyCode == KeyEvent.DOM_VK_PAGE_DOWN ||
-              event.keyCode == KeyEvent.DOM_VK_PAGE_UP ?
-              UrlbarUtils.PAGE_UP_DOWN_DELTA : 1,
-              { reverse: event.keyCode == KeyEvent.DOM_VK_UP ||
-                        event.keyCode == KeyEvent.DOM_VK_PAGE_UP });
+                event.keyCode == KeyEvent.DOM_VK_PAGE_UP
+                ? UrlbarUtils.PAGE_UP_DOWN_DELTA
+                : 1,
+              {
+                reverse:
+                  event.keyCode == KeyEvent.DOM_VK_UP ||
+                  event.keyCode == KeyEvent.DOM_VK_PAGE_UP,
+              }
+            );
           }
         } else {
           if (this.keyEventMovesCaret(event)) {
@@ -322,6 +349,7 @@ class UrlbarController {
           }
           if (executeAction) {
             this.userSelectionBehavior = "arrow";
+            this.engagementEvent.start(event);
             this.input.startQuery({ searchString: this.input.textValue });
           }
         }
@@ -365,7 +393,7 @@ class UrlbarController {
     if (!this.input || context.isPrivate || context.results.length == 0) {
       return;
     }
-    let {url} = UrlbarUtils.getUrlFromResult(result);
+    let { url } = UrlbarUtils.getUrlFromResult(result);
     if (!url) {
       return;
     }
@@ -373,13 +401,21 @@ class UrlbarController {
     switch (reason) {
       case "resultsadded": {
         // We should connect to an heuristic result, if it exists.
-        if ((result == context.results[0] && context.preselected) || result.autofill) {
+        if (
+          (result == context.results[0] && context.preselected) ||
+          result.autofill
+        ) {
           if (result.type == UrlbarUtils.RESULT_TYPE.SEARCH) {
             // Speculative connect only if search suggestions are enabled.
-            if (UrlbarPrefs.get("suggest.searches") &&
-                UrlbarPrefs.get("browser.search.suggest.enabled")) {
+            if (
+              UrlbarPrefs.get("suggest.searches") &&
+              UrlbarPrefs.get("browser.search.suggest.enabled")
+            ) {
               let engine = Services.search.defaultEngine;
-              UrlbarUtils.setupSpeculativeConnection(engine, this.browserWindow);
+              UrlbarUtils.setupSpeculativeConnection(
+                engine,
+                this.browserWindow
+              );
             }
           } else if (result.autofill) {
             UrlbarUtils.setupSpeculativeConnection(url, this.browserWindow);
@@ -431,10 +467,13 @@ class UrlbarController {
       // Except for the history popup, the urlbar always has a selection.  The
       // first result at index 0 is the "heuristic" result that indicates what
       // will happen when you press the Enter key.  Treat it as no selection.
-      selectedResult = (resultIndex > 0 || !result.heuristic) ? resultIndex : -1;
+      selectedResult = resultIndex > 0 || !result.heuristic ? resultIndex : -1;
     }
     BrowserUsageTelemetry.recordUrlbarSelectedResultMethod(
-      event, selectedResult, this._userSelectionBehavior);
+      event,
+      selectedResult,
+      this._userSelectionBehavior
+    );
 
     if (!result) {
       return;
@@ -446,16 +485,23 @@ class UrlbarController {
         telemetryType = "switchtab";
         break;
       case UrlbarUtils.RESULT_TYPE.SEARCH:
-        telemetryType = result.payload.suggestion ? "searchsuggestion" : "searchengine";
+        telemetryType = result.payload.suggestion
+          ? "searchsuggestion"
+          : "searchengine";
         break;
       case UrlbarUtils.RESULT_TYPE.URL:
         if (result.autofill) {
           telemetryType = "autofill";
-        } else if (result.source == UrlbarUtils.RESULT_SOURCE.OTHER_LOCAL &&
-                   result.heuristic) {
+        } else if (
+          result.source == UrlbarUtils.RESULT_SOURCE.OTHER_LOCAL &&
+          result.heuristic
+        ) {
           telemetryType = "visiturl";
         } else {
-          telemetryType = result.source == UrlbarUtils.RESULT_SOURCE.BOOKMARKS ? "bookmark" : "history";
+          telemetryType =
+            result.source == UrlbarUtils.RESULT_SOURCE.BOOKMARKS
+              ? "bookmark"
+              : "history";
         }
         break;
       case UrlbarUtils.RESULT_TYPE.KEYWORD:
@@ -473,20 +519,21 @@ class UrlbarController {
     }
 
     Services.telemetry
-            .getHistogramById("FX_URLBAR_SELECTED_RESULT_INDEX")
-            .add(resultIndex);
+      .getHistogramById("FX_URLBAR_SELECTED_RESULT_INDEX")
+      .add(resultIndex);
     // You can add values but don't change any of the existing values.
     // Otherwise you'll break our data.
     if (telemetryType in URLBAR_SELECTED_RESULT_TYPES) {
       Services.telemetry
-              .getHistogramById("FX_URLBAR_SELECTED_RESULT_TYPE")
-              .add(URLBAR_SELECTED_RESULT_TYPES[telemetryType]);
+        .getHistogramById("FX_URLBAR_SELECTED_RESULT_TYPE")
+        .add(URLBAR_SELECTED_RESULT_TYPES[telemetryType]);
       Services.telemetry
-              .getKeyedHistogramById("FX_URLBAR_SELECTED_RESULT_INDEX_BY_TYPE")
-              .add(telemetryType, resultIndex);
+        .getKeyedHistogramById("FX_URLBAR_SELECTED_RESULT_INDEX_BY_TYPE")
+        .add(telemetryType, resultIndex);
     } else {
-      Cu.reportError("Unknown FX_URLBAR_SELECTED_RESULT_TYPE type: " +
-                     telemetryType);
+      Cu.reportError(
+        "Unknown FX_URLBAR_SELECTED_RESULT_TYPE type: " + telemetryType
+      );
     }
   }
 
@@ -503,12 +550,14 @@ class UrlbarController {
     }
 
     const selectedResult = this.input.view.selectedResult;
-    if (!selectedResult ||
-        selectedResult.source != UrlbarUtils.RESULT_SOURCE.HISTORY) {
+    if (
+      !selectedResult ||
+      selectedResult.source != UrlbarUtils.RESULT_SOURCE.HISTORY
+    ) {
       return false;
     }
 
-    let {queryContext} = this._lastQueryContextWrapper;
+    let { queryContext } = this._lastQueryContextWrapper;
     let index = queryContext.results.indexOf(selectedResult);
     if (!index) {
       Cu.reportError("Failed to find the selected result in the results");
@@ -516,19 +565,21 @@ class UrlbarController {
     }
 
     queryContext.results.splice(index, 1);
-    this._notify("onQueryResultRemoved", index);
+    this.notify(NOTIFICATIONS.QUERY_RESULT_REMOVED, index);
 
-    PlacesUtils.history.remove(selectedResult.payload.url).catch(Cu.reportError);
+    PlacesUtils.history
+      .remove(selectedResult.payload.url)
+      .catch(Cu.reportError);
     return true;
   }
 
   /**
-   * Internal function to notify listeners of results.
+   * Notifies listeners of results.
    *
    * @param {string} name Name of the notification.
    * @param {object} params Parameters to pass with the notification.
    */
-  _notify(name, ...params) {
+  notify(name, ...params) {
     for (let listener of this._listeners) {
       // Can't use "in" because some tests proxify these.
       if (typeof listener[name] != "undefined") {
@@ -539,5 +590,198 @@ class UrlbarController {
         }
       }
     }
+  }
+}
+
+/**
+ * Tracks and records telemetry events for the given category, if provided,
+ * otherwise it's a no-op.
+ * It is currently designed around the "urlbar" category, even if it can
+ * potentially be extended to other categories.
+ * To record an event, invoke start() with a starting event, then either
+ * invoke record() with a final event, or discard() to drop the recording.
+ * @see Events.yaml
+ */
+class TelemetryEvent {
+  constructor(category) {
+    this._category = category;
+  }
+
+  /**
+   * Start measuring the elapsed time from an input event.
+   * After this has been invoked, any subsequent calls to start() are ignored,
+   * until either record() or discard() are invoked. Thus, it is safe to keep
+   * invoking this on every input event.
+   * @param {event} event A DOM input event.
+   * @note This should never throw, or it may break the urlbar.
+   */
+  start(event) {
+    // Start is invoked at any input, but we only count the first one.
+    // Once an engagement or abandoment happens, we clear the _startEventInfo.
+    if (!this._category || this._startEventInfo) {
+      return;
+    }
+    if (!event) {
+      Cu.reportError("Must always provide an event");
+      return;
+    }
+    if (!["input", "drop", "mousedown", "keydown"].includes(event.type)) {
+      Cu.reportError("Can't start recording from event type: " + event.type);
+      return;
+    }
+
+    // "typed" is used when the user types something, while "pasted" and
+    // "dropped" are used when the text is inserted at once, by a paste or drop
+    // operation. "topsites" is a bit special, it is used when the user opens
+    // the empty search dropdown, that is supposed to show top sites. That
+    // happens by clicking on the urlbar dropmarker, or pressing DOWN with an
+    // empty input field. Even if the user later types something, we still
+    // report "topsites", with a positive numChars.
+    let interactionType = "topsites";
+    if (event.type == "input") {
+      interactionType = UrlbarUtils.isPasteEvent(event) ? "pasted" : "typed";
+    } else if (event.type == "drop") {
+      interactionType = "dropped";
+    }
+
+    this._startEventInfo = {
+      timeStamp: event.timeStamp || Cu.now(),
+      interactionType,
+    };
+  }
+
+  /**
+   * Record an engagement telemetry event.
+   * When the user picks a result from a search through the mouse or keyboard,
+   * an engagement event is recorded. If instead the user abandons a search, by
+   * blurring the input field, an abandonment event is recorded.
+   * @param {event} [event] A DOM event.
+   * @param {object} details An object describing action details.
+   * @param {string} details.numChars Number of input characters.
+   * @param {string} details.selIndex Index of the selected result, undefined
+   *        for "blur".
+   * @param {string} details.selType type of the selected element, undefined
+   *        for "blur". One of "none", "autofill", "visit", "bookmark",
+   *        "history", "keyword", "search", "searchsuggestion", "switchtab",
+   *         "remotetab", "extension", "oneoff".
+   * @note event can be null, that usually happens for paste&go or drop&go.
+   *       If there's no _startEventInfo this is a no-op.
+   */
+  record(event, details) {
+    // This should never throw, or it may break the urlbar.
+    try {
+      this._internalRecord(event, details);
+    } catch (ex) {
+      Cu.reportError("Could not record event: " + ex);
+    } finally {
+      this._startEventInfo = null;
+    }
+  }
+
+  _internalRecord(event, details) {
+    if (!this._category || !this._startEventInfo) {
+      return;
+    }
+    if (
+      !event &&
+      this._startEventInfo.interactionType != "pasted" &&
+      this._startEventInfo.interactionType != "dropped"
+    ) {
+      // If no event is passed, we must be executing either paste&go or drop&go.
+      throw new Error("Event must be defined, unless input was pasted/dropped");
+    }
+    if (!details) {
+      throw new Error("Invalid event details: " + details);
+    }
+
+    let endTime = (event && event.timeStamp) || Cu.now();
+    let startTime = this._startEventInfo.timeStamp || endTime;
+    // Synthesized events in tests may have a bogus timeStamp, causing a
+    // subtraction between monotonic and non-monotonic timestamps; that's why
+    // abs is necessary here. It should only happen in tests, anyway.
+    let elapsed = Math.abs(Math.round(endTime - startTime));
+
+    let action;
+    if (!event) {
+      action =
+        this._startEventInfo.interactionType == "dropped"
+          ? "drop_go"
+          : "paste_go";
+    } else if (event.type == "blur") {
+      action = "blur";
+    } else {
+      action = event instanceof MouseEvent ? "click" : "enter";
+    }
+    let method = action == "blur" ? "abandonment" : "engagement";
+    let value = this._startEventInfo.interactionType;
+
+    // Rather than listening to the pref, just update status when we record an
+    // event, if the pref changed from the last time.
+    let recordingEnabled = UrlbarPrefs.get("eventTelemetry.enabled");
+    if (this._eventRecordingEnabled != recordingEnabled) {
+      this._eventRecordingEnabled = recordingEnabled;
+      Services.telemetry.setEventRecordingEnabled("urlbar", recordingEnabled);
+    }
+
+    let extra = {
+      elapsed: elapsed.toString(),
+      numChars: details.numChars.toString(),
+    };
+    if (method == "engagement") {
+      extra.selIndex = details.selIndex.toString();
+      extra.selType = details.selType;
+    }
+
+    // We invoke recordEvent regardless, if recording is disabled this won't
+    // report the events remotely, but will count it in the event_counts scalar.
+    Services.telemetry.recordEvent(
+      this._category,
+      method,
+      action,
+      value,
+      extra
+    );
+  }
+
+  /**
+   * Resets the currently tracked input event, that was registered via start(),
+   * so it won't be recorded.
+   * If there's no tracked input event, this is a no-op.
+   */
+  discard() {
+    this._startEventInfo = null;
+  }
+
+  /**
+   * Extracts a type from a result, to be used in the telemetry event.
+   * @param {UrlbarResult} result The result to analyze.
+   * @returns {string} a string type for the telemetry event.
+   */
+  typeFromResult(result) {
+    if (result) {
+      switch (result.type) {
+        case UrlbarUtils.RESULT_TYPE.TAB_SWITCH:
+          return "switchtab";
+        case UrlbarUtils.RESULT_TYPE.SEARCH:
+          return result.payload.suggestion ? "searchsuggestion" : "search";
+        case UrlbarUtils.RESULT_TYPE.URL:
+          if (result.autofill) {
+            return "autofill";
+          }
+          if (result.heuristic) {
+            return "visit";
+          }
+          return result.source == UrlbarUtils.RESULT_SOURCE.BOOKMARKS
+            ? "bookmark"
+            : "history";
+        case UrlbarUtils.RESULT_TYPE.KEYWORD:
+          return "keyword";
+        case UrlbarUtils.RESULT_TYPE.OMNIBOX:
+          return "extension";
+        case UrlbarUtils.RESULT_TYPE.REMOTE_TAB:
+          return "remotetab";
+      }
+    }
+    return "none";
   }
 }

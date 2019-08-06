@@ -8,7 +8,9 @@
 
 // shared-head.js handles imports, constants, and utility functions
 Services.scriptloader.loadSubScript(
-  "chrome://mochitests/content/browser/devtools/client/shared/test/shared-head.js", this);
+  "chrome://mochitests/content/browser/devtools/client/shared/test/shared-head.js",
+  this
+);
 
 // DOM panel actions.
 const constants = require("devtools/client/dom/content/constants");
@@ -32,26 +34,29 @@ registerCleanupFunction(() => {
  * @return a promise that resolves to the tab object when
  *        the url is loaded
  */
-function addTestTab(url) {
+async function addTestTab(url) {
   info("Adding a new test tab with URL: '" + url + "'");
 
-  return new Promise(resolve => {
-    addTab(url).then(tab => {
-      // Load devtools/shared/test/frame-script-utils.js
-      loadFrameScriptUtils();
+  const tab = await addTab(url);
 
-      // Select the DOM panel and wait till it's initialized.
-      initDOMPanel(tab).then(panel => {
-        waitForDispatch(panel, "FETCH_PROPERTIES").then(() => {
-          resolve({
-            tab: tab,
-            browser: tab.linkedBrowser,
-            panel: panel,
-          });
-        });
-      });
-    });
-  });
+  // Load devtools/shared/test/frame-script-utils.js
+  loadFrameScriptUtils();
+
+  // Select the DOM panel and wait till it's initialized.
+  const panel = await initDOMPanel(tab);
+
+  // FETCH_PROPERTIES should be fired during the call to initDOMPanel
+  // But note that this behavior changed during a change in webconsole
+  // initialization. So this might be racy.
+  const doc = panel.panelWin.document;
+  const nodes = [...doc.querySelectorAll(".treeLabel")];
+  ok(nodes.length > 0, "The DOM panel is already populated");
+
+  return {
+    tab,
+    browser: tab.linkedBrowser,
+    panel,
+  };
 }
 
 /**
@@ -136,7 +141,9 @@ function getAllRowsForLabel(panel, text) {
     if (level > rootObjectLevel) {
       result.push({
         name: normalizeTreeValue(node.textContent),
-        value: normalizeTreeValue(node.parentNode.nextElementSibling.textContent),
+        value: normalizeTreeValue(
+          node.parentNode.nextElementSibling.textContent
+        ),
       });
     } else {
       break;
@@ -210,9 +217,9 @@ function _afterDispatchDone(store, type) {
       type: "@@service/waitUntil",
       predicate: action => {
         if (action.type === type) {
-          return action.status ?
-            (action.status === "end" || action.status === "error") :
-            true;
+          return action.status
+            ? action.status === "end" || action.status === "error"
+            : true;
         }
         return false;
       },

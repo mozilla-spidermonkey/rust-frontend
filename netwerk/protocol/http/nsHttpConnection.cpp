@@ -1699,7 +1699,13 @@ nsresult nsHttpConnection::ResumeRecv() {
   // may get done before the ResumeRecv() call
   mLastReadTime = PR_IntervalNow();
 
-  if (mSocketIn) return mSocketIn->AsyncWait(this, 0, 0, nullptr);
+  if (mSocketIn) {
+    if (!mTLSFilter || !mTLSFilter->HasDataToRecv() ||
+        NS_FAILED(ForceRecv())) {
+      return mSocketIn->AsyncWait(this, 0, 0, nullptr);
+    }
+    return NS_OK;
+  }
 
   MOZ_ASSERT_UNREACHABLE("no socket input stream");
   return NS_ERROR_UNEXPECTED;
@@ -1795,6 +1801,7 @@ void nsHttpConnection::CloseTransaction(nsAHttpTransaction* trans,
        this, trans, static_cast<uint32_t>(reason)));
 
   MOZ_ASSERT((trans == mTransaction) ||
+             (mTLSFilter && !mTLSFilter->Transaction()) ||
              (mTLSFilter && mTLSFilter->Transaction() == trans));
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
 
@@ -1811,7 +1818,30 @@ void nsHttpConnection::CloseTransaction(nsAHttpTransaction* trans,
     mSpdySession = nullptr;
   }
 
+  if (!mTransaction && mTLSFilter && gHttpHandler->Bug1556491()) {
+    // In case of a race when the transaction is being closed before the tunnel
+    // is established we need to carry closing status on the proxied
+    // transaction.
+    // Not doing this leads to use of this closed connection to activate the
+    // not closed transaction what will likely lead to a use of a closed ssl
+    // socket and may cause a crash because of an unexpected use.
+    //
+    // There can possibly be two states: the actual transaction is still hanging
+    // of off the filter, or has not even been assigned on it yet.  In the
+    // latter case we simply must close the transaction given to us via the
+    // argument.
+    if (!mTLSFilter->Transaction()) {
+      LOG(("  closing transaction directly"));
+      MOZ_ASSERT(trans);
+      trans->Close(reason);
+    } else {
+      LOG(("  closing transactin hanging of off mTLSFilter"));
+      mTLSFilter->Close(reason);
+    }
+  }
+
   if (mTransaction) {
+    LOG(("  closing associated mTransaction"));
     mHttp1xTransactionCount += mTransaction->Http1xTransactionCount();
 
     mTransaction->Close(reason);
@@ -2168,6 +2198,7 @@ void nsHttpConnection::SetInSpdyTunnel(bool arg) {
   mProxyConnectInProgress = false;
 }
 
+// static
 nsresult nsHttpConnection::MakeConnectString(nsAHttpTransaction* trans,
                                              nsHttpRequestHead* request,
                                              nsACString& result, bool h2ws) {
@@ -2232,6 +2263,14 @@ nsresult nsHttpConnection::MakeConnectString(nsAHttpTransaction* trans,
 
   result.Truncate();
   request->Flatten(result, false);
+
+  if (LOG1_ENABLED()) {
+    LOG(("nsHttpConnection::MakeConnectString for transaction=%p [",
+         trans->QueryHttpTransaction()));
+    LogHeaders(result.BeginReading());
+    LOG(("]"));
+  }
+
   result.AppendLiteral("\r\n");
   return NS_OK;
 }

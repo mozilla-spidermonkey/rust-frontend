@@ -47,7 +47,16 @@ class WebRenderThreadPool {
 
   ~WebRenderThreadPool();
 
-  wr::WrThreadPool* Raw() { return mThreadPool; }
+  wr::WrThreadPool* Raw() {
+    // If this pointer is null we are likely at some late shutdown stage,
+    // when threads are no longer safe to interact with.
+    MOZ_RELEASE_ASSERT(mThreadPool);
+    return mThreadPool;
+  }
+
+  /// Prematurely destroys this handle to the thread pool.
+  /// After calling this the object is useless.
+  void Release();
 
  protected:
   wr::WrThreadPool* mThreadPool;
@@ -196,10 +205,6 @@ class RenderThread final {
   void NotifyNotUsed(uint64_t aExternalImageId);
 
   /// Can only be called from the render thread.
-  void UpdateRenderTextureHost(uint64_t aSrcExternalImageId,
-                               uint64_t aWrappedExternalImageId);
-
-  /// Can only be called from the render thread.
   void NofityForUse(uint64_t aExternalImageId);
 
   /// Can only be called from the render thread.
@@ -264,7 +269,9 @@ class RenderThread final {
 
   void SetCompositionRecorderForWindow(
       wr::WindowId aWindowId,
-      RefPtr<layers::WebRenderCompositionRecorder>&& aCompositionRecorder);
+      UniquePtr<layers::WebRenderCompositionRecorder> aCompositionRecorder);
+
+  void WriteCollectedFramesForWindow(wr::WindowId aWindowId);
 
  private:
   explicit RenderThread(base::Thread* aThread);
@@ -290,7 +297,7 @@ class RenderThread final {
   RefPtr<gl::GLContext> mSharedGL;
 
   std::map<wr::WindowId, UniquePtr<RendererOGL>> mRenderers;
-  std::map<wr::WindowId, RefPtr<layers::WebRenderCompositionRecorder>>
+  std::map<wr::WindowId, UniquePtr<layers::WebRenderCompositionRecorder>>
       mCompositionRecorders;
 
   struct WindowInfo {

@@ -118,7 +118,7 @@ media/gmp-clearkey/0.1/openaes/.*
 media/kiss_fft/.*
 media/libaom/.*
 media/libcubeb/.*
-media/libdav1d/version.h
+media/libdav1d/.*
 media/libjpeg/.*
 media/libmkv/.*
 media/libnestegg/.*
@@ -146,7 +146,6 @@ modules/brotli/.*
 modules/fdlibm/.*
 modules/freetype2/.*
 modules/libbz2/.*
-modules/libmar/.*
 modules/pdfium/.*
 modules/woff2/.*
 modules/xz-embedded/.*

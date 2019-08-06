@@ -7,7 +7,8 @@
 /* import-globals-from ../../mochitest/role.js */
 loadScripts({ name: "role.js", dir: MOCHITESTS_DIR });
 
-addAccessibleTask(`
+addAccessibleTask(
+  `
   <style>
     .gentext:before {
       content: "START"
@@ -25,16 +26,22 @@ addAccessibleTask(`
     let container2 = findAccessibleChildByID(accDoc, id2);
 
     let tree = {
-      SECTION: [ ] // container
+      SECTION: [], // container
     };
     testAccessibleTree(container1, tree);
 
     tree = {
-      SECTION: [ { // container2
-        SECTION: [ { // container2 child
-          TEXT_LEAF: [ ] // primary text
-        } ]
-      } ]
+      SECTION: [
+        {
+          // container2
+          SECTION: [
+            {
+              // container2 child
+              TEXT_LEAF: [], // primary text
+            },
+          ],
+        },
+      ],
     };
     testAccessibleTree(container2, tree);
 
@@ -49,29 +56,38 @@ addAccessibleTask(`
     await onReorder;
 
     tree = {
-      SECTION: [ // container
-        { SECTION: [ // inserted node
-          { STATICTEXT: [] }, // :before
-          { TEXT_LEAF: [] }, // primary text
-          { STATICTEXT: [] } // :after
-        ] }
-      ]
+      SECTION: [
+        // container
+        {
+          SECTION: [
+            // inserted node
+            { STATICTEXT: [] }, // :before
+            { TEXT_LEAF: [] }, // primary text
+            { STATICTEXT: [] }, // :after
+          ],
+        },
+      ],
     };
     testAccessibleTree(container1, tree);
 
-    onReorder = waitForEvent(EVENT_REORDER, id2);
+    onReorder = waitForEvent(EVENT_REORDER, "container2_child");
     // Add CSS generated content to an element in container2's subtree
     await invokeSetAttribute(browser, "container2_child", "class", "gentext");
     await onReorder;
 
     tree = {
-      SECTION: [ // container2
-        { SECTION: [ // container2 child
-          { STATICTEXT: [] }, // :before
-          { TEXT_LEAF: [] }, // primary text
-          { STATICTEXT: [] } // :after
-        ] }
-      ]
+      SECTION: [
+        // container2
+        {
+          SECTION: [
+            // container2 child
+            { STATICTEXT: [] }, // :before
+            { TEXT_LEAF: [] }, // primary text
+            { STATICTEXT: [] }, // :after
+          ],
+        },
+      ],
     };
     testAccessibleTree(container2, tree);
-  });
+  }
+);

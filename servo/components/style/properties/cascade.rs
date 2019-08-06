@@ -153,7 +153,7 @@ where
                         // longhands are only allowed if they have our
                         // restriction flag set.
                         if let PropertyDeclarationId::Longhand(id) = declaration.id() {
-                            if !id.flags().contains(restriction) {
+                            if !id.flags().contains(restriction) && cascade_level.origin() != Origin::UserAgent {
                                 return None;
                             }
                         }
@@ -639,13 +639,8 @@ impl<'a, 'b: 'a> Cascade<'a, 'b> {
 
         #[cfg(feature = "servo")]
         {
-            // TODO(emilio): Use get_font_if_mutated instead.
-            if self.seen.contains(LonghandId::FontStyle) ||
-                self.seen.contains(LonghandId::FontWeight) ||
-                self.seen.contains(LonghandId::FontStretch) ||
-                self.seen.contains(LonghandId::FontFamily)
-            {
-                builder.mutate_font().compute_font_hash();
+            if let Some(font) = builder.get_font_if_mutated() {
+                font.compute_font_hash();
             }
         }
     }

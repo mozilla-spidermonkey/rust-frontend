@@ -6,12 +6,11 @@
 
 var EXPORTED_SYMBOLS = ["DevTools"];
 
-const {gDevTools} = ChromeUtils.import("resource://devtools/client/framework/gDevTools.jsm");
-const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const {setTimeout} = ChromeUtils.import("resource://gre/modules/Timer.jsm");
-
-let { devtools } = ChromeUtils.import("resource://devtools/shared/Loader.jsm");
-let TargetFactory = devtools.TargetFactory;
+const { require } = ChromeUtils.import("resource://devtools/shared/Loader.jsm");
+const { TargetFactory } = require("devtools/client/framework/target");
+const { gDevTools } = require("devtools/client/framework/devtools");
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
 
 async function getTargetForSelectedTab() {
   let browserWindow = Services.wm.getMostRecentWindow("navigator:browser");
@@ -25,8 +24,14 @@ function selectToolbox(toolbox) {
 
 var DevTools = {
   init(libDir) {
-    let panels = ["options", "webconsole", "jsdebugger", "styleeditor",
-                  "performance", "netmonitor"];
+    let panels = [
+      "options",
+      "webconsole",
+      "jsdebugger",
+      "styleeditor",
+      "performance",
+      "netmonitor",
+    ];
 
     panels.forEach(panel => {
       this.configurations[panel] = {};
@@ -45,7 +50,11 @@ var DevTools = {
       async applyConfig() {
         Services.prefs.clearUserPref("devtools.toolbox.footer.height");
         let target = await getTargetForSelectedTab();
-        let toolbox = await gDevTools.showToolbox(target, "inspector", "bottom");
+        let toolbox = await gDevTools.showToolbox(
+          target,
+          "inspector",
+          "bottom"
+        );
         this.selectors = [selectToolbox.bind(null, toolbox)];
         await new Promise(resolve => setTimeout(resolve, 1000));
       },
@@ -62,7 +71,11 @@ var DevTools = {
       windowType: "devtools:toolbox",
       async applyConfig() {
         let target = await getTargetForSelectedTab();
-        let toolbox = await gDevTools.showToolbox(target, "inspector", "window");
+        let toolbox = await gDevTools.showToolbox(
+          target,
+          "inspector",
+          "window"
+        );
         this.selectors = [selectToolbox.bind(null, toolbox)];
         await new Promise(resolve => setTimeout(resolve, 500));
       },

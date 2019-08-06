@@ -18,6 +18,8 @@
 #include "mozilla/dom/ChromeUtils.h"
 #include "mozilla/dom/ipc/IdType.h"
 #include "mozilla/dom/ipc/StructuredCloneData.h"
+#include "mozilla/ServoCSSParser.h"
+#include "mozilla/ServoStyleSet.h"
 #include "mozJSComponentLoader.h"
 #include "nsContentUtils.h"
 #include "nsDocShell.h"
@@ -51,7 +53,8 @@ WindowGlobalParent::WindowGlobalParent(const WindowGlobalInit& aInit,
       mOuterWindowId(aInit.outerWindowId()),
       mInProcess(aInProcess),
       mIPCClosed(true),  // Closed until WGP::Init
-      mIsInitialDocument(false) {
+      mIsInitialDocument(false),
+      mHasBeforeUnload(false) {
   MOZ_DIAGNOSTIC_ASSERT(XRE_IsParentProcess(), "Parent process only");
   MOZ_RELEASE_ASSERT(mDocumentPrincipal, "Must have a valid principal");
 
@@ -84,6 +87,12 @@ void WindowGlobalParent::Init(const WindowGlobalInit& aInit) {
 
   mBrowsingContext = CanonicalBrowsingContext::Cast(aInit.browsingContext());
   MOZ_ASSERT(mBrowsingContext);
+
+  MOZ_DIAGNOSTIC_ASSERT(
+      !mBrowsingContext->GetParent() ||
+          mBrowsingContext->GetEmbedderWindowGlobal(),
+      "When creating a non-root WindowGlobalParent, the WindowGlobalParent "
+      "for our embedder should've already been created.");
 
   // Attach ourself to the browsing context.
   mBrowsingContext->RegisterWindowGlobal(this);
@@ -171,7 +180,10 @@ bool WindowGlobalParent::IsProcessRoot() {
   }
 
   auto* embedder = BrowsingContext()->GetEmbedderWindowGlobal();
-  MOZ_ASSERT(embedder, "This should be set before we were created");
+  if (NS_WARN_IF(!embedder)) {
+    return false;
+  }
+
   return ContentParentId() != embedder->ContentParentId();
 }
 
@@ -179,6 +191,11 @@ IPCResult WindowGlobalParent::RecvUpdateDocumentURI(nsIURI* aURI) {
   // XXX(nika): Assert that the URI change was one which makes sense (either
   // about:blank -> a real URI, or a legal push/popstate URI change?)
   mDocumentURI = aURI;
+  return IPC_OK();
+}
+
+IPCResult WindowGlobalParent::RecvSetHasBeforeUnload(bool aHasBeforeUnload) {
+  mHasBeforeUnload = aHasBeforeUnload;
   return IPC_OK();
 }
 
@@ -284,7 +301,7 @@ already_AddRefed<Promise> WindowGlobalParent::ChangeFrameRemoteness(
     return nullptr;
   }
 
-  nsIGlobalObject* global = xpc::NativeGlobal(xpc::PrivilegedJunkScope());
+  nsIGlobalObject* global = GetParentObject();
   RefPtr<Promise> promise = Promise::Create(global, aRv);
   if (aRv.Failed()) {
     return nullptr;
@@ -325,6 +342,7 @@ already_AddRefed<Promise> WindowGlobalParent::ChangeFrameRemoteness(
         // in-process frame. For remote frames, the BrowserBridgeParent::Init
         // method should've already set up the OwnerProcessId.
         uint64_t childId = browserParent->Manager()->ChildID();
+        MOZ_ASSERT_IF(bridge, browsingContext == browserParent->GetBrowsingContext());
         MOZ_ASSERT_IF(bridge, browsingContext->IsOwnedByProcess(childId));
         browsingContext->SetOwnerProcessId(childId);
 
@@ -340,6 +358,49 @@ already_AddRefed<Promise> WindowGlobalParent::ChangeFrameRemoteness(
   return promise.forget();
 }
 
+already_AddRefed<mozilla::dom::Promise> WindowGlobalParent::DrawSnapshot(
+    const DOMRect* aRect, double aScale, const nsAString& aBackgroundColor,
+    mozilla::ErrorResult& aRv) {
+  nsIGlobalObject* global = GetParentObject();
+  RefPtr<Promise> promise = Promise::Create(global, aRv);
+  if (NS_WARN_IF(aRv.Failed())) {
+    return nullptr;
+  }
+
+  nscolor color;
+  if (NS_WARN_IF(!ServoCSSParser::ComputeColor(nullptr, NS_RGB(0, 0, 0),
+                                               aBackgroundColor, &color,
+                                               nullptr, nullptr))) {
+    aRv = NS_ERROR_FAILURE;
+    return nullptr;
+  }
+
+  if (!gfx::CrossProcessPaint::Start(this, aRect, (float)aScale, color,
+                                     promise)) {
+    aRv = NS_ERROR_FAILURE;
+    return nullptr;
+  }
+  return promise.forget();
+}
+
+void WindowGlobalParent::DrawSnapshotInternal(gfx::CrossProcessPaint* aPaint,
+                                              const Maybe<IntRect>& aRect,
+                                              float aScale,
+                                              nscolor aBackgroundColor) {
+  auto promise = SendDrawSnapshot(aRect, aScale, aBackgroundColor);
+
+  RefPtr<gfx::CrossProcessPaint> paint(aPaint);
+  RefPtr<WindowGlobalParent> wgp(this);
+  promise->Then(
+      GetMainThreadSerialEventTarget(), __func__,
+      [paint, wgp](PaintFragment&& aFragment) {
+        paint->ReceiveFragment(wgp, std::move(aFragment));
+      },
+      [paint, wgp](ResponseRejectReason&& aReason) {
+        paint->LostFragment(wgp);
+      });
+}
+
 already_AddRefed<Promise> WindowGlobalParent::GetSecurityInfo(
     ErrorResult& aRv) {
   RefPtr<BrowserParent> browserParent = GetBrowserParent();
@@ -348,7 +409,7 @@ already_AddRefed<Promise> WindowGlobalParent::GetSecurityInfo(
     return nullptr;
   }
 
-  nsIGlobalObject* global = xpc::NativeGlobal(xpc::PrivilegedJunkScope());
+  nsIGlobalObject* global = GetParentObject();
   RefPtr<Promise> promise = Promise::Create(global, aRv);
   if (aRv.Failed()) {
     return nullptr;
@@ -410,7 +471,7 @@ JSObject* WindowGlobalParent::WrapObject(JSContext* aCx,
   return WindowGlobalParent_Binding::Wrap(aCx, this, aGivenProto);
 }
 
-nsISupports* WindowGlobalParent::GetParentObject() {
+nsIGlobalObject* WindowGlobalParent::GetParentObject() {
   return xpc::NativeGlobal(xpc::PrivilegedJunkScope());
 }
 

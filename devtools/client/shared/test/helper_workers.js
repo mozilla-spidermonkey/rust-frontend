@@ -8,25 +8,17 @@
 /* import-globals-from ../../debugger/test/mochitest/helpers/context.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/debugger/test/mochitest/helpers.js",
-  this);
+  this
+);
 
 var { DebuggerServer } = require("devtools/server/main");
 var { DebuggerClient } = require("devtools/shared/client/debugger-client");
 var { Toolbox } = require("devtools/client/framework/toolbox");
+loader.lazyRequireGetter(this, "defer", "devtools/shared/defer");
 
 const FRAME_SCRIPT_URL = getRootDirectory(gTestPath) + "code_frame-script.js";
 
 var nextId = 0;
-
-/**
- * Returns a thenable promise
- * @return {Promise}
- */
-function getDeferredPromise() {
-  // Override promise with deprecated-sync-thenables
-  const promise = require("devtools/shared/deprecated-sync-thenables");
-  return promise;
-}
 
 function jsonrpc(tab, method, params) {
   return new Promise(function(resolve, reject) {
@@ -38,7 +30,9 @@ function jsonrpc(tab, method, params) {
       id: currentId,
     });
     messageManager.addMessageListener("jsonrpc", function listener(res) {
-      const { data: { result, error, id } } = res;
+      const {
+        data: { result, error, id },
+      } = res;
       if (id !== currentId) {
         return;
       }
@@ -145,10 +139,10 @@ async function waitForWorkerClose(workerTargetFront) {
   info("Worker did close.");
 }
 
-// Return a promise with a reference to jsterm, opening the split
+// Return a promise with a reference to webconsole, opening the split
 // console if necessary.  This cleans up the split console pref so
 // it won't pollute other tests.
-function getSplitConsole(toolbox, win) {
+async function getSplitConsole(toolbox, win) {
   if (!win) {
     win = toolbox.win;
   }
@@ -157,12 +151,32 @@ function getSplitConsole(toolbox, win) {
     EventUtils.synthesizeKey("VK_ESCAPE", {}, win);
   }
 
+  await toolbox.getPanelWhenReady("webconsole");
+  ok(toolbox.splitConsole, "Split console is shown.");
+  return toolbox.getPanel("webconsole");
+}
+
+function executeAndWaitForMessage(
+  webconsole,
+  expression,
+  expectedTextContent,
+  className = "result"
+) {
+  const { ui } = webconsole.hud;
   return new Promise(resolve => {
-    toolbox.getPanelWhenReady("webconsole").then(() => {
-      ok(toolbox.splitConsole, "Split console is shown.");
-      const jsterm = toolbox.getPanel("webconsole").hud.jsterm;
-      resolve(jsterm);
-    });
+    const onNewMessages = messages => {
+      for (const message of messages) {
+        if (
+          message.node.classList.contains(className) &&
+          message.node.textContent.includes(expectedTextContent)
+        ) {
+          ui.off("new-messages", onNewMessages);
+          resolve(message.node);
+        }
+      }
+    };
+    ui.on("new-messages", onNewMessages);
+    ui.wrapper.dispatchEvaluateExpression(expression);
   });
 }
 
@@ -177,9 +191,11 @@ async function initWorkerDebugger(TAB_URL, WORKER_URL) {
   const { workers } = await listWorkers(target);
   const workerTargetFront = findWorker(workers, WORKER_URL);
 
-  const toolbox = await gDevTools.showToolbox(workerTargetFront,
-                                            "jsdebugger",
-                                            Toolbox.HostType.WINDOW);
+  const toolbox = await gDevTools.showToolbox(
+    workerTargetFront,
+    "jsdebugger",
+    Toolbox.HostType.WINDOW
+  );
 
   const debuggerPanel = toolbox.getCurrentPanel();
 
@@ -187,7 +203,15 @@ async function initWorkerDebugger(TAB_URL, WORKER_URL) {
 
   const context = createDebuggerContext(toolbox);
 
-  return { ...context, client, tab, target, workerTargetFront, toolbox, gDebugger};
+  return {
+    ...context,
+    client,
+    tab,
+    target,
+    workerTargetFront,
+    toolbox,
+    gDebugger,
+  };
 }
 
 // Override addTab/removeTab as defined by shared-head, since these have
@@ -195,22 +219,24 @@ async function initWorkerDebugger(TAB_URL, WORKER_URL) {
 this.addTab = function addTab(url, win) {
   info("Adding tab: " + url);
 
-  const deferred = getDeferredPromise().defer();
+  const deferred = defer();
   const targetWindow = win || window;
   const targetBrowser = targetWindow.gBrowser;
 
   targetWindow.focus();
-  const tab = targetBrowser.selectedTab = BrowserTestUtils.addTab(targetBrowser, url);
+  const tab = (targetBrowser.selectedTab = BrowserTestUtils.addTab(
+    targetBrowser,
+    url
+  ));
   const linkedBrowser = tab.linkedBrowser;
 
   info("Loading frame script with url " + FRAME_SCRIPT_URL + ".");
   linkedBrowser.messageManager.loadFrameScript(FRAME_SCRIPT_URL, false);
 
-  BrowserTestUtils.browserLoaded(linkedBrowser)
-    .then(function() {
-      info("Tab added and finished loading: " + url);
-      deferred.resolve(tab);
-    });
+  BrowserTestUtils.browserLoaded(linkedBrowser).then(function() {
+    info("Tab added and finished loading: " + url);
+    deferred.resolve(tab);
+  });
 
   return deferred.promise;
 };
@@ -218,15 +244,19 @@ this.addTab = function addTab(url, win) {
 this.removeTab = function removeTab(tab, win) {
   info("Removing tab.");
 
-  const deferred = getDeferredPromise().defer();
+  const deferred = defer();
   const targetWindow = win || window;
   const targetBrowser = targetWindow.gBrowser;
   const tabContainer = targetBrowser.tabContainer;
 
-  tabContainer.addEventListener("TabClose", function() {
-    info("Tab removed and finished closing.");
-    deferred.resolve();
-  }, {once: true});
+  tabContainer.addEventListener(
+    "TabClose",
+    function() {
+      info("Tab removed and finished closing.");
+      deferred.resolve();
+    },
+    { once: true }
+  );
 
   targetBrowser.removeTab(tab);
   return deferred.promise;
@@ -235,19 +265,19 @@ this.removeTab = function removeTab(tab, win) {
 async function attachThreadActorForTab(tab) {
   const target = await TargetFactory.forTab(tab);
   await target.attach();
-  const [, threadClient] = await target.attachThread();
-  await threadClient.resume();
-  return { client: target.client, threadClient };
+  const [, threadFront] = await target.attachThread();
+  await threadFront.resume();
+  return { client: target.client, threadFront };
 }
 
 function pushPrefs(...aPrefs) {
-  const deferred = getDeferredPromise().defer();
-  SpecialPowers.pushPrefEnv({"set": aPrefs}, deferred.resolve);
+  const deferred = defer();
+  SpecialPowers.pushPrefEnv({ set: aPrefs }, deferred.resolve);
   return deferred.promise;
 }
 
 function popPrefs() {
-  const deferred = getDeferredPromise().defer();
+  const deferred = defer();
   SpecialPowers.popPrefEnv(deferred.resolve);
   return deferred.promise;
 }

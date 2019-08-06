@@ -18,6 +18,7 @@
 #include "mozilla/TransactionManager.h"  // for TransactionManager
 #include "mozilla/WeakPtr.h"             // for WeakPtr
 #include "mozilla/dom/DataTransfer.h"    // for dom::DataTransfer
+#include "mozilla/dom/HTMLBRElement.h"   // for dom::HTMLBRElement
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/Text.h"
 #include "nsCOMPtr.h"  // for already_AddRefed, nsCOMPtr
@@ -90,20 +91,20 @@ class TextServicesDocument;
 class TypeInState;
 class WSRunObject;
 
+template <typename NodeType>
+class CreateNodeResultBase;
+typedef CreateNodeResultBase<dom::Element> CreateElementResult;
+
 namespace dom {
 class DataTransfer;
 class DragEvent;
 class Element;
 class EventTarget;
-class Text;
 }  // namespace dom
 
 namespace widget {
 struct IMEState;
 }  // namespace widget
-
-#define kMOZEditorBogusNodeAttrAtom nsGkAtoms::mozeditorbogusnode
-#define kMOZEditorBogusNodeValue NS_LITERAL_STRING("TRUE")
 
 /**
  * SplitAtEdges is for EditorBase::SplitNodeDeepWithTransaction(),
@@ -708,7 +709,7 @@ class EditorBase : public nsIEditor,
         case EditSubAction::eUndo:
         case EditSubAction::eRedo:
         case EditSubAction::eComputeTextToOutput:
-        case EditSubAction::eCreateBogusNode:
+        case EditSubAction::eCreatePaddingBRElementForEmptyEditor:
         case EditSubAction::eNone:
           MOZ_ASSERT(aDirection == eNone);
           mDirectionOfTopLevelEditSubAction = eNone;
@@ -943,7 +944,8 @@ class EditorBase : public nsIEditor,
       const nsAString& aStringToInsert, Text& aTextNode, int32_t aOffset,
       bool aSuppressIME = false);
 
-  nsresult SetTextImpl(const nsAString& aString, Text& aTextNode);
+  MOZ_CAN_RUN_SCRIPT nsresult SetTextImpl(const nsAString& aString,
+                                          Text& aTextNode);
 
   /**
    * DeleteNodeWithTransaction() removes aNode from the DOM tree.
@@ -965,6 +967,18 @@ class EditorBase : public nsIEditor,
    */
   MOZ_CAN_RUN_SCRIPT nsresult InsertNodeWithTransaction(
       nsIContent& aContentToInsert, const EditorDOMPoint& aPointToInsert);
+
+  /**
+   * InsertPaddingBRElementForEmptyLastLineWithTransaction() creates a padding
+   * <br> element with setting flags to NS_PADDING_FOR_EMPTY_LAST_LINE and
+   * inserts it around aPointToInsert.
+   *
+   * @param aPointToInsert      The DOM point where should be <br> node inserted
+   *                            before.
+   */
+  MOZ_CAN_RUN_SCRIPT MOZ_MUST_USE CreateElementResult
+  InsertPaddingBRElementForEmptyLastLineWithTransaction(
+      const EditorDOMPoint& aPointToInsert);
 
   /**
    * ReplaceContainerWithTransaction() creates new element whose name is
@@ -1245,10 +1259,28 @@ class EditorBase : public nsIEditor,
   already_AddRefed<Element> CreateHTMLContent(const nsAtom* aTag);
 
   /**
-   * Creates text node which is marked as "maybe modified frequently".
+   * Creates text node which is marked as "maybe modified frequently" and
+   * "maybe masked" if this is a password editor.
    */
-  static already_AddRefed<nsTextNode> CreateTextNode(Document& aDocument,
-                                                     const nsAString& aData);
+  already_AddRefed<nsTextNode> CreateTextNode(const nsAString& aData);
+
+  /**
+   * DoInsertText(), DoDeleteText(), DoReplaceText() and DoSetText() are
+   * wrapper of `CharacterData::InsertData()`, `CharacterData::DeleteData()`,
+   * `CharacterData::ReplaceData()` and `CharacterData::SetData()`.
+   */
+  MOZ_CAN_RUN_SCRIPT void DoInsertText(dom::Text& aText, uint32_t aOffset,
+                                       const nsAString& aStringToInsert,
+                                       ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT void DoDeleteText(dom::Text& aText, uint32_t aOffset,
+                                       uint32_t aCount, ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT void DoReplaceText(dom::Text& aText, uint32_t aOffset,
+                                        uint32_t aCount,
+                                        const nsAString& aStringToInsert,
+                                        ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT void DoSetText(dom::Text& aText,
+                                    const nsAString& aStringToSet,
+                                    ErrorResult& aRv);
 
   /**
    * Create an element node whose name is aTag at before aPointToInsert.  When
@@ -1302,15 +1334,15 @@ class EditorBase : public nsIEditor,
       int32_t* aOffset, int32_t* aLength);
 
   /**
-   * DeleteTextWithTransaction() removes text in the range from aCharData.
+   * DeleteTextWithTransaction() removes text in the range from aTextNode.
    *
-   * @param aCharData           The data node which should be modified.
-   * @param aOffset             Start offset of removing text in aCharData.
+   * @param aTextNode           The text node which should be modified.
+   * @param aOffset             Start offset of removing text in aTextNode.
    * @param aLength             Length of removing text.
    */
-  MOZ_CAN_RUN_SCRIPT
-  nsresult DeleteTextWithTransaction(dom::CharacterData& aCharacterData,
-                                     uint32_t aOffset, uint32_t aLength);
+  MOZ_CAN_RUN_SCRIPT nsresult DeleteTextWithTransaction(dom::Text& aTextNode,
+                                                        uint32_t aOffset,
+                                                        uint32_t aLength);
 
   /**
    * ReplaceContainerWithTransactionInternal() is implementation of
@@ -1375,9 +1407,9 @@ class EditorBase : public nsIEditor,
    *                            node if necessary), returns no error.
    *                            Otherwise, an error.
    */
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY
-  void DoSplitNode(const EditorDOMPoint& aStartOfRightNode,
-                   nsIContent& aNewLeftNode, ErrorResult& aError);
+  MOZ_CAN_RUN_SCRIPT void DoSplitNode(const EditorDOMPoint& aStartOfRightNode,
+                                      nsIContent& aNewLeftNode,
+                                      ErrorResult& aError);
 
   /**
    * DoJoinNodes() merges contents in aNodeToJoin to aNodeToKeep and remove
@@ -1391,8 +1423,9 @@ class EditorBase : public nsIEditor,
    *                      same type.
    * @param aParent       The parent of aNodeToKeep
    */
-  nsresult DoJoinNodes(nsINode* aNodeToKeep, nsINode* aNodeToJoin,
-                       nsINode* aParent);
+  MOZ_CAN_RUN_SCRIPT nsresult DoJoinNodes(nsINode* aNodeToKeep,
+                                          nsINode* aNodeToJoin,
+                                          nsINode* aParent);
 
   /**
    * SplitNodeDeepWithTransaction() splits aMostAncestorToSplit deeply.
@@ -1600,8 +1633,8 @@ class EditorBase : public nsIEditor,
       return false;
     }
 
-    if (!aNode->IsContent() || IsMozEditorBogusNode(aNode) ||
-        !IsModifiableNode(*aNode)) {
+    if (!aNode->IsContent() || !IsModifiableNode(*aNode) ||
+        EditorBase::IsPaddingBRElementForEmptyEditor(*aNode)) {
       return false;
     }
 
@@ -1619,26 +1652,34 @@ class EditorBase : public nsIEditor,
   }
 
   /**
-   * Returns true if aNode is a usual element node (not bogus node) or
-   * a text node.  In other words, returns true if aNode is a usual element
-   * node or visible data node.
+   * Returns true if aNode is a usual element node (not padding <br> element
+   * for empty editor) or a text node.  In other words, returns true if aNode
+   * is a usual element node or visible data node.
    */
   bool IsElementOrText(const nsINode& aNode) const {
-    if (!aNode.IsContent() || IsMozEditorBogusNode(&aNode)) {
-      return false;
+    if (aNode.IsText()) {
+      return true;
     }
-    return aNode.NodeType() == nsINode::ELEMENT_NODE ||
-           aNode.NodeType() == nsINode::TEXT_NODE;
+    return aNode.IsElement() &&
+           !EditorBase::IsPaddingBRElementForEmptyEditor(aNode);
   }
 
   /**
-   * Returns true if aNode is a MozEditorBogus node.
+   * Returns true if aNode is a <br> element and it's marked as padding for
+   * empty editor.
    */
-  bool IsMozEditorBogusNode(const nsINode* aNode) const {
-    return aNode && aNode->IsElement() &&
-           aNode->AsElement()->AttrValueIs(
-               kNameSpaceID_None, kMOZEditorBogusNodeAttrAtom,
-               kMOZEditorBogusNodeValue, eCaseMatters);
+  static bool IsPaddingBRElementForEmptyEditor(const nsINode& aNode) {
+    const dom::HTMLBRElement* brElement = dom::HTMLBRElement::FromNode(&aNode);
+    return brElement && brElement->IsPaddingForEmptyEditor();
+  }
+
+  /**
+   * Returns true if aNode is a <br> element and it's marked as padding for
+   * empty last line.
+   */
+  static bool IsPaddingBRElementForEmptyLastLine(const nsINode& aNode) {
+    const dom::HTMLBRElement* brElement = dom::HTMLBRElement::FromNode(&aNode);
+    return brElement && brElement->IsPaddingForEmptyLastLine();
   }
 
   /**
@@ -2055,6 +2096,18 @@ class EditorBase : public nsIEditor,
   };
   MOZ_CAN_RUN_SCRIPT
   void NotifyEditorObservers(NotificationForEditorObservers aNotification);
+
+  /**
+   * PrepareToInsertBRElement() returns a point where new <br> element should
+   * be inserted.  If aPointToInsert points middle of a text node, this method
+   * splits the text node and returns the point before right node.
+   *
+   * @param aPointToInsert      Candidate point to insert new <br> element.
+   * @return                    Computed point to insert new <br> element.
+   *                            If something failed, this is unset.
+   */
+  MOZ_CAN_RUN_SCRIPT EditorDOMPoint
+  PrepareToInsertBRElement(const EditorDOMPoint& aPointToInsert);
 
  private:
   nsCOMPtr<nsISelectionController> mSelectionController;

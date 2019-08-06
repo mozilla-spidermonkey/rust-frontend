@@ -29,7 +29,8 @@
 #include "mozilla/image/nsPNGEncoder.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/RefPtr.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_gfx.h"
+#include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/UniquePtrExtensions.h"
 #include "mozilla/Unused.h"
 #include "mozilla/Vector.h"
@@ -1461,23 +1462,25 @@ void gfxUtils::RemoveShaderCacheFromDiskIfNecessary() {
 
 /* static */
 bool gfxUtils::DumpDisplayList() {
-  return StaticPrefs::LayoutDumpDisplayList() ||
-         (StaticPrefs::LayoutDumpDisplayListParent() &&
+  return StaticPrefs::layout_display_list_dump() ||
+         (StaticPrefs::layout_display_list_dump_parent() &&
           XRE_IsParentProcess()) ||
-         (StaticPrefs::LayoutDumpDisplayListContent() &&
+         (StaticPrefs::layout_display_list_dump_content() &&
           XRE_IsContentProcess());
 }
 
 wr::RenderRoot gfxUtils::GetContentRenderRoot() {
   if (gfx::gfxVars::UseWebRender() &&
-      StaticPrefs::WebRenderSplitRenderRoots()) {
+      StaticPrefs::gfx_webrender_split_render_roots_AtStartup()) {
     return wr::RenderRoot::Content;
   }
   return wr::RenderRoot::Default;
 }
 
 Maybe<wr::RenderRoot> gfxUtils::GetRenderRootForFrame(const nsIFrame* aFrame) {
-  if (!gfxVars::UseWebRender() || !StaticPrefs::WebRenderSplitRenderRoots()) {
+  if (!gfxVars::UseWebRender() ||
+      !StaticPrefs::gfx_webrender_split_render_roots_AtStartup() ||
+      !XRE_IsParentProcess()) {
     return Nothing();
   }
   if (!aFrame->GetContent()) {
@@ -1486,30 +1489,23 @@ Maybe<wr::RenderRoot> gfxUtils::GetRenderRootForFrame(const nsIFrame* aFrame) {
   if (!aFrame->GetContent()->IsElement()) {
     return Nothing();
   }
-  return gfxUtils::GetRenderRootForElement(aFrame->GetContent()->AsElement());
-}
-
-Maybe<wr::RenderRoot> gfxUtils::GetRenderRootForElement(
-    const dom::Element* aElement) {
-  if (!aElement) {
-    return Nothing();
-  }
-  if (!gfxVars::UseWebRender() || !StaticPrefs::WebRenderSplitRenderRoots()) {
-    return Nothing();
-  }
-  if (!aElement->IsXULElement()) {
-    return Nothing();
-  }
-  if (aElement->AttrValueIs(kNameSpaceID_None, nsGkAtoms::renderroot,
-                            NS_LITERAL_STRING("content"), eCaseMatters)) {
+  const dom::Element* element = aFrame->GetContent()->AsElement();
+  if (element->AttrValueIs(kNameSpaceID_None, nsGkAtoms::renderroot,
+                           NS_LITERAL_STRING("content"), eCaseMatters)) {
     return Some(wr::RenderRoot::Content);
+  }
+  if (element->AttrValueIs(kNameSpaceID_None, nsGkAtoms::renderroot,
+                           NS_LITERAL_STRING("popover"), eCaseMatters)) {
+    return Some(wr::RenderRoot::Popover);
   }
   return Nothing();
 }
 
 wr::RenderRoot gfxUtils::RecursivelyGetRenderRootForFrame(
     const nsIFrame* aFrame) {
-  if (!gfxVars::UseWebRender() || !StaticPrefs::WebRenderSplitRenderRoots()) {
+  if (!gfxVars::UseWebRender() ||
+      !StaticPrefs::gfx_webrender_split_render_roots_AtStartup() ||
+      !XRE_IsParentProcess()) {
     return wr::RenderRoot::Default;
   }
 

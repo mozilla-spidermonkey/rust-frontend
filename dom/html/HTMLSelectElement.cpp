@@ -111,7 +111,8 @@ SafeOptionListMutation::~SafeOptionListMutation() {
 HTMLSelectElement::HTMLSelectElement(
     already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo,
     FromParser aFromParser)
-    : nsGenericHTMLFormElementWithState(std::move(aNodeInfo), NS_FORM_SELECT),
+    : nsGenericHTMLFormElementWithState(std::move(aNodeInfo), aFromParser,
+                                        NS_FORM_SELECT),
       mOptions(new HTMLOptionsCollection(this)),
       mAutocompleteAttrState(nsContentUtils::eAutocompleteAttrState_Unknown),
       mAutocompleteInfoState(nsContentUtils::eAutocompleteAttrState_Unknown),
@@ -532,7 +533,7 @@ void HTMLSelectElement::Add(nsGenericHTMLElement& aElement,
   // Just in case we're not the parent, get the parent of the reference
   // element
   nsCOMPtr<nsINode> parent = aBefore->Element::GetParentNode();
-  if (!parent || !nsContentUtils::ContentIsDescendantOf(parent, this)) {
+  if (!parent || !parent->IsInclusiveDescendantOf(this)) {
     // NOT_FOUND_ERR: Raised if before is not a descendant of the SELECT
     // element.
     aError.Throw(NS_ERROR_DOM_NOT_FOUND_ERR);
@@ -1113,10 +1114,8 @@ void HTMLSelectElement::DoneAddingChildren(bool aHaveNotified) {
   }
 
   if (!mInhibitStateRestoration) {
-    nsresult rv = GenerateStateKey();
-    if (NS_SUCCEEDED(rv)) {
-      RestoreFormControlState();
-    }
+    GenerateStateKey();
+    RestoreFormControlState();
   }
 
   // Now that we're done, select something (if it's a single select something

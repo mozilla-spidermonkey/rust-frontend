@@ -13,32 +13,27 @@ add_task(async function() {
   // Enable pasting with middle-click.
   await pushPref("middlemouse.paste", true);
 
-  // Run test with legacy JsTerm
-  await pushPref("devtools.webconsole.jsterm.codeMirror", false);
-  await performTests();
-  // And then run it with the CodeMirror-powered one.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", true);
-  await performTests();
-});
-
-async function performTests() {
   const hud = await openNewTabAndConsole(TEST_URI);
-  const {jsterm} = hud;
+  const { jsterm } = hud;
 
   info("Set clipboard content");
   const clipboardContent = "test clipboard content";
   setClipboardText(clipboardContent);
 
   info("Middle-click on the console input");
-  const node = jsterm.node || jsterm.inputNode;
+  const node = jsterm.node;
 
-  EventUtils.synthesizeMouse(node, 30, 10, {button: 1}, hud.iframeWindow);
-  is(getInputValue(hud), clipboardContent,
-    "clipboard content was pasted in the console input");
-}
+  EventUtils.synthesizeMouse(node, 30, 10, { button: 1 }, hud.iframeWindow);
+  is(
+    getInputValue(hud),
+    clipboardContent,
+    "clipboard content was pasted in the console input"
+  );
+});
 
 function setClipboardText(text) {
-  const helper = SpecialPowers.Cc["@mozilla.org/widget/clipboardhelper;1"]
-    .getService(SpecialPowers.Ci.nsIClipboardHelper);
+  const helper = SpecialPowers.Cc[
+    "@mozilla.org/widget/clipboardhelper;1"
+  ].getService(SpecialPowers.Ci.nsIClipboardHelper);
   helper.copyString(text);
 }

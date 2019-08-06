@@ -69,6 +69,8 @@
 
 #else  // !MOZ_GECKO_PROFILER
 
+#  include "js/AllocationRecording.h"
+#  include "js/ProfilingFrameIterator.h"
 #  include "js/ProfilingStack.h"
 #  include "js/RootingAPI.h"
 #  include "js/TypeDecls.h"
@@ -77,6 +79,7 @@
 #  include "mozilla/Attributes.h"
 #  include "mozilla/GuardObjects.h"
 #  include "mozilla/Maybe.h"
+#  include "mozilla/PowerOfTwo.h"
 #  include "mozilla/Sprintf.h"
 #  include "mozilla/ThreadLocal.h"
 #  include "mozilla/TimeStamp.h"
@@ -118,44 +121,47 @@ class Vector;
 // values are used internally only and so can be changed without consequence.
 // Any changes to this list should also be applied to the feature list in
 // toolkit/components/extensions/schemas/geckoProfiler.json.
-#  define PROFILER_FOR_EACH_FEATURE(MACRO)                                    \
-    MACRO(0, "java", Java, "Profile Java code, Android only")                 \
-                                                                              \
-    MACRO(1, "js", JS,                                                        \
-          "Get the JS engine to expose the JS stack to the profiler")         \
-                                                                              \
-    /* The DevTools profiler doesn't want the native addresses. */            \
-    MACRO(2, "leaf", Leaf, "Include the C++ leaf node if not stackwalking")   \
-                                                                              \
-    MACRO(3, "mainthreadio", MainThreadIO,                                    \
-          "Add main thread I/O to the profile")                               \
-                                                                              \
-    MACRO(4, "memory", Memory, "Add memory measurements")                     \
-                                                                              \
-    MACRO(5, "privacy", Privacy,                                              \
-          "Do not include user-identifiable information")                     \
-                                                                              \
-    MACRO(6, "responsiveness", Responsiveness,                                \
-          "Collect thread responsiveness information")                        \
-                                                                              \
-    MACRO(7, "screenshots", Screenshots,                                      \
-          "Take a snapshot of the window on every composition")               \
-                                                                              \
-    MACRO(8, "seqstyle", SequentialStyle,                                     \
-          "Disable parallel traversal in styling")                            \
-                                                                              \
-    MACRO(9, "stackwalk", StackWalk,                                          \
-          "Walk the C++ stack, not available on all platforms")               \
-                                                                              \
-    MACRO(10, "tasktracer", TaskTracer,                                       \
-          "Start profiling with feature TaskTracer")                          \
-                                                                              \
-    MACRO(11, "threads", Threads, "Profile the registered secondary threads") \
-                                                                              \
-    MACRO(12, "trackopts", TrackOptimizations,                                \
-          "Have the JavaScript engine track JIT optimizations")               \
-                                                                              \
-    MACRO(13, "jstracer", JSTracer, "Enable tracing of the JavaScript engine")
+#  define PROFILER_FOR_EACH_FEATURE(MACRO)                                     \
+    MACRO(0, "java", Java, "Profile Java code, Android only")                  \
+                                                                               \
+    MACRO(1, "js", JS,                                                         \
+          "Get the JS engine to expose the JS stack to the profiler")          \
+                                                                               \
+    /* The DevTools profiler doesn't want the native addresses. */             \
+    MACRO(2, "leaf", Leaf, "Include the C++ leaf node if not stackwalking")    \
+                                                                               \
+    MACRO(3, "mainthreadio", MainThreadIO,                                     \
+          "Add main thread I/O to the profile")                                \
+                                                                               \
+    MACRO(4, "memory", Memory, "Add memory measurements")                      \
+                                                                               \
+    MACRO(5, "privacy", Privacy,                                               \
+          "Do not include user-identifiable information")                      \
+                                                                               \
+    MACRO(6, "responsiveness", Responsiveness,                                 \
+          "Collect thread responsiveness information")                         \
+                                                                               \
+    MACRO(7, "screenshots", Screenshots,                                       \
+          "Take a snapshot of the window on every composition")                \
+                                                                               \
+    MACRO(8, "seqstyle", SequentialStyle,                                      \
+          "Disable parallel traversal in styling")                             \
+                                                                               \
+    MACRO(9, "stackwalk", StackWalk,                                           \
+          "Walk the C++ stack, not available on all platforms")                \
+                                                                               \
+    MACRO(10, "tasktracer", TaskTracer,                                        \
+          "Start profiling with feature TaskTracer")                           \
+                                                                               \
+    MACRO(11, "threads", Threads, "Profile the registered secondary threads")  \
+                                                                               \
+    MACRO(12, "trackopts", TrackOptimizations,                                 \
+          "Have the JavaScript engine track JIT optimizations")                \
+                                                                               \
+    MACRO(13, "jstracer", JSTracer, "Enable tracing of the JavaScript engine") \
+                                                                               \
+    MACRO(14, "jsallocations", JSAllocations,                                  \
+          "Have the JavaScript engine track allocations")
 
 struct ProfilerFeature {
 #  define DECLARE(n_, str_, Name_, desc_)                     \
@@ -237,20 +243,20 @@ bool IsThreadBeingProfiled();
 // Start and stop the profiler
 //---------------------------------------------------------------------------
 
-static constexpr uint32_t PROFILER_DEFAULT_ENTRIES =
+static constexpr mozilla::PowerOfTwo32 PROFILER_DEFAULT_ENTRIES =
 #  if !defined(ARCH_ARMV6)
-    1u << 20;  // 1'048'576
+    mozilla::MakePowerOfTwo32<1u << 20>();  // 1'048'576
 #  else
-    1u << 17;  // 131'072
+    mozilla::MakePowerOfTwo32<1u << 17>();  // 131'072
 #  endif
 
 // Startup profiling usually need to capture more data, especially on slow
 // systems.
-static constexpr uint32_t PROFILER_DEFAULT_STARTUP_ENTRIES =
+static constexpr mozilla::PowerOfTwo32 PROFILER_DEFAULT_STARTUP_ENTRIES =
 #  if !defined(ARCH_ARMV6)
-    1u << 22;  // 4'194'304
+    mozilla::MakePowerOfTwo32<1u << 22>();  // 4'194'304
 #  else
-    1u << 17;  // 131'072
+    mozilla::MakePowerOfTwo32<1u << 17>();  // 131'072
 #  endif
 
 #  define PROFILER_DEFAULT_DURATION 20
@@ -286,7 +292,7 @@ void profiler_shutdown();
 //                  id of the process that the thread is running in.
 //   "aDuration" is the duration of entries in the profiler's circular buffer.
 void profiler_start(
-    uint32_t aCapacity, double aInterval, uint32_t aFeatures,
+    mozilla::PowerOfTwo32 aCapacity, double aInterval, uint32_t aFeatures,
     const char** aFilters, uint32_t aFilterCount,
     const mozilla::Maybe<double>& aDuration = mozilla::Nothing());
 
@@ -300,7 +306,7 @@ void profiler_stop();
 // The only difference to profiler_start is that the current buffer contents are
 // not discarded if the profiler is already running with the requested settings.
 void profiler_ensure_started(
-    uint32_t aCapacity, double aInterval, uint32_t aFeatures,
+    mozilla::PowerOfTwo32 aCapacity, double aInterval, uint32_t aFeatures,
     const char** aFilters, uint32_t aFilterCount,
     const mozilla::Maybe<double>& aDuration = mozilla::Nothing());
 
@@ -508,10 +514,42 @@ using UniqueProfilerBacktrace =
 // if the profiler is inactive or in privacy mode.
 UniqueProfilerBacktrace profiler_get_backtrace();
 
+struct ProfilerStats {
+  unsigned n = 0;
+  double sum = 0;
+  double min = std::numeric_limits<double>::max();
+  double max = 0;
+  void Count(double v) {
+    ++n;
+    sum += v;
+    if (v < min) {
+      min = v;
+    }
+    if (v > max) {
+      max = v;
+    }
+  }
+};
+
 struct ProfilerBufferInfo {
+  // Index of the oldest entry.
   uint64_t mRangeStart;
+  // Index of the newest entry.
   uint64_t mRangeEnd;
+  // Buffer capacity in number of entries.
   uint32_t mEntryCount;
+  // Sampling stats: Interval between successive samplings.
+  ProfilerStats mIntervalsNs;
+  // Sampling stats: Total sampling duration. (Split detail below.)
+  ProfilerStats mOverheadsNs;
+  // Sampling stats: Time to acquire the lock before sampling.
+  ProfilerStats mLockingsNs;
+  // Sampling stats: Time to discard expired data.
+  ProfilerStats mCleaningsNs;
+  // Sampling stats: Time to collect counter data.
+  ProfilerStats mCountersNs;
+  // Sampling stats: Time to sample thread stacks.
+  ProfilerStats mThreadsNs;
 };
 
 // Get information about the current buffer status.
@@ -643,6 +681,7 @@ void profiler_add_marker(const char* aMarkerName,
                          JS::ProfilingCategoryPair aCategoryPair,
                          mozilla::UniquePtr<ProfilerMarkerPayload> aPayload);
 void profiler_add_js_marker(const char* aMarkerName);
+void profiler_add_js_allocation_marker(JS::RecordAllocationInfo&& info);
 
 // Insert a marker in the profile timeline for a specified thread.
 void profiler_add_marker_for_thread(

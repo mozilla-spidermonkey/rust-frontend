@@ -27,6 +27,7 @@
 #include "BasicLayers.h"
 #include "mozilla/gfx/Point.h"
 #include "nsCSSRendering.h"
+#include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/Unused.h"
 
 using namespace mozilla;
@@ -1002,7 +1003,7 @@ void PaintMaskAndClipPathInternal(const PaintFramesParams& aParams,
   context.SetMatrix(matrixAutoSaveRestore.Matrix());
   aPaintChild();
 
-  if (StaticPrefs::DrawMaskLayer()) {
+  if (StaticPrefs::layers_draw_mask_debug()) {
     gfxContextAutoSaveRestore saver(&context);
 
     context.NewPath();

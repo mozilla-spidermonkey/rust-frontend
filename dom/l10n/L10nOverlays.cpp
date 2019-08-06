@@ -1,3 +1,9 @@
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "L10nOverlays.h"
 #include "mozilla/dom/HTMLTemplateElement.h"
 #include "mozilla/dom/HTMLInputElement.h"
@@ -398,7 +404,7 @@ void L10nOverlays::OverlayChildNodes(DocumentFragment* aFromFragment,
 
 void L10nOverlays::TranslateElement(
     const GlobalObject& aGlobal, Element& aElement,
-    const L10nValue& aTranslation,
+    const L10nMessage& aTranslation,
     Nullable<nsTArray<L10nOverlaysError>>& aErrors) {
   nsTArray<L10nOverlaysError> errors;
 
@@ -445,7 +451,7 @@ bool L10nOverlays::ContainsMarkup(const nsAString& aStr) {
 }
 
 void L10nOverlays::TranslateElement(Element& aElement,
-                                    const L10nValue& aTranslation,
+                                    const L10nMessage& aTranslation,
                                     nsTArray<L10nOverlaysError>& aErrors,
                                     ErrorResult& aRv) {
   if (!aTranslation.mValue.IsVoid()) {

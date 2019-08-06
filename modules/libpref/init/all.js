@@ -7,14 +7,14 @@
  * embedding situations. Application-specific preferences belong somewhere else,
  * such as browser/app/profile/firefox.js or mobile/android/app/mobile.js.
  *
+ * NOTE: Not all prefs should be defined in this (or any other) data file.
+ * Static prefs, especially VarCache prefs, are defined in StaticPrefList.yaml.
+ * Those prefs should *not* appear in this file.
+ *
  * For the syntax used by this file, consult the comments at the top of
  * modules/libpref/parser/src/lib.rs.
- *
- * Some prefs, especially VarCache prefs, are defined in StaticPrefList.h
- * rather than this (or any other) data file.
  */
 
-pref("keyword.enabled", false);
 pref("general.useragent.compatMode.firefox", false);
 
 // This pref exists only for testing purposes. In order to disable all
@@ -28,53 +28,14 @@ pref("general.warnOnAboutConfig", true);
 // maximum number of dated backups to keep at any time
 pref("browser.bookmarks.max_backups",       5);
 
-pref("browser.cache.disk.enable",           true);
-// Does the user want smart-sizing?
-pref("browser.cache.disk.smart_size.enabled", true);
 // Size (in KB) explicitly set by the user. Used when smart_size.enabled == false
 pref("browser.cache.disk.capacity",         256000);
-// When smartsizing is disabled we could potentially fill all disk space by
-// cache data when the disk capacity is not set correctly. To avoid that we
-// check the free space every time we write some data to the cache. The free
-// space is checked against two limits. Once the soft limit is reached we start
-// evicting the least useful entries, when we reach the hard limit writing to
-// the entry fails.
-pref("browser.cache.disk.free_space_soft_limit", 5120); // 5MB
-pref("browser.cache.disk.free_space_hard_limit", 1024); // 1MB
-// Max-size (in KB) for entries in disk cache. Set to -1 for no limit.
-// (Note: entries bigger than 1/8 of disk-cache are never cached)
-pref("browser.cache.disk.max_entry_size",    51200);  // 50 MB
-pref("browser.cache.memory.enable",         true);
-// -1 = determine dynamically, 0 = none, n = memory capacity in kilobytes
-//pref("browser.cache.memory.capacity",     -1);
-// Max-size (in KB) for entries in memory cache. Set to -1 for no limit.
-// (Note: entries bigger than than 90% of the mem-cache are never cached)
-pref("browser.cache.memory.max_entry_size",  5120);
-// Memory limit (in kB) for new cache data not yet written to disk. Writes to
-// the cache are buffered and written to disk on background with low priority.
-// With a slow persistent storage these buffers may grow when data is coming
-// fast from the network. When the amount of unwritten data is exceeded, new
-// writes will simply fail. We have two buckets, one for important data
-// (priority) like html, css, fonts and js, and one for other data like images,
-// video, etc.
-// Note: 0 means no limit.
-pref("browser.cache.disk.max_chunks_memory_usage", 40960);
-pref("browser.cache.disk.max_priority_chunks_memory_usage", 40960);
 
 pref("browser.cache.disk_cache_ssl",        true);
 // 0 = once-per-session, 1 = each-time, 2 = never, 3 = when-appropriate/automatically
 pref("browser.cache.check_doc_frequency",   3);
-// Limit of recent metadata we keep in memory for faster access, in Kb
-pref("browser.cache.disk.metadata_memory_limit", 250); // 0.25 MB
-// The number of chunks we preload ahead of read.  One chunk has currently 256kB.
-pref("browser.cache.disk.preload_chunk_count", 4); // 1 MB of read ahead
 // The half life used to re-compute cache entries frecency in hours.
 pref("browser.cache.frecency_half_life_hours", 6);
-
-// Number of seconds the cache spends writting pending data and closing files
-// after the shutdown has been signalled.  Past that time data are never written
-// and files are left open given up to the OS to do the cleanup.
-pref("browser.cache.max_shutdown_io_lag", 2);
 
 // AppCache over insecure connection is disabled by default
 pref("browser.cache.offline.insecure.enable",  false);
@@ -88,13 +49,6 @@ pref("browser.cache.offline.capacity",         512000);
 // the user should be warned if offline app disk usage exceeds this amount
 // (in kilobytes)
 pref("offline-apps.quota.warn",        51200);
-
-// zlib compression level used for cache compression:
-// 0 => disable compression
-// 1 => best speed
-// 9 => best compression
-// cache compression turned off for now - see bug #715198
-pref("browser.cache.compression_level", 0);
 
 // Don't show "Open with" option on download dialog if true.
 pref("browser.download.forbid_open_with", false);
@@ -207,10 +161,6 @@ pref("ui.context_menus.after_mouseup", false);
 pref("ui.menu.incremental_search.timeout", 1000);
 // If true, all popups won't hide automatically on blur
 pref("ui.popup.disable_autohide", false);
-
-#ifdef XP_MACOSX
-pref("ui.touchbar.layout", "Back,Forward,Reload,OpenLocation,NewTab,Share");
-#endif
 
 // 0 = default: always, except in high contrast mode
 // 1 = always
@@ -342,13 +292,8 @@ pref("media.decoder-doctor.verbose", false);
 // URL to report decode issues
 pref("media.decoder-doctor.new-issue-endpoint", "https://webcompat.com/issues/new");
 
-#if defined(NIGHTLY_BUILD) && defined(XP_WIN)
-pref("media.videocontrols.picture-in-picture.enabled", true);
-pref("media.videocontrols.picture-in-picture.video-toggle.enabled", true);
-#else
 pref("media.videocontrols.picture-in-picture.enabled", false);
 pref("media.videocontrols.picture-in-picture.video-toggle.enabled", false);
-#endif
 pref("media.videocontrols.picture-in-picture.video-toggle.flyout-enabled", false);
 pref("media.videocontrols.picture-in-picture.video-toggle.flyout-wait-ms", 5000);
 pref("media.videocontrols.picture-in-picture.video-toggle.always-show", false);
@@ -426,11 +371,13 @@ pref("media.peerconnection.ice.link_local", false); // Set only for testing IPV6
 pref("media.peerconnection.ice.force_interface", ""); // Limit to only a single interface
 pref("media.peerconnection.ice.relay_only", false); // Limit candidates to TURN
 pref("media.peerconnection.use_document_iceservers", true);
+
 pref("media.peerconnection.identity.timeout", 10000);
 pref("media.peerconnection.ice.stun_client_maximum_transmits", 7);
 pref("media.peerconnection.ice.trickle_grace_period", 5000);
 pref("media.peerconnection.ice.no_host", false);
 pref("media.peerconnection.ice.default_address_only", false);
+pref("media.peerconnection.ice.proxy_only_if_behind_proxy", false);
 pref("media.peerconnection.ice.proxy_only", false);
 pref("media.peerconnection.turn.disable", false);
 
@@ -464,21 +411,6 @@ pref("media.webvtt.pseudo.enabled", true);
 
 // WebVTT debug logging.
 pref("media.webvtt.debug.logging", false);
-
-// Whether to enable MediaSource support.
-pref("media.mediasource.enabled", true);
-
-pref("media.mediasource.mp4.enabled", true);
-
-#if defined(XP_WIN) || defined(XP_MACOSX) || defined(MOZ_WIDGET_ANDROID)
-pref("media.mediasource.webm.enabled", false);
-#else
-pref("media.mediasource.webm.enabled", true);
-#endif
-pref("media.mediasource.webm.audio.enabled", true);
-
-// Whether to enable MediaSource v2 support.
-pref("media.mediasource.experimental.enabled", false);
 
 pref("media.benchmark.vp9.threshold", 150);
 pref("media.benchmark.frames", 300);
@@ -524,9 +456,6 @@ pref("media.video-queue.default-size", 10);
 // By default, send all of them.
 pref("media.video-queue.send-to-compositor-size", 9999);
 
-// Whether to disable the video stats to prevent fingerprinting
-pref("media.video_stats.enabled", true);
-
 // Log level for cubeb, the audio input/output system. Valid values are
 // "verbose", "normal" and "" (log disabled).
 pref("media.cubeb.logging_level", "");
@@ -534,7 +463,7 @@ pref("media.cubeb.logging_level", "");
 // Cubeb sandbox (remoting) control
 #if defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID)
 pref("media.cubeb.sandbox", true);
-pref("media.audioipc.pool_size", 2);
+pref("media.audioipc.pool_size", 1);
 // 64 * 4 kB stack per pool thread.
 pref("media.audioipc.stack_size", 262144);
 #else
@@ -545,7 +474,7 @@ pref("media.cubeb.sandbox", false);
 pref("media.audiograph.single_thread.enabled", false);
 
 #ifdef MOZ_AV1
-#if defined(XP_WIN) && !defined(_ARM64_) && !defined(__MINGW32__)
+#if defined(XP_WIN) && !defined(_ARM64_)
 pref("media.av1.enabled", true);
 pref("media.av1.use-dav1d", true);
 #elif defined(XP_MACOSX)
@@ -559,8 +488,6 @@ pref("media.av1.enabled", false);
 pref("media.av1.use-dav1d", false);
 #endif
 #endif
-
-pref("media.webaudio.audiocontextoptions-samplerate.enabled", true);
 
 // Whether to enable arbitrary layer geometry for OpenGL compositor
 pref("layers.geometry.opengl.enabled", true);
@@ -787,8 +714,9 @@ pref("gfx.ycbcr.accurate-conversion", false);
 
 #ifdef XP_WIN
 pref("gfx.webrender.force-angle", true);
+pref("gfx.webrender.flip-sequential", false);
 pref("gfx.webrender.dcomp-win.enabled", true);
-pref("gfx.webrender.dcomp-win-triple-buffering.enabled", true);
+pref("gfx.webrender.triple-buffering.enabled", true);
 #endif
 
 #if defined(XP_WIN) || defined(MOZ_WIDGET_ANDROID)
@@ -797,6 +725,7 @@ pref("gfx.webrender.program-binary-disk", true);
 
 #ifdef XP_MACOSX
 pref("gfx.compositor.glcontext.opaque", false);
+pref("gfx.core-animation.enabled", false);
 #endif
 
 pref("gfx.webrender.highlight-painted-layers", false);
@@ -963,9 +892,10 @@ pref("toolkit.asyncshutdown.log", false);
 pref("toolkit.content-background-hang-monitor.disabled", false);
 
 // Enable JS dump() function.
-// IMPORTANT: Keep this in condition in sync with StaticPrefList.h. The value
-// of MOZILLA_OFFICIAL is different between full and artifact builds, so without
-// it being specified, dump is disabled in artifact builds (see Bug 1490412).
+// IMPORTANT: These prefs must be here even though they're also defined in
+// StaticPrefList.yaml. They are required because MOZILLA_OFFICIAL is false in
+// local full builds but true in artifact builds. Without these definitions
+// here, dumping is disabled in artifact builds (see Bug 1490412).
 #ifdef MOZILLA_OFFICIAL
 pref("browser.dom.window.dump.enabled", false, sticky);
 pref("devtools.console.stdout.chrome", false, sticky);
@@ -1022,7 +952,6 @@ pref("layout.framevisibility.numscrollportheights", 1);
 pref("browser.fixup.alternate.enabled", true);
 pref("browser.fixup.alternate.prefix", "www.");
 pref("browser.fixup.alternate.suffix", ".com");
-pref("browser.fixup.dns_first_for_single_words", false);
 
 // Print header customization
 // Use the following codes:
@@ -1135,7 +1064,6 @@ pref("dom.require_user_interaction_for_beforeunload", true);
 pref("dom.popup_maximum",                           20);
 pref("dom.popup_allowed_events", "change click dblclick auxclick mouseup pointerup notificationclick reset submit touchend contextmenu");
 
-pref("dom.disable_open_click_delay", 1000);
 pref("dom.serviceWorkers.disable_open_click_delay", 1000);
 
 pref("dom.storage.enabled", true);
@@ -1152,34 +1080,6 @@ pref("dom.storage.snapshot_reusing", true);
 pref("dom.storage.client_validation", true);
 
 pref("dom.send_after_paint_to_content", false);
-
-// Timeout clamp in ms for timeouts we clamp
-pref("dom.min_timeout_value", 4);
-// And for background windows
-pref("dom.min_background_timeout_value", 1000);
-// Timeout clamp in ms for tracking timeouts we clamp
-// Note that this requires the privacy.trackingprotection.annotate_channels pref to be on in order to have any effect.
-pref("dom.min_tracking_timeout_value", 4);
-// And for background windows
-// Note that this requires the privacy.trackingprotection.annotate_channels pref to be on in order to have any effect.
-pref("dom.min_tracking_background_timeout_value", 4);
-// Delay in ms from document load until we start throttling background timeouts.
-pref("dom.timeout.throttling_delay", 30000);
-
-// Time (in ms) that it takes to regenerate 1ms.
-pref("dom.timeout.background_budget_regeneration_rate", 100);
-// Maximum value (in ms) for the background budget. Only valid for
-// values greater than 0.
-pref("dom.timeout.background_throttling_max_budget", 50);
-// Time (in ms) that it takes to regenerate 1ms.
-pref("dom.timeout.foreground_budget_regeneration_rate", 1);
-// Maximum value (in ms) for the background budget. Only valid for
-// values greater than 0.
-pref("dom.timeout.foreground_throttling_max_budget", -1);
-// The maximum amount a timeout can be delayed by budget throttling
-pref("dom.timeout.budget_throttling_max_delay", 15000);
-// Turn on budget throttling by default
-pref("dom.timeout.enable_budget_timer_throttling", true);
 
 // Don't use new input types
 pref("dom.experimental_forms", false);
@@ -1215,11 +1115,6 @@ pref("dom.use_components_shim", false);
 pref("dom.use_components_shim", true);
 #endif // NIGHTLY_BUILD
 
-// Parsing perf prefs. For now just mimic what the old code did.
-#ifndef XP_WIN
-pref("content.sink.pending_event_mode", 0);
-#endif
-
 // Disable popups from plugins by default
 //   0 = openAllowed
 //   1 = openControlled
@@ -1235,6 +1130,10 @@ pref("privacy.restrict3rdpartystorage.partitionedHosts", "accounts.google.com/o/
 // before granting the storage access permission.
 pref("privacy.restrict3rdpartystorage.userInteractionRequiredForHosts", "");
 
+// The url decoration tokens used to for stripping document referrers based on.
+// A list separated by spaces.  This pref isn't meant to be changed by users.
+pref("privacy.restrict3rdpartystorage.url_decorations", "");
+
 // Excessive reporting of blocked popups can be a DOS vector,
 // by overloading the main process as popups get blocked and when
 // users try to restore all popups, which is the most visible
@@ -1243,33 +1142,10 @@ pref("privacy.restrict3rdpartystorage.userInteractionRequiredForHosts", "");
 // opened more than this number of popups.
 pref("privacy.popups.maxReported", 100);
 
-// Enforce tracking protection in all modes
-pref("privacy.trackingprotection.enabled",  false);
-// Enforce tracking protection in Private Browsing mode
-pref("privacy.trackingprotection.pbmode.enabled",  true);
-// First Party Isolation (double keying), disabled by default
-pref("privacy.firstparty.isolate",                        false);
-// If false, two windows in the same domain with different first party domains
-// (top level URLs) can access resources through window.opener.
-// This pref is effective only when "privacy.firstparty.isolate" is true.
-pref("privacy.firstparty.isolate.restrict_opener_access", true);
-// We automatically decline canvas permission requests if they are not initiated
-// from user input. Just in case that breaks something, we allow the user to revert
-// this behavior with this obscure pref. We do not intend to support this long term.
-// If you do set it, to work around some broken website, please file a bug with
-// information so we can understand why it is needed.
-pref("privacy.resistFingerprinting.autoDeclineNoUserInputCanvasPrompts", true);
-// The log level for browser console messages logged in RFPHelper.jsm
-// Change to 'All' and restart to see the messages
-pref("privacy.resistFingerprinting.jsmloglevel", "Warn");
-// A subset of Resist Fingerprinting protections focused specifically on timers for testing
-// This affects the Animation API, the performance APIs, Date.getTime, Event.timestamp,
-//   File.lastModified, audioContext.currentTime, canvas.captureStream.currentTime
-pref("privacy.reduceTimerPrecision", true);
-// Dynamically tune the resolution of the timer reduction for both of the two above prefs
-pref("privacy.resistFingerprinting.reduceTimerPrecision.microseconds", 1000);
-// Enable jittering the clock one precision value forward
-pref("privacy.resistFingerprinting.reduceTimerPrecision.jitter", true);
+// Enable Origin Telemetry by default
+#ifdef NIGHTLY_BUILD
+pref("privacy.trackingprotection.origin_telemetry.enabled", true);
+#endif
 
 pref("dom.event.contextmenu.enabled",       true);
 pref("dom.event.coalesce_mouse_move",       true);
@@ -1279,15 +1155,17 @@ pref("javascript.options.strict",           false);
 #ifdef DEBUG
 pref("javascript.options.strict.debug",     false);
 #endif
-pref("javascript.options.unboxed_objects",  false);
+pref("javascript.options.blinterp",         true);
+// Duplicated in JitOptions - ensure both match.
+pref("javascript.options.blinterp.threshold", 10);
 pref("javascript.options.baselinejit",      true);
-//Duplicated in JitOptions - ensure both match.
-pref("javascript.options.baselinejit.threshold", 10);
+// Duplicated in JitOptions - ensure both match.
+pref("javascript.options.baselinejit.threshold", 100);
 pref("javascript.options.ion",              true);
-//Duplicated in JitOptions - ensure both match.
+// Duplicated in JitOptions - ensure both match.
 pref("javascript.options.ion.threshold",    1000);
 pref("javascript.options.ion.full.threshold", 100000);
-//Duplicated in JitOptions - ensure both match.
+// Duplicated in JitOptions - ensure both match.
 pref("javascript.options.ion.frequent_bailout_threshold", 10);
 pref("javascript.options.asmjs",            true);
 pref("javascript.options.wasm",             true);
@@ -1322,10 +1200,6 @@ pref("javascript.options.discardSystemSource", false);
 // change the defaults here please also consider changing them in
 // js/src/jsgc.cpp.  They're documented in js/src/jsapi.h.
 
-// JSGC_MAX_MALLOC_BYTES
-// How much malloc memory can be allocated before triggering a GC, in MB.
-pref("javascript.options.mem.high_water_mark", 128);
-
 // JSGC_MAX_BYTES
 // SpiderMonkey defaults to 2^32-1 bytes, but this is measured in MB so that
 // cannot be represented directly in order to show it in about:config.
@@ -1344,7 +1218,7 @@ pref("javascript.options.mem.nursery.max_kb", 16384);
 pref("javascript.options.mem.gc_per_zone", true);
 pref("javascript.options.mem.gc_incremental", true);
 
-// JSGC_SLICE_TIME_BUDGET
+// JSGC_SLICE_TIME_BUDGET_MS
 // Override the shell's default of unlimited slice time.
 pref("javascript.options.mem.gc_incremental_slice_ms", 5);
 
@@ -1418,8 +1292,6 @@ pref("javascript.options.spectre.jit_to_C++_calls", true);
 
 // Streams API
 pref("javascript.options.streams", true);
-
-pref("javascript.options.experimental.fields", false);
 
 // Dynamic module import.
 pref("javascript.options.dynamicImport", true);
@@ -1588,12 +1460,8 @@ pref("network.http.referer.defaultPolicy", 3);
 // default cookie policy is set to reject third-party trackers;
 // to be used unless overriden by the site;
 // values are identical to defaultPolicy above
-#ifdef NIGHTLY_BUILD
-// On Nightly, trim referrers from trackers to origins.
+// Trim referrers from trackers to origins by default.
 pref("network.http.referer.defaultPolicy.trackers", 2);
-#else
-pref("network.http.referer.defaultPolicy.trackers", 3);
-#endif
 // Set the Private Browsing Default Referrer Policy;
 // to be used unless overriden by the site;
 // values are identical to defaultPolicy above
@@ -1603,8 +1471,8 @@ pref("network.http.referer.defaultPolicy.pbmode", 2);
 // trackers;
 // to be used unless overriden by the site;
 // values are identical to defaultPolicy above
-// No need to change this pref for Nightly only since in private windows we
-// already trim all referrers to origin only.
+// No need to change this pref for trimming referrers from trackers since in
+// private windows we already trim all referrers to origin only.
 pref("network.http.referer.defaultPolicy.trackers.pbmode", 2);
 // false=real referer, true=spoof referer (use target URI as referer)
 pref("network.http.referer.spoofSource", false);
@@ -1616,10 +1484,13 @@ pref("network.http.referer.trimmingPolicy", 0);
 pref("network.http.referer.XOriginTrimmingPolicy", 0);
 // 0=always send, 1=send iff base domains match, 2=send iff hosts match
 pref("network.http.referer.XOriginPolicy", 0);
+// The maximum allowed length for a referrer header - 4096 default
+// 0 means no limit.
+pref("network.http.referer.referrerLengthLimit", 4096);
 
 // Include an origin header on non-GET and non-HEAD requests regardless of CORS
 // 0=never send, 1=send when same-origin only, 2=always send
-pref("network.http.sendOriginHeader", 0);
+pref("network.http.sendOriginHeader", 2);
 
 // Maximum number of consecutive redirects before aborting.
 pref("network.http.redirection-limit", 20);
@@ -1798,12 +1669,6 @@ pref("network.sts.max_time_for_pr_close_during_shutdown", 5000);
 // This timeout can be disabled by setting this pref to 0.
 // The value is expected in seconds.
 pref("network.sts.pollable_event_timeout", 6);
-
-// Start a separate socket process. Performing networking on the socket process
-// is control by a sepparate pref
-// ("network.http.network_access_on_socket_process.enabled").
-// Changing these prefs requires a restart.
-pref("network.process.enabled", false);
 
 // Enable/disable sni encryption.
 pref("network.security.esni.enabled", false);
@@ -2184,6 +2049,11 @@ pref("network.http.tailing.delay-max", 6000);
 // Total limit we delay tailed requests since a page load beginning.
 pref("network.http.tailing.total-max", 45000);
 
+// Enable or disable the whole fix from bug 1563538
+pref("network.http.spdy.bug1563538", true);
+pref("network.http.spdy.bug1563695", true);
+pref("network.http.spdy.bug1556491", true);
+
 pref("permissions.default.image",           1); // 1-Accept, 2-Deny, 3-dontAcceptForeign
 
 pref("network.proxy.type",                  5);
@@ -2515,13 +2385,10 @@ pref("security.dialog_enable_delay", 1000);
 pref("security.notification_enable_delay", 500);
 
 #if defined(DEBUG) && !defined(ANDROID)
-pref("csp.about_uris_without_csp", "blank,printpreview,srcdoc,addons,cache-entry,config,debugging,devtools,downloads,home,newtab,plugins,profiles,preferences,restartrequired,serviceworkers,sessionrestore,support,sync-log,telemetry,url-classifier,welcomeback");
+pref("csp.about_uris_without_csp", "blank,printpreview,srcdoc,addons,config,downloads,preferences,sync-log");
 // the following prefs are for testing purposes only.
 pref("csp.overrule_about_uris_without_csp_whitelist", false);
 pref("csp.skip_about_page_has_csp_assert", false);
-// assertion flag will be set to false after fixing Bug 1473549
-pref("security.allow_eval_with_system_principal", false);
-pref("security.uris_using_eval_with_system_principal", "autocomplete.xml,redux.js,react-redux.js,content-task.js,preferencesbindings.js,lodash.js,jszip.js,sinon-7.2.7.js,ajv-4.1.1.js,jsol.js");
 #endif
 
 #ifdef EARLY_BETA_OR_EARLIER
@@ -2541,12 +2408,6 @@ pref("security.mixed_content.block_object_subrequest", false);
 
 // Sub-resource integrity
 pref("security.sri.enable", true);
-
-// Block scripts with wrong MIME type such as image/ or video/.
-pref("security.block_script_with_wrong_mime", true);
-
-// Block scripts with wrong MIME type when loading via importScripts() in workers.
-pref("security.block_importScripts_with_wrong_mime", true);
 
 // OCSP must-staple
 pref("security.ssl.enable_ocsp_must_staple", true);
@@ -2901,10 +2762,6 @@ pref("layout.css.scroll-snap.prediction-max-velocity", 2000);
 // gestures.
 pref("layout.css.scroll-snap.prediction-sensitivity", "0.750");
 
-// Is the paint-order property supported for HTML text?
-// (It is always supported for SVG.)
-pref("layout.css.paint-order.enabled", true);
-
 // Is layout of CSS outline-style:auto enabled?
 pref("layout.css.outline-style-auto.enabled", false);
 
@@ -3141,13 +2998,6 @@ pref("dom.ipc.processCount.webIsolated", 1);
 // away from about:newtab.
 pref("dom.ipc.keepProcessesAlive.privilegedabout", 1);
 
-// Whether a native event loop should be used in the content process.
-#if defined(XP_WIN) || defined(XP_MACOSX)
-pref("dom.ipc.useNativeEventProcessing.content", false);
-#else
-pref("dom.ipc.useNativeEventProcessing.content", true);
-#endif
-
 // Disable support for SVG
 pref("svg.disabled", false);
 
@@ -3160,8 +3010,14 @@ pref("dom.largeAllocationHeader.enabled", true);
 // Disable e10s for Gecko by default. This is overridden in firefox.js.
 pref("browser.tabs.remote.autostart", false);
 
-// Disable fission for Gecko by default.
+// Disable fission for Gecko by default. Lock it on release and beta because
+// it is not ready for use and can leak URIs to telemetry until bug 1561653 is
+// fixed.
+#ifdef RELEASE_OR_BETA
+pref("fission.autostart", false, locked);
+#else
 pref("fission.autostart", false);
+#endif
 
 // Pref to control whether we use separate content processes for top-level load
 // of file:// URIs.
@@ -3173,6 +3029,10 @@ pref("browser.tabs.remote.separateFileUriProcess", true);
 // sorts of pages, which we have to do when we run them in the normal web
 // content process, causes compatibility issues.
 pref("browser.tabs.remote.allowLinkedWebInFileUriProcess", true);
+
+// This pref will cause assertions when a remoteType triggers a process switch
+// to a new remoteType it should not be able to trigger.
+pref("browser.tabs.remote.enforceRemoteTypeRestrictions", false);
 
 // Pref to control whether we use a separate privileged content process
 // for about: pages. This pref name did not age well: we will have multiple
@@ -4797,9 +4657,7 @@ pref("widget.content.allow-gtk-dark-theme", false);
 #endif
 #endif
 #ifdef MOZ_WAYLAND
-#ifdef HAVE_LIBDRM
 pref("widget.wayland_dmabuf_backend.enabled", false);
-#endif
 #endif
 
 pref("widget.window-transforms.disabled", false);
@@ -4850,7 +4708,6 @@ pref("extensions.webextensions.keepUuidOnUninstall", false);
 pref("extensions.webextensions.identity.redirectDomain", "extensions.allizom.org");
 pref("extensions.webextensions.restrictedDomains", "accounts-static.cdn.mozilla.net,accounts.firefox.com,addons.cdn.mozilla.net,addons.mozilla.org,api.accounts.firefox.com,content.cdn.mozilla.net,discovery.addons.mozilla.org,install.mozilla.org,oauth.accounts.firefox.com,profile.accounts.firefox.com,support.mozilla.org,sync.services.mozilla.com");
 
-pref("extensions.webextensions.remote", false);
 // Whether or not the moz-extension resource loads are remoted. For debugging
 // purposes only. Setting this to false will break moz-extension URI loading
 // unless other process sandboxing and extension remoting prefs are changed.
@@ -4924,6 +4781,10 @@ pref("alerts.useSystemBackend", true);
 #endif
 
 // DOM full-screen API.
+#ifdef XP_MACOSX
+// Whether to use macOS native full screen for Fullscreen API
+pref("full-screen-api.macos-native-full-screen", false);
+#endif
 // whether to prevent the top level widget from going fullscreen
 pref("full-screen-api.ignore-widgets", false);
 pref("full-screen-api.pointer-lock.enabled", true);
@@ -5068,13 +4929,6 @@ pref("dom.vr.navigation.timeout", 5000);
 // If this value is too low, the Oculus Home interface may be visible
 // momentarily during VR link navigation.
 pref("dom.vr.oculus.present.timeout", 500);
-// Minimum number of milliseconds that the browser will wait before
-// reloading the Oculus OVR library after seeing a "ShouldQuit" flag set.
-// Oculus requests that we shut down and unload the OVR library, by setting
-// a "ShouldQuit" flag.  To ensure that we don't interfere with
-// Oculus software auto-updates, we will not attempt to re-load the
-// OVR library until this timeout has elapsed.
-pref("dom.vr.oculus.quit.timeout", 10000);
 // When enabled, Oculus sessions may be created with the ovrInit_Invisible
 // flag if a page is using tracking but not presenting.  When a page
 // begins presenting VR frames, the session will be re-initialized without
@@ -5107,9 +4961,6 @@ pref("dom.vr.poseprediction.enabled", true);
 pref("dom.vr.require-gesture", true);
 // Puppet device, used for simulating VR hardware within tests and dev tools
 pref("dom.vr.puppet.enabled", false);
-// Allow displaying the result of vr submitframe (0: disable, 1: store the
-// result as a base64 image, 2: show it on the screen).
-pref("dom.vr.puppet.submitframe", 0);
 // path to OSVR DLLs
 pref("gfx.vr.osvr.utilLibPath", "");
 pref("gfx.vr.osvr.commonLibPath", "");
@@ -5209,13 +5060,13 @@ pref("captivedetect.maxRetryCount", 5);
 pref("dom.mapped_arraybuffer.enabled", true);
 
 // The tables used for Safebrowsing phishing and malware checks
-pref("urlclassifier.malwareTable", "goog-malware-proto,goog-unwanted-proto,test-harmful-simple,test-malware-simple,test-unwanted-simple");
+pref("urlclassifier.malwareTable", "goog-malware-proto,goog-unwanted-proto,moztest-harmful-simple,moztest-malware-simple,moztest-unwanted-simple");
 #ifdef MOZILLA_OFFICIAL
 // In official builds, we are allowed to use Google's private phishing
 // list (see bug 1288840).
-pref("urlclassifier.phishTable", "goog-phish-proto,test-phish-simple");
+pref("urlclassifier.phishTable", "goog-phish-proto,moztest-phish-simple");
 #else
-pref("urlclassifier.phishTable", "googpub-phish-proto,test-phish-simple");
+pref("urlclassifier.phishTable", "googpub-phish-proto,moztest-phish-simple");
 #endif
 
 // Tables for application reputation
@@ -5226,18 +5077,26 @@ pref("urlclassifier.downloadBlockTable", "goog-badbinurl-proto");
 pref("urlclassifier.passwordAllowTable", "goog-passwordwhite-proto");
 
 // Tables for anti-tracking features
-pref("urlclassifier.trackingAnnotationTable", "test-track-simple,ads-track-digest256,social-track-digest256,analytics-track-digest256,content-track-digest256");
-pref("urlclassifier.trackingAnnotationWhitelistTable", "test-trackwhite-simple,mozstd-trackwhite-digest256");
-pref("urlclassifier.trackingTable", "test-track-simple,base-track-digest256");
-pref("urlclassifier.trackingWhitelistTable", "test-trackwhite-simple,mozstd-trackwhite-digest256");
+pref("urlclassifier.trackingAnnotationTable", "moztest-track-simple,ads-track-digest256,social-track-digest256,analytics-track-digest256,content-track-digest256");
+pref("urlclassifier.trackingAnnotationWhitelistTable", "moztest-trackwhite-simple,mozstd-trackwhite-digest256");
+pref("urlclassifier.trackingTable", "moztest-track-simple,base-track-digest256");
+pref("urlclassifier.trackingWhitelistTable", "moztest-trackwhite-simple,mozstd-trackwhite-digest256");
 
 pref("urlclassifier.features.fingerprinting.blacklistTables", "base-fingerprinting-track-digest256");
 pref("urlclassifier.features.fingerprinting.whitelistTables", "mozstd-trackwhite-digest256");
+pref("urlclassifier.features.fingerprinting.annotate.blacklistTables", "base-fingerprinting-track-digest256");
+pref("urlclassifier.features.fingerprinting.annotate.whitelistTables", "mozstd-trackwhite-digest256");
 pref("urlclassifier.features.cryptomining.blacklistTables", "base-cryptomining-track-digest256");
 pref("urlclassifier.features.cryptomining.whitelistTables", "mozstd-trackwhite-digest256");
+pref("urlclassifier.features.cryptomining.annotate.blacklistTables", "base-cryptomining-track-digest256");
+pref("urlclassifier.features.cryptomining.annotate.whitelistTables", "mozstd-trackwhite-digest256");
+pref("urlclassifier.features.socialtracking.blacklistTables", "social-tracking-protection-digest256,social-tracking-protection-facebook-digest256,social-tracking-protection-linkedin-digest256,social-tracking-protection-twitter-digest256,social-tracking-protection-youtube-digest256");
+pref("urlclassifier.features.socialtracking.whitelistTables", "mozstd-trackwhite-digest256");
+pref("urlclassifier.features.socialtracking.annotation.blacklistTables", "social-tracking-protection-digest256,social-tracking-protection-facebook-digest256,social-tracking-protection-linkedin-digest256,social-tracking-protection-twitter-digest256,social-tracking-protection-youtube-digest256");
+pref("urlclassifier.features.socialtracking.annotation.whitelistTables", "mozstd-trackwhite-digest256");
 
 // These tables will never trigger a gethash call.
-pref("urlclassifier.disallow_completions", "goog-downloadwhite-digest256,base-track-digest256,mozstd-trackwhite-digest256,content-track-digest256,mozplugin-block-digest256,mozplugin2-block-digest256,block-flash-digest256,except-flash-digest256,allow-flashallow-digest256,except-flashallow-digest256,block-flashsubdoc-digest256,except-flashsubdoc-digest256,goog-passwordwhite-proto,ads-track-digest256,social-track-digest256,analytics-track-digest256,base-fingerprinting-track-digest256,content-fingerprinting-track-digest256,base-cryptomining-track-digest256,content-cryptomining-track-digest256,fanboyannoyance-ads-digest256,fanboysocial-ads-digest256,easylist-ads-digest256,easyprivacy-ads-digest256,adguard-ads-digest256");
+pref("urlclassifier.disallow_completions", "goog-downloadwhite-digest256,base-track-digest256,mozstd-trackwhite-digest256,content-track-digest256,mozplugin-block-digest256,mozplugin2-block-digest256,block-flash-digest256,except-flash-digest256,allow-flashallow-digest256,except-flashallow-digest256,block-flashsubdoc-digest256,except-flashsubdoc-digest256,goog-passwordwhite-proto,ads-track-digest256,social-track-digest256,analytics-track-digest256,base-fingerprinting-track-digest256,content-fingerprinting-track-digest256,base-cryptomining-track-digest256,content-cryptomining-track-digest256,fanboyannoyance-ads-digest256,fanboysocial-ads-digest256,easylist-ads-digest256,easyprivacy-ads-digest256,adguard-ads-digest256,social-tracking-protection-digest256,social-tracking-protection-facebook-digest256,social-tracking-protection-linkedin-digest256,social-tracking-protection-twitter-digest256,social-tracking-protection-youtube-digest256");
 
 // Workaround for Google Recaptcha
 pref("urlclassifier.trackingAnnotationSkipURLs", "google.com/recaptcha/,*.google.com/recaptcha/");
@@ -5307,7 +5166,7 @@ pref("browser.safebrowsing.reportPhishURL", "https://%LOCALE%.phish-report.mozil
 
 // Mozilla Safe Browsing provider (for tracking protection and plugin blocking)
 pref("browser.safebrowsing.provider.mozilla.pver", "2.2");
-pref("browser.safebrowsing.provider.mozilla.lists", "base-track-digest256,mozstd-trackwhite-digest256,content-track-digest256,mozplugin-block-digest256,mozplugin2-block-digest256,block-flash-digest256,except-flash-digest256,allow-flashallow-digest256,except-flashallow-digest256,block-flashsubdoc-digest256,except-flashsubdoc-digest256,ads-track-digest256,social-track-digest256,analytics-track-digest256,base-fingerprinting-track-digest256,content-fingerprinting-track-digest256,base-cryptomining-track-digest256,content-cryptomining-track-digest256,fanboyannoyance-ads-digest256,fanboysocial-ads-digest256,easylist-ads-digest256,easyprivacy-ads-digest256,adguard-ads-digest256");
+pref("browser.safebrowsing.provider.mozilla.lists", "base-track-digest256,mozstd-trackwhite-digest256,content-track-digest256,mozplugin-block-digest256,mozplugin2-block-digest256,block-flash-digest256,except-flash-digest256,allow-flashallow-digest256,except-flashallow-digest256,block-flashsubdoc-digest256,except-flashsubdoc-digest256,ads-track-digest256,social-track-digest256,analytics-track-digest256,base-fingerprinting-track-digest256,content-fingerprinting-track-digest256,base-cryptomining-track-digest256,content-cryptomining-track-digest256,fanboyannoyance-ads-digest256,fanboysocial-ads-digest256,easylist-ads-digest256,easyprivacy-ads-digest256,adguard-ads-digest256,social-tracking-protection-digest256,social-tracking-protection-facebook-digest256,social-tracking-protection-linkedin-digest256,social-tracking-protection-twitter-digest256,social-tracking-protection-youtube-digest256");
 pref("browser.safebrowsing.provider.mozilla.updateURL", "https://shavar.services.mozilla.com/downloads?client=SAFEBROWSING_ID&appver=%MAJOR_VERSION%&pver=2.2");
 pref("browser.safebrowsing.provider.mozilla.gethashURL", "https://shavar.services.mozilla.com/gethash?client=SAFEBROWSING_ID&appver=%MAJOR_VERSION%&pver=2.2");
 // Set to a date in the past to force immediate download in new profiles.
@@ -5318,7 +5177,7 @@ pref("browser.safebrowsing.provider.mozilla.lists.base", "moz-std");
 pref("browser.safebrowsing.provider.mozilla.lists.content", "moz-full");
 
 // The table and global pref for blocking plugin content
-pref("urlclassifier.blockedTable", "test-block-simple,mozplugin-block-digest256");
+pref("urlclassifier.blockedTable", "moztest-block-simple,mozplugin-block-digest256");
 
 // Flash blocking tables
 pref("urlclassifier.flashAllowTable", "allow-flashallow-digest256");
@@ -5542,10 +5401,6 @@ pref("browser.sanitizer.loglevel", "Warn");
 // To disable blocking of auth prompts, set the limit to -1.
 pref("prompts.authentication_dialog_abuse_limit", 2);
 
-// Maximum amount of time in milliseconds consecutive setTimeout()/setInterval()
-// callback are allowed to run before yielding the event loop.
-pref("dom.timeout.max_consecutive_callbacks_ms", 4);
-
 // Payment Request API preferences
 pref("dom.payments.loglevel", "Warn");
 pref("dom.payments.defaults.saveCreditCard", false);
@@ -5563,9 +5418,6 @@ pref("toolkit.telemetry.overrideUpdateChannel", "nightly-asan");
 // on Windows 7.
 pref("layers.mlgpu.enable-on-windows7", true);
 #endif
-
-// Enable lowercased response header name
-pref("dom.xhr.lowercase_header.enabled", true);
 
 // Control whether clients.openWindow() opens windows in the same process
 // that called the API vs following our normal multi-process selection

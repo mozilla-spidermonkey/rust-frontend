@@ -29,6 +29,7 @@
   --theme-toolbar-background-alt: #f5f5f5;
   --theme-toolbar-hover: var(--grey-20);
   --theme-toolbar-hover-active: var(--grey-20);
+  --theme-toolbar-separator: var(--grey-90-a10);
 
   /* Buttons */
   --theme-button-background: rgba(12, 12, 13, 0.05);
@@ -50,6 +51,8 @@
   --theme-icon-color: rgba(12, 12, 13, 0.8);
   --theme-icon-dimmed-color: rgba(135, 135, 137, 0.9);
   --theme-icon-checked-color: var(--blue-60);
+  --theme-icon-error-color: var(--red-60);
+  --theme-icon-warning-color: var(--yellow-65);
 
   /* Text color */
   --theme-comment: var(--grey-50);
@@ -103,6 +106,9 @@
   --theme-toolbarbutton-checked-hover-color: var(--grey-90);
   --theme-toolbarbutton-active-background: var(--grey-90-a20);
   --theme-toolbarbutton-active-color: var(--grey-90);
+
+  /* Element Flash background color */
+  --theme-bg-yellow: #FFF697;
 }
 
 /*
@@ -112,7 +118,7 @@
 :root[platform="mac"].theme-light {
   --theme-popup-background: hsla(0,0%,99%,.975);
   --theme-popup-color: hsl(0,0%,10%);
-  --theme-popup-border-color: hsla(210,4%,10%,.05);
+  --theme-popup-border-color: var(--grey-90-a20);
 }
 
 :root.theme-dark {
@@ -130,6 +136,7 @@
   --theme-toolbar-background-alt: var(--grey-85);
   --theme-toolbar-hover: #232327;
   --theme-toolbar-hover-active: #252526;
+  --theme-toolbar-separator: var(--grey-10-a20);
 
   /* Buttons */
   --theme-button-background: rgba(249, 249, 250, 0.1);
@@ -151,6 +158,8 @@
   --theme-icon-color: rgba(249, 249, 250, 0.7);
   --theme-icon-dimmed-color: rgba(147, 147, 149, 0.9);
   --theme-icon-checked-color: var(--blue-30);
+  --theme-icon-error-color: var(--red-40);
+  --theme-icon-warning-color: var(--yellow-60);
 
   /* Text color */
   --theme-comment: var(--grey-45);
@@ -204,6 +213,9 @@
   --theme-toolbarbutton-checked-hover-color: var(--grey-30);
   --theme-toolbarbutton-active-background: var(--grey-10-a30);
   --theme-toolbarbutton-active-color: var(--grey-30);
+
+  /* Element Flash background color */
+  --theme-bg-yellow: #605913;
 }
 
 :root {
@@ -230,9 +242,13 @@
   /* The photon animation curve */
   --animation-curve: cubic-bezier(.07,.95,0,1);
 
-  /* Firefox Colors CSS Variables v1.0.3
-   * Colors are taken from: https://github.com/FirefoxUX/design-tokens
-   * Some intermediate colors were added (names ending in '5').
+  /*
+   * Photon Colors CSS Variables v3.3.2
+   * - Colors are taken from https://github.com/FirefoxUX/photon-colors/blob/master/photon-colors.css
+   * - We only add Photon color variables that we are actually using; unused
+   *   variables will fail browser/base/content/test/static/browser_parsable_css.js
+   * - We added a few unofficial colors: a few intermediary values (e.g. Blue 45),
+  *    and lighter variants for the dark theme (e.g. Red 20, Red 40).
    */
   --magenta-50: #ff1ad9;
   --magenta-65: #dd00a9;
@@ -252,12 +268,6 @@
   --teal-60: #00c8d7;
   --teal-70: #008ea4;
 
-  --red-20: #ffb3d2;
-  --red-40: #ff3b6b;
-  --red-50: #ff0039;
-  --red-60: #d70022;
-  --red-70: #a4000f;
-
   --green-50: #30e60b;
   --green-60: #12bc00;
   --green-70: #058b00;
@@ -267,6 +277,12 @@
   --yellow-65: #be9b00;
   --yellow-70: #a47f00;
   --yellow-80: #715100;
+
+  --red-20: #ffb3d2;
+  --red-40: #ff3b6b;
+  --red-50: #ff0039;
+  --red-60: #d70022;
+  --red-70: #a4000f;
 
   --grey-10: #f9f9fa;
   --grey-10-a15: rgba(249, 249, 250, 0.15);

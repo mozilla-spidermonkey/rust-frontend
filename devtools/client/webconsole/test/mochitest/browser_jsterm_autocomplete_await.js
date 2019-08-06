@@ -10,22 +10,13 @@
 const TEST_URI = `data:text/html;charset=utf-8,Autocomplete await expression`;
 
 add_task(async function() {
-  // Run test with legacy JsTerm
-  await pushPref("devtools.webconsole.jsterm.codeMirror", false);
-  await performTests();
-  // And then run it with the CodeMirror-powered one.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", true);
-  await performTests();
-});
-
-async function performTests() {
   const hud = await openNewTabAndConsole(TEST_URI);
   const { jsterm } = hud;
   const { autocompletePopup } = jsterm;
 
   info("Check that the await keyword is in the autocomplete");
   await setInputValueForAutocompletion(hud, "aw");
-  checkInputCompletionValue(hud, "  ait", "completeNode has expected value");
+  checkInputCompletionValue(hud, "ait", "completeNode has expected value");
 
   EventUtils.synthesizeKey("KEY_Tab");
   is(getInputValue(hud), "await", "'await' tab completion");
@@ -40,6 +31,8 @@ async function performTests() {
   await onPopUpOpen;
 
   ok(autocompletePopup.isOpen, "popup is open");
-  ok(autocompletePopup.items.some(item => item.label === "Promise"),
-    "popup has expected `Promise` item");
-}
+  ok(
+    autocompletePopup.items.some(item => item.label === "Promise"),
+    "popup has expected `Promise` item"
+  );
+});

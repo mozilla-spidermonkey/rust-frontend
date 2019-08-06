@@ -127,9 +127,9 @@ void nsTableWrapperFrame::AppendFrames(ChildListID aListID,
   MarkNeedsDisplayItemRebuild();
 }
 
-void nsTableWrapperFrame::InsertFrames(ChildListID aListID,
-                                       nsIFrame* aPrevFrame,
-                                       nsFrameList& aFrameList) {
+void nsTableWrapperFrame::InsertFrames(
+    ChildListID aListID, nsIFrame* aPrevFrame,
+    const nsLineList::iterator* aPrevFrameLine, nsFrameList& aFrameList) {
   MOZ_ASSERT(kCaptionList == aListID, "unexpected child list");
   MOZ_ASSERT(aFrameList.IsEmpty() || aFrameList.FirstChild()->IsTableCaption(),
              "inserting non-caption frame into captionList");
@@ -153,7 +153,7 @@ void nsTableWrapperFrame::RemoveFrame(ChildListID aListID,
   if (HasSideCaption()) {
     // The old caption isize had an effect on the inner table isize, so
     // we're going to need to reflow it. Mark it dirty
-    InnerTableFrame()->AddStateBits(NS_FRAME_IS_DIRTY);
+    InnerTableFrame()->MarkSubtreeDirty();
   }
 
   // Remove the frame and destroy it

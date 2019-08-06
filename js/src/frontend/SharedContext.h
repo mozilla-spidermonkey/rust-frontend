@@ -11,6 +11,7 @@
 #include "jstypes.h"
 
 #include "ds/InlineTable.h"
+#include "frontend/FunctionCreationData.h"
 #include "frontend/ParseNode.h"
 #include "vm/BytecodeUtil.h"
 #include "vm/JSFunction.h"
@@ -394,8 +395,13 @@ class FunctionBox : public ObjectBox, public SharedContext {
   bool isSetter_ : 1;
   bool isMethod_ : 1;
 
-  JSFunction::FunctionKind kind_;
+  bool isInterpreted_ : 1;
+  bool isInterpretedLazy_ : 1;
+
+  FunctionFlags::FunctionKind kind_;
   JSAtom* explicitName_;
+
+  uint16_t nargs_;
 
   FunctionBox(JSContext* cx, TraceListNode* traceListHead, JSFunction* fun,
               uint32_t toStringStart, Directives directives, bool extraWarnings,
@@ -431,14 +437,20 @@ class FunctionBox : public ObjectBox, public SharedContext {
                             HasHeritage hasHeritage);
 
   inline bool isLazyFunctionWithoutEnclosingScope() const {
-    return function()->isInterpretedLazy() &&
+    return isInterpretedLazy() &&
            !function()->lazyScript()->hasEnclosingScope();
   }
   void setEnclosingScopeForInnerLazyFunction(Scope* enclosingScope);
   void finish();
 
   JSFunction* function() const { return &object()->as<JSFunction>(); }
-  void clobberFunction(JSFunction* function) { gcThing = function; }
+  
+  void clobberFunction(JSFunction* function) {
+    gcThing = function;
+    // After clobbering, these flags need to be updated
+    setIsInterpreted(function->isInterpreted());
+    setIsInterpretedLazy(function->isInterpretedLazy());
+  }
 
   Scope* compilationEnclosingScope() const override {
     // This method is used to distinguish the outermost SharedContext. If
@@ -450,7 +462,7 @@ class FunctionBox : public ObjectBox, public SharedContext {
     // from the lazy function at the beginning of delazification and should
     // keep pointing the same scope.
     MOZ_ASSERT_IF(
-        function()->isInterpretedLazy() &&
+        isInterpretedLazy() &&
             function()->lazyScript()->hasEnclosingScope(),
         enclosingScope_ == function()->lazyScript()->enclosingScope());
 
@@ -524,9 +536,19 @@ class FunctionBox : public ObjectBox, public SharedContext {
   bool isSetter() const { return isSetter_; }
   bool isMethod() const { return isMethod_; }
 
-  JSFunction::FunctionKind kind() { return kind_; }
+  bool isInterpreted() const { return isInterpreted_; }
+  void setIsInterpreted(bool interpreted) { isInterpreted_ = interpreted; }
+  bool isInterpretedLazy() const { return isInterpretedLazy_; }
+  void setIsInterpretedLazy(bool interpretedLazy) { isInterpretedLazy_ = interpretedLazy; }
 
-  JSAtom* explicitName() const { return function()->explicitName(); }
+  void initLazyScript(LazyScript* script) { 
+    function()->initLazyScript(script);
+    setIsInterpretedLazy(function()->isInterpretedLazy());
+  }
+
+  FunctionFlags::FunctionKind kind() { return kind_; }
+
+  JSAtom* explicitName() const { return explicitName_; }
 
   void setHasExtensibleScope() { hasExtensibleScope_ = true; }
   void setHasThisBinding() { hasThisBinding_ = true; }
@@ -553,6 +575,15 @@ class FunctionBox : public ObjectBox, public SharedContext {
     return !strict() && hasSimpleParameterList();
   }
 
+  bool shouldSuppressRunOnce() const {
+    // These heuristics suppress the run-once optimization if we expect that
+    // script-cloning will have more impact than TI type-precision would gain.
+    //
+    // See also: Bug 864218
+    return explicitName() || argumentsHasLocalBinding() || isGenerator() ||
+           isAsync();
+  }
+
   // Return whether this or an enclosing function is being parsed and
   // validated as asm.js. Note: if asm.js validation fails, this will be false
   // while the function is being reparsed. This flag can be used to disable
@@ -572,6 +603,13 @@ class FunctionBox : public ObjectBox, public SharedContext {
     // the toString ending position with the end of the class definition.
     bufEnd = toStringEnd = end;
   }
+
+  void setArgCount(uint16_t args) { nargs_ = args; }
+
+  size_t nargs() { return nargs_; }
+
+  // Flush the acquired argCount to the associated function.
+  void synchronizeArgCount() { function()->setArgCount(nargs_); }
 
   void trace(JSTracer* trc) override;
 };

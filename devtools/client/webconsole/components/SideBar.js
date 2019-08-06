@@ -3,16 +3,47 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { Component, createElement } = require("devtools/client/shared/vendor/react");
+const {
+  Component,
+  createFactory,
+} = require("devtools/client/shared/vendor/react");
 const { connect } = require("devtools/client/shared/vendor/react-redux");
 
-loader.lazyRequireGetter(this, "dom", "devtools/client/shared/vendor/react-dom-factories");
-loader.lazyRequireGetter(this, "getObjectInspector", "devtools/client/webconsole/utils/object-inspector", true);
-loader.lazyRequireGetter(this, "actions", "devtools/client/webconsole/actions/index");
-loader.lazyRequireGetter(this, "PropTypes", "devtools/client/shared/vendor/react-prop-types");
-loader.lazyRequireGetter(this, "SplitBox", "devtools/client/shared/components/splitter/SplitBox");
-loader.lazyRequireGetter(this, "reps", "devtools/client/shared/components/reps/reps");
-loader.lazyRequireGetter(this, "l10n", "devtools/client/webconsole/utils/messages", true);
+const GridElementWidthResizer = createFactory(
+  require("devtools/client/shared/components/splitter/GridElementWidthResizer")
+);
+loader.lazyRequireGetter(
+  this,
+  "dom",
+  "devtools/client/shared/vendor/react-dom-factories"
+);
+loader.lazyRequireGetter(
+  this,
+  "getObjectInspector",
+  "devtools/client/webconsole/utils/object-inspector",
+  true
+);
+loader.lazyRequireGetter(
+  this,
+  "actions",
+  "devtools/client/webconsole/actions/index"
+);
+loader.lazyRequireGetter(
+  this,
+  "PropTypes",
+  "devtools/client/shared/vendor/react-prop-types"
+);
+loader.lazyRequireGetter(
+  this,
+  "reps",
+  "devtools/client/shared/components/reps/reps"
+);
+loader.lazyRequireGetter(
+  this,
+  "l10n",
+  "devtools/client/webconsole/utils/messages",
+  true
+);
 
 class SideBar extends Component {
   static get propTypes() {
@@ -31,10 +62,7 @@ class SideBar extends Component {
   }
 
   shouldComponentUpdate(nextProps) {
-    const {
-      grip,
-      visible,
-    } = nextProps;
+    const { grip, visible } = nextProps;
 
     return visible !== this.props.visible || grip !== this.props.grip;
   }
@@ -48,11 +76,7 @@ class SideBar extends Component {
       return null;
     }
 
-    const {
-      grip,
-      serviceContainer,
-      onResized,
-    } = this.props;
+    const { grip, serviceContainer } = this.props;
 
     const objectInspector = getObjectInspector(grip, serviceContainer, {
       autoExpandDepth: 1,
@@ -60,32 +84,40 @@ class SideBar extends Component {
       autoFocusRoot: true,
     });
 
-    const endPanel = dom.aside({
-      className: "sidebar-wrapper",
-    },
-      dom.header({
-        className: "devtools-toolbar webconsole-sidebar-toolbar",
-      },
-        dom.button({
-          className: "devtools-button sidebar-close-button",
-          title: l10n.getStr("webconsole.closeSidebarButton.tooltip"),
-          onClick: this.onClickSidebarClose,
-        })
+    return [
+      dom.aside(
+        {
+          className: "sidebar",
+          key: "sidebar",
+          ref: node => {
+            this.node = node;
+          },
+        },
+        dom.header(
+          {
+            className: "devtools-toolbar webconsole-sidebar-toolbar",
+          },
+          dom.button({
+            className: "devtools-button sidebar-close-button",
+            title: l10n.getStr("webconsole.closeSidebarButton.tooltip"),
+            onClick: this.onClickSidebarClose,
+          })
+        ),
+        dom.aside(
+          {
+            className: "sidebar-contents",
+          },
+          objectInspector
+        )
       ),
-      dom.aside({
-        className: "sidebar-contents",
-      }, objectInspector)
-    );
-
-    return createElement(SplitBox, {
-      className: "sidebar",
-      endPanel,
-      endPanelControl: true,
-      initialSize: "200px",
-      minSize: "100px",
-      vert: true,
-      onControlledPanelResized: onResized,
-    });
+      GridElementWidthResizer({
+        key: "resizer",
+        enabled: true,
+        position: "start",
+        className: "sidebar-resizer",
+        getControlledElementNode: () => this.node,
+      }),
+    ];
   }
 }
 

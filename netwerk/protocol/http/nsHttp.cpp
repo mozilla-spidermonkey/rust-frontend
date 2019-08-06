@@ -12,6 +12,8 @@
 #include "PLDHashTable.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/HashFunctions.h"
+#include "mozilla/Preferences.h"
+#include "mozilla/Unused.h"
 #include "nsCRT.h"
 #include "nsHttpRequestHead.h"
 #include "nsHttpResponseHead.h"
@@ -803,6 +805,35 @@ void LogCallingScriptLocation(void* instance) {
 
   LOG(("%p called from script: %s:%u:%u", instance, fileNameString.get(), line,
        col));
+}
+
+static bool sSanitize = true;
+
+static bool InitPreferences() {
+  Preferences::AddBoolVarCache(&sSanitize,
+                               "network.http.sanitize-headers-in-logs", true);
+  return true;
+}
+
+void LogHeaders(const char* lineStart) {
+  // The static bool assignment means that AddBoolVarCache is called just once.
+  static bool once = InitPreferences();
+  Unused << once;
+
+  nsAutoCString buf;
+  char* endOfLine;
+  while ((endOfLine = PL_strstr(lineStart, "\r\n"))) {
+    buf.Assign(lineStart, endOfLine - lineStart);
+    if (sSanitize && (PL_strcasestr(buf.get(), "authorization: ") ||
+                      PL_strcasestr(buf.get(), "proxy-authorization: "))) {
+      char* p = PL_strchr(buf.get(), ' ');
+      while (p && *++p) {
+        *p = '*';
+      }
+    }
+    LOG1(("  %s\n", buf.get()));
+    lineStart = endOfLine + 2;
+  }
 }
 
 }  // namespace net

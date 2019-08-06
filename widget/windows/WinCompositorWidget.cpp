@@ -5,6 +5,7 @@
 
 #include "WinCompositorWidget.h"
 
+#include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/gfx/DeviceManagerDx.h"
 #include "mozilla/gfx/Point.h"
 #include "mozilla/layers/Compositor.h"
@@ -37,9 +38,9 @@ WinCompositorWidget::WinCompositorWidget(
 
   // mNotDeferEndRemoteDrawing is set on the main thread during init,
   // but is only accessed after on the compositor thread.
-  mNotDeferEndRemoteDrawing = StaticPrefs::LayersCompositionFrameRate() == 0 ||
-                              gfxPlatform::IsInLayoutAsapMode() ||
-                              gfxPlatform::ForceSoftwareVsync();
+  mNotDeferEndRemoteDrawing =
+      StaticPrefs::layers_offmainthreadcomposition_frame_rate() == 0 ||
+      gfxPlatform::IsInLayoutAsapMode() || gfxPlatform::ForceSoftwareVsync();
 }
 
 WinCompositorWidget::~WinCompositorWidget() { DestroyCompositorWindow(); }

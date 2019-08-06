@@ -9,7 +9,7 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/HTMLMediaElement.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_media.h"
 
 namespace mozilla {
 
@@ -44,8 +44,6 @@ class HTMLVideoElement final : public HTMLMediaElement {
                               nsAttrValue& aResult) override;
   NS_IMETHOD_(bool) IsAttributeMapped(const nsAtom* aAttribute) const override;
 
-  static void InitStatics();
-
   virtual nsMapRuleToAttributesFunc GetAttributeMappingFunction()
       const override;
 
@@ -66,13 +64,17 @@ class HTMLVideoElement final : public HTMLMediaElement {
 
   // WebIDL
 
-  uint32_t Width() const { return GetIntAttr(nsGkAtoms::width, 0); }
+  uint32_t Width() const {
+    return GetDimensionAttrAsUnsignedInt(nsGkAtoms::width, 0);
+  }
 
   void SetWidth(uint32_t aValue, ErrorResult& aRv) {
     SetUnsignedIntAttr(nsGkAtoms::width, aValue, 0, aRv);
   }
 
-  uint32_t Height() const { return GetIntAttr(nsGkAtoms::height, 0); }
+  uint32_t Height() const {
+    return GetDimensionAttrAsUnsignedInt(nsGkAtoms::height, 0);
+  }
 
   void SetHeight(uint32_t aValue, ErrorResult& aRv) {
     SetUnsignedIntAttr(nsGkAtoms::height, aValue, 0, aRv);

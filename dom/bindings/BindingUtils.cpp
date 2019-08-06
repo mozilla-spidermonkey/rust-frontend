@@ -13,7 +13,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/Unused.h"
 #include "mozilla/UseCounter.h"
 
@@ -730,7 +730,8 @@ static JSObject* CreateInterfaceObject(
     unsigned ctorNargs, const NamedConstructor* namedConstructors,
     JS::Handle<JSObject*> proto, const NativeProperties* properties,
     const NativeProperties* chromeOnlyProperties, const char* name,
-    bool isChrome, bool defineOnGlobal) {
+    bool isChrome, bool defineOnGlobal,
+    const char* const* legacyWindowAliases) {
   JS::Rooted<JSObject*> constructor(cx);
   MOZ_ASSERT(constructorProto);
   MOZ_ASSERT(constructorClass);
@@ -818,6 +819,14 @@ static JSObject* CreateInterfaceObject(
 
   if (defineOnGlobal && !DefineConstructor(cx, global, name, constructor)) {
     return nullptr;
+  }
+
+  if (legacyWindowAliases && NS_IsMainThread()) {
+    for (; *legacyWindowAliases; ++legacyWindowAliases) {
+      if (!DefineConstructor(cx, global, *legacyWindowAliases, constructor)) {
+        return nullptr;
+      }
+    }
   }
 
   if (namedConstructors) {
@@ -950,7 +959,8 @@ void CreateInterfaceObjects(
     unsigned ctorNargs, const NamedConstructor* namedConstructors,
     JS::Heap<JSObject*>* constructorCache, const NativeProperties* properties,
     const NativeProperties* chromeOnlyProperties, const char* name,
-    bool defineOnGlobal, const char* const* unscopableNames, bool isGlobal) {
+    bool defineOnGlobal, const char* const* unscopableNames, bool isGlobal,
+    const char* const* legacyWindowAliases) {
   MOZ_ASSERT(protoClass || constructorClass, "Need at least one class!");
   MOZ_ASSERT(
       !((properties &&
@@ -1002,7 +1012,7 @@ void CreateInterfaceObjects(
     interface = CreateInterfaceObject(
         cx, global, constructorProto, constructorClass, ctorNargs,
         namedConstructors, proto, properties, chromeOnlyProperties, name,
-        isChrome, defineOnGlobal);
+        isChrome, defineOnGlobal, legacyWindowAliases);
     if (!interface) {
       if (protoCache) {
         // If we fail we need to make sure to clear the value of protoCache we
@@ -2563,24 +2573,6 @@ bool GetContentGlobalForJSImplementedObject(JSContext* cx,
   MOZ_ASSERT(NS_SUCCEEDED(rv));
   MOZ_ASSERT(*globalObj);
   return true;
-}
-
-already_AddRefed<nsIGlobalObject> ConstructJSImplementation(
-    const char* aContractId, const GlobalObject& aGlobal,
-    JS::MutableHandle<JSObject*> aObject, ErrorResult& aRv) {
-  // Get the global object to use as a parent and for initialization.
-  nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
-  if (!global) {
-    aRv.Throw(NS_ERROR_FAILURE);
-    return nullptr;
-  }
-
-  ConstructJSImplementation(aContractId, global, aObject, aRv);
-
-  if (aRv.Failed()) {
-    return nullptr;
-  }
-  return global.forget();
 }
 
 void ConstructJSImplementation(const char* aContractId,

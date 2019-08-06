@@ -13,6 +13,7 @@
 #include "mozilla/MouseEvents.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/TouchEvents.h"
@@ -420,6 +421,7 @@ nsWindow::nsWindow() {
 
 #ifdef MOZ_WAYLAND
   mNeedsUpdatingEGLSurface = false;
+  mCompositorInitiallyPaused = false;
 #endif
 
   if (!gGlobalsInitialized) {
@@ -1316,7 +1318,24 @@ void nsWindow::NativeMoveResizeWaylandPopup(GdkPoint* aPosition,
     hints = GdkAnchorHints(hints | GDK_ANCHOR_RESIZE);
   }
 
+  // A workaround for https://gitlab.gnome.org/GNOME/gtk/issues/1986
+  // gdk_window_move_to_rect() does not reposition visible windows.
+  static auto sGtkWidgetIsVisible =
+      (gboolean(*)(GtkWidget*))dlsym(RTLD_DEFAULT, "gtk_widget_is_visible");
+
+  bool isWidgetVisible =
+      (sGtkWidgetIsVisible != nullptr) && sGtkWidgetIsVisible(mShell);
+  if (isWidgetVisible) {
+    HideWaylandWindow();
+  }
+
   sGdkWindowMoveToRect(gdkWindow, &rect, rectAnchor, menuAnchor, hints, 0, 0);
+
+  if (isWidgetVisible) {
+    // We show the popup with the same configuration so no need to call
+    // ConfigureWaylandPopupWindows() before gtk_widget_show().
+    gtk_widget_show(mShell);
+  }
 }
 
 void nsWindow::NativeMove() {
@@ -2089,8 +2108,10 @@ void nsWindow::WaylandEGLSurfaceForceRedraw() {
   if (CompositorBridgeChild* remoteRenderer = GetRemoteRenderer()) {
     MOZ_ASSERT(mCompositorWidgetDelegate);
     if (mCompositorWidgetDelegate) {
+      mCompositorInitiallyPaused = false;
       mNeedsUpdatingEGLSurface = false;
       mCompositorWidgetDelegate->RequestsUpdatingEGLSurface();
+      remoteRenderer->SendResumeAsync();
     }
     remoteRenderer->SendForcePresent();
   }
@@ -3483,12 +3504,6 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
   mBounds = aRect;
   ConstrainSize(&mBounds.width, &mBounds.height);
 
-  // eWindowType_child is not supported on Wayland. Just switch to toplevel
-  // as a workaround.
-  if (!mIsX11Display && mWindowType == eWindowType_child) {
-    mWindowType = eWindowType_toplevel;
-  }
-
   // figure out our parent window
   GtkWidget* parentMozContainer = nullptr;
   GtkContainer* parentGtkContainer = nullptr;
@@ -3520,6 +3535,18 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
     // get the toplevel window just in case someone needs to use it
     // for setting transients or whatever.
     topLevelParent = GTK_WINDOW(gtk_widget_get_toplevel(parentMozContainer));
+  }
+
+  if (!mIsX11Display) {
+    if (mWindowType == eWindowType_child) {
+      // eWindowType_child is not supported on Wayland. Just switch to toplevel
+      // as a workaround.
+      mWindowType = eWindowType_toplevel;
+    } else if (mWindowType == eWindowType_popup && !topLevelParent) {
+      // Workaround for Wayland where the popup windows always need to have
+      // parent window. For example webrtc ui is a popup window without parent.
+      mWindowType = eWindowType_toplevel;
+    }
   }
 
   // ok, create our windows
@@ -3736,6 +3763,7 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
       mContainer = MOZ_CONTAINER(container);
 #ifdef MOZ_WAYLAND
       if (!mIsX11Display && ComputeShouldAccelerate()) {
+        mCompositorInitiallyPaused = true;
         RefPtr<nsWindow> self(this);
         moz_container_set_initial_draw_callback(mContainer, [self]() -> void {
           self->mNeedsUpdatingEGLSurface = true;

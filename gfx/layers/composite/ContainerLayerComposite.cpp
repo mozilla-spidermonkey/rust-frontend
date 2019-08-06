@@ -12,7 +12,8 @@
 #include "gfxEnv.h"                          // for gfxEnv
 #include "mozilla/Assertions.h"              // for MOZ_ASSERT, etc
 #include "mozilla/RefPtr.h"                  // for RefPtr
-#include "mozilla/StaticPrefs.h"             // for StaticPrefs
+#include "mozilla/StaticPrefs_apz.h"
+#include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/UniquePtr.h"               // for UniquePtr
 #include "mozilla/gfx/BaseRect.h"            // for BaseRect
 #include "mozilla/gfx/Matrix.h"              // for Matrix4x4
@@ -432,7 +433,7 @@ void RenderLayers(ContainerT* aContainer, LayerManagerComposite* aManager,
       continue;
     }
 
-    if (StaticPrefs::LayersDrawFPS()) {
+    if (StaticPrefs::layers_acceleration_draw_fps()) {
       for (const auto& metadata : layer->GetAllScrollMetadata()) {
         if (metadata.IsApzForceDisabled()) {
           aManager->DisabledApzWarning();
@@ -473,11 +474,11 @@ void RenderLayers(ContainerT* aContainer, LayerManagerComposite* aManager,
       layerToRender->RenderLayer(clipRect, geometry);
     }
 
-    if (StaticPrefs::UniformityInfo()) {
+    if (StaticPrefs::layers_uniformity_info_AtStartup()) {
       PrintUniformityInfo(layer);
     }
 
-    if (StaticPrefs::DrawLayerInfo()) {
+    if (StaticPrefs::layers_draw_layer_info()) {
       DrawLayerInfo(preparedData.mClipRect, aManager, layer);
     }
 
@@ -650,7 +651,7 @@ void ContainerRender(ContainerT* aContainer, LayerManagerComposite* aManager,
   // APZCs attached to it has a nonempty async transform, then that transform is
   // not applied to any visible content. Display a warning box (conditioned on
   // the FPS display being enabled).
-  if (StaticPrefs::LayersDrawFPS() &&
+  if (StaticPrefs::layers_acceleration_draw_fps() &&
       aContainer->IsScrollableWithoutContent()) {
     RefPtr<APZSampler> sampler =
         aManager->GetCompositor()->GetCompositorBridgeParent()->GetAPZSampler();

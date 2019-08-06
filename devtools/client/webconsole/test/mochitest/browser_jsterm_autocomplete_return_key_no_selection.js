@@ -21,20 +21,8 @@ const {
 } = require("devtools/client/webconsole/selectors/history");
 
 add_task(async function() {
-  // Run test with legacy JsTerm
-  await pushPref("devtools.webconsole.jsterm.codeMirror", false);
-  await performTests();
-  // And then run it with the CodeMirror-powered one.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", true);
-  await performTests();
-});
-
-async function performTests() {
   const hud = await openNewTabAndConsole(TEST_URI);
-  const {
-    jsterm,
-    ui,
-  } = hud;
+  const { jsterm, ui } = hud;
 
   const { autocompletePopup: popup } = jsterm;
 
@@ -56,14 +44,25 @@ async function performTests() {
   await onPopUpClose;
 
   ok(!popup.isOpen, "popup is not open after KEY_Enter");
-  is(getInputValue(hud), "window.testBugA",
-    "input was completed with the first item of the popup");
+  is(
+    getInputValue(hud),
+    "window.testBugA",
+    "input was completed with the first item of the popup"
+  );
   ok(!getInputCompletionValue(hud), "completeNode is empty");
 
+  const onMessage = waitForMessage(hud, "hello world");
   EventUtils.synthesizeKey("KEY_Enter");
   is(getInputValue(hud), "", "input is empty after KEY_Enter");
 
   const state = ui.wrapper.getStore().getState();
   const entries = getHistoryEntries(state);
-  is(entries[entries.length - 1], "window.testBugA", "jsterm history is correct");
-}
+  is(
+    entries[entries.length - 1],
+    "window.testBugA",
+    "jsterm history is correct"
+  );
+
+  info("Wait for the execution value to appear");
+  await onMessage;
+});

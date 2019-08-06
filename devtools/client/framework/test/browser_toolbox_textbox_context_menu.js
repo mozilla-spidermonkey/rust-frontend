@@ -17,6 +17,15 @@ registerCleanupFunction(() => {
 });
 
 add_task(async function checkMenuEntryStates() {
+  // We have to disable CSP for this test otherwise the CSP of
+  // about:devtools-toolbox will block the data: url.
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["security.csp.enable", false],
+      ["csp.skip_about_page_has_csp_assert", true],
+    ],
+  });
+
   info("Checking the state of edit menuitems with an empty clipboard");
   const toolbox = await openNewTabAndToolbox(URL, "inspector");
 
@@ -60,7 +69,18 @@ add_task(async function checkMenuEntryStates() {
 });
 
 add_task(async function automaticallyBindTexbox() {
-  info("Registering a tool with an input field and making sure the context menu works");
+  // We have to disable CSP for this test otherwise the CSP of
+  // about:devtools-toolbox will block the data: url.
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["security.csp.enable", false],
+      ["csp.skip_about_page_has_csp_assert", true],
+    ],
+  });
+
+  info(
+    "Registering a tool with an input field and making sure the context menu works"
+  );
   gDevTools.registerTool({
     id: textboxToolId,
     isTargetSupported: () => true,
@@ -88,9 +108,13 @@ async function checkNonTextInput(input, toolbox) {
   let textboxContextMenu = toolbox.getTextBoxContextMenu();
   ok(!textboxContextMenu, "The menu is closed");
 
-  info("Simulating context click on the non text input and expecting no menu to open");
+  info(
+    "Simulating context click on the non text input and expecting no menu to open"
+  );
   const eventBubbledUp = new Promise(resolve => {
-    input.ownerDocument.addEventListener("contextmenu", resolve, { once: true });
+    input.ownerDocument.addEventListener("contextmenu", resolve, {
+      once: true,
+    });
   });
   synthesizeContextMenuEvent(input);
   info("Waiting for event");
@@ -104,7 +128,9 @@ async function checkTextBox(textBox, toolbox) {
   let textboxContextMenu = toolbox.getTextBoxContextMenu();
   ok(!textboxContextMenu, "The menu is closed");
 
-  info("Simulating context click on the textbox and expecting the menu to open");
+  info(
+    "Simulating context click on the textbox and expecting the menu to open"
+  );
   const onContextMenu = toolbox.once("menu-open");
   synthesizeContextMenuEvent(textBox);
   await onContextMenu;

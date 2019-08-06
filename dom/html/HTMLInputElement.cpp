@@ -17,7 +17,7 @@
 #include "mozilla/dom/GetFilesHelper.h"
 #include "mozilla/dom/WheelEventBinding.h"
 #include "mozilla/PresShell.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "nsAttrValueInlines.h"
 #include "nsCRTGlue.h"
 #include "nsQueryObject.h"
@@ -194,6 +194,14 @@ static const nsAttrValue::EnumTable kInputInputmodeTable[] = {
 // Default inputmode value is "auto".
 static const nsAttrValue::EnumTable* kInputDefaultInputmode =
     &kInputInputmodeTable[0];
+
+static const nsAttrValue::EnumTable kCaptureTable[] = {
+    {"user", static_cast<int16_t>(nsIFilePicker::captureUser)},
+    {"environment", static_cast<int16_t>(nsIFilePicker::captureEnv)},
+    {"", static_cast<int16_t>(nsIFilePicker::captureDefault)},
+    {nullptr, static_cast<int16_t>(nsIFilePicker::captureNone)}};
+
+static const nsAttrValue::EnumTable* kCaptureDefault = &kCaptureTable[2];
 
 const Decimal HTMLInputElement::kStepScaleFactorDate = Decimal(86400000);
 const Decimal HTMLInputElement::kStepScaleFactorNumberRange = Decimal(1);
@@ -725,15 +733,15 @@ nsresult HTMLInputElement::InitFilePicker(FilePickerType aType) {
   nsAutoString title;
   nsAutoString okButtonLabel;
   if (aType == FILE_PICKER_DIRECTORY) {
-    nsContentUtils::GetLocalizedString(nsContentUtils::eFORMS_PROPERTIES,
-                                       "DirectoryUpload", title);
+    nsContentUtils::GetLocalizedString(
+        nsContentUtils::eFORMS_PROPERTIES_MAYBESPOOF, "DirectoryUpload", title);
 
-    nsContentUtils::GetLocalizedString(nsContentUtils::eFORMS_PROPERTIES,
-                                       "DirectoryPickerOkButtonLabel",
-                                       okButtonLabel);
+    nsContentUtils::GetLocalizedString(
+        nsContentUtils::eFORMS_PROPERTIES_MAYBESPOOF,
+        "DirectoryPickerOkButtonLabel", okButtonLabel);
   } else {
-    nsContentUtils::GetLocalizedString(nsContentUtils::eFORMS_PROPERTIES,
-                                       "FileUpload", title);
+    nsContentUtils::GetLocalizedString(
+        nsContentUtils::eFORMS_PROPERTIES_MAYBESPOOF, "FileUpload", title);
   }
 
   nsCOMPtr<nsIFilePicker> filePicker =
@@ -762,6 +770,14 @@ nsresult HTMLInputElement::InitFilePicker(FilePickerType aType) {
   if (HasAttr(kNameSpaceID_None, nsGkAtoms::accept) &&
       aType != FILE_PICKER_DIRECTORY) {
     SetFilePickerFiltersFromAccept(filePicker);
+
+    if (StaticPrefs::dom_capture_enabled()) {
+      const nsAttrValue* captureVal = GetParsedAttr(nsGkAtoms::capture,
+                                                    kNameSpaceID_None);
+      if (captureVal) {
+        filePicker->SetCapture(captureVal->GetEnumValue());
+      }
+    }
   } else {
     filePicker->AppendFilters(nsIFilePicker::filterAll);
   }
@@ -939,7 +955,7 @@ void HTMLInputElement::Shutdown() {
 HTMLInputElement::HTMLInputElement(
     already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo,
     FromParser aFromParser, FromClone aFromClone)
-    : nsGenericHTMLFormElementWithState(std::move(aNodeInfo),
+    : nsGenericHTMLFormElementWithState(std::move(aNodeInfo), aFromParser,
                                         kInputDefaultType->value),
       mAutocompleteAttrState(nsContentUtils::eAutocompleteAttrState_Unknown),
       mAutocompleteInfoState(nsContentUtils::eAutocompleteAttrState_Unknown),
@@ -1357,6 +1373,10 @@ void HTMLInputElement::GetAutocompleteInfo(Nullable<AutocompleteInfo>& aInfo) {
   const nsAttrValue* attributeVal = GetParsedAttr(nsGkAtoms::autocomplete);
   mAutocompleteInfoState = nsContentUtils::SerializeAutocompleteAttribute(
       attributeVal, aInfo.SetValue(), mAutocompleteInfoState, true);
+}
+
+void HTMLInputElement::GetCapture(nsAString& aValue) {
+  GetEnumAttr(nsGkAtoms::capture, kCaptureDefault->tag, aValue);
 }
 
 void HTMLInputElement::GetFormEnctype(nsAString& aValue) {
@@ -1927,12 +1947,6 @@ bool HTMLInputElement::IsDateTimeInputType(uint8_t aType) {
          aType == NS_FORM_INPUT_DATETIME_LOCAL;
 }
 
-void HTMLInputElement::FlushFrames() {
-  if (GetComposedDoc()) {
-    GetComposedDoc()->FlushPendingNotifications(FlushType::Frames);
-  }
-}
-
 void HTMLInputElement::MozGetFileNameArray(nsTArray<nsString>& aArray,
                                            ErrorResult& aRv) {
   if (NS_WARN_IF(mType != NS_FORM_INPUT_FILE)) {
@@ -2339,21 +2353,24 @@ void HTMLInputElement::GetDisplayFileName(nsAString& aValue) const {
     if ((StaticPrefs::dom_input_dirpicker() && Allowdirs()) ||
         (StaticPrefs::dom_webkitBlink_dirPicker_enabled() &&
          HasAttr(kNameSpaceID_None, nsGkAtoms::webkitdirectory))) {
-      nsContentUtils::GetLocalizedString(nsContentUtils::eFORMS_PROPERTIES,
-                                         "NoDirSelected", value);
+      nsContentUtils::GetLocalizedString(
+          nsContentUtils::eFORMS_PROPERTIES_MAYBESPOOF, "NoDirSelected", value);
     } else if (HasAttr(kNameSpaceID_None, nsGkAtoms::multiple)) {
-      nsContentUtils::GetLocalizedString(nsContentUtils::eFORMS_PROPERTIES,
-                                         "NoFilesSelected", value);
+      nsContentUtils::GetLocalizedString(
+          nsContentUtils::eFORMS_PROPERTIES_MAYBESPOOF, "NoFilesSelected",
+          value);
     } else {
-      nsContentUtils::GetLocalizedString(nsContentUtils::eFORMS_PROPERTIES,
-                                         "NoFileSelected", value);
+      nsContentUtils::GetLocalizedString(
+          nsContentUtils::eFORMS_PROPERTIES_MAYBESPOOF, "NoFileSelected",
+          value);
     }
   } else {
     nsString count;
     count.AppendInt(int(mFileData->mFilesOrDirectories.Length()));
 
     nsContentUtils::FormatLocalizedString(
-        value, nsContentUtils::eFORMS_PROPERTIES, "XFilesSelected", count);
+        value, nsContentUtils::eFORMS_PROPERTIES_MAYBESPOOF, "XFilesSelected",
+        count);
   }
 
   aValue = value;
@@ -5185,10 +5202,10 @@ bool HTMLInputElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
       return true;
     }
     if (aAttribute == nsGkAtoms::width) {
-      return aResult.ParseSpecialIntValue(aValue);
+      return aResult.ParseHTMLDimension(aValue);
     }
     if (aAttribute == nsGkAtoms::height) {
-      return aResult.ParseSpecialIntValue(aValue);
+      return aResult.ParseHTMLDimension(aValue);
     }
     if (aAttribute == nsGkAtoms::maxlength) {
       return aResult.ParseNonNegativeIntValue(aValue);
@@ -5198,9 +5215,6 @@ bool HTMLInputElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
     }
     if (aAttribute == nsGkAtoms::size) {
       return aResult.ParsePositiveIntValue(aValue);
-    }
-    if (aAttribute == nsGkAtoms::border) {
-      return aResult.ParseIntWithBounds(aValue, 0);
     }
     if (aAttribute == nsGkAtoms::align) {
       return ParseAlignValue(aValue, aResult);
@@ -5217,6 +5231,9 @@ bool HTMLInputElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
     }
     if (aAttribute == nsGkAtoms::inputmode) {
       return aResult.ParseEnumValue(aValue, kInputInputmodeTable, false);
+    }
+    if (aAttribute == nsGkAtoms::capture) {
+      return aResult.ParseEnumValue(aValue, kCaptureTable, false, kCaptureDefault);
     }
     if (ParseImageAttribute(aAttribute, aValue, aResult)) {
       // We have to call |ParseImageAttribute| unconditionally since we
@@ -5785,8 +5802,8 @@ HTMLInputElement::SubmitNamesValues(HTMLFormSubmission* aFormSubmission) {
       !HasAttr(kNameSpaceID_None, nsGkAtoms::value)) {
     // Get our default value, which is the same as our default label
     nsAutoString defaultValue;
-    nsContentUtils::GetLocalizedString(nsContentUtils::eFORMS_PROPERTIES,
-                                       "Submit", defaultValue);
+    nsContentUtils::GetLocalizedString(
+        nsContentUtils::eFORMS_PROPERTIES_MAYBESPOOF, "Submit", defaultValue);
     value = defaultValue;
   }
 
@@ -5894,9 +5911,11 @@ void HTMLInputElement::DoneCreatingElement() {
   // Restore state as needed.  Note that disabled state applies to all control
   // types.
   //
-  bool restoredCheckedState = !mInhibitRestoration &&
-                              NS_SUCCEEDED(GenerateStateKey()) &&
-                              RestoreFormControlState();
+  bool restoredCheckedState = false;
+  if (!mInhibitRestoration) {
+    GenerateStateKey();
+    restoredCheckedState = RestoreFormControlState();
+  }
 
   //
   // If restore does not occur, we initialize .checked using the CHECKED

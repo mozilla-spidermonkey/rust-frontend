@@ -19,7 +19,8 @@
 #include "mozilla/layers/CompositorOptions.h"
 #include "mozilla/Range.h"
 #include "mozilla/ScopeExit.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_gfx.h"
+#include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/widget/CompositorWidget.h"
 #include "mozilla/widget/GtkCompositorWidget.h"
 #include "mozilla/Unused.h"
@@ -185,7 +186,7 @@ bool GLXLibrary::EnsureInitialized() {
 
   if (HasExtension(extensionsStr, "GLX_EXT_texture_from_pixmap") &&
       fnLoadSymbols(symbols_texturefrompixmap)) {
-    mUseTextureFromPixmap = StaticPrefs::UseGLXTextureFromPixmap();
+    mUseTextureFromPixmap = StaticPrefs::gfx_use_glx_texture_from_pixmap();
   } else {
     mUseTextureFromPixmap = false;
     NS_WARNING("Texture from pixmap disabled");
@@ -597,7 +598,7 @@ bool GLContextGLX::MakeCurrentImpl() const {
     // Many GLX implementations default to blocking until the next
     // VBlank when calling glXSwapBuffers. We want to run unthrottled
     // in ASAP mode. See bug 1280744.
-    const bool isASAP = (StaticPrefs::LayoutFrameRate() == 0);
+    const bool isASAP = (StaticPrefs::layout_frame_rate() == 0);
     mGLX->fSwapInterval(mDisplay, mDrawable, isASAP ? 0 : 1);
   }
   return succeeded;

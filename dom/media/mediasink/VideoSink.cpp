@@ -20,7 +20,8 @@
 #include "VideoUtils.h"
 
 #include "mozilla/IntegerPrintfMacros.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_browser.h"
+#include "mozilla/StaticPrefs_media.h"
 
 namespace mozilla {
 
@@ -84,6 +85,7 @@ static void SetImageToGreenPixel(PlanarYCbCrImage* aImage) {
   data.mCrChannel = greenPixel + 2;
   data.mYStride = data.mCbCrStride = 1;
   data.mPicSize = data.mYSize = data.mCbCrSize = gfx::IntSize(1, 1);
+  data.mYUVColorSpace = gfx::YUVColorSpace::BT601;
   aImage->CopyData(data);
 }
 
@@ -104,7 +106,7 @@ VideoSink::VideoSink(AbstractThread* aThread, MediaSink* aAudioSink,
       mHasVideo(false),
       mUpdateScheduler(aThread),
       mVideoQueueSendToCompositorSize(aVQueueSentToCompositerSize),
-      mMinVideoQueueSize(StaticPrefs::MediaRuinAvSyncEnabled() ? 1 : 0)
+      mMinVideoQueueSize(StaticPrefs::media_ruin_av_sync_enabled() ? 1 : 0)
 #ifdef XP_WIN
       ,
       mHiResTimersRequested(false)

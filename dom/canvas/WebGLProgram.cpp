@@ -579,28 +579,36 @@ webgl::LinkedProgramInfo::GetDrawFetchLimits() const {
   if (found) return found;
 
   std::vector<const CacheInvalidator*> cacheDeps;
+  cacheDeps.reserve(2 + this->attribs.size());
   cacheDeps.push_back(vao.get());
   cacheDeps.push_back(&webgl->mGenericVertexAttribTypeInvalidator);
 
   {
     // We have to ensure that every enabled attrib array (not just the active
     // ones) has a non-null buffer.
-    uint32_t i = 0;
+    bool err = false;
     for (const auto& cur : vao->mAttribs) {
-      if (cur.mEnabled && !cur.mBuf) {
-        webgl->ErrorInvalidOperation(
-            "Vertex attrib array %u is enabled but"
-            " has no buffer bound.",
-            i);
-        return nullptr;
+      err |= (cur.mEnabled && !cur.mBuf);
+    }
+    if (MOZ_UNLIKELY(err)) {
+      uint32_t i = 0;
+      for (const auto& cur : vao->mAttribs) {
+        if (cur.mEnabled && !cur.mBuf) {
+          webgl->ErrorInvalidOperation(
+              "Vertex attrib array %u is enabled but"
+              " has no buffer bound.",
+              i);
+          return nullptr;
+        }
+        i++;
       }
-      i++;
     }
   }
 
   bool hasActiveAttrib = false;
   bool hasActiveDivisor0 = false;
   webgl::CachedDrawFetchLimits fetchLimits = {UINT64_MAX, UINT64_MAX};
+  fetchLimits.usedBuffers.reserve(this->attribs.size());
 
   for (const auto& progAttrib : this->attribs) {
     const auto& loc = progAttrib.mLoc;
@@ -613,13 +621,9 @@ webgl::LinkedProgramInfo::GetDrawFetchLimits() const {
     webgl::AttribBaseType attribDataBaseType;
     if (attribData.mEnabled) {
       MOZ_ASSERT(attribData.mBuf);
-      if (attribData.mBuf->IsBoundForTF()) {
-        webgl->ErrorInvalidOperation(
-            "Vertex attrib %u's buffer is bound for"
-            " transform feedback.",
-            loc);
-        return nullptr;
-      }
+      fetchLimits.usedBuffers.push_back(
+          {attribData.mBuf.get(), static_cast<uint32_t>(loc)});
+
       cacheDeps.push_back(&attribData.mBuf->mFetchInvalidator);
 
       attribDataBaseType = attribData.BaseType();

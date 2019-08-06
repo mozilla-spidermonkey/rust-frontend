@@ -255,7 +255,7 @@
 
 /* Ensure diacritics and other edge-of-font-box glyphs do not get clipped,
  * even in non-Latin scripts. */
-html|input.urlbar-input {
+#urlbar-input {
   line-height: 1.745em;
 }
 
@@ -267,7 +267,8 @@ html|input.urlbar-input {
 
 %include ../shared/identity-block/identity-block.inc.css
 
-#identity-box:not(:active):-moz-focusring {
+#identity-box:not(:active):-moz-focusring,
+#tracking-protection-icon-container:not(:active):-moz-focusring {
   border-inline-end-style: none;
 }
 
@@ -282,27 +283,6 @@ html|input.urlbar-input {
   100% {
     transform: scale(1.0);
   }
-}
-
-#urlbar-search-footer {
-  border-top: 1px solid var(--panel-separator-color);
-  background-color: var(--arrowpanel-dimmed);
-}
-
-#urlbar-search-settings {
-  -moz-appearance: none;
-  -moz-user-focus: ignore;
-  color: GrayText;
-  margin: 0;
-  padding: 8px 20px;
-}
-
-#urlbar-search-settings:hover {
-  background-color: var(--arrowpanel-dimmed);
-}
-
-#urlbar-search-settings:hover:active {
-  background-color: var(--arrowpanel-dimmed-further);
 }
 
 #search-container {
@@ -324,8 +304,6 @@ html|input.urlbar-input {
   list-style-image: url("chrome://browser/skin/share.svg");
 }
 
-%include ../shared/urlbarSearchSuggestionsNotification.inc.css
-
 /* ----- AUTOCOMPLETE ----- */
 
 %include ../shared/autocomplete.inc.css
@@ -336,34 +314,12 @@ html|input.urlbar-input {
   --urlbar-popup-action-color: hsl(178, 100%, 28%);
 }
 
-/* Remove our custom border since we already get a native one that we can't
- * seem to override. */
-#urlbar-results {
-  border-style: none;
-}
-
-/* Give an extra margin top to align the top of the awesomebar with the
- * bottom of the nav bar, OSX calculates the panel position with an missing
- * 1px - https://bugzilla.mozilla.org/show_bug.cgi?id=1406353
- */
-#PopupAutoCompleteRichResult {
-  margin-top: 1px;
-}
-
 #PopupAutoComplete > richlistbox > richlistitem[originaltype~="datalist-first"] {
   border-top: 1px solid #C7C7C7;
 }
 
-.ac-title,
 #urlbarView-results {
   font-size: 14px;
-}
-
-.ac-separator,
-.ac-url,
-.ac-action,
-.ac-tags {
-  font-size: 12px;
 }
 
 #BMB_bookmarksPopup[side="top"],
@@ -889,11 +845,6 @@ menulist.translate-infobar-element > .menulist-dropmarker {
 #context-navigation > .menuitem-iconic {
   padding-left: 0;
   padding-right: 0;
-}
-
-.browser-extension-panel > .panel-arrowcontainer > .panel-arrowcontent {
-  padding: 0;
-  overflow: hidden;
 }
 
 .cui-widget-panelview[id^=PanelUI-webext-] {

@@ -8,15 +8,11 @@
 
 "use strict";
 
-const TEST_URI = "http://example.com/browser/devtools/client/webconsole/" +
-                 "test/mochitest/test-console-iframes.html";
+const TEST_URI =
+  "http://example.com/browser/devtools/client/webconsole/" +
+  "test/mochitest/test-console-iframes.html";
 
-const expectedMessages = [
-  "main file",
-  "blah",
-  "iframe 2",
-  "iframe 3",
-];
+const expectedMessages = ["main file", "blah", "iframe 2", "iframe 3"];
 
 const expectedDupedMessage = "iframe 1";
 
@@ -33,7 +29,7 @@ add_task(async function() {
   await closeConsole();
   info("web console closed");
 
-  hud = await HUDService.toggleBrowserConsole();
+  hud = await BrowserConsoleManager.toggleBrowserConsole();
   await testBrowserConsole(hud);
   await closeConsole();
 });

@@ -4,12 +4,20 @@
 
 "use strict";
 
-const {KeyCodes} = require("devtools/client/shared/keycodes");
-const {flashElementOn, flashElementOff} =
-      require("devtools/client/inspector/markup/utils");
+const { KeyCodes } = require("devtools/client/shared/keycodes");
+const {
+  flashElementOn,
+  flashElementOff,
+} = require("devtools/client/inspector/markup/utils");
+
+loader.lazyRequireGetter(
+  this,
+  "wrapMoveFocus",
+  "devtools/client/shared/focus",
+  true
+);
 
 const DRAG_DROP_MIN_INITIAL_DISTANCE = 10;
-
 const TYPES = {
   TEXT_CONTAINER: "textcontainer",
   ELEMENT_CONTAINER: "elementcontainer",
@@ -27,7 +35,7 @@ const TYPES = {
  *    MarkupTextContainer
  *    MarkupElementContainer
  */
-function MarkupContainer() { }
+function MarkupContainer() {}
 
 /**
  * Unique identifier used to set markup container node id.
@@ -81,7 +89,10 @@ MarkupContainer.prototype = {
     this.updateIsDisplayed();
 
     if (node.isShadowRoot) {
-      this.markup.telemetry.scalarSet("devtools.shadowdom.shadow_root_displayed", true);
+      this.markup.telemetry.scalarSet(
+        "devtools.shadowdom.shadow_root_displayed",
+        true
+      );
     }
   },
 
@@ -267,8 +278,10 @@ MarkupContainer.prototype = {
    * group from the accessibility point of view.
    */
   setChildrenRole: function() {
-    this.children.setAttribute("role",
-      this.hasChildren ? "group" : "presentation");
+    this.children.setAttribute(
+      "role",
+      this.hasChildren ? "group" : "presentation"
+    );
   },
 
   /**
@@ -299,8 +312,9 @@ MarkupContainer.prototype = {
       return null;
     }
 
-    return [...this.children.children].filter(node => node.container)
-                                      .map(node => node.container);
+    return [...this.children.children]
+      .filter(node => node.container)
+      .map(node => node.container);
   },
 
   /**
@@ -343,7 +357,10 @@ MarkupContainer.prototype = {
     }
 
     if (this.node.isShadowRoot) {
-      this.markup.telemetry.scalarSet("devtools.shadowdom.shadow_root_expanded", true);
+      this.markup.telemetry.scalarSet(
+        "devtools.shadowdom.shadow_root_expanded",
+        true
+      );
     }
   },
 
@@ -445,46 +462,24 @@ MarkupContainer.prototype = {
   isDraggable: function() {
     const tagName = this.node.tagName && this.node.tagName.toLowerCase();
 
-    return !this.node.isPseudoElement &&
-           !this.node.isAnonymous &&
-           !this.node.isDocumentElement &&
-           tagName !== "body" &&
-           tagName !== "head" &&
-           this.win.getSelection().isCollapsed &&
-           this.node.parentNode() &&
-           this.node.parentNode().tagName !== null;
+    return (
+      !this.node.isPseudoElement &&
+      !this.node.isAnonymous &&
+      !this.node.isDocumentElement &&
+      tagName !== "body" &&
+      tagName !== "head" &&
+      this.win.getSelection().isCollapsed &&
+      this.node.parentNode() &&
+      this.node.parentNode().tagName !== null
+    );
   },
 
   isSlotted: function() {
     return false;
   },
 
-  /**
-   * Move keyboard focus to a next/previous focusable element inside container
-   * that is not part of its children (only if current focus is on first or last
-   * element).
-   *
-   * @param  {DOMNode} current  currently focused element
-   * @param  {Boolean} back     direction
-   * @return {DOMNode}          newly focused element if any
-   */
-  _wrapMoveFocus: function(current, back) {
-    const elms = this.focusableElms;
-    let next;
-    if (back) {
-      if (elms.indexOf(current) === 0) {
-        next = elms[elms.length - 1];
-        next.focus();
-      }
-    } else if (elms.indexOf(current) === elms.length - 1) {
-      next = elms[0];
-      next.focus();
-    }
-    return next;
-  },
-
   _onKeyDown: function(event) {
-    const {target, keyCode, shiftKey} = event;
+    const { target, keyCode, shiftKey } = event;
     const isInput = this.markup._isInputOrTextarea(target);
 
     // Ignore all keystrokes that originated in editors except for when 'Tab' is
@@ -498,7 +493,11 @@ MarkupContainer.prototype = {
         // Only handle 'Tab' if tabbable element is on the edge (first or last).
         if (isInput) {
           // Corresponding tabbable element is editor's next sibling.
-          const next = this._wrapMoveFocus(target.nextSibling, shiftKey);
+          const next = wrapMoveFocus(
+            this.focusableElms,
+            target.nextSibling,
+            shiftKey
+          );
           if (next) {
             event.preventDefault();
             // Keep the editing state if possible.
@@ -509,7 +508,7 @@ MarkupContainer.prototype = {
             }
           }
         } else {
-          const next = this._wrapMoveFocus(target, shiftKey);
+          const next = wrapMoveFocus(this.focusableElms, target, shiftKey);
           if (next) {
             event.preventDefault();
           }
@@ -531,7 +530,7 @@ MarkupContainer.prototype = {
   },
 
   _onMouseDown: function(event) {
-    const {target, button, metaKey, ctrlKey} = event;
+    const { target, button, metaKey, ctrlKey } = event;
     const isLeftClick = button === 0;
     const isMiddleClick = button === 1;
     const isMetaClick = isLeftClick && (metaKey || ctrlKey);
@@ -593,8 +592,11 @@ MarkupContainer.prototype = {
         return;
       }
 
-      await this.markup.walker.insertBefore(this.node, dropTargetNodes.parent,
-                                            dropTargetNodes.nextSibling);
+      await this.markup.walker.insertBefore(
+        this.node,
+        dropTargetNodes.parent,
+        dropTargetNodes.nextSibling
+      );
       this.markup.emit("drop-completed");
     }
   },
@@ -613,9 +615,9 @@ MarkupContainer.prototype = {
 
       // If this is the last child, use the closing <div.tag-line> of parent as
       // indicator.
-      const position = this.elt.nextElementSibling ||
-                     this.markup.getContainer(this.node.parentNode())
-                                .closeTagLine;
+      const position =
+        this.elt.nextElementSibling ||
+        this.markup.getContainer(this.node.parentNode()).closeTagLine;
       this.markup.indicateDragTarget(position);
     }
 
@@ -654,13 +656,19 @@ MarkupContainer.prototype = {
    */
   flashMutation: function() {
     if (!this.selected) {
-      flashElementOn(this.tagState, { foregroundElt: this.editor.elt });
+      flashElementOn(this.tagState, {
+        foregroundElt: this.editor.elt,
+        backgroundClass: "theme-bg-yellow-contrast",
+      });
       if (this._flashMutationTimer) {
         clearTimeout(this._flashMutationTimer);
         this._flashMutationTimer = null;
       }
       this._flashMutationTimer = setTimeout(() => {
-        flashElementOff(this.tagState, { foregroundElt: this.editor.elt });
+        flashElementOff(this.tagState, {
+          foregroundElt: this.editor.elt,
+          backgroundClass: "theme-bg-yellow-contrast",
+        });
       }, this.markup.CONTAINER_FLASHING_DURATION);
     }
   },
@@ -679,12 +687,16 @@ MarkupContainer.prototype = {
         this.tagState.classList.add("tag-hover");
       }
       if (this.closeTagLine) {
-        this.closeTagLine.querySelector(".tag-state").classList.add("tag-hover");
+        this.closeTagLine
+          .querySelector(".tag-state")
+          .classList.add("tag-hover");
       }
     } else {
       this.tagState.classList.remove("tag-hover");
       if (this.closeTagLine) {
-        this.closeTagLine.querySelector(".tag-state").classList.remove("tag-hover");
+        this.closeTagLine
+          .querySelector(".tag-state")
+          .classList.remove("tag-hover");
       }
     }
   },
@@ -775,7 +787,11 @@ MarkupContainer.prototype = {
     this.markup.navigate(this);
 
     if (this.hasChildren) {
-      this.markup.setNodeExpanded(this.node, !this.expanded, applyToDescendants);
+      this.markup.setNodeExpanded(
+        this.node,
+        !this.expanded,
+        applyToDescendants
+      );
     }
   },
 

@@ -234,7 +234,7 @@ nsresult nsCoreUtils::ScrollSubstringTo(nsIFrame* aFrame, nsRange* aRange,
       selCon->GetSelection(nsISelectionController::SELECTION_ACCESSIBILITY);
 
   selection->RemoveAllRanges(IgnoreErrors());
-  selection->AddRange(*aRange, IgnoreErrors());
+  selection->AddRangeAndSelectFramesAndNotifyListeners(*aRange, IgnoreErrors());
 
   selection->ScrollIntoView(nsISelectionController::SELECTION_ANCHOR_REGION,
                             aVertical, aHorizontal,
@@ -342,7 +342,7 @@ bool nsCoreUtils::IsRootDocument(Document* aDocument) {
   NS_ASSERTION(docShellTreeItem, "No document shell for document!");
 
   nsCOMPtr<nsIDocShellTreeItem> parentTreeItem;
-  docShellTreeItem->GetParent(getter_AddRefs(parentTreeItem));
+  docShellTreeItem->GetInProcessParent(getter_AddRefs(parentTreeItem));
 
   return !parentTreeItem;
 }
@@ -358,7 +358,7 @@ bool nsCoreUtils::IsTabDocument(Document* aDocumentNode) {
   nsCOMPtr<nsIDocShellTreeItem> treeItem(aDocumentNode->GetDocShell());
 
   nsCOMPtr<nsIDocShellTreeItem> parentTreeItem;
-  treeItem->GetParent(getter_AddRefs(parentTreeItem));
+  treeItem->GetInProcessParent(getter_AddRefs(parentTreeItem));
 
   // Tab document running in own process doesn't have parent.
   if (XRE_IsContentProcess()) return !parentTreeItem;
@@ -544,4 +544,9 @@ void nsCoreUtils::DispatchAccEvent(RefPtr<nsIAccessibleEvent> event) {
   NS_ENSURE_TRUE_VOID(obsService);
 
   obsService->NotifyObservers(event, NS_ACCESSIBLE_EVENT_TOPIC, nullptr);
+}
+
+bool nsCoreUtils::IsDisplayContents(nsIContent* aContent) {
+  return aContent && aContent->IsElement() &&
+         aContent->AsElement()->IsDisplayContents();
 }

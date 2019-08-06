@@ -3,8 +3,12 @@
 
 "use strict";
 
-const {RemoteAgent} = ChromeUtils.import("chrome://remote/content/RemoteAgent.jsm");
-const {RemoteAgentError} = ChromeUtils.import("chrome://remote/content/Error.jsm");
+const { RemoteAgent } = ChromeUtils.import(
+  "chrome://remote/content/RemoteAgent.jsm"
+);
+const { RemoteAgentError } = ChromeUtils.import(
+  "chrome://remote/content/Error.jsm"
+);
 
 /**
  * Override `add_task` in order to translate chrome-remote-interface exceptions
@@ -27,7 +31,8 @@ this.add_task = function(test) {
   });
 };
 
-const CRI_URI = "http://example.com/browser/remote/test/browser/chrome-remote-interface.js";
+const CRI_URI =
+  "http://example.com/browser/remote/test/browser/chrome-remote-interface.js";
 
 /**
  * Create a test document in an invisible window.
@@ -59,7 +64,7 @@ async function getCDP() {
   script.setAttribute("src", CRI_URI);
   document.documentElement.appendChild(script);
   await new Promise(resolve => {
-    script.addEventListener("load", resolve, {once: true});
+    script.addEventListener("load", resolve, { once: true });
   });
 
   const window = document.defaultView.wrappedJSObject;
@@ -68,7 +73,7 @@ async function getCDP() {
   // library in order to do the cross-domain http request, which,
   // in a regular Web page, is impossible.
   window.criRequest = (options, callback) => {
-    const {host, port, path} = options;
+    const { host, port, path } = options;
     const url = `http://${host}:${port}${path}`;
     const xhr = new XMLHttpRequest();
     xhr.open("GET", url, true);
@@ -97,28 +102,58 @@ function getTargets(CDP) {
 }
 
 /**
- * Create a new tab for the provided uri and start a CDP server debugging the
- * created tab.
+ * Set up test environment in same fashion as setupForURL(),
+ * except using an empty document.
  */
-async function setupTestForUri(uri) {
-  // Open a test page, to prevent debugging the random default page
-  const tab = await BrowserTestUtils.openNewForegroundTab(gBrowser, uri);
+async function setup() {
+  return setupForURL(toDataURL(""));
+}
 
-  // Start the CDP server
-  RemoteAgent.listen(Services.io.newURI("http://localhost:9222"));
+/**
+ * Set up test environment by starting the remote agent, connecting
+ * the CDP client over loopback, and creating a fresh tab to avoid
+ * state bleedover from previous test.
+ */
+async function setupForURL(url) {
+  const tab = await BrowserTestUtils.openNewForegroundTab(gBrowser, url);
 
-  // Retrieve the chrome-remote-interface library object
+  await RemoteAgent.listen(Services.io.newURI("http://localhost:9222"));
   const CDP = await getCDP();
 
-  // Connect to the server
   const client = await CDP({
     target(list) {
-      // Ensure debugging the right target, i.e. the one for our test tab.
-      return list.find(target => {
-        return target.url == uri;
-      });
+      // ensure we are debugging the right target, i.e. the requested URL
+      return list.find(target => target.url == url);
     },
   });
-  ok(true, "CDP client has been instantiated");
+  info("CDP client instantiated");
+
   return { client, tab };
+}
+
+/** Creates a data URL for the given source document. */
+function toDataURL(src, doctype = "html") {
+  let doc, mime;
+  switch (doctype) {
+    case "html":
+      mime = "text/html;charset=utf-8";
+      doc = `<!doctype html>\n<meta charset=utf-8>\n${src}`;
+      break;
+    default:
+      throw new Error("Unexpected doctype: " + doctype);
+  }
+
+  return `data:${mime},${encodeURIComponent(doc)}`;
+}
+
+/**
+ * Retrieve the value of a property on the content window.
+ */
+function getContentProperty(prop) {
+  info(`Retrieve ${prop} on the content window`);
+  return ContentTask.spawn(
+    gBrowser.selectedBrowser,
+    prop,
+    _prop => content[_prop]
+  );
 }

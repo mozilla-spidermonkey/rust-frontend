@@ -25,14 +25,16 @@ function setupServer(mm) {
   }
 
   // Lazy load Loader.jsm to prevent loading any devtools dependency too early.
-  const { DevToolsLoader } =
-    ChromeUtils.import("resource://devtools/shared/Loader.jsm");
+  const { DevToolsLoader } = ChromeUtils.import(
+    "resource://devtools/shared/Loader.jsm"
+  );
 
   // Init a custom, invisible DebuggerServer, in order to not pollute the
   // debugger with all devtools modules, nor break the debugger itself with
   // using it in the same process.
-  gLoader = new DevToolsLoader();
-  gLoader.invisibleToDebugger = true;
+  gLoader = new DevToolsLoader({
+    invisibleToDebugger: true,
+  });
   const { DebuggerServer } = gLoader.require("devtools/server/main");
 
   DebuggerServer.init();
@@ -66,8 +68,9 @@ function init(msg) {
   const conn = DebuggerServer.connectToParent(prefix, mm);
   conn.parentMessageManager = mm;
 
-  const { ContentProcessTargetActor } =
-      loader.require("devtools/server/actors/targets/content-process");
+  const { ContentProcessTargetActor } = loader.require(
+    "devtools/server/actors/targets/content-process"
+  );
   const { ActorPool } = loader.require("devtools/server/actors/common");
   const actor = new ContentProcessTargetActor(conn);
   const actorPool = new ActorPool(conn);

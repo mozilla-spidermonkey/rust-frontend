@@ -3,19 +3,22 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 :host {
-  padding: 18px;
+  padding: 40px;
 
   --reveal-checkbox-opacity: .8;
   --reveal-checkbox-opacity-hover: .6;
   --reveal-checkbox-opacity-active: 1;
+  --success-color: #00c100;
 }
 
 :host([data-editing]) .edit-button,
+:host([data-editing]) .copy-button,
+:host([data-editing]) .open-site-button,
 :host([data-is-new-login]) .delete-button,
 :host([data-is-new-login]) .origin-saved-value,
-:host([data-is-new-login]) copy-to-clipboard-button,
-:host([data-is-new-login]) .open-site-button,
 :host([data-is-new-login]) .meta-info,
+:host([data-is-new-login]) .login-item-title,
+:host(:not([data-is-new-login])) .new-login-title,
 :host(:not([data-editing])) .cancel-button,
 :host(:not([data-editing])) .save-changes-button {
   display: none;
@@ -25,20 +28,27 @@
 :host(:not([data-editing])) input[type="text"],
 :host(:not([data-editing])) input[type="url"] {
   all: unset;
+  font-size: 1.1em;
   display: inline-block;
   width: -moz-available;
   background-color: transparent !important; /* override common.inc.css */
 }
 
+.detail-cell input:not([type="checkbox"]),
+.save-changes-button {
+  margin-inline-start: 0; /* align all elements on the start side */
+}
+
 .header {
   display: flex;
   border-bottom: 1px solid var(--in-content-box-border-color);
+  margin-bottom: 40px;
 }
 
 .title {
   margin-top: 0;
   margin-bottom: 0;
-  flex: auto;
+  flex-grow: 1;
 }
 
 .delete-button,
@@ -52,7 +62,7 @@
 
 .delete-button:dir(rtl),
 .edit-button:dir(rtl) {
-  background-position: right 8px center;
+  background-position-x: right 8px;
 }
 
 .delete-button {
@@ -65,22 +75,33 @@
   padding-inline-start: 32px; /* 8px on each side, and 16px for icon width */
 }
 
-.detail-row,
+:host(:not([data-editing])) input[type="url"] {
+  color: var(--in-content-link-color) !important;
+  cursor: pointer;
+}
+
+:host(:not([data-editing])) input[type="url"]:hover {
+  color: var(--in-content-link-color-hover) !important;
+  text-decoration: underline;
+}
+
+:host(:not([data-editing])) input[type="url"]:hover:active {
+  color: var(--in-content-link-color-active) !important;
+}
+
 .reveal-password-wrapper {
   display: flex;
   align-items: center;
 }
 
 .detail-row {
-  margin-bottom: 20px;
+  display: flex;
+  align-items: end;
+  margin-bottom: 40px;
 }
 
 .detail-cell {
-  flex: auto;
-}
-
-.detail-row > button {
-  align-self: end;
+  flex-grow: 1;
 }
 
 .field-label {
@@ -90,16 +111,45 @@
   margin-bottom: 5px;
 }
 
-.meta-info {
-  font-size: smaller;
+:host([data-editing]) .detail-cell input:not([type="checkbox"]) {
+  width: 280px;
 }
 
-.meta-info:first-of-type {
-  padding-top: 1em;
+.copy-button:not([data-copied]) .copied-button-text,
+.copy-button[data-copied] .copy-button-text {
+  display: none;
+}
+
+.copy-button[data-copied] {
+  color: var(--success-color) !important; /* override common.css */
+  background-color: transparent;
+  opacity: 1; /* override common.css fading out disabled buttons */
+}
+
+.copy-button[data-copied]:-moz-focusring {
+  outline-width: 0;
+  box-shadow: none;
+}
+
+.copied-button-text {
+  background-image: url(chrome://global/skin/icons/check.svg);
+  background-repeat: no-repeat;
+  -moz-context-properties: fill;
+  fill: currentColor;
+  padding-inline-start: 22px;
+}
+
+.meta-info {
+  font-size: smaller;
+  color: var(--in-content-deemphasized-text);
+}
+
+.meta-info:first-of-type::before {
+  content: "";
+  display: block;
+  margin-bottom: 20px;
   border-top: 1px solid var(--in-content-box-border-color);
   width: 40px;
-  /* Show a non-full length border but constrain the text to this width */
-  white-space: nowrap;
 }
 
 :host(:not([editing])) input[name='password'] {
@@ -130,12 +180,57 @@
   background-image: url("chrome://browser/content/aboutlogins/icons/hide-password.svg") !important;
 }
 
-@supports -moz-bool-pref("browser.in-content.dark-mode") {
-@media (prefers-color-scheme: dark) {
-  :host {
-    --reveal-checkbox-opacity: .8;
-    --reveal-checkbox-opacity-hover: 1;
-    --reveal-checkbox-opacity-active: .6;
-  }
+.reveal-password-checkbox:-moz-focusring {
+  outline: 2px solid var(--in-content-border-active);
+  /* offset outline to align with 1px border-width set for buttons/menulists above. */
+  outline-offset: -1px;
+  /* Make outline-radius slightly bigger than the border-radius set above,
+   * to make the thicker outline corners look smooth */
+  -moz-outline-radius: 3px;
+  box-shadow: 0 0 0 4px var(--in-content-border-active-shadow);
 }
+
+.breach-alert {
+  border-radius: 8px;
+  border: 1px solid var(--in-content-border-color);
+  background-color: var(--yellow-10);
+  background-image: url("chrome://global/skin/icons/warning.svg");
+  background-repeat: no-repeat;
+  background-position: left 10px top 10px;
+  -moz-context-properties: fill;
+  fill: var(--red-90);
+  box-shadow: 0 2px 8px 0 rgba(12,12,13,0.1);
+  font-size: .9em;
+  font-weight: 300;
+  line-height: 1.4;
+  padding-block: 12px;
+  padding-inline-start: 36px;
+  padding-inline-end: 92px;
+  margin-block-end: 40px;
+}
+
+.breach-alert:dir(rtl) {
+  background-position: right 10px top 10px;
+}
+
+a.breach-alert-link {
+  color: inherit;
+  text-decoration: underline;
+  font-weight: 500;
+}
+
+@supports -moz-bool-pref("browser.in-content.dark-mode") {
+  @media (prefers-color-scheme: dark) {
+    :host {
+      --reveal-checkbox-opacity: .8;
+      --reveal-checkbox-opacity-hover: 1;
+      --reveal-checkbox-opacity-active: .6;
+      --success-color: #86DE74;
+    }
+  
+    .breach-alert {
+      box-shadow: 0 2px 8px 0 rgba(249,249,250,0.1);
+      color: #0C0C0D;
+    }
+  }
 }

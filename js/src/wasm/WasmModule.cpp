@@ -32,8 +32,8 @@
 #include "wasm/WasmJS.h"
 #include "wasm/WasmSerialize.h"
 
+#include "debugger/DebugAPI-inl.h"
 #include "vm/ArrayBufferObject-inl.h"
-#include "vm/Debugger-inl.h"
 #include "vm/JSAtom-inl.h"
 
 using namespace js;
@@ -62,6 +62,7 @@ class Module::Tier2GeneratorTaskImpl : public Tier2GeneratorTask {
   void cancel() override { cancelled_ = true; }
 
   void runTask() override {
+    AutoSetHelperThreadContext usesContext;
     CompileTier2(*compileArgs_, bytecode_->bytes, *module_, &cancelled_);
   }
   ThreadType threadType() override {
@@ -432,6 +433,16 @@ void Module::addSizeOfMisc(MallocSizeOf mallocSizeOf,
   }
 }
 
+void Module::initGCMallocBytesExcludingCode() {
+  // The size doesn't have to be exact so use the serialization framework to
+  // calculate a value.
+  gcMallocBytesExcludingCode_ = sizeof(*this) + SerializedVectorSize(imports_) +
+                                SerializedVectorSize(exports_) +
+                                SerializedVectorSize(dataSegments_) +
+                                SerializedVectorSize(elemSegments_) +
+                                SerializedVectorSize(customSections_);
+}
+
 // Extracting machine code as JS object. The result has the "code" property, as
 // a Uint8Array, and the "segments" property as array objects. The objects
 // contain offsets in the "code" array and basic information about a code
@@ -550,7 +561,6 @@ static bool AllSegmentsArePassive(const DataSegmentVector& vec) {
 #endif
 
 bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
-                          const JSFunctionVector& funcImports,
                           HandleWasmMemoryObject memoryObj,
                           const ValVector& globalImportValues) const {
   MOZ_ASSERT_IF(!memoryObj, AllSegmentsArePassive(dataSegments_));
@@ -558,81 +568,93 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
   Instance& instance = instanceObj->instance();
   const SharedTableVector& tables = instance.tables();
 
-#ifndef ENABLE_WASM_BULKMEM_OPS
   // Bulk memory changes the error checking behavior: we may write partial data.
+  // We enable bulk memory semantics if shared memory is enabled.
+#ifdef ENABLE_WASM_BULKMEM_OPS
+  const bool eagerBoundsCheck = false;
+#else
+  // Bulk memory must be available if shared memory is enabled.
+  const bool eagerBoundsCheck =
+      !cx->realm()->creationOptions().getSharedMemoryAndAtomicsEnabled();
+#endif
 
-  // Perform all error checks up front so that this function does not perform
-  // partial initialization if an error is reported.
+  if (eagerBoundsCheck) {
+    // Perform all error checks up front so that this function does not perform
+    // partial initialization if an error is reported.
 
-  for (const ElemSegment* seg : elemSegments_) {
-    if (!seg->active()) {
-      continue;
-    }
-
-    uint32_t tableLength = tables[seg->tableIndex]->length();
-    uint32_t offset = EvaluateInitExpr(globalImportValues, seg->offset());
-
-    if (offset > tableLength || tableLength - offset < seg->length()) {
-      JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_WASM_BAD_FIT,
-                               "elem", "table");
-      return false;
-    }
-  }
-
-  if (memoryObj) {
-    uint32_t memoryLength = memoryObj->volatileMemoryLength();
-    for (const DataSegment* seg : dataSegments_) {
+    for (const ElemSegment* seg : elemSegments_) {
       if (!seg->active()) {
         continue;
       }
 
+      uint32_t tableLength = tables[seg->tableIndex]->length();
       uint32_t offset = EvaluateInitExpr(globalImportValues, seg->offset());
 
-      if (offset > memoryLength ||
-          memoryLength - offset < seg->bytes.length()) {
+      if (offset > tableLength || tableLength - offset < seg->length()) {
         JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                                 JSMSG_WASM_BAD_FIT, "data", "memory");
+                                 JSMSG_WASM_BAD_FIT, "elem", "table");
         return false;
+      }
+    }
+
+    if (memoryObj) {
+      uint32_t memoryLength = memoryObj->volatileMemoryLength();
+      for (const DataSegment* seg : dataSegments_) {
+        if (!seg->active()) {
+          continue;
+        }
+
+        uint32_t offset = EvaluateInitExpr(globalImportValues, seg->offset());
+
+        if (offset > memoryLength ||
+            memoryLength - offset < seg->bytes.length()) {
+          JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                                   JSMSG_WASM_BAD_FIT, "data", "memory");
+          return false;
+        }
       }
     }
   }
 
-  // Now that initialization can't fail partway through, write data/elem
-  // segments into memories/tables.
-#endif
+  // Write data/elem segments into memories/tables.
 
   for (const ElemSegment* seg : elemSegments_) {
     if (seg->active()) {
       uint32_t offset = EvaluateInitExpr(globalImportValues, seg->offset());
       uint32_t count = seg->length();
-#ifdef ENABLE_WASM_BULKMEM_OPS
-      uint32_t tableLength = tables[seg->tableIndex]->length();
-      bool fail = false;
-      if (offset > tableLength) {
-        fail = true;
-        count = 0;
-      } else if (tableLength - offset < count) {
-        fail = true;
-        count = tableLength - offset;
+
+      // Allow zero-sized initializations even if they are out-of-bounds. This
+      // behavior technically only applies when bulk-memory-operations are
+      // enabled, but we will fail with an error during eager bounds checking
+      // above in that case.
+      if (count == 0) {
+        continue;
       }
-#endif
+
+      bool fail = false;
+      if (!eagerBoundsCheck) {
+        uint32_t tableLength = tables[seg->tableIndex]->length();
+        if (offset > tableLength) {
+          fail = true;
+          count = 0;
+        } else if (tableLength - offset < count) {
+          fail = true;
+          count = tableLength - offset;
+        }
+      }
       if (count) {
         instance.initElems(seg->tableIndex, *seg, offset, 0, count);
       }
-#ifdef ENABLE_WASM_BULKMEM_OPS
       if (fail) {
         JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                                  JSMSG_WASM_BAD_FIT, "elem", "table");
         return false;
       }
-#endif
     }
   }
 
   if (memoryObj) {
-#ifdef ENABLE_WASM_BULKMEM_OPS
     uint32_t memoryLength = memoryObj->volatileMemoryLength();
-#endif
     uint8_t* memoryBase =
         memoryObj->buffer().dataPointerEither().unwrap(/* memcpy */);
 
@@ -643,26 +665,33 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
 
       uint32_t offset = EvaluateInitExpr(globalImportValues, seg->offset());
       uint32_t count = seg->bytes.length();
-#ifdef ENABLE_WASM_BULKMEM_OPS
-      bool fail = false;
-      if (offset > memoryLength) {
-        fail = true;
-        count = 0;
-      } else if (memoryLength - offset < count) {
-        fail = true;
-        count = memoryLength - offset;
+
+      // Allow zero-sized initializations even if they are out-of-bounds. This
+      // behavior technically only applies when bulk-memory-operations are
+      // enabled, but we will fail with an error during eager bounds checking
+      // above in that case.
+      if (count == 0) {
+        continue;
       }
-#endif
+
+      bool fail = false;
+      if (!eagerBoundsCheck) {
+        if (offset > memoryLength) {
+          fail = true;
+          count = 0;
+        } else if (memoryLength - offset < count) {
+          fail = true;
+          count = memoryLength - offset;
+        }
+      }
       if (count) {
         memcpy(memoryBase + offset, seg->bytes.begin(), count);
       }
-#ifdef ENABLE_WASM_BULKMEM_OPS
       if (fail) {
         JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                                  JSMSG_WASM_BAD_FIT, "data", "memory");
         return false;
       }
-#endif
     }
   }
 
@@ -1398,8 +1427,7 @@ bool Module::instantiate(JSContext* cx, ImportValues& imports,
   // constructed since this can make the instance live to content (even if the
   // start function fails).
 
-  if (!initSegments(cx, instance, imports.funcs, memory,
-                    imports.globalValues)) {
+  if (!initSegments(cx, instance, memory, imports.globalValues)) {
     return false;
   }
 

@@ -5,7 +5,7 @@
 # This module contains code for managing WebIDL files and bindings for
 # the build system.
 
-from __future__ import unicode_literals
+from __future__ import print_function, unicode_literals
 
 import errno
 import hashlib
@@ -137,6 +137,7 @@ class WebIDLCodegenManager(LoggingMixin):
         'UnionConversions.h',
         'UnionTypes.h',
         'WebIDLPrefs.h',
+        'WebIDLSerializable.h',
     }
 
     # Global parser derived definition files.
@@ -148,6 +149,7 @@ class WebIDLCodegenManager(LoggingMixin):
         'UnionTypes.cpp',
         'PrototypeList.cpp',
         'WebIDLPrefs.cpp',
+        'WebIDLSerializable.cpp',
     }
 
     def __init__(self, config_path, webidl_root, inputs, exported_header_dir,
@@ -312,7 +314,7 @@ class WebIDLCodegenManager(LoggingMixin):
 
         example_paths = self._example_paths(interface)
         for path in example_paths:
-            print "Generating %s" % path
+            print("Generating {}".format(path))
 
         return self._maybe_write_codegen(root, *example_paths)
 

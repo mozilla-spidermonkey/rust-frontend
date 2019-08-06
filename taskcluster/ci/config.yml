@@ -15,7 +15,7 @@ treeherder:
         'py3': 'Python 3 unit tests'
         'A': 'Android Gradle tests'
         'Bpgo': 'Profile-guided optimization builds'
-        'Fetch-URL': 'Fetch and store content'
+        'Fetch': 'Fetch and store content'
         'Fxfn-l': 'Firefox functional tests (local)'
         'Fxfn-l-1proc': 'Firefox functional tests (local) without e10s'
         'Fxfn-r': 'Firefox functional tests (remote)'
@@ -88,6 +88,7 @@ treeherder:
         'Deb7': 'Packages for Debian 7'
         'Deb7-32': 'Packages for Debian 7 32-bits'
         'Deb9': 'Packages for Debian 9'
+        'Deb10': 'Packages for Debian 10'
         'Nexus 5-L': 'Nexus 5-L Device Image'
         'I': 'Docker Image Builds'
         'TL': 'Toolchain builds for Linux 64-bits'
@@ -253,7 +254,7 @@ partner-urls:
                         by-release-level:
                             production: 'git@github.com:mozilla-partners/repack-manifests.git'
                             staging: 'git@github.com:moz-releng-automation-stage/repack-manifests.git'
-                    esr60:
+                    esr(60|68):
                         by-release-level:
                             production: 'git@github.com:mozilla-partners/esr-repack-manifests.git'
                             staging: 'git@github.com:moz-releng-automation-stage/esr-repack-manifests.git'
@@ -380,7 +381,7 @@ workers:
             implementation: generic-worker
             os: windows
             worker-type: 'gecko-{alias}'
-        t-win10-64(-hw|-ref-hw|-ux):
+        t-win10-64(-hw|-ref-hw):
             provisioner: releng-hardware
             implementation: generic-worker
             os: windows
@@ -395,6 +396,11 @@ workers:
             implementation: generic-worker
             os: windows
             worker-type: 'gecko-{alias}'
+        succeed:
+            provisioner: built-in
+            implementation: succeed
+            os: none
+            worker-type: succeed
 
 mac-notarization:
     mac-behavior:
@@ -407,7 +413,7 @@ mac-notarization:
     mac-entitlements:
         by-platform:
             macosx64.*:
-                by-project:
-                    mozilla-(central|beta|release): security/mac/hardenedruntime/production.entitlements.xml
+                by-release-level:
+                    production: security/mac/hardenedruntime/production.entitlements.xml
                     default: security/mac/hardenedruntime/developer.entitlements.xml
             default: ''

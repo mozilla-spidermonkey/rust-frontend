@@ -33,6 +33,7 @@
 #include "mozilla/dom/TimeRanges.h"
 #include "mozilla/dom/VideoPlaybackQuality.h"
 #include "mozilla/dom/VideoStreamTrack.h"
+#include "mozilla/StaticPrefs_media.h"
 #include "mozilla/Unused.h"
 
 #include <algorithm>
@@ -49,9 +50,6 @@ nsGenericHTMLElement* NS_NewHTMLVideoElement(
 
 namespace mozilla {
 namespace dom {
-
-static bool sVideoStatsEnabled;
-static bool sCloneElementVisuallyTesting;
 
 nsresult HTMLVideoElement::Clone(mozilla::dom::NodeInfo* aNodeInfo,
                                  nsINode** aResult) const {
@@ -151,7 +149,7 @@ bool HTMLVideoElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
                                       nsIPrincipal* aMaybeScriptedPrincipal,
                                       nsAttrValue& aResult) {
   if (aAttribute == nsGkAtoms::width || aAttribute == nsGkAtoms::height) {
-    return aResult.ParseSpecialIntValue(aValue);
+    return aResult.ParseHTMLDimension(aValue);
   }
 
   return HTMLMediaElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
@@ -417,15 +415,9 @@ bool HTMLVideoElement::SetVisualCloneSource(
 }
 
 /* static */
-void HTMLVideoElement::InitStatics() {
-  Preferences::AddBoolVarCache(&sVideoStatsEnabled,
-                               "media.video_stats.enabled");
-  Preferences::AddBoolVarCache(&sCloneElementVisuallyTesting,
-                               "media.cloneElementVisually.testing");
+bool HTMLVideoElement::IsVideoStatsEnabled() {
+  return StaticPrefs::media_video_stats_enabled();
 }
-
-/* static */
-bool HTMLVideoElement::IsVideoStatsEnabled() { return sVideoStatsEnabled; }
 
 double HTMLVideoElement::TotalPlayTime() const {
   double total = 0.0;
@@ -486,7 +478,7 @@ void HTMLVideoElement::CloneElementVisually(HTMLVideoElement& aTargetVideo,
 
   aTargetVideo.SetMediaInfo(mMediaInfo);
 
-  if (IsInComposedDoc() && !sCloneElementVisuallyTesting) {
+  if (IsInComposedDoc() && !StaticPrefs::media_cloneElementVisually_testing()) {
     NotifyUAWidgetSetupOrChange();
   }
 
@@ -542,7 +534,7 @@ void HTMLVideoElement::EndCloningVisually() {
   Unused << mVisualCloneTarget->SetVisualCloneSource(nullptr);
   Unused << SetVisualCloneTarget(nullptr);
 
-  if (IsInComposedDoc() && !sCloneElementVisuallyTesting) {
+  if (IsInComposedDoc() && !StaticPrefs::media_cloneElementVisually_testing()) {
     NotifyUAWidgetSetupOrChange();
   }
 }

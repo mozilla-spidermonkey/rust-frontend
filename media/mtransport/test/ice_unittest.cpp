@@ -757,7 +757,7 @@ class IceTestPeer : public sigslot::has_slots<> {
       ice_ctx_->SetControlling(offerer_ ? NrIceCtx::ICE_CONTROLLING
                                         : NrIceCtx::ICE_CONTROLLED);
       // Now start checks
-      res = ice_ctx_->StartChecks(offerer_);
+      res = ice_ctx_->StartChecks();
       ASSERT_TRUE(NS_SUCCEEDED(res));
     }
   }
@@ -952,7 +952,7 @@ class IceTestPeer : public sigslot::has_slots<> {
         NS_DISPATCH_SYNC);
     // Now start checks
     test_utils_->sts_target()->Dispatch(
-        WrapRunnableRet(&res, ice_ctx_, &NrIceCtx::StartChecks, offerer_),
+        WrapRunnableRet(&res, ice_ctx_, &NrIceCtx::StartChecks),
         NS_DISPATCH_SYNC);
     ASSERT_TRUE(NS_SUCCEEDED(res));
   }
@@ -1732,10 +1732,9 @@ class WebRtcIceConnectTest : public StunTest {
     caller->Connect(callee, mode);
 
     if (mode != TRICKLE_SIMULATE) {
-      ASSERT_TRUE_WAIT(caller->ready_ct() == 1 && callee->ready_ct() == 1,
-                       kDefaultTimeout);
       ASSERT_TRUE_WAIT(caller->ice_connected() && callee->ice_connected(),
                        kDefaultTimeout);
+      ASSERT_TRUE(caller->ready_ct() >= 1 && callee->ready_ct() >= 1);
       ASSERT_TRUE(caller->ice_reached_checking());
       ASSERT_TRUE(callee->ice_reached_checking());
 
@@ -3202,8 +3201,8 @@ TEST_F(WebRtcIceConnectTest, TestConsentDelayed) {
   /* Note: We don't have a list of STUN transaction IDs of the previously timed
            out consent requests. Thus responses after sending the next consent
            request are ignored. */
-  p1_->SetStunResponseDelay(300);
-  p2_->SetStunResponseDelay(300);
+  p1_->SetStunResponseDelay(200);
+  p2_->SetStunResponseDelay(200);
   PR_Sleep(1000);
   AssertConsentRefresh();
   SendReceive();

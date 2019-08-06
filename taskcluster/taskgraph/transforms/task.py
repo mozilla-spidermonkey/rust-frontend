@@ -15,6 +15,9 @@ import os
 import re
 import time
 from copy import deepcopy
+from six import text_type
+
+import attr
 
 from mozbuild.util import memoize
 from taskgraph.util.attributes import TRUNK_PROJECTS
@@ -30,12 +33,14 @@ from taskgraph.util.schema import (
     OptimizationSchema,
     taskref_or_string,
 )
+from taskgraph.util.partners import get_partners_to_be_published
 from taskgraph.util.scriptworker import (
     BALROG_ACTIONS,
     get_release_config,
     add_scope_prefix,
 )
 from taskgraph.util.signed_artifacts import get_signed_artifacts
+from taskgraph.util.workertypes import worker_type_implementation
 from voluptuous import Any, Required, Optional, Extra, Match
 from taskgraph import GECKO, MAX_DEPENDENCIES
 from ..util import docker as dockerutil
@@ -228,7 +233,7 @@ task_description_schema = Schema({
     Optional('release-artifacts'): [basestring],
 
     # information specific to the worker implementation that will run this task
-    'worker': {
+    Optional('worker'): {
         Required('implementation'): basestring,
         Extra: object,
     }
@@ -326,12 +331,17 @@ def get_default_priority(graph_config, project):
 payload_builders = {}
 
 
+@attr.s(frozen=True)
+class PayloadBuilder(object):
+    schema = attr.ib(type=Schema)
+    builder = attr.ib()
+
+
 def payload_builder(name, schema):
-    schema = Schema({Required('implementation'): name}).extend(schema)
+    schema = Schema({Required('implementation'): name, Optional('os'): text_type}).extend(schema)
 
     def wrap(func):
-        payload_builders[name] = func
-        func.schema = Schema(schema)
+        payload_builders[name] = PayloadBuilder(schema, func)
         return func
     return wrap
 
@@ -876,7 +886,7 @@ def build_generic_worker_payload(config, task, task_def):
 
     # behavior for mac iscript
     Optional('mac-behavior'): Any(
-        "mac_notarize", "mac_sign", "mac_sign_and_pkg", "mac_pkg",
+        "mac_notarize", "mac_sign", "mac_sign_and_pkg", "mac_geckodriver",
     ),
     Optional('entitlements-url'): basestring,
 })
@@ -972,12 +982,14 @@ def build_beetmover_payload(config, task, task_def):
 def build_beetmover_push_to_release_payload(config, task, task_def):
     worker = task['worker']
     release_config = get_release_config(config)
+    partners = ['{}/{}'.format(p, s) for p, s, _ in get_partners_to_be_published(config)]
 
     task_def['payload'] = {
         'maxRunTime': worker['max-run-time'],
         'product': worker['product'],
         'version': release_config['version'],
         'build_number': release_config['build_number'],
+        'partners': partners,
     }
 
 
@@ -1113,6 +1125,7 @@ def build_bouncer_locations_payload(config, task, task_def):
     task_def['payload'] = {
         'bouncer_products': worker['bouncer-products'],
         'version': release_config['version'],
+        'product': task['shipping-product'],
     }
 
 
@@ -1156,6 +1169,7 @@ def build_push_apk_payload(config, task, task_def):
 
 
 @payload_builder('push-snap', schema={
+    Required('channel'): basestring,
     Required('upstream-artifacts'): [{
         Required('taskId'): taskref_or_string,
         Required('taskType'): basestring,
@@ -1166,6 +1180,7 @@ def build_push_snap_payload(config, task, task_def):
     worker = task['worker']
 
     task_def['payload'] = {
+        'channel': worker['channel'],
         'upstreamArtifacts':  worker['upstream-artifacts'],
     }
 
@@ -1265,7 +1280,9 @@ def build_invalid_payload(config, task, task_def):
 @payload_builder('always-optimized', schema={
     Extra: object,
 })
-def build_always_optimized_payload(config, task, task_def):
+@payload_builder('succeed', schema={
+})
+def build_dummy_payload(config, task, task_def):
     task_def['payload'] = {}
 
 
@@ -1322,6 +1339,30 @@ def build_script_engine_autophone_payload(config, task, task_def):
 
 
 transforms = TransformSequence()
+
+
+@transforms.add
+def set_implementation(config, tasks):
+    """
+    Set the worker implementation based on the worker-type alias.
+    """
+    for task in tasks:
+        if 'implementation' in task['worker']:
+            yield task
+            continue
+
+        impl, os = worker_type_implementation(config.graph_config, task['worker-type'])
+
+        tags = task.setdefault('tags', {})
+        tags['worker-implementation'] = impl
+        if os:
+            task['tags']['os'] = os
+        worker = task.setdefault('worker', {})
+        worker['implementation'] = impl
+        if os:
+            worker['os'] = os
+
+        yield task
 
 
 @transforms.add
@@ -1771,7 +1812,7 @@ def build_task(config, tasks):
                 'description': task['description'],
                 'name': task['label'],
                 'owner': config.params['owner'],
-                'source': config.params.file_url(config.path),
+                'source': config.params.file_url(config.path, pretty=True),
             },
             'extra': extra,
             'tags': tags,
@@ -1789,7 +1830,7 @@ def build_task(config, tasks):
                 th_push_link)
 
         # add the payload and adjust anything else as required (e.g., scopes)
-        payload_builders[task['worker']['implementation']](config, task, task_def)
+        payload_builders[task['worker']['implementation']].builder(config, task, task_def)
 
         # Resolve run-on-projects
         build_platform = attributes.get('build_platform')
@@ -1859,11 +1900,11 @@ def check_task_identifiers(config, tasks):
     """
     e = re.compile("^[a-zA-Z0-9_-]{1,38}$")
     for task in tasks:
-        for attr in ('workerType', 'provisionerId'):
-            if not e.match(task['task'][attr]):
+        for attrib in ('workerType', 'provisionerId'):
+            if not e.match(task['task'][attrib]):
                 raise Exception(
                     'task {}.{} is not a valid identifier: {}'.format(
-                        task['label'], attr, task['task'][attr]))
+                        task['label'], attrib, task['task'][attrib]))
         yield task
 
 

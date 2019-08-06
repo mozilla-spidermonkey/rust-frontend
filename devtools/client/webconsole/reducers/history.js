@@ -8,6 +8,7 @@
 const {
   APPEND_TO_HISTORY,
   CLEAR_HISTORY,
+  EVALUATE_EXPRESSION,
   HISTORY_LOADED,
   UPDATE_HISTORY_POSITION,
   HISTORY_BACK,
@@ -46,6 +47,7 @@ function getInitialState() {
 function history(state = getInitialState(), action, prefsState) {
   switch (action.type) {
     case APPEND_TO_HISTORY:
+    case EVALUATE_EXPRESSION:
       return appendToHistory(state, prefsState, action.expression);
     case CLEAR_HISTORY:
       return clearHistory(state);
@@ -67,7 +69,7 @@ function history(state = getInitialState(), action, prefsState) {
 
 function appendToHistory(state, prefsState, expression) {
   // Clone state
-  state = {...state};
+  state = { ...state };
   state.entries = [...state.entries];
 
   // Append new expression only if it isn't the same as
@@ -120,7 +122,7 @@ function updateHistoryPosition(state, direction, expression) {
     }
 
     // Clone state
-    state = {...state};
+    state = { ...state };
 
     // Store the current input value when the user starts
     // browsing through the history.
@@ -174,13 +176,16 @@ function reverseSearchInputChange(state, searchString) {
 
   searchString = searchString.toLocaleLowerCase();
   const matchingEntries = state.entries.filter(entry =>
-    entry.toLocaleLowerCase().includes(searchString));
+    entry.toLocaleLowerCase().includes(searchString)
+  );
   // We only return unique entries, but we want to keep the latest entry in the array if
   // it's duplicated (e.g. if we have [1,2,1], we want to get [2,1], not [1,2]).
   // To do that, we need to reverse the matching entries array, provide it to a Set,
   // transform it back to an array and reverse it again.
   const uniqueEntries = new Set(matchingEntries.reverse());
-  const currentReverseSearchResults = Array.from(new Set(uniqueEntries)).reverse();
+  const currentReverseSearchResults = Array.from(
+    new Set(uniqueEntries)
+  ).reverse();
 
   return {
     ...state,

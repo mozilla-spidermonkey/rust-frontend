@@ -117,7 +117,10 @@ class Selection final : public nsSupportsWeakReference,
     }
   }
 
+  // Required for WebIDL bindings, see
+  // https://developer.mozilla.org/en-US/docs/Mozilla/WebIDL_bindings#Adding_WebIDL_bindings_to_a_class.
   Document* GetParentObject() const;
+
   DocGroup* GetDocGroup() const;
 
   // utility methods for scrolling the selection into view
@@ -158,17 +161,21 @@ class Selection final : public nsSupportsWeakReference,
                           ScrollAxis aVertical = ScrollAxis(),
                           ScrollAxis aHorizontal = ScrollAxis(),
                           int32_t aFlags = 0);
-  nsresult SubtractRange(RangeData* aRange, nsRange* aSubtract,
-                         nsTArray<RangeData>* aOutput);
+  static nsresult SubtractRange(RangeData* aRange, nsRange* aSubtract,
+                                nsTArray<RangeData>* aOutput);
+
+ private:
   /**
-   * AddItem adds aRange to this Selection.  If mUserInitiated is true,
+   * Adds aRange to this Selection.  If mUserInitiated is true,
    * then aRange is first scanned for -moz-user-select:none nodes and split up
    * into multiple ranges to exclude those before adding the resulting ranges
    * to this Selection.
    */
-  nsresult AddItem(nsRange* aRange, int32_t* aOutIndex,
-                   bool aNoStartSelect = false);
-  nsresult RemoveItem(nsRange* aRange);
+  nsresult AddRangesForSelectableNodes(nsRange* aRange, int32_t* aOutIndex,
+                                       bool aNoStartSelect = false);
+  nsresult RemoveRangeInternal(nsRange& aRange);
+
+ public:
   nsresult RemoveCollapsedRanges();
   nsresult Clear(nsPresContext* aPresContext);
   nsresult Collapse(nsINode* aContainer, int32_t aOffset) {
@@ -292,7 +299,8 @@ class Selection final : public nsSupportsWeakReference,
   void AddRangeJS(nsRange& aRange, mozilla::ErrorResult& aRv);
 
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
-  void RemoveRange(nsRange& aRange, mozilla::ErrorResult& aRv);
+  void RemoveRangeAndUnselectFramesAndNotifyListeners(
+      nsRange& aRange, mozilla::ErrorResult& aRv);
 
   MOZ_CAN_RUN_SCRIPT_BOUNDARY void RemoveAllRanges(mozilla::ErrorResult& aRv);
 
@@ -438,7 +446,8 @@ class Selection final : public nsSupportsWeakReference,
   void Extend(nsINode& aContainer, uint32_t aOffset, ErrorResult& aRv);
 
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
-  void AddRange(nsRange& aRange, mozilla::ErrorResult& aRv);
+  void AddRangeAndSelectFramesAndNotifyListeners(nsRange& aRange,
+                                                 mozilla::ErrorResult& aRv);
 
   /**
    * Adds all children of the specified node to the selection.
@@ -590,15 +599,16 @@ class Selection final : public nsSupportsWeakReference,
 
   MOZ_CAN_RUN_SCRIPT nsresult DoAutoScroll(nsIFrame* aFrame, nsPoint aPoint);
 
-  // We are not allowed to be in nodes whose root is not our document
-  bool HasSameRoot(nsINode& aNode);
+  bool HasSameRootOrSameComposedDoc(const nsINode& aNode);
 
   // XXX Please don't add additional uses of this method, it's only for
   // XXX supporting broken code (bug 1245883) in the following classes:
   friend class ::nsCopySupport;
   friend class ::nsHTMLCopyEncoder;
   MOZ_CAN_RUN_SCRIPT
-  void AddRangeInternal(nsRange& aRange, Document* aDocument, ErrorResult&);
+  void AddRangeAndSelectFramesAndNotifyListeners(nsRange& aRange,
+                                                 Document* aDocument,
+                                                 ErrorResult&);
 
   // This is helper method for GetPrimaryFrameForFocusNode.
   // If aVisual is true, this returns caret frame.
@@ -717,27 +727,35 @@ class Selection final : public nsSupportsWeakReference,
   nsresult AddTableCellRange(nsRange* aRange, bool* aDidAddRange,
                              int32_t* aOutIndex);
 
-  nsresult FindInsertionPoint(nsTArray<RangeData>* aElementArray,
-                              nsINode* aPointNode, int32_t aPointOffset,
-                              nsresult (*aComparator)(nsINode*, int32_t,
-                                                      nsRange*, int32_t*),
-                              int32_t* aPoint);
-  bool EqualsRangeAtPoint(nsINode* aBeginNode, int32_t aBeginOffset,
-                          nsINode* aEndNode, int32_t aEndOffset,
-                          int32_t aRangeIndex);
-  nsresult GetIndicesForInterval(nsINode* aBeginNode, int32_t aBeginOffset,
-                                 nsINode* aEndNode, int32_t aEndOffset,
-                                 bool aAllowAdjacent, int32_t* aStartIndex,
-                                 int32_t* aEndIndex);
+  static nsresult FindInsertionPoint(
+      const nsTArray<RangeData>* aElementArray, const nsINode* aPointNode,
+      int32_t aPointOffset,
+      nsresult (*aComparator)(const nsINode*, int32_t, const nsRange*,
+                              int32_t*),
+      int32_t* aPoint);
+  bool EqualsRangeAtPoint(const nsINode* aBeginNode, int32_t aBeginOffset,
+                          const nsINode* aEndNode, int32_t aEndOffset,
+                          int32_t aRangeIndex) const;
+  /**
+   * Works on the same principle as GetRangesForIntervalArray, however
+   * instead this returns the indices into mRanges between which the
+   * overlapping ranges lie.
+   */
+  nsresult GetIndicesForInterval(const nsINode* aBeginNode,
+                                 int32_t aBeginOffset, const nsINode* aEndNode,
+                                 int32_t aEndOffset, bool aAllowAdjacent,
+                                 int32_t& aStartIndex,
+                                 int32_t& aEndIndex) const;
   RangeData* FindRangeData(nsRange* aRange);
 
-  void UserSelectRangesToAdd(nsRange* aItem,
-                             nsTArray<RefPtr<nsRange>>& rangesToAdd);
+  static void UserSelectRangesToAdd(nsRange* aItem,
+                                    nsTArray<RefPtr<nsRange>>& rangesToAdd);
 
   /**
-   * Helper method for AddItem.
+   * Preserves the sorting of mRanges.
    */
-  nsresult AddItemInternal(nsRange* aRange, int32_t* aOutIndex);
+  nsresult MaybeAddRangeAndTruncateOverlaps(nsRange* aRange,
+                                            int32_t* aOutIndex);
 
   Document* GetDocument() const;
   nsPIDOMWindowOuter* GetWindow() const;

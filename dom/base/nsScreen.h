@@ -12,7 +12,7 @@
 #include "mozilla/dom/ScreenOrientation.h"
 #include "mozilla/DOMEventTargetHelper.h"
 #include "mozilla/ErrorResult.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_media.h"
 #include "nsCOMPtr.h"
 #include "nsRect.h"
 
@@ -120,7 +120,7 @@ class nsScreen : public mozilla::DOMEventTargetHelper {
   }
 
   static bool MediaCapabilitiesEnabled(JSContext* aCx, JSObject* aGlobal) {
-    return mozilla::StaticPrefs::MediaCapabilitiesScreenEnabled();
+    return mozilla::StaticPrefs::media_media_capabilities_screen_enabled();
   }
 
   IMPL_EVENT_HANDLER(change);

@@ -455,6 +455,12 @@ class RefTest(object):
         # Enable leaks detection to its own log file.
         self.leakLogFile = os.path.join(profileDir, "runreftest_leaks.log")
         browserEnv["XPCOM_MEM_BLOAT_LOG"] = self.leakLogFile
+
+        if options.enable_webrender:
+            browserEnv["MOZ_WEBRENDER"] = "1"
+            browserEnv["MOZ_ACCELERATED"] = "1"
+        else:
+            browserEnv["MOZ_WEBRENDER"] = "0"
         return browserEnv
 
     def cleanup(self, profileDir):
@@ -759,7 +765,7 @@ class RefTest(object):
             'processOutputLine': [self.outputHandler],
         }
 
-        if mozinfo.isWin:
+        if mozinfo.isWin or mozinfo.isMac:
             # Prevents log interleaving on Windows at the expense of losing
             # true log order. See bug 798300 and bug 1324961 for more details.
             kp_kwargs['processStderrLine'] = [self.outputHandler]

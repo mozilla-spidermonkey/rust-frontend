@@ -4,7 +4,10 @@
 
 "use strict";
 
-const { Component, createFactory } = require("devtools/client/shared/vendor/react");
+const {
+  Component,
+  createFactory,
+} = require("devtools/client/shared/vendor/react");
 const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
 const Services = require("Services");
@@ -14,6 +17,7 @@ const {
   fetchNetworkUpdatePacket,
   formDataURI,
   getUrlBaseName,
+  isJSON,
 } = require("../utils/request-utils");
 const { Filters } = require("../utils/filter-predicates");
 
@@ -61,12 +65,16 @@ class ResponsePanel extends Component {
 
   componentDidMount() {
     const { request, connector } = this.props;
-    fetchNetworkUpdatePacket(connector.requestData, request, ["responseContent"]);
+    fetchNetworkUpdatePacket(connector.requestData, request, [
+      "responseContent",
+    ]);
   }
 
   componentWillReceiveProps(nextProps) {
     const { request, connector } = nextProps;
-    fetchNetworkUpdatePacket(connector.requestData, request, ["responseContent"]);
+    fetchNetworkUpdatePacket(connector.requestData, request, [
+      "responseContent",
+    ]);
   }
 
   updateImageDimensions({ target }) {
@@ -79,23 +87,6 @@ class ResponsePanel extends Component {
   }
 
   /**
-   * This method checks that the response is base64 encoded by
-   * comparing these 2 values:
-   * 1. The original response
-   * 2. The value of doing a base64 decode on the
-   * response and then base64 encoding the result.
-   * If the values are different or an error is thrown,
-   * the method will return false.
-   */
-  isBase64(response) {
-    try {
-      return btoa(atob(response)) == response;
-    } catch (err) {
-      return false;
-    }
-  }
-
-  /**
    * Handle json, which we tentatively identify by checking the
    * MIME type for "json" after any word boundary. This works
    * for the standard "application/json", and also for custom
@@ -104,10 +95,11 @@ class ResponsePanel extends Component {
    * it's json or not, to handle responses incorrectly labeled
    * as text/plain instead.
    */
-  isJSON(mimeType, response) {
-    const limit = Services.prefs.getIntPref("devtools.netmonitor.responseBodyLimit");
+  handleJSONResponse(mimeType, response) {
+    const limit = Services.prefs.getIntPref(
+      "devtools.netmonitor.responseBodyLimit"
+    );
     const { request } = this.props;
-    let json, error;
 
     // Check if the response has been truncated, in which case no parse should
     // be attempted.
@@ -117,19 +109,7 @@ class ResponsePanel extends Component {
       return result;
     }
 
-    try {
-      json = JSON.parse(response);
-    } catch (err) {
-      if (this.isBase64(response)) {
-        try {
-          json = JSON.parse(atob(response));
-        } catch (err64) {
-          error = err;
-        }
-      } else {
-        error = err;
-      }
-    }
+    let { json, error } = isJSON(response);
 
     if (/\bjson/.test(mimeType) || json) {
       // Extract the actual json substring in case this might be a "JSONP".
@@ -173,11 +153,12 @@ class ResponsePanel extends Component {
     const { openLink, request } = this.props;
     const { responseContent, url } = request;
 
-    if (!responseContent || typeof responseContent.content.text !== "string"
-        || !responseContent.content.text) {
-      return div({ className: "empty-notice" },
-        RESPONSE_EMPTY_TEXT
-      );
+    if (
+      !responseContent ||
+      typeof responseContent.content.text !== "string" ||
+      !responseContent.content.text
+    ) {
+      return div({ className: "empty-notice" }, RESPONSE_EMPTY_TEXT);
     }
 
     let { encoding, mimeType, text } = responseContent.content;
@@ -185,25 +166,27 @@ class ResponsePanel extends Component {
     if (mimeType.includes("image/")) {
       const { width, height } = this.state.imageDimensions;
 
-      return (
-        div({ className: "panel-container response-image-box devtools-monospace" },
-          img({
-            className: "response-image",
-            src: formDataURI(mimeType, encoding, text),
-            onLoad: this.updateImageDimensions,
-          }),
-          div({ className: "response-summary" },
-            div({ className: "tabpanel-summary-label" }, RESPONSE_IMG_NAME),
-            div({ className: "tabpanel-summary-value" }, getUrlBaseName(url)),
-          ),
-          div({ className: "response-summary" },
-            div({ className: "tabpanel-summary-label" }, RESPONSE_IMG_DIMENSIONS),
-            div({ className: "tabpanel-summary-value" }, `${width} × ${height}`),
-          ),
-          div({ className: "response-summary" },
-            div({ className: "tabpanel-summary-label" }, RESPONSE_IMG_MIMETYPE),
-            div({ className: "tabpanel-summary-value" }, mimeType),
-          ),
+      return div(
+        { className: "panel-container response-image-box devtools-monospace" },
+        img({
+          className: "response-image",
+          src: formDataURI(mimeType, encoding, text),
+          onLoad: this.updateImageDimensions,
+        }),
+        div(
+          { className: "response-summary" },
+          div({ className: "tabpanel-summary-label" }, RESPONSE_IMG_NAME),
+          div({ className: "tabpanel-summary-value" }, getUrlBaseName(url))
+        ),
+        div(
+          { className: "response-summary" },
+          div({ className: "tabpanel-summary-label" }, RESPONSE_IMG_DIMENSIONS),
+          div({ className: "tabpanel-summary-value" }, `${width} × ${height}`)
+        ),
+        div(
+          { className: "response-summary" },
+          div({ className: "tabpanel-summary-label" }, RESPONSE_IMG_MIMETYPE),
+          div({ className: "tabpanel-summary-value" }, mimeType)
         )
       );
     }
@@ -214,7 +197,8 @@ class ResponsePanel extends Component {
     }
 
     // Display Properties View
-    const { json, jsonpCallback, error } = this.isJSON(mimeType, text) || {};
+    const { json, jsonpCallback, error } =
+      this.handleJSONResponse(mimeType, text) || {};
     const object = {};
     let sectionName;
 
@@ -247,18 +231,15 @@ class ResponsePanel extends Component {
       classList.push("contains-html-preview");
     }
 
-    return (
-      div({ className: classList.join(" ") },
-        error && div({ className: "response-error-header", title: error },
-          error
-        ),
-        PropertiesView({
-          object,
-          filterPlaceHolder: JSON_FILTER_TEXT,
-          sectionNames: Object.keys(object),
-          openLink,
-        }),
-      )
+    return div(
+      { className: classList.join(" ") },
+      error && div({ className: "response-error-header", title: error }, error),
+      PropertiesView({
+        object,
+        filterPlaceHolder: JSON_FILTER_TEXT,
+        sectionNames: Object.keys(object),
+        openLink,
+      })
     );
   }
 }

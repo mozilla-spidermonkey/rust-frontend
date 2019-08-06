@@ -4,7 +4,7 @@
 
 use crate::batch::{BatchKey, BatchKind, BrushBatchKind, BatchFeatures};
 use crate::device::{Device, Program, ShaderError};
-use euclid::{Transform3D};
+use euclid::default::Transform3D;
 use crate::glyph_rasterizer::GlyphFormat;
 use crate::renderer::{
     desc,
@@ -192,6 +192,7 @@ impl LazilyCompiledShader {
                 VertexArrayKind::Border => &desc::BORDER,
                 VertexArrayKind::Scale => &desc::SCALE,
                 VertexArrayKind::Resolve => &desc::RESOLVE,
+                VertexArrayKind::SvgFilter => &desc::SVG_FILTER,
             };
 
             device.link_program(program, vertex_descriptor)?;
@@ -508,10 +509,10 @@ pub struct Shaders {
     pub cs_blur_rgba8: LazilyCompiledShader,
     pub cs_border_segment: LazilyCompiledShader,
     pub cs_border_solid: LazilyCompiledShader,
-    pub cs_scale_a8: LazilyCompiledShader,
-    pub cs_scale_rgba8: LazilyCompiledShader,
+    pub cs_scale: LazilyCompiledShader,
     pub cs_line_decoration: LazilyCompiledShader,
     pub cs_gradient: LazilyCompiledShader,
+    pub cs_svg_filter: LazilyCompiledShader,
 
     // Brush shaders
     brush_solid: BrushShader,
@@ -634,6 +635,14 @@ impl Shaders {
             options.precache_flags,
         )?;
 
+        let cs_svg_filter = LazilyCompiledShader::new(
+            ShaderKind::Cache(VertexArrayKind::SvgFilter),
+            "cs_svg_filter",
+            &[],
+            device,
+            options.precache_flags,
+        )?;
+
         let cs_clip_rectangle_slow = LazilyCompiledShader::new(
             ShaderKind::ClipCache,
             "cs_clip_rectangle",
@@ -688,18 +697,10 @@ impl Shaders {
             pls_precache_flags,
         )?;
 
-        let cs_scale_a8 = LazilyCompiledShader::new(
+        let cs_scale = LazilyCompiledShader::new(
             ShaderKind::Cache(VertexArrayKind::Scale),
             "cs_scale",
-            &["ALPHA_TARGET"],
-            device,
-            options.precache_flags,
-        )?;
-
-        let cs_scale_rgba8 = LazilyCompiledShader::new(
-            ShaderKind::Cache(VertexArrayKind::Scale),
-            "cs_scale",
-            &["COLOR_TARGET"],
+            &[],
             device,
             options.precache_flags,
         )?;
@@ -854,8 +855,8 @@ impl Shaders {
             cs_line_decoration,
             cs_gradient,
             cs_border_solid,
-            cs_scale_a8,
-            cs_scale_rgba8,
+            cs_scale,
+            cs_svg_filter,
             brush_solid,
             brush_image,
             brush_fast_image,
@@ -937,10 +938,10 @@ impl Shaders {
     }
 
     pub fn deinit(self, device: &mut Device) {
-        self.cs_scale_a8.deinit(device);
-        self.cs_scale_rgba8.deinit(device);
+        self.cs_scale.deinit(device);
         self.cs_blur_a8.deinit(device);
         self.cs_blur_rgba8.deinit(device);
+        self.cs_svg_filter.deinit(device);
         self.brush_solid.deinit(device);
         self.brush_blend.deinit(device);
         self.brush_mix_blend.deinit(device);

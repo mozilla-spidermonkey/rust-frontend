@@ -15,7 +15,7 @@
 #include "js/SourceText.h"
 #include "MessageEventRunnable.h"
 #include "mozilla/ScopeExit.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/dom/BlobURLProtocolHandler.h"
 #include "mozilla/dom/CallbackDebuggerNotification.h"
 #include "mozilla/dom/ClientManager.h"
@@ -695,6 +695,22 @@ class UpdateGCZealRunnable final : public WorkerControlRunnable {
   }
 };
 #endif
+
+class SetLowMemoryStateRunnable final : public WorkerControlRunnable {
+  bool mState;
+
+ public:
+  SetLowMemoryStateRunnable(WorkerPrivate* aWorkerPrivate, bool aState)
+      : WorkerControlRunnable(aWorkerPrivate, WorkerThreadUnchangedBusyCount),
+        mState(aState) {}
+
+ private:
+  virtual bool WorkerRun(JSContext* aCx,
+                         WorkerPrivate* aWorkerPrivate) override {
+    aWorkerPrivate->SetLowMemoryStateInternal(aCx, mState);
+    return true;
+  }
+};
 
 class GarbageCollectRunnable final : public WorkerControlRunnable {
   bool mShrinking;
@@ -1819,6 +1835,16 @@ void WorkerPrivate::UpdateGCZeal(uint8_t aGCZeal, uint32_t aFrequency) {
 }
 #endif
 
+void WorkerPrivate::SetLowMemoryState(bool aState) {
+  AssertIsOnParentThread();
+
+  RefPtr<SetLowMemoryStateRunnable> runnable =
+      new SetLowMemoryStateRunnable(this, aState);
+  if (!runnable->Dispatch()) {
+    NS_WARNING("Failed to set low memory state!");
+  }
+}
+
 void WorkerPrivate::GarbageCollect(bool aShrinking) {
   AssertIsOnParentThread();
 
@@ -2021,7 +2047,7 @@ bool WorkerPrivate::PrincipalIsValid() const {
 
 WorkerPrivate::WorkerThreadAccessible::WorkerThreadAccessible(
     WorkerPrivate* const aParent)
-    : mNumHoldersPreventingShutdownStart(0),
+    : mNumWorkerRefsPreventingShutdownStart(0),
       mDebuggerEventLoopLevel(0),
       mErrorHandlerRecursionCount(0),
       mNextTimeoutId(1),
@@ -2127,13 +2153,14 @@ WorkerPrivate::WorkerPrivate(WorkerPrivate* aParent,
 
     RuntimeService::GetDefaultJSSettings(mJSSettings);
 
+    mJSSettings.chrome.realmOptions.creationOptions().setClampAndJitterTime(
+        !UsesSystemPrincipal());
+    mJSSettings.content.realmOptions.creationOptions().setClampAndJitterTime(
+        !UsesSystemPrincipal());
+
     if (mIsSecureContext) {
       mJSSettings.chrome.realmOptions.creationOptions().setSecureContext(true);
-      mJSSettings.chrome.realmOptions.creationOptions().setClampAndJitterTime(
-          false);
       mJSSettings.content.realmOptions.creationOptions().setSecureContext(true);
-      mJSSettings.content.realmOptions.creationOptions().setClampAndJitterTime(
-          false);
     }
 
     mIsInAutomation = xpc::IsInAutomation();
@@ -2481,7 +2508,7 @@ nsresult WorkerPrivate::GetLoadInfo(JSContext* aCx, nsPIDOMWindowInner* aWindow,
         if (document->GetSandboxFlags() & SANDBOXED_ORIGIN) {
           nsCOMPtr<Document> tmpDoc = document;
           do {
-            tmpDoc = tmpDoc->GetParentDocument();
+            tmpDoc = tmpDoc->GetInProcessParentDocument();
           } while (tmpDoc && tmpDoc->GetSandboxFlags() & SANDBOXED_ORIGIN);
 
           if (tmpDoc) {
@@ -2679,7 +2706,7 @@ void WorkerPrivate::DoRunLoop(JSContext* aCx) {
       while (mControlQueue.IsEmpty() &&
              !(debuggerRunnablesPending = !mDebuggerQueue.IsEmpty()) &&
              !(normalRunnablesPending = NS_HasPendingEvents(mThread)) &&
-             !(mStatus != Running && !HasActiveHolders())) {
+             !(mStatus != Running && !HasActiveWorkerRefs())) {
         WaitForWorkerEvents();
       }
 
@@ -2697,7 +2724,7 @@ void WorkerPrivate::DoRunLoop(JSContext* aCx) {
     }
 
     // if all holders are done then we can kill this thread.
-    if (currentStatus != Running && !HasActiveHolders()) {
+    if (currentStatus != Running && !HasActiveWorkerRefs()) {
       // Now we are ready to kill the worker thread.
       if (currentStatus == Canceling) {
         NotifyInternal(Killing);
@@ -3476,7 +3503,9 @@ void WorkerPrivate::RemoveChildWorker(WorkerPrivate* aChildWorker) {
   }
 }
 
-bool WorkerPrivate::AddHolder(WorkerHolder* aHolder, WorkerStatus aFailStatus) {
+bool WorkerPrivate::AddWorkerRef(WorkerRef* aWorkerRef,
+                                 WorkerStatus aFailStatus) {
+  MOZ_ASSERT(aWorkerRef);
   MOZ_ACCESS_THREAD_BOUND(mWorkerThreadAccessible, data);
 
   {
@@ -3487,46 +3516,46 @@ bool WorkerPrivate::AddHolder(WorkerHolder* aHolder, WorkerStatus aFailStatus) {
     }
   }
 
-  MOZ_ASSERT(!data->mHolders.Contains(aHolder), "Already know about this one!");
+  MOZ_ASSERT(!data->mWorkerRefs.Contains(aWorkerRef),
+             "Already know about this one!");
 
-  if (aHolder->GetBehavior() == WorkerHolder::PreventIdleShutdownStart) {
-    if (!data->mNumHoldersPreventingShutdownStart &&
+  if (aWorkerRef->IsPreventingShutdown()) {
+    if (!data->mNumWorkerRefsPreventingShutdownStart &&
         !ModifyBusyCountFromWorker(true)) {
       return false;
     }
-    data->mNumHoldersPreventingShutdownStart += 1;
+    data->mNumWorkerRefsPreventingShutdownStart += 1;
   }
 
-  data->mHolders.AppendElement(aHolder);
+  data->mWorkerRefs.AppendElement(aWorkerRef);
   return true;
 }
 
-void WorkerPrivate::RemoveHolder(WorkerHolder* aHolder) {
+void WorkerPrivate::RemoveWorkerRef(WorkerRef* aWorkerRef) {
+  MOZ_ASSERT(aWorkerRef);
   MOZ_ACCESS_THREAD_BOUND(mWorkerThreadAccessible, data);
 
-  MOZ_ASSERT(data->mHolders.Contains(aHolder), "Didn't know about this one!");
-  data->mHolders.RemoveElement(aHolder);
+  MOZ_ASSERT(data->mWorkerRefs.Contains(aWorkerRef),
+             "Didn't know about this one!");
+  data->mWorkerRefs.RemoveElement(aWorkerRef);
 
-  if (aHolder->GetBehavior() == WorkerHolder::PreventIdleShutdownStart) {
-    data->mNumHoldersPreventingShutdownStart -= 1;
-    if (!data->mNumHoldersPreventingShutdownStart &&
+  if (aWorkerRef->IsPreventingShutdown()) {
+    data->mNumWorkerRefsPreventingShutdownStart -= 1;
+    if (!data->mNumWorkerRefsPreventingShutdownStart &&
         !ModifyBusyCountFromWorker(false)) {
       NS_WARNING("Failed to modify busy count!");
     }
   }
 }
 
-void WorkerPrivate::NotifyHolders(WorkerStatus aStatus) {
+void WorkerPrivate::NotifyWorkerRefs(WorkerStatus aStatus) {
   MOZ_ACCESS_THREAD_BOUND(mWorkerThreadAccessible, data);
 
   NS_ASSERTION(aStatus > Closing, "Bad status!");
 
-  nsTObserverArray<WorkerHolder*>::ForwardIterator iter(data->mHolders);
+  nsTObserverArray<WorkerRef*>::ForwardIterator iter(data->mWorkerRefs);
   while (iter.HasMore()) {
-    WorkerHolder* holder = iter.GetNext();
-    if (!holder->Notify(aStatus)) {
-      NS_WARNING("Failed to notify holder!");
-    }
+    iter.GetNext()->Notify();
   }
 
   AutoTArray<WorkerPrivate*, 10> children;
@@ -4033,7 +4062,7 @@ bool WorkerPrivate::NotifyInternal(WorkerStatus aStatus) {
 
   // Let all our holders know the new status.
   if (aStatus > Closing) {
-    NotifyHolders(aStatus);
+    NotifyWorkerRefs(aStatus);
   }
 
   // If this is the first time our status has changed then we need to clear the
@@ -4502,6 +4531,16 @@ void WorkerPrivate::UpdateGCZealInternal(JSContext* aCx, uint8_t aGCZeal,
 }
 #endif
 
+void WorkerPrivate::SetLowMemoryStateInternal(JSContext* aCx, bool aState) {
+  MOZ_ACCESS_THREAD_BOUND(mWorkerThreadAccessible, data);
+
+  JS::SetLowMemoryState(aCx, aState);
+
+  for (uint32_t index = 0; index < data->mChildWorkers.Length(); index++) {
+    data->mChildWorkers[index]->SetLowMemoryState(aState);
+  }
+}
+
 void WorkerPrivate::GarbageCollectInternal(JSContext* aCx, bool aShrinking,
                                            bool aCollectChildren) {
   MOZ_ACCESS_THREAD_BOUND(mWorkerThreadAccessible, data);
@@ -4764,11 +4803,13 @@ void WorkerPrivate::AssertIsOnWorkerThread() const {
 void WorkerPrivate::DumpCrashInformation(nsACString& aString) {
   MOZ_ACCESS_THREAD_BOUND(mWorkerThreadAccessible, data);
 
-  nsTObserverArray<WorkerHolder*>::ForwardIterator iter(data->mHolders);
+  nsTObserverArray<WorkerRef*>::ForwardIterator iter(data->mWorkerRefs);
   while (iter.HasMore()) {
-    WorkerHolder* holder = iter.GetNext();
-    aString.Append("|");
-    aString.Append(holder->Name());
+    WorkerRef* workerRef = iter.GetNext();
+    if (workerRef->IsPreventingShutdown()) {
+      aString.Append("|");
+      aString.Append(workerRef->Name());
+    }
   }
 }
 

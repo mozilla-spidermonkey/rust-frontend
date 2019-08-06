@@ -7,7 +7,7 @@
 
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/Sprintf.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_gfx.h"
 
 #include "gfxCoreTextShaper.h"
 #include <algorithm>
@@ -199,7 +199,7 @@ bool gfxMacFont::ShapeText(DrawTarget* aDrawTarget, const char16_t* aText,
   // so we ignore RequiresAATLayout if vertical is requested.
   auto macFontEntry = static_cast<MacOSFontEntry*>(GetFontEntry());
   if (macFontEntry->RequiresAATLayout() && !aVertical &&
-      StaticPrefs::CoreTextEnabled()) {
+      StaticPrefs::gfx_font_rendering_coretext_enabled()) {
     if (!mCoreTextShaper) {
       mCoreTextShaper = MakeUnique<gfxCoreTextShaper>(this);
     }

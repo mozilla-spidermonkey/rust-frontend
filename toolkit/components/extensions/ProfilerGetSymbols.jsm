@@ -1,13 +1,23 @@
 /* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* vim: set sts=2 sw=2 et tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
 const EXPORTED_SYMBOLS = ["ProfilerGetSymbols"];
 
-ChromeUtils.defineModuleGetter(this, "setTimeout",
-                               "resource://gre/modules/Timer.jsm");
-ChromeUtils.defineModuleGetter(this, "clearTimeout",
-                               "resource://gre/modules/Timer.jsm");
+ChromeUtils.defineModuleGetter(
+  this,
+  "setTimeout",
+  "resource://gre/modules/Timer.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
+  "clearTimeout",
+  "resource://gre/modules/Timer.jsm"
+);
 
 Cu.importGlobalProperties(["fetch"]);
 
@@ -55,7 +65,10 @@ function getWASMProfilerGetSymbolsModule() {
 
   // Reset expiry timer.
   clearTimeout(gCachedWASMModuleExpiryTimer);
-  gCachedWASMModuleExpiryTimer = setTimeout(clearCachedWASMModule, EXPIRY_TIME_IN_MS);
+  gCachedWASMModuleExpiryTimer = setTimeout(
+    clearCachedWASMModule,
+    EXPIRY_TIME_IN_MS
+  );
 
   return gCachedWASMModulePromise;
 }
@@ -80,16 +93,17 @@ this.ProfilerGetSymbols = {
     const module = await getWASMProfilerGetSymbolsModule();
 
     return new Promise((resolve, reject) => {
-      const worker =
-        new ChromeWorker("resource://gre/modules/ProfilerGetSymbols-worker.js");
-      worker.onmessage = (e) => {
+      const worker = new ChromeWorker(
+        "resource://gre/modules/ProfilerGetSymbols-worker.js"
+      );
+      worker.onmessage = e => {
         if (e.data.error) {
           reject(e.data.error);
           return;
         }
         resolve(e.data.result);
       };
-      worker.postMessage({binaryPath, debugPath, breakpadId, module});
+      worker.postMessage({ binaryPath, debugPath, breakpadId, module });
     });
   },
 };

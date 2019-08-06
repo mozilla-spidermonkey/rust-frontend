@@ -13,7 +13,7 @@
 
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/Unused.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/HTMLFrameElement.h"
@@ -55,8 +55,6 @@
 using namespace mozilla;
 using namespace mozilla::layers;
 using mozilla::dom::Document;
-
-static bool sShowPreviousPage = true;
 
 static Document* GetDocumentFromView(nsView* aView) {
   MOZ_ASSERT(aView, "null view");
@@ -111,15 +109,6 @@ void nsSubDocumentFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
   MOZ_ASSERT(aContent);
   // determine if we are a <frame> or <iframe>
   mIsInline = !aContent->IsHTMLElement(nsGkAtoms::frame);
-
-  static bool addedShowPreviousPage = false;
-  if (!addedShowPreviousPage) {
-    // If layout.show_previous_page is true then during loading of a new page we
-    // will draw the previous page if the new page has painting suppressed.
-    Preferences::AddBoolVarCache(&sShowPreviousPage,
-                                 "layout.show_previous_page", true);
-    addedShowPreviousPage = true;
-  }
 
   nsAtomicContainerFrame::Init(aContent, aParent, aPrevInFlow);
 
@@ -255,7 +244,7 @@ mozilla::PresShell* nsSubDocumentFrame::GetSubdocumentPresShellForPainting(
       mozilla::PresShell* presShellForNextView = frame->PresShell();
       if (!presShell || (presShellForNextView &&
                          !presShellForNextView->IsPaintingSuppressed() &&
-                         sShowPreviousPage)) {
+                         StaticPrefs::layout_show_previous_page())) {
         subdocView = nextView;
         subdocRootFrame = frame;
         presShell = presShellForNextView;
@@ -433,7 +422,7 @@ void nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
           aBuilder, &copyOfVisible, &copyOfDirty,
           /* aSetBase = */ true);
 
-      if (!StaticPrefs::LayoutUseContainersForRootFrames() ||
+      if (!StaticPrefs::layout_scroll_root_frame_containers() ||
           !aBuilder->IsPaintingToWindow()) {
         haveDisplayPort = false;
       }
@@ -590,7 +579,7 @@ void nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
   // unscrolled color item for overscroll. Try again now that we're
   // outside the scrolled ContainerLayer.
   if (!aBuilder->IsForEventDelivery() &&
-      StaticPrefs::LayoutUseContainersForRootFrames() &&
+      StaticPrefs::layout_scroll_root_frame_containers() &&
       !nsLayoutUtils::NeedsPrintPreviewBackground(presContext)) {
     nsRect bounds =
         GetContentRectRelativeToSelf() + aBuilder->ToReferenceFrame(this);
@@ -1285,6 +1274,11 @@ nsView* nsSubDocumentFrame::EnsureInnerView() {
   return mInnerView;
 }
 
+nsPoint nsSubDocumentFrame::GetExtraOffset() const {
+  MOZ_ASSERT(mInnerView);
+  return mInnerView->GetPosition();
+}
+
 nsIFrame* nsSubDocumentFrame::ObtainIntrinsicSizeFrame() {
   if (StyleDisplay()->IsContainSize()) {
     // Intrinsic size of 'contain:size' replaced elements is 0,0. So, don't use
@@ -1409,10 +1403,11 @@ already_AddRefed<mozilla::layers::Layer> nsDisplayRemote::BuildLayer(
     // relative to this frame
     nsRect visibleRect;
     if (aContainerParameters.mItemVisibleRect) {
-      visibleRect = *aContainerParameters.mItemVisibleRect - ToReferenceFrame();
+      visibleRect = *aContainerParameters.mItemVisibleRect;
     } else {
-      visibleRect = mFrame->GetContentRectRelativeToSelf();
+      visibleRect = GetBuildingRect();
     }
+    visibleRect -= ToReferenceFrame();
 
     // Generate an effects update notifying the browser it is visible
     aBuilder->AddEffectUpdate(remoteBrowser,
@@ -1477,11 +1472,14 @@ bool nsDisplayRemote::CreateWebRenderCommands(
 
   if (RefPtr<RemoteBrowser> remoteBrowser =
           GetFrameLoader()->GetRemoteBrowser()) {
+    // Adjust mItemVisibleRect, which is relative to the reference frame, to be
+    // relative to this frame
+    nsRect visibleRect = GetBuildingRect() - ToReferenceFrame();
+
     // Generate an effects update notifying the browser it is visible
-    // TODO - Gather visibleRect and scaling factors
+    // TODO - Gather scaling factors
     aDisplayListBuilder->AddEffectUpdate(
-        remoteBrowser, EffectsInfo::VisibleWithinRect(
-                           mFrame->GetContentRectRelativeToSelf(), 1.0f, 1.0f));
+        remoteBrowser, EffectsInfo::VisibleWithinRect(visibleRect, 1.0f, 1.0f));
 
     // Create a WebRenderRemoteData to notify the RemoteBrowser when it is no
     // longer visible

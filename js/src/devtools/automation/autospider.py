@@ -1,4 +1,8 @@
 #!/usr/bin/env python
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this file,
+# You can obtain one at http://mozilla.org/MPL/2.0/.
+
 
 import argparse
 import json
@@ -392,7 +396,7 @@ if not args.nobuild:
     configure = os.path.join(DIR.js_src, 'configure')
     if need_updating_configure(configure):
         shutil.copyfile(configure + ".in", configure)
-        os.chmod(configure, 0755)
+        os.chmod(configure, 0o755)
 
     # Run configure
     if not args.noconf:

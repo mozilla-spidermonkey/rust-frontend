@@ -817,7 +817,7 @@ function handleRequest(req, res) {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Content-Type', 'application/json');
     res.writeHead(200, "OK");
-    res.end('{"http://' + req.headers['host'] + '": { "tls-ports": [' + serverPort + '] }}');
+    res.end('["http://' + req.headers['host'] + '"]');
     return;
   }
 
@@ -1210,6 +1210,12 @@ if (http2_internal) {
     if (target == '404.example.com:443') {
       // 404 Not Found, a response code that a proxy should return when the host can't be found
       stream.respond({ ':status': 404 });
+      stream.end();
+      return;
+    }
+    if (target == '429.example.com:443') {
+      // 429 Too Many Requests, a response code that a proxy should return when receiving too many requests
+      stream.respond({ ':status': 429 });
       stream.end();
       return;
     }

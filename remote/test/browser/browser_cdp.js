@@ -5,11 +5,11 @@
 
 // Test very basic CDP features.
 
-const TEST_URI = "data:text/html;charset=utf-8,default-test-page";
+const TEST_DOC = toDataURL("default-test-page");
 
 add_task(async function testCDP() {
   // Open a test page, to prevent debugging the random default page
-  const tab = await BrowserTestUtils.openNewForegroundTab(gBrowser, TEST_URI);
+  const tab = await BrowserTestUtils.openNewForegroundTab(gBrowser, TEST_DOC);
 
   // Start the CDP server
   await RemoteAgent.listen(Services.io.newURI("http://localhost:9222"));
@@ -22,28 +22,38 @@ add_task(async function testCDP() {
     target(list) {
       // Ensure debugging the right target, i.e. the one for our test tab.
       return list.find(target => {
-        return target.url == TEST_URI;
+        return target.url == TEST_DOC;
       });
     },
   });
   ok(true, "CDP client has been instantiated");
 
-  const {Browser, Log, Page} = client;
+  const { Browser, Log, Page } = client;
   ok("Browser" in client, "Browser domain is available");
   ok("Log" in client, "Log domain is available");
   ok("Page" in client, "Page domain is available");
 
   const version = await Browser.getVersion();
-  const { isHeadless } = Cc["@mozilla.org/gfx/info;1"].getService(Ci.nsIGfxInfo);
-  is(version.product, isHeadless ? "Headless Firefox" : "Firefox", "Browser.getVersion works and depends on headless mode");
-  is(version.userAgent, window.navigator.userAgent, "Browser.getVersion().userAgent is correct");
+  const { isHeadless } = Cc["@mozilla.org/gfx/info;1"].getService(
+    Ci.nsIGfxInfo
+  );
+  is(
+    version.product,
+    isHeadless ? "Headless Firefox" : "Firefox",
+    "Browser.getVersion works and depends on headless mode"
+  );
+  is(
+    version.userAgent,
+    window.navigator.userAgent,
+    "Browser.getVersion().userAgent is correct"
+  );
 
   // receive console.log messages and print them
   Log.enable();
   ok(true, "Log domain has been enabled");
 
-  Log.entryAdded(({entry}) => {
-    const {timestamp, level, text, args} = entry;
+  Log.entryAdded(({ entry }) => {
+    const { timestamp, level, text, args } = entry;
     const msg = text || args.join(" ");
     console.log(`${new Date(timestamp)}\t${level.toUpperCase()}\t${msg}`);
   });
@@ -55,7 +65,9 @@ add_task(async function testCDP() {
   const frameStoppedLoading = Page.frameStoppedLoading();
   const navigatedWithinDocument = Page.navigatedWithinDocument();
   const loadEventFired = Page.loadEventFired();
-  await Page.navigate({url: "data:text/html;charset=utf-8,test-page<script>console.log('foo');</script><script>'</script>"});
+  await Page.navigate({
+    url: toDataURL(`<script>console.log("foo")</script>`),
+  });
   ok(true, "A new page has been loaded");
 
   await loadEventFired;

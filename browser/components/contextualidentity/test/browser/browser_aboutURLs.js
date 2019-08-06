@@ -5,9 +5,9 @@
 requestLongerTimeout(2);
 
 add_task(async function() {
-  await SpecialPowers.pushPrefEnv({"set": [
-    ["signon.management.page.enabled", true],
-  ]});
+  await SpecialPowers.pushPrefEnv({
+    set: [["signon.management.page.enabled", true]],
+  });
 
   let aboutURLs = [];
 
@@ -18,8 +18,9 @@ add_task(async function() {
     // This is due to a fetch request that has the default user context. Since
     // the fetch request omits credentials, the user context doesn't matter.
     "addons",
-    // about:credits will initiate network request.
+    // about:credits and about:logins will initiate network request.
     "credits",
+    "logins",
     // about:telemetry will fetch Telemetry asynchronously and takes longer,
     // so we skip this for now.
     "telemetry",
@@ -28,10 +29,15 @@ add_task(async function() {
     // about:debugging requires specific wait code for internal pending RDP requests.
     "debugging",
     "debugging-new",
+    // about:protections uses RPM to send a message as soon as the page loads,
+    // the page is destoryed before getting a response.
+    "protections",
   ];
 
   for (let cid in Cc) {
-    let result = cid.match(/@mozilla.org\/network\/protocol\/about;1\?what\=(.*)$/);
+    let result = cid.match(
+      /@mozilla.org\/network\/protocol\/about;1\?what\=(.*)$/
+    );
     if (!result) {
       continue;
     }
@@ -42,8 +48,10 @@ add_task(async function() {
       let am = Cc[contract].getService(Ci.nsIAboutModule);
       let uri = Services.io.newURI("about:" + aboutType);
       let flags = am.getURIFlags(uri);
-      if (!(flags & Ci.nsIAboutModule.HIDE_FROM_ABOUTABOUT) &&
-          !skipURLs.includes(aboutType)) {
+      if (
+        !(flags & Ci.nsIAboutModule.HIDE_FROM_ABOUTABOUT) &&
+        !skipURLs.includes(aboutType)
+      ) {
         aboutURLs.push(aboutType);
       }
     } catch (e) {
@@ -54,7 +62,9 @@ add_task(async function() {
 
   for (let url of aboutURLs) {
     info("Loading about:" + url);
-    let tab = BrowserTestUtils.addTab(gBrowser, "about:" + url, {userContextId: 1});
+    let tab = BrowserTestUtils.addTab(gBrowser, "about:" + url, {
+      userContextId: 1,
+    });
     await BrowserTestUtils.browserLoaded(tab.linkedBrowser);
 
     ok(true, "Done loading about:" + url);

@@ -8,7 +8,7 @@
 #include "mozilla/dom/FeaturePolicy.h"
 #include "mozilla/dom/FeaturePolicyViolationReportBody.h"
 #include "mozilla/dom/ReportingUtils.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/dom/Document.h"
 #include "nsIURIFixup.h"
 
@@ -92,7 +92,7 @@ bool FeaturePolicyUtils::IsFeatureAllowed(Document* aDocument,
     return true;
   }
 
-  FeaturePolicy* policy = aDocument->Policy();
+  FeaturePolicy* policy = aDocument->FeaturePolicy();
   MOZ_ASSERT(policy);
 
   if (policy->AllowsFeatureInternal(aFeatureName, policy->DefaultOrigin())) {

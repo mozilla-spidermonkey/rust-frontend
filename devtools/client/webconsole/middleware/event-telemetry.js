@@ -8,6 +8,7 @@ const {
   FILTER_TEXT_SET,
   FILTER_TOGGLE,
   DEFAULT_FILTERS_RESET,
+  EVALUATE_EXPRESSION,
   MESSAGES_ADD,
   PERSIST_TOGGLE,
 } = require("devtools/client/webconsole/constants");
@@ -42,17 +43,28 @@ function eventTelemetryMiddleware(telemetry, sessionId, store) {
     } else if (action.type === MESSAGES_ADD) {
       messagesAdd({ action, telemetry });
     } else if (action.type === PERSIST_TOGGLE) {
-      telemetry.recordEvent("persist_changed", "webconsole", String(state.ui.persistLogs),
+      telemetry.recordEvent(
+        "persist_changed",
+        "webconsole",
+        String(state.ui.persistLogs),
         {
-        "session_id": sessionId,
-        });
+          session_id: sessionId,
+        }
+      );
+    } else if (action.type === EVALUATE_EXPRESSION) {
+      // Send telemetry event. If we are in the browser toolbox we send -1 as the
+      // toolbox session id.
+      telemetry.recordEvent("execute_js", "webconsole", null, {
+        lines: action.expression.split(/\n/).length,
+        session_id: sessionId,
+      });
     }
 
     return res;
   };
 }
 
-function filterChange({action, state, oldState, telemetry, sessionId}) {
+function filterChange({ action, state, oldState, telemetry, sessionId }) {
   const oldFilterState = oldState.filters;
   const filterState = state.filters;
   const activeFilters = [];
@@ -79,18 +91,19 @@ function filterChange({action, state, oldState, telemetry, sessionId}) {
   }
 
   telemetry.recordEvent("filters_changed", "webconsole", null, {
-    "trigger": trigger,
-    "active": activeFilters.join(","),
-    "inactive": inactiveFilters.join(","),
-    "session_id": sessionId,
+    trigger: trigger,
+    active: activeFilters.join(","),
+    inactive: inactiveFilters.join(","),
+    session_id: sessionId,
   });
 }
 
 function messagesAdd({ action, telemetry }) {
-  const {messages} = action;
+  const { messages } = action;
   for (const message of messages) {
     if (message.level === "error" && message.source === "javascript") {
-      telemetry.getKeyedHistogramById("DEVTOOLS_JAVASCRIPT_ERROR_DISPLAYED")
+      telemetry
+        .getKeyedHistogramById("DEVTOOLS_JAVASCRIPT_ERROR_DISPLAYED")
         .add(message.errorMessageName || "Unknown", true);
     }
   }

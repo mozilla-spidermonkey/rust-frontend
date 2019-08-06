@@ -23,14 +23,6 @@ const TEST_URI = `data:text/html;charset=utf-8,
 <body>Test</body>`;
 
 add_task(async function() {
-  // Run test with legacy JsTerm
-  await performTests();
-  // And then run it with the CodeMirror-powered one.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", true);
-  await performTests();
-});
-
-async function performTests() {
   const { jsterm } = await openNewTabAndConsole(TEST_URI);
   const { autocompletePopup: popup } = jsterm;
 
@@ -44,30 +36,43 @@ async function performTests() {
   ok(popup.isOpen, "popup is open");
 
   const expectedPopupItems = ["xx", "xxx"];
-  is(popup.items.map(i => i.label).join("-"), expectedPopupItems.join("-"),
-    "popup has expected items");
+  is(
+    popup.items.map(i => i.label).join("-"),
+    expectedPopupItems.join("-"),
+    "popup has expected items"
+  );
 
   const originalWidth = popup._tooltip.container.clientWidth;
-  ok(originalWidth > 2 * jsterm._inputCharWidth,
-    "popup is at least wider than the width of the longest list item");
+  ok(
+    originalWidth > 2 * jsterm._inputCharWidth,
+    "popup is at least wider than the width of the longest list item"
+  );
 
   info(`wait for completion suggestions for "xx."`);
   let onAutocompleteUpdated = jsterm.once("autocomplete-updated");
   EventUtils.sendString(".");
   await onAutocompleteUpdated;
 
-  is(popup.items.map(i => i.label).join("-"), ["y".repeat(10), "z".repeat(20)].join("-"),
-    "popup has expected items");
+  is(
+    popup.items.map(i => i.label).join("-"),
+    ["y".repeat(10), "z".repeat(20)].join("-"),
+    "popup has expected items"
+  );
   const newPopupWidth = popup._tooltip.container.clientWidth;
   ok(newPopupWidth > originalWidth, "The popup width was updated");
-  ok(newPopupWidth > 20 * jsterm._inputCharWidth,
-    "popup is at least wider than the width of the longest list item");
+  ok(
+    newPopupWidth > 20 * jsterm._inputCharWidth,
+    "popup is at least wider than the width of the longest list item"
+  );
 
   info(`wait for completion suggestions for "xx"`);
   onAutocompleteUpdated = jsterm.once("autocomplete-updated");
   EventUtils.synthesizeKey("KEY_Backspace");
   await onAutocompleteUpdated;
 
-  is(popup._tooltip.container.clientWidth, originalWidth,
-    "popup is back to its original width");
-}
+  is(
+    popup._tooltip.container.clientWidth,
+    originalWidth,
+    "popup is back to its original width"
+  );
+});

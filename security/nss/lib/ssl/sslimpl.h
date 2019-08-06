@@ -37,6 +37,7 @@
 typedef struct sslSocketStr sslSocket;
 typedef struct sslNamedGroupDefStr sslNamedGroupDef;
 typedef struct sslEsniKeysStr sslEsniKeys;
+typedef struct sslDelegatedCredentialStr sslDelegatedCredential;
 typedef struct sslEphemeralKeyPairStr sslEphemeralKeyPair;
 typedef struct TLS13KeyShareEntryStr TLS13KeyShareEntry;
 
@@ -279,6 +280,7 @@ typedef struct sslOptionsStr {
     unsigned int enableHelloDowngradeCheck : 1;
     unsigned int enableV2CompatibleHello : 1;
     unsigned int enablePostHandshakeAuth : 1;
+    unsigned int enableDelegatedCredentials : 1;
 } sslOptions;
 
 typedef enum { sslHandshakingUndetermined = 0,
@@ -1094,6 +1096,9 @@ struct sslSocketStr {
     /* The information from the ESNI keys record
      * (also the private key for the server). */
     sslEsniKeys *esniKeys;
+
+    /* Anti-replay for TLS 1.3 0-RTT. */
+    SSLAntiReplayContext *antiReplay;
 };
 
 struct sslSelfEncryptKeysStr {
@@ -1462,6 +1467,11 @@ extern void ssl_FreeEphemeralKeyPairs(sslSocket *ss);
 extern SECStatus ssl_AppendPaddedDHKeyShare(sslBuffer *buf,
                                             const SECKEYPublicKey *pubKey,
                                             PRBool appendLength);
+extern PRBool ssl_CanUseSignatureScheme(SSLSignatureScheme scheme,
+                                        const SSLSignatureScheme *peerSchemes,
+                                        unsigned int peerSchemeCount,
+                                        PRBool requireSha1,
+                                        PRBool slotDoesPss);
 extern const ssl3DHParams *ssl_GetDHEParams(const sslNamedGroupDef *groupDef);
 extern SECStatus ssl_SelectDHEGroup(sslSocket *ss,
                                     const sslNamedGroupDef **groupDef);
@@ -1558,9 +1568,14 @@ extern SECStatus ssl3_ConsumeHandshakeNumber64(sslSocket *ss, PRUint64 *num,
 extern SECStatus ssl3_ConsumeHandshakeVariable(sslSocket *ss, SECItem *i,
                                                PRUint32 bytes, PRUint8 **b,
                                                PRUint32 *length);
+extern SECStatus ssl_SignatureSchemeFromSpki(const CERTSubjectPublicKeyInfo *spki,
+                                             PRBool isTls13,
+                                             SSLSignatureScheme *scheme);
+extern PRBool ssl_SignatureSchemeEnabled(const sslSocket *ss,
+                                         SSLSignatureScheme scheme);
 extern PRBool ssl_IsSupportedSignatureScheme(SSLSignatureScheme scheme);
 extern SECStatus ssl_CheckSignatureSchemeConsistency(
-    sslSocket *ss, SSLSignatureScheme scheme, CERTCertificate *cert);
+    sslSocket *ss, SSLSignatureScheme scheme, CERTSubjectPublicKeyInfo *spki);
 extern SECStatus ssl_ParseSignatureSchemes(const sslSocket *ss, PLArenaPool *arena,
                                            SSLSignatureScheme **schemesOut,
                                            unsigned int *numSchemesOut,
@@ -1568,8 +1583,18 @@ extern SECStatus ssl_ParseSignatureSchemes(const sslSocket *ss, PLArenaPool *are
                                            unsigned int *len);
 extern SECStatus ssl_ConsumeSignatureScheme(
     sslSocket *ss, PRUint8 **b, PRUint32 *length, SSLSignatureScheme *out);
+extern SECStatus ssl3_SignHashesWithPrivKey(SSL3Hashes *hash,
+                                            SECKEYPrivateKey *key,
+                                            SSLSignatureScheme scheme,
+                                            PRBool isTls,
+                                            SECItem *buf);
 extern SECStatus ssl3_SignHashes(sslSocket *ss, SSL3Hashes *hash,
                                  SECKEYPrivateKey *key, SECItem *buf);
+extern SECStatus ssl_VerifySignedHashesWithPubKey(sslSocket *ss,
+                                                  SECKEYPublicKey *spki,
+                                                  SSLSignatureScheme scheme,
+                                                  SSL3Hashes *hash,
+                                                  SECItem *buf);
 extern SECStatus ssl3_VerifySignedHashes(sslSocket *ss, SSLSignatureScheme scheme,
                                          SSL3Hashes *hash, SECItem *buf);
 extern SECStatus ssl3_CacheWrappedSecret(sslSocket *ss, sslSessionID *sid,
@@ -1652,6 +1677,7 @@ SECStatus ssl3_HandleNoCertificate(sslSocket *ss);
 SECStatus ssl3_SendEmptyCertificate(sslSocket *ss);
 void ssl3_CleanupPeerCerts(sslSocket *ss);
 SECStatus ssl3_SendCertificateStatus(sslSocket *ss);
+SECStatus ssl_SetAuthKeyBits(sslSocket *ss, const SECKEYPublicKey *pubKey);
 SECStatus ssl3_AuthCertificate(sslSocket *ss);
 SECStatus ssl_ReadCertificateStatus(sslSocket *ss, PRUint8 *b,
                                     PRUint32 length);
@@ -1693,6 +1719,8 @@ PRBool ssl3_CipherSuiteAllowedForVersionRange(ssl3CipherSuite cipherSuite,
                                               const SSLVersionRange *vrange);
 
 SECStatus ssl3_SelectServerCert(sslSocket *ss);
+SECStatus ssl_PrivateKeySupportsRsaPss(SECKEYPrivateKey *privKey,
+                                       PRBool *supportsRsaPss);
 SECStatus ssl_PickSignatureScheme(sslSocket *ss,
                                   CERTCertificate *cert,
                                   SECKEYPublicKey *pubKey,

@@ -285,14 +285,6 @@ static nscoord GetBaselinePosition(nsTextFrame* aFrame, gfxTextRun* aTextRun,
       return writingMode.IsVerticalRL() ? metrics.mAscent + metrics.mDescent
                                         : 0;
 
-    case NS_STYLE_DOMINANT_BASELINE_USE_SCRIPT:
-    case NS_STYLE_DOMINANT_BASELINE_NO_CHANGE:
-    case NS_STYLE_DOMINANT_BASELINE_RESET_SIZE:
-      // These three should not simply map to 'baseline', but we don't
-      // support the complex baseline model that SVG 1.1 has and which
-      // css3-linebox now defines.
-      // (fall through)
-
     case NS_STYLE_DOMINANT_BASELINE_AUTO:
     case NS_STYLE_DOMINANT_BASELINE_ALPHABETIC:
       return writingMode.IsVerticalRL()
@@ -1528,7 +1520,7 @@ class TextFrameIterator {
       return;
     }
 
-    mBaselines.AppendElement(mRootFrame->StyleSVGReset()->mDominantBaseline);
+    mBaselines.AppendElement(mRootFrame->StyleSVG()->mDominantBaseline);
     Next();
   }
 
@@ -1671,10 +1663,7 @@ nsTextFrame* TextFrameIterator::Next() {
 }
 
 void TextFrameIterator::PushBaseline(nsIFrame* aNextFrame) {
-  uint8_t baseline = aNextFrame->StyleSVGReset()->mDominantBaseline;
-  if (baseline == NS_STYLE_DOMINANT_BASELINE_AUTO) {
-    baseline = mBaselines.LastElement();
-  }
+  uint8_t baseline = aNextFrame->StyleSVG()->mDominantBaseline;
   mBaselines.AppendElement(baseline);
 }
 
@@ -2967,7 +2956,7 @@ void SVGTextFrame::ReflowSVGNonDisplayText() {
 
   // We had a style change, so we mark this frame as dirty so that the next
   // time it is painted, we reflow the anonymous block frame.
-  AddStateBits(NS_FRAME_IS_DIRTY);
+  this->MarkSubtreeDirty();
 
   // We also need to call InvalidateRenderingObservers, so that if the <text>
   // element is within a <mask>, say, the element referencing the <mask> will
@@ -3436,7 +3425,7 @@ void SVGTextFrame::ReflowSVG() {
   TextRenderedRunIterator it(this, TextRenderedRunIterator::eAllFrames);
   for (TextRenderedRun run = it.Current(); run.mFrame; run = it.Next()) {
     uint32_t runFlags = 0;
-    if (run.mFrame->StyleSVG()->mFill.Type() != eStyleSVGPaintType_None) {
+    if (!run.mFrame->StyleSVG()->mFill.kind.IsNone()) {
       runFlags |=
           TextRenderedRun::eIncludeFill | TextRenderedRun::eIncludeTextShadow;
     }
@@ -3507,7 +3496,7 @@ static uint32_t TextRenderedRunFlagsForBBoxContribution(
   uint32_t flags = 0;
   if ((aBBoxFlags & nsSVGUtils::eBBoxIncludeFillGeometry) ||
       ((aBBoxFlags & nsSVGUtils::eBBoxIncludeFill) &&
-       aRun.mFrame->StyleSVG()->mFill.Type() != eStyleSVGPaintType_None)) {
+       !aRun.mFrame->StyleSVG()->mFill.kind.IsNone())) {
     flags |= TextRenderedRun::eIncludeFill;
   }
   if ((aBBoxFlags & nsSVGUtils::eBBoxIncludeStrokeGeometry) ||
@@ -4958,9 +4947,8 @@ bool SVGTextFrame::ShouldRenderAsPath(nsTextFrame* aFrame,
 
   // Fill is a non-solid paint, has a non-default fill-rule or has
   // non-1 opacity.
-  if (!(style->mFill.Type() == eStyleSVGPaintType_None ||
-        (style->mFill.Type() == eStyleSVGPaintType_Color &&
-         style->mFillOpacity == 1))) {
+  if (!(style->mFill.kind.IsNone() ||
+        (style->mFill.kind.IsColor() && style->mFillOpacity == 1))) {
     return true;
   }
 
@@ -5030,7 +5018,7 @@ void SVGTextFrame::MaybeReflowAnonymousBlockChild() {
       // (Note that our anonymous nsBlockFrame is not an nsSVGDisplayableFrame,
       // so even when we are called via our ReflowSVG this will not be done for
       // us by nsSVGDisplayContainerFrame::ReflowSVG.)
-      kid->AddStateBits(NS_FRAME_IS_DIRTY);
+      kid->MarkSubtreeDirty();
     }
 
     // The RecordCorrespondence and DoReflow calls can result in new text frames

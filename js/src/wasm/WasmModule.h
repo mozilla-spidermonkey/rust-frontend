@@ -111,6 +111,10 @@ class Module : public JS::WasmModule {
 
   mutable Atomic<bool> testingTier2Active_;
 
+  // Cached malloc allocation size for GC memory tracking.
+
+  size_t gcMallocBytesExcludingCode_;
+
   bool instantiateFunctions(JSContext* cx,
                             const JSFunctionVector& funcImports) const;
   bool instantiateMemory(JSContext* cx,
@@ -129,7 +133,6 @@ class Module : public JS::WasmModule {
   bool instantiateGlobals(JSContext* cx, const ValVector& globalImportValues,
                           WasmGlobalObjectVector& globalObjs) const;
   bool initSegments(JSContext* cx, HandleWasmInstanceObject instance,
-                    const JSFunctionVector& funcImports,
                     HandleWasmMemoryObject memory,
                     const ValVector& globalImportValues) const;
   SharedCode getDebugEnabledCode() const;
@@ -161,6 +164,7 @@ class Module : public JS::WasmModule {
         testingTier2Active_(false) {
     MOZ_ASSERT_IF(metadata().debugEnabled,
                   debugUnlinkedCode_ && debugLinkData_);
+    initGCMallocBytesExcludingCode();
   }
   ~Module() override;
 
@@ -212,6 +216,13 @@ class Module : public JS::WasmModule {
   void addSizeOfMisc(MallocSizeOf mallocSizeOf, Metadata::SeenSet* seenMetadata,
                      ShareableBytes::SeenSet* seenBytes,
                      Code::SeenSet* seenCode, size_t* code, size_t* data) const;
+
+  // GC malloc memory tracking:
+
+  void initGCMallocBytesExcludingCode();
+  size_t gcMallocBytesExcludingCode() const {
+    return gcMallocBytesExcludingCode_;
+  }
 
   // Generated code analysis support:
 

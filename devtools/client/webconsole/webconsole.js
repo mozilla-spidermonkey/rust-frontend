@@ -5,11 +5,36 @@
 "use strict";
 
 var Services = require("Services");
-loader.lazyRequireGetter(this, "Utils", "devtools/client/webconsole/utils", true);
-loader.lazyRequireGetter(this, "WebConsoleUI", "devtools/client/webconsole/webconsole-ui", true);
-loader.lazyRequireGetter(this, "gDevTools", "devtools/client/framework/devtools", true);
-loader.lazyRequireGetter(this, "viewSource", "devtools/client/shared/view-source");
-loader.lazyRequireGetter(this, "openDocLink", "devtools/client/shared/link", true);
+loader.lazyRequireGetter(
+  this,
+  "Utils",
+  "devtools/client/webconsole/utils",
+  true
+);
+loader.lazyRequireGetter(
+  this,
+  "WebConsoleUI",
+  "devtools/client/webconsole/webconsole-ui",
+  true
+);
+loader.lazyRequireGetter(
+  this,
+  "gDevTools",
+  "devtools/client/framework/devtools",
+  true
+);
+loader.lazyRequireGetter(
+  this,
+  "viewSource",
+  "devtools/client/shared/view-source"
+);
+loader.lazyRequireGetter(
+  this,
+  "openDocLink",
+  "devtools/client/shared/link",
+  true
+);
+const EventEmitter = require("devtools/shared/event-emitter");
 
 var gHudId = 0;
 const isMacOS = Services.appinfo.OS === "Darwin";
@@ -25,43 +50,40 @@ const isMacOS = Services.appinfo.OS === "Darwin";
  */
 class WebConsole {
   /*
-  * @constructor
-  * @param object target
-  *        The target that the web console will connect to.
-  * @param nsIDOMWindow iframeWindow
-  *        The window where the web console UI is already loaded.
-  * @param nsIDOMWindow chromeWindow
-  *        The window of the web console owner.
-  * @param object hudService
-  *        The parent HUD Service
-  * @param bool isBrowserConsole
-  */
-  constructor(target, iframeWindow, chromeWindow, hudService, isBrowserConsole = false) {
+   * @constructor
+   * @param object target
+   *        The target that the web console will connect to.
+   * @param nsIDOMWindow iframeWindow
+   *        The window where the web console UI is already loaded.
+   * @param nsIDOMWindow chromeWindow
+   *        The window of the web console owner.
+   * @param bool isBrowserConsole
+   */
+  constructor(
+    target,
+    iframeWindow,
+    chromeWindow,
+    isBrowserConsole = false,
+    fissionSupport = false
+  ) {
     this.iframeWindow = iframeWindow;
     this.chromeWindow = chromeWindow;
     this.hudId = "hud_" + ++gHudId;
     this.target = target;
     this.browserWindow = this.chromeWindow.top;
-    this.hudService = hudService;
-    this._browserConsole = isBrowserConsole;
+    this.isBrowserConsole = isBrowserConsole;
+    this.fissionSupport = fissionSupport;
 
     const element = this.browserWindow.document.documentElement;
     if (element.getAttribute("windowtype") != gDevTools.chromeWindowType) {
-      this.browserWindow = this.hudService.currentContext();
+      this.browserWindow = Services.wm.getMostRecentWindow(
+        gDevTools.chromeWindowType
+      );
     }
     this.ui = new WebConsoleUI(this);
     this._destroyer = null;
-  }
 
-  /**
-   * Getter for a function to to listen for every request that completes. Used
-   * by unit tests. The callback takes one argument: the HTTP activity object as
-   * received from the remote Web Console.
-   *
-   * @type function
-   */
-  get lastFinishedRequestCallback() {
-    return this.hudService.lastFinishedRequest.callback;
+    EventEmitter.decorate(this);
   }
 
   /**
@@ -79,14 +101,6 @@ class WebConsole {
     return this.chromeWindow.top;
   }
 
-  /**
-   * Getter for the output element that holds messages we display.
-   * @type Element
-   */
-  get outputNode() {
-    return this.ui ? this.ui.outputNode : null;
-  }
-
   get gViewSourceUtils() {
     return this.chromeUtilsWindow.gViewSourceUtils;
   }
@@ -98,7 +112,7 @@ class WebConsole {
    *         A promise for the initialization.
    */
   init() {
-    return this.ui.init().then(() => this);
+    return this.ui.init();
   }
 
   /**
@@ -168,7 +182,10 @@ class WebConsole {
    *        The line number which should be highlighted.
    */
   viewSource(sourceURL, sourceLine) {
-    this.gViewSourceUtils.viewSource({ URL: sourceURL, lineNumber: sourceLine || 0 });
+    this.gViewSourceUtils.viewSource({
+      URL: sourceURL,
+      lineNumber: sourceLine || 0,
+    });
   }
 
   /**
@@ -212,9 +229,11 @@ class WebConsole {
       this.viewSource(sourceURL, sourceLine, sourceColumn);
       return;
     }
-    toolbox.viewSourceInDebugger(sourceURL, sourceLine, sourceColumn).then(() => {
-      this.ui.emit("source-in-debugger-opened");
-    });
+    toolbox
+      .viewSourceInDebugger(sourceURL, sourceLine, sourceColumn)
+      .then(() => {
+        this.ui.emit("source-in-debugger-opened");
+      });
   }
 
   /**
@@ -235,7 +254,7 @@ class WebConsole {
    *
    * @return object|null
    *         An object which holds:
-   *         - frames: the active ThreadClient.cachedFrames array.
+   *         - frames: the active ThreadFront.cachedFrames array.
    *         - selected: depth/index of the selected stackframe in the debugger
    *         UI.
    *         If the debugger is not open or if it's not paused, then |null| is
@@ -253,18 +272,6 @@ class WebConsole {
     }
 
     return panel.getFrames();
-  }
-
-  /**
-   * Return the console client to use when interacting with a thread.
-   *
-   * @param {String} thread: The ID of the target thread.
-   * @returns {Object} The console client associated with the thread.
-   */
-  lookupConsoleClient(thread) {
-    const toolbox = gDevTools.getToolbox(this.target);
-    const panel = toolbox.getPanel("jsdebugger");
-    return panel.lookupConsoleClient(thread);
   }
 
   /**
@@ -297,7 +304,12 @@ class WebConsole {
       const shouldMapBindings = false;
       const shouldMapAwait = true;
       const res = this.parserService.mapExpression(
-        expression, null, null, shouldMapBindings, shouldMapAwait);
+        expression,
+        null,
+        null,
+        shouldMapBindings,
+        shouldMapAwait
+      );
       return res;
     }
 
@@ -309,13 +321,15 @@ class WebConsole {
       return this._parserService;
     }
 
-    const { ParserDispatcher } =
-      require("devtools/client/debugger/src/workers/parser/index");
+    const {
+      ParserDispatcher,
+    } = require("devtools/client/debugger/src/workers/parser/index");
 
     this._parserService = new ParserDispatcher();
     this._parserService.start(
       "resource://devtools/client/debugger/dist/parser-worker.js",
-      this.chromeUtilsWindow);
+      this.chromeUtilsWindow
+    );
     return this._parserService;
   }
 
@@ -349,36 +363,25 @@ class WebConsole {
    * @return object
    *         A promise object that is resolved once the Web Console is closed.
    */
-  async destroy() {
-    if (this._destroyer) {
-      return this._destroyer;
+  destroy() {
+    if (!this.hudId) {
+      return;
     }
 
-    this._destroyer = (async () => {
-      this.hudService.consoles.delete(this.hudId);
+    if (this.ui) {
+      this.ui.destroy();
+    }
 
-      if (this.ui) {
-        await this.ui.destroy();
-      }
+    if (this._parserService) {
+      this._parserService.stop();
+      this._parserService = null;
+    }
 
-      if (!this._browserConsole) {
-        try {
-          await this.target.focus();
-        } catch (ex) {
-          // Tab focus can fail if the tab or target is closed.
-        }
-      }
+    const id = Utils.supportsString(this.hudId);
+    Services.obs.notifyObservers(id, "web-console-destroyed");
+    this.hudId = null;
 
-      if (this._parserService) {
-        this._parserService.stop();
-        this._parserService = null;
-      }
-
-      const id = Utils.supportsString(this.hudId);
-      Services.obs.notifyObservers(id, "web-console-destroyed");
-    })();
-
-    return this._destroyer;
+    this.emit("destroyed");
   }
 }
 

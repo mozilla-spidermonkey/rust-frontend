@@ -12,24 +12,23 @@ Services.scriptloader.loadSubScript(
 
 // Test that the element highlighter works when paused and replaying.
 add_task(async function() {
-  const dbg = await attachRecordingDebugger(
-    "doc_inspector_basic.html",
-    { waitForRecording: true }
-  );
-  const {threadClient, tab, toolbox} = dbg;
+  const dbg = await attachRecordingDebugger("doc_inspector_basic.html", {
+    waitForRecording: true,
+  });
+  const { threadFront, toolbox } = dbg;
 
-  await threadClient.interrupt();
-  await threadClient.resume();
+  await threadFront.interrupt();
+  await threadFront.resume();
 
-  await threadClient.interrupt();
-  const bp = await setBreakpoint(threadClient, "doc_inspector_basic.html", 9);
-  await rewindToLine(threadClient, 9);
+  await threadFront.interrupt();
+  const bp = await setBreakpoint(threadFront, "doc_inspector_basic.html", 9);
+  await rewindToLine(threadFront, 9);
 
-  const {inspector, testActor} = await openInspector();
+  const { inspector, testActor } = await openInspector();
 
   info("Waiting for element picker to become active.");
   toolbox.win.focus();
-  await toolbox.inspector.nodePicker.start();
+  await toolbox.inspectorFront.nodePicker.start();
 
   info("Moving mouse over div.");
   await moveMouseOver("#maindiv", 1, 1);
@@ -39,13 +38,17 @@ add_task(async function() {
   info("Performing checks");
   await testActor.isNodeCorrectlyHighlighted("#maindiv", is);
 
-  await threadClient.removeBreakpoint(bp);
-  await toolbox.closeToolbox();
-  await gBrowser.removeTab(tab);
+  await threadFront.removeBreakpoint(bp);
+  await shutdownDebugger(dbg);
 
   function moveMouseOver(selector, x, y) {
     info("Waiting for element " + selector + " to be highlighted");
-    testActor.synthesizeMouse({selector, x, y, options: {type: "mousemove"}});
-    return inspector.inspector.nodePicker.once("picker-node-hovered");
+    testActor.synthesizeMouse({
+      selector,
+      x,
+      y,
+      options: { type: "mousemove" },
+    });
+    return inspector.inspectorFront.nodePicker.once("picker-node-hovered");
   }
 });

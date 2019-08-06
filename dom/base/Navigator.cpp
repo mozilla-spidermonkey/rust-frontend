@@ -31,7 +31,9 @@
 #include "nsContentUtils.h"
 #include "nsUnicharUtils.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_media.h"
+#include "mozilla/StaticPrefs_network.h"
+#include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/Telemetry.h"
 #include "BatteryManager.h"
 #include "mozilla/dom/CredentialsContainer.h"
@@ -498,18 +500,18 @@ bool Navigator::CookieEnabled() {
     return cookieEnabled;
   }
 
-  nsCOMPtr<nsIURI> codebaseURI;
-  doc->NodePrincipal()->GetURI(getter_AddRefs(codebaseURI));
+  nsCOMPtr<nsIURI> contentURI;
+  doc->NodePrincipal()->GetURI(getter_AddRefs(contentURI));
 
-  if (!codebaseURI) {
-    // Not a codebase, so technically can't set cookies, but let's
+  if (!contentURI) {
+    // Not a content, so technically can't set cookies, but let's
     // just return the default value.
     return cookieEnabled;
   }
 
   uint32_t rejectedReason = 0;
   bool granted = AntiTrackingCommon::IsFirstPartyStorageAccessGrantedFor(
-      mWindow, codebaseURI, &rejectedReason);
+      mWindow, contentURI, &rejectedReason);
 
   AntiTrackingCommon::NotifyBlockingDecision(
       mWindow,
@@ -545,7 +547,7 @@ void Navigator::GetBuildID(nsAString& aBuildID, CallerType aCallerType,
       if (doc) {
         nsIURI* uri = doc->GetDocumentURI();
         if (uri) {
-          MOZ_ALWAYS_SUCCEEDS(uri->SchemeIs("https", &isHTTPS));
+          isHTTPS = uri->SchemeIs("https");
           if (isHTTPS) {
             MOZ_ALWAYS_SUCCEEDS(uri->GetHost(host));
           }
@@ -1118,10 +1120,7 @@ bool Navigator::SendBeaconInternal(const nsAString& aUrl,
   }
 
   // Spec disallows any schemes save for HTTP/HTTPs
-  bool isValidScheme;
-  if (!(NS_SUCCEEDED(uri->SchemeIs("http", &isValidScheme)) && isValidScheme) &&
-      !(NS_SUCCEEDED(uri->SchemeIs("https", &isValidScheme)) &&
-        isValidScheme)) {
+  if (!uri->SchemeIs("http") && !uri->SchemeIs("https")) {
     aRv.ThrowTypeError<MSG_INVALID_URL_SCHEME>(NS_LITERAL_STRING("Beacon"),
                                                aUrl);
     return false;
@@ -1758,9 +1757,6 @@ already_AddRefed<Promise> Navigator::RequestMediaKeySystemAccess(
   EME_LOG("%s", RequestKeySystemAccessLogString(aKeySystem, aConfigs,
                                                 mWindow->IsSecureContext())
                     .get());
-
-  Telemetry::Accumulate(Telemetry::MEDIA_EME_SECURE_CONTEXT,
-                        mWindow->IsSecureContext());
 
   if (!mWindow->IsSecureContext()) {
     Document* doc = mWindow->GetExtantDoc();

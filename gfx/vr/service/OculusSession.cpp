@@ -11,7 +11,7 @@
 #include <math.h>
 #include <d3d11.h>
 
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/dom/GamepadEventTypes.h"
 #include "mozilla/dom/GamepadBinding.h"
 #include "mozilla/gfx/DeviceManagerDx.h"
@@ -206,7 +206,8 @@ OculusSession::OculusSession()
 OculusSession::~OculusSession() { Shutdown(); }
 
 bool OculusSession::Initialize(mozilla::gfx::VRSystemState& aSystemState) {
-  if (!StaticPrefs::dom_vr_enabled() || !StaticPrefs::VROculusEnabled()) {
+  if (!StaticPrefs::dom_vr_enabled() ||
+      !StaticPrefs::dom_vr_oculus_enabled_AtStartup()) {
     return false;
   }
 
@@ -256,8 +257,8 @@ void OculusSession::UpdateVisibility() {
   }
 
   TimeDuration duration = TimeStamp::Now() - mLastPresentationEnd;
-  TimeDuration timeout =
-      TimeDuration::FromMilliseconds(StaticPrefs::VROculusPresentTimeout());
+  TimeDuration timeout = TimeDuration::FromMilliseconds(
+      StaticPrefs::dom_vr_oculus_present_timeout());
   if (timeout <= TimeDuration(0) || duration >= timeout) {
     if (!ChangeVisibility(false)) {
       gfxWarning() << "OculusSession::ChangeVisibility(false) failed";
@@ -293,7 +294,7 @@ void OculusSession::CoverTransitions() {
 bool OculusSession::ChangeVisibility(bool bVisible) {
   ovrInitFlags flags =
       (ovrInitFlags)(ovrInit_RequestVersion | ovrInit_MixedRendering);
-  if (StaticPrefs::VROculusInvisibleEnabled() && !bVisible) {
+  if (StaticPrefs::dom_vr_oculus_invisible_enabled() && !bVisible) {
     flags = (ovrInitFlags)(flags | ovrInit_Invisible);
   }
   if (mInitFlags == flags) {
@@ -1011,6 +1012,8 @@ bool OculusSession::InitState(VRSystemState& aSystemState) {
   state.capabilityFlags |= VRDisplayCapabilityFlags::Cap_External;
   state.capabilityFlags |= VRDisplayCapabilityFlags::Cap_MountDetection;
   state.capabilityFlags |= VRDisplayCapabilityFlags::Cap_Present;
+  state.capabilityFlags |= VRDisplayCapabilityFlags::Cap_ImmersiveVR;
+  state.blendMode = VRDisplayBlendMode::Opaque;
   state.reportsDroppedFrames = true;
 
   mFOVPort[VRDisplayState::Eye_Left] = desc.DefaultEyeFov[ovrEye_Left];
@@ -1153,7 +1156,7 @@ void OculusSession::UpdateHeadsetPose(VRSystemState& aState) {
     return;
   }
   double predictedFrameTime = 0.0f;
-  if (StaticPrefs::VRPosePredictionEnabled()) {
+  if (StaticPrefs::dom_vr_poseprediction_enabled()) {
     // XXX We might need to call ovr_GetPredictedDisplayTime even if we don't
     // use the result. If we don't call it, the Oculus driver will spew out many
     // warnings...
@@ -1324,7 +1327,8 @@ void OculusSession::EnumerateControllers(VRSystemState& aState,
 
 void OculusSession::UpdateControllerInputs(VRSystemState& aState,
                                            const ovrInputState& aInputState) {
-  const float triggerThreshold = StaticPrefs::VRControllerTriggerThreshold();
+  const float triggerThreshold =
+      StaticPrefs::dom_vr_controller_trigger_threshold();
 
   for (uint32_t handIdx = 0; handIdx < 2; handIdx++) {
     // Left Touch Controller will always be at index 0 and

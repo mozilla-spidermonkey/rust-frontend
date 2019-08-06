@@ -1,10 +1,14 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
 if (typeof ChromeUtils !== "undefined") {
   // Use a var here instead of let outside to avoid creating a locally scoped
   // variable that hides the global, which we modify for testing.
   // eslint-disable-next-line no-var, vars-on-top
-  var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+  var { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 }
 
 let usablePerfObj;

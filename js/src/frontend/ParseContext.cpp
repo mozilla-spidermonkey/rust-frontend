@@ -233,7 +233,7 @@ ParseContext::ParseContext(JSContext* cx, ParseContext*& parent,
       varScope_(nullptr),
       positionalFormalParameterNames_(cx->frontendCollectionPool()),
       closedOverBindingsForLazy_(cx->frontendCollectionPool()),
-      innerFunctionsForLazy(cx, GCVector<JSFunction*, 8>(cx)),
+      innerFunctionBoxesForLazy(cx),
       newDirectives(newDirectives),
       lastYieldOffset(NoYieldOffset),
       lastAwaitOffset(NoAwaitOffset),
@@ -261,15 +261,14 @@ bool ParseContext::init() {
     // binding is closed over when we finish parsing the function in
     // finishExtraFunctionScopes, the function box needs to be marked as
     // needing a dynamic DeclEnv object.
-    RootedFunction fun(cx, functionBox()->function());
-    if (fun->isNamedLambda()) {
+    if (functionBox()->isNamedLambda()) {
       if (!namedLambdaScope_->init(this)) {
         return false;
       }
       AddDeclaredNamePtr p =
-          namedLambdaScope_->lookupDeclaredNameForAdd(fun->explicitName());
+          namedLambdaScope_->lookupDeclaredNameForAdd(functionBox()->explicitName());
       MOZ_ASSERT(!p);
-      if (!namedLambdaScope_->addDeclaredName(this, p, fun->explicitName(),
+      if (!namedLambdaScope_->addDeclaredName(this, p, functionBox()->explicitName(),
                                               DeclarationKind::Const,
                                               DeclaredNameInfo::npos)) {
         return false;
@@ -507,7 +506,7 @@ bool ParseContext::declareFunctionThis(const UsedNameTracker& usedNames,
   } else {
     declareThis = hasUsedFunctionSpecialName(usedNames, dotThis) ||
                   funbox->function()->kind() ==
-                      JSFunction::FunctionKind::ClassConstructor;
+                      FunctionFlags::FunctionKind::ClassConstructor;
   }
 
   if (declareThis) {

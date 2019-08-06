@@ -24,11 +24,13 @@ const EXAMPLE_URL =
 async function attachDebugger(tab) {
   const target = await TargetFactory.forTab(tab);
   const toolbox = await gDevTools.showToolbox(target, "jsdebugger");
-  return { toolbox, target };
+  return { toolbox, tab, target };
 }
 
-async function attachRecordingDebugger(url,
-    { waitForRecording } = { waitForRecording: false }) {
+async function attachRecordingDebugger(
+  url,
+  { waitForRecording } = { waitForRecording: false }
+) {
   const tab = BrowserTestUtils.addTab(gBrowser, null, { recordExecution: "*" });
   gBrowser.selectedTab = tab;
   openTrustedLinkIn(EXAMPLE_URL + url, "current");
@@ -38,29 +40,38 @@ async function attachRecordingDebugger(url,
   }
   const { target, toolbox } = await attachDebugger(tab);
   const dbg = createDebuggerContext(toolbox);
-  const threadClient = dbg.toolbox.threadClient;
+  const threadFront = dbg.toolbox.threadFront;
 
-  await threadClient.interrupt();
-  return {...dbg, tab, threadClient, target};
+  await threadFront.interrupt();
+  return { ...dbg, tab, threadFront, target };
+}
+
+async function shutdownDebugger(dbg) {
+  await waitForRequestsToSettle(dbg);
+  await dbg.toolbox.destroy();
+  await gBrowser.removeTab(dbg.tab);
 }
 
 // Return a promise that resolves when a breakpoint has been set.
-async function setBreakpoint(threadClient, expectedFile, lineno, options = {}) {
-  const {sources} = await threadClient.getSources();
+async function setBreakpoint(threadFront, expectedFile, lineno, options = {}) {
+  const { sources } = await threadFront.getSources();
   ok(sources.length == 1, "Got one source");
   ok(RegExp(expectedFile).test(sources[0].url), "Source is " + expectedFile);
   const location = { sourceUrl: sources[0].url, line: lineno };
-  await threadClient.setBreakpoint(location, options);
+  await threadFront.setBreakpoint(location, options);
   return location;
 }
 
 function resumeThenPauseAtLineFunctionFactory(method) {
-  return async function(threadClient, lineno) {
-    threadClient[method]();
-    await threadClient.once("paused", async function(packet) {
-      const {frames} = await threadClient.getFrames(0, 1);
+  return async function(threadFront, lineno) {
+    threadFront[method]();
+    await threadFront.once("paused", async function(packet) {
+      const { frames } = await threadFront.getFrames(0, 1);
       const frameLine = frames[0] ? frames[0].where.line : undefined;
-      ok(frameLine == lineno, "Paused at line " + frameLine + " expected " + lineno);
+      ok(
+        frameLine == lineno,
+        "Paused at line " + frameLine + " expected " + lineno
+      );
     });
   };
 }
@@ -69,7 +80,9 @@ function resumeThenPauseAtLineFunctionFactory(method) {
 // pauses at a specified line.
 var rewindToLine = resumeThenPauseAtLineFunctionFactory("rewind");
 var resumeToLine = resumeThenPauseAtLineFunctionFactory("resume");
-var reverseStepOverToLine = resumeThenPauseAtLineFunctionFactory("reverseStepOver");
+var reverseStepOverToLine = resumeThenPauseAtLineFunctionFactory(
+  "reverseStepOver"
+);
 var stepOverToLine = resumeThenPauseAtLineFunctionFactory("stepOver");
 var stepInToLine = resumeThenPauseAtLineFunctionFactory("stepIn");
 var stepOutToLine = resumeThenPauseAtLineFunctionFactory("stepOut");
@@ -77,20 +90,22 @@ var stepOutToLine = resumeThenPauseAtLineFunctionFactory("stepOut");
 // Return a promise that resolves when a thread evaluates a string in the
 // topmost frame, with the result throwing an exception.
 async function checkEvaluateInTopFrameThrows(target, text) {
-  const threadClient = target.threadClient;
+  const threadFront = target.threadFront;
   const consoleFront = await target.getFront("console");
-  const { frames } = await threadClient.getFrames(0, 1);
+  const { frames } = await threadFront.getFrames(0, 1);
   ok(frames.length == 1, "Got one frame");
-  const options = { thread: threadClient.actor, frameActor: frames[0].actor };
+  const options = { thread: threadFront.actor, frameActor: frames[0].actor };
   const response = await consoleFront.evaluateJS(text, options);
   ok(response.exception, "Eval threw an exception");
 }
 
 // Return a pathname that can be used for a new recording file.
 function newRecordingFile() {
-  ChromeUtils.import("resource://gre/modules/osfile.jsm", this);
-  return OS.Path.join(OS.Constants.Path.tmpDir,
-                      "MochitestRecording" + Math.round(Math.random() * 1000000000));
+  const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
+  return OS.Path.join(
+    OS.Constants.Path.tmpDir,
+    "MochitestRecording" + Math.round(Math.random() * 1000000000)
+  );
 }
 
 function findMessage(hud, text, selector = ".message") {
@@ -99,9 +114,8 @@ function findMessage(hud, text, selector = ".message") {
 
 function findMessages(hud, text, selector = ".message") {
   const messages = hud.ui.outputNode.querySelectorAll(selector);
-  const elements = Array.prototype.filter.call(
-    messages,
-    (el) => el.textContent.includes(text)
+  const elements = Array.prototype.filter.call(messages, el =>
+    el.textContent.includes(text)
   );
 
   if (elements.length == 0) {
@@ -155,4 +169,11 @@ PromiseTestUtils.whitelistRejectionsGlobally(/NS_ERROR_NOT_INITIALIZED/);
 
 // Many web replay tests can resume execution before the debugger has finished
 // all operations related to the pause.
-PromiseTestUtils.whitelistRejectionsGlobally(/Current thread has paused or resumed/);
+PromiseTestUtils.whitelistRejectionsGlobally(
+  /Current thread has paused or resumed/
+);
+
+// When running the full test suite, long delays can occur early on in tests,
+// before child processes have even been spawned. Allow a longer timeout to
+// avoid failures from this.
+requestLongerTimeout(4);

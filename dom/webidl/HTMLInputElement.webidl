@@ -32,6 +32,8 @@ interface HTMLInputElement : HTMLElement {
            attribute DOMString autocomplete;
   [CEReactions, Pure, SetterThrows]
            attribute boolean autofocus;
+  [CEReactions, Pure, SetterThrows, Pref="dom.capture.enabled"]
+           attribute DOMString capture;
   [CEReactions, Pure, SetterThrows]
            attribute boolean defaultChecked;
   [Pure]
@@ -266,10 +268,10 @@ partial interface HTMLInputElement {
   double getMaximum();
 
   [Pref="dom.forms.datetime", Func="IsChromeOrXBLOrUAWidget"]
-  void openDateTimePicker(optional DateTimeValue initialValue);
+  void openDateTimePicker(optional DateTimeValue initialValue = {});
 
   [Pref="dom.forms.datetime", Func="IsChromeOrXBLOrUAWidget"]
-  void updateDateTimePicker(optional DateTimeValue value);
+  void updateDateTimePicker(optional DateTimeValue value = {});
 
   [Pref="dom.forms.datetime", Func="IsChromeOrXBLOrUAWidget"]
   void closeDateTimePicker();

@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 /**
  * This file outputs the format that treeherder requires. If we integrate
  * these tests with ./mach, then we may replace this with a json handler within
@@ -29,7 +33,11 @@ function MozillaFormatter(runner) {
     failures++;
     // Replace any newlines in the title.
     let title = test.title.replace(/\n/g, "|");
-    console.log(`TEST-UNEXPECTED-FAIL | ${path.basename(test.file)} | ${title} | ${err.message}`);
+    console.log(
+      `TEST-UNEXPECTED-FAIL | ${path.basename(test.file)} | ${title} | ${
+        err.message
+      }`
+    );
   });
 
   runner.on("end", function() {

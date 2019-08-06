@@ -30,7 +30,8 @@ static inline bool OnHelperThread() {
 
   if (Helper == AllowedHelperThread::GCTask ||
       Helper == AllowedHelperThread::GCTaskOrIonCompile) {
-    if (TlsContext.get()->performingGC) {
+    JSContext* cx = TlsContext.get();
+    if (cx->defaultFreeOp()->isCollecting()) {
       return true;
     }
   }
@@ -44,6 +45,14 @@ void CheckThreadLocal::check() const {
   MOZ_ASSERT_IF(cx->isMainThreadContext(),
                 CurrentThreadCanAccessRuntime(cx->runtime()));
   MOZ_ASSERT(id == ThisThread::GetId());
+}
+
+void CheckContextLocal::check() const {
+  JSContext* cx = TlsContext.get();
+  MOZ_ASSERT(cx);
+  MOZ_ASSERT_IF(cx->isMainThreadContext(),
+                CurrentThreadCanAccessRuntime(cx->runtime()));
+  MOZ_ASSERT(cx_ == cx);
 }
 
 template <AllowedHelperThread Helper>

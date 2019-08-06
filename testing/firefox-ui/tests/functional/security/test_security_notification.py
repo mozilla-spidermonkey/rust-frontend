@@ -2,6 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
 import time
 
 from firefox_puppeteer import PuppeteerMixin
@@ -58,5 +59,5 @@ class TestSecurityNotification(PuppeteerMixin, MarionetteTestCase):
             self.marionette.navigate(self.urls[2])
 
         Wait(self.marionette).until(lambda _: (
-            self.identity_box.get_property('className') == 'unknownIdentity')
+            self.identity_box.get_property('className') == 'notSecure')
         )

@@ -6,11 +6,25 @@
 
 var EXPORTED_SYMBOLS = ["PictureInPicture"];
 
-const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const PLAYER_URI = "chrome://global/content/pictureinpicture/player.xhtml";
 const PLAYER_FEATURES = `chrome,titlebar=no,alwaysontop,lockaspectratio,resizable`;
 const WINDOW_TYPE = "Toolkit:PictureInPicture";
+
+/**
+ * If closing the Picture-in-Picture player window occurred for a reason that
+ * we can easily detect (user clicked on the close button, originating tab unloaded,
+ * user clicked on the unpip button), that will be stashed in gCloseReasons so that
+ * we can note it in Telemetry when the window finally unloads.
+ */
+let gCloseReasons = new WeakMap();
+
+/**
+ * To differentiate windows in the Telemetry Event Log, each Picture-in-Picture
+ * player window is given a unique ID.
+ */
+let gNextWindowID = 0;
 
 /**
  * This module is responsible for creating a Picture in Picture window to host
@@ -32,20 +46,21 @@ var PictureInPicture = {
         /**
          * Content has requested that its Picture in Picture window go away.
          */
-        this.closePipWindow();
+        let reason = aMessage.data.reason;
+        this.closePipWindow({ reason });
         break;
       }
       case "PictureInPicture:Playing": {
-        let controls = this.weakPipControls && this.weakPipControls.get();
-        if (controls) {
-          controls.classList.add("playing");
+        let player = this.weakPipPlayer && this.weakPipPlayer.get();
+        if (player) {
+          player.setIsPlayingState(true);
         }
         break;
       }
       case "PictureInPicture:Paused": {
-        let controls = this.weakPipControls && this.weakPipControls.get();
-        if (controls) {
-          controls.classList.remove("playing");
+        let player = this.weakPipPlayer && this.weakPipPlayer.get();
+        if (player) {
+          player.setIsPlayingState(false);
         }
         break;
       }
@@ -56,7 +71,7 @@ var PictureInPicture = {
     let gBrowser = this.browser.ownerGlobal.gBrowser;
     let tab = gBrowser.getTabForBrowser(this.browser);
     gBrowser.selectedTab = tab;
-    await this.closePipWindow();
+    await this.closePipWindow({ reason: "unpip" });
   },
 
   /**
@@ -73,7 +88,7 @@ var PictureInPicture = {
   /**
    * Find and close any pre-existing Picture in Picture windows.
    */
-  async closePipWindow() {
+  async closePipWindow({ reason }) {
     // This uses an enumerator, but there really should only be one of
     // these things.
     for (let win of Services.wm.getEnumerator(WINDOW_TYPE)) {
@@ -81,8 +96,9 @@ var PictureInPicture = {
         continue;
       }
       let closedPromise = new Promise(resolve => {
-        win.addEventListener("unload", resolve, {once: true});
+        win.addEventListener("unload", resolve, { once: true });
       });
+      gCloseReasons.set(win, reason);
       win.close();
       await closedPromise;
     }
@@ -110,29 +126,41 @@ var PictureInPicture = {
    */
   async handlePictureInPictureRequest(browser, videoData) {
     // If there's a pre-existing PiP window, close it first.
-    await this.closePipWindow();
+    await this.closePipWindow({ reason: "new-pip" });
 
     let parentWin = browser.ownerGlobal;
     this.browser = browser;
     let win = await this.openPipWindow(parentWin, videoData);
-    let controls = win.document.getElementById("controls");
-    this.weakPipControls = Cu.getWeakReference(controls);
-    if (videoData.playing) {
-      controls.classList.add("playing");
-    }
+    this.weakPipPlayer = Cu.getWeakReference(win);
+    win.setIsPlayingState(videoData.playing);
+
     // set attribute which shows pip icon in tab
     let tab = parentWin.gBrowser.getTabForBrowser(browser);
     tab.setAttribute("pictureinpicture", true);
-    win.setupPlayer(browser, videoData);
+
+    win.setupPlayer(gNextWindowID.toString(), browser);
+    gNextWindowID++;
   },
 
   /**
    * unload event has been called in player.js, cleanup our preserved
    * browser object.
    */
-  unload() {
+  unload(window) {
+    TelemetryStopwatch.finish(
+      "FX_PICTURE_IN_PICTURE_WINDOW_OPEN_DURATION",
+      window
+    );
+
+    let reason = gCloseReasons.get(window) || "other";
+    Services.telemetry.keyedScalarAdd(
+      "pictureinpicture.closed_method",
+      reason,
+      1
+    );
+
     this.clearPipTabIcon();
-    delete this.weakPipControls;
+    delete this.weakPipPlayer;
     delete this.browser;
   },
 
@@ -161,16 +189,28 @@ var PictureInPicture = {
 
     // The Picture in Picture window will open on the same display as the
     // originating window, and anchor to the bottom right.
-    let screenManager = Cc["@mozilla.org/gfx/screenmanager;1"]
-                          .getService(Ci.nsIScreenManager);
-    let screen = screenManager.screenForRect(parentWin.screenX,
-                                             parentWin.screenY, 1, 1);
+    let screenManager = Cc["@mozilla.org/gfx/screenmanager;1"].getService(
+      Ci.nsIScreenManager
+    );
+    let screen = screenManager.screenForRect(
+      parentWin.screenX,
+      parentWin.screenY,
+      1,
+      1
+    );
 
     // Now that we have the right screen, let's see how much available
     // real-estate there is for us to work with.
-    let screenLeft = {}, screenTop = {}, screenWidth = {}, screenHeight = {};
-    screen.GetAvailRectDisplayPix(screenLeft, screenTop, screenWidth,
-                                  screenHeight);
+    let screenLeft = {},
+      screenTop = {},
+      screenWidth = {},
+      screenHeight = {};
+    screen.GetAvailRectDisplayPix(
+      screenLeft,
+      screenTop,
+      screenWidth,
+      screenHeight
+    );
 
     // We have to divide these dimensions by the CSS scale factor for the
     // display in order for the video to be positioned correctly on displays
@@ -212,19 +252,49 @@ var PictureInPicture = {
     // to position it in the bottom right corner. Since we know the width of the
     // available rect, we need to subtract the dimensions of the window we're
     // opening to get the top left coordinates that openWindow expects.
+    //
+    // In event that the user has multiple displays connected, we have to
+    // calculate the top-left coordinate of the new window in absolute
+    // coordinates that span the entire display space, since this is what the
+    // openWindow expects for its top and left feature values.
+    //
+    // The screenWidth and screenHeight values only tell us the available
+    // dimensions on the screen that the parent window is on. We add these to
+    // the screenLeft and screenTop values, which tell us where this screen is
+    // located relative to the "origin" in absolute coordinates.
     let isRTL = Services.locale.isAppLocaleRTL;
-    let pipLeft = isRTL ? 0 : screenWidth.value - resultWidth;
-    let pipTop = screenHeight.value - resultHeight;
-    let features = `${PLAYER_FEATURES},top=${pipTop},left=${pipLeft},` +
-                   `outerWidth=${resultWidth},outerHeight=${resultHeight}`;
+    let pipLeft = isRTL
+      ? screenLeft.value
+      : screenLeft.value + screenWidth.value - resultWidth;
+    let pipTop = screenTop.value + screenHeight.value - resultHeight;
+    let features =
+      `${PLAYER_FEATURES},top=${pipTop},left=${pipLeft},` +
+      `outerWidth=${resultWidth},outerHeight=${resultHeight}`;
 
-    let pipWindow =
-      Services.ww.openWindow(parentWin, PLAYER_URI, null, features, null);
+    let pipWindow = Services.ww.openWindow(
+      parentWin,
+      PLAYER_URI,
+      null,
+      features,
+      null
+    );
+
+    TelemetryStopwatch.start(
+      "FX_PICTURE_IN_PICTURE_WINDOW_OPEN_DURATION",
+      pipWindow,
+      {
+        inSeconds: true,
+      }
+    );
 
     return new Promise(resolve => {
-      pipWindow.addEventListener("load", () => {
-        resolve(pipWindow);
-      }, { once: true });
+      pipWindow.addEventListener(
+        "load",
+        () => {
+          resolve(pipWindow);
+        },
+        { once: true }
+      );
     });
   },
 };

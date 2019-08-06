@@ -55,7 +55,7 @@
 #include "mozilla/Mutex.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ServoElementSnapshot.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/RestyleManager.h"
 #include "mozilla/SizeOfState.h"
 #include "mozilla/StyleAnimationValue.h"
@@ -1170,7 +1170,7 @@ void Gecko_CopyImageValueFrom(nsStyleImage* aImage,
 
 void Gecko_InitializeImageCropRect(nsStyleImage* aImage) {
   MOZ_ASSERT(aImage);
-  aImage->SetCropRect(MakeUnique<nsStyleSides>());
+  aImage->SetCropRect(MakeUnique<nsStyleImage::CropRect>());
 }
 
 void Gecko_SetCursorArrayLength(nsStyleUI* aStyleUI, size_t aLen) {
@@ -1270,8 +1270,12 @@ void Gecko_SetStyleGridTemplate(UniquePtr<nsStyleGridTemplate>* aGridTemplate,
 nsStyleGridTemplate* Gecko_CreateStyleGridTemplate(uint32_t aTrackSizes,
                                                    uint32_t aNameSize) {
   nsStyleGridTemplate* result = new nsStyleGridTemplate;
-  result->mMinTrackSizingFunctions.SetLength(aTrackSizes);
-  result->mMaxTrackSizingFunctions.SetLength(aTrackSizes);
+  result->mTrackSizingFunctions.SetCapacity(aTrackSizes);
+  auto auto_ = StyleTrackSize::Breadth(StyleTrackBreadth::Auto());
+  for (auto i : IntegerRange(aTrackSizes)) {
+    Unused << i;
+    result->mTrackSizingFunctions.AppendElement(auto_);
+  }
   result->mLineNameLists.SetLength(aNameSize);
   return result;
 }
@@ -1469,23 +1473,6 @@ PropertyValuePair* Gecko_AppendPropertyValuePair(
   return aProperties->AppendElement(PropertyValuePair{aProperty});
 }
 
-void Gecko_ResetStyleCoord(nsStyleUnit* aUnit, nsStyleUnion* aValue) {
-  nsStyleCoord::Reset(*aUnit, *aValue);
-}
-
-void Gecko_SetStyleCoordCalcValue(nsStyleUnit* aUnit, nsStyleUnion* aValue,
-                                  nsStyleCoord::CalcValue aCalc) {
-  // Calc units should be cleaned up first
-  MOZ_ASSERT(*aUnit != nsStyleUnit::eStyleUnit_Calc);
-  nsStyleCoord::Calc* calcRef = new nsStyleCoord::Calc();
-  calcRef->mLength = aCalc.mLength;
-  calcRef->mPercent = aCalc.mPercent;
-  calcRef->mHasPercent = aCalc.mHasPercent;
-  *aUnit = nsStyleUnit::eStyleUnit_Calc;
-  aValue->mPointer = calcRef;
-  calcRef->AddRef();
-}
-
 void Gecko_CopyShapeSourceFrom(StyleShapeSource* aDst,
                                const StyleShapeSource* aSrc) {
   MOZ_ASSERT(aDst);
@@ -1508,18 +1495,6 @@ void Gecko_SetToSVGPath(StyleShapeSource* aShape,
   MOZ_ASSERT(aShape);
   aShape->SetPath(MakeUnique<StyleSVGPath>(aCommands, aFill));
 }
-
-void Gecko_nsStyleSVGPaint_CopyFrom(nsStyleSVGPaint* aDest,
-                                    const nsStyleSVGPaint* aSrc) {
-  *aDest = *aSrc;
-}
-
-void Gecko_nsStyleSVGPaint_SetURLValue(nsStyleSVGPaint* aPaint,
-                                       const StyleComputedUrl* aURL) {
-  aPaint->SetPaintServer(*aURL);
-}
-
-void Gecko_nsStyleSVGPaint_Reset(nsStyleSVGPaint* aPaint) { aPaint->SetNone(); }
 
 void Gecko_nsStyleSVG_SetDashArrayLength(nsStyleSVG* aSvg, uint32_t aLen) {
   aSvg->mStrokeDasharray.Clear();
@@ -1564,6 +1539,20 @@ void Gecko_nsIURI_Debug(nsIURI* aURI, nsCString* aOut) {
 // subclasses have the HasThreadSafeRefCnt bits.
 void Gecko_AddRefnsIURIArbitraryThread(nsIURI* aPtr) { NS_ADDREF(aPtr); }
 void Gecko_ReleasensIURIArbitraryThread(nsIURI* aPtr) { NS_RELEASE(aPtr); }
+void Gecko_AddRefnsIReferrerInfoArbitraryThread(nsIReferrerInfo* aPtr) {
+  NS_ADDREF(aPtr);
+}
+void Gecko_ReleasensIReferrerInfoArbitraryThread(nsIReferrerInfo* aPtr) {
+  NS_RELEASE(aPtr);
+}
+
+void Gecko_nsIReferrerInfo_Debug(nsIReferrerInfo* aReferrerInfo,
+                                 nsCString* aOut) {
+  if (aReferrerInfo) {
+    nsCOMPtr<nsIURI> referrer = aReferrerInfo->GetComputedReferrer();
+    *aOut = referrer->GetSpecOrDefault();
+  }
+}
 
 template <typename ElementLike>
 void DebugListAttributes(const ElementLike& aElement, nsCString& aOut) {
@@ -1604,8 +1593,6 @@ void Gecko_Snapshot_DebugListAttributes(const ServoElementSnapshot* aSnapshot,
 }
 
 NS_IMPL_THREADSAFE_FFI_REFCOUNTING(URLExtraData, URLExtraData);
-
-NS_IMPL_THREADSAFE_FFI_REFCOUNTING(nsStyleCoord::Calc, Calc);
 
 void Gecko_nsStyleFont_SetLang(nsStyleFont* aFont, nsAtom* aAtom) {
   aFont->mLanguage = dont_AddRef(aAtom);
@@ -1809,6 +1796,9 @@ static already_AddRefed<StyleSheet> LoadImportSheet(
     }
     emptySheet->SetURIs(uri, uri, uri);
     emptySheet->SetPrincipal(aURL.ExtraData().Principal());
+    nsCOMPtr<nsIReferrerInfo> referrerInfo =
+        ReferrerInfo::CreateForExternalCSSResources(emptySheet);
+    emptySheet->SetReferrerInfo(referrerInfo);
     emptySheet->SetComplete();
     aParent->PrependStyleSheet(emptySheet);
     return emptySheet.forget();
@@ -2036,4 +2026,8 @@ bool Gecko_AssertClassAttrValueIsSane(const nsAttrValue* aValue) {
 void Gecko_LoadData_DeregisterLoad(const StyleLoadData* aData) {
   MOZ_ASSERT(aData->load_id != 0);
   ImageLoader::DeregisterCSSImageFromAllLoaders(*aData);
+}
+
+void Gecko_PrintfStderr(const nsCString* aStr) {
+  printf_stderr("%s", aStr->get());
 }

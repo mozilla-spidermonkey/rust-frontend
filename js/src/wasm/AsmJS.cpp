@@ -1355,9 +1355,9 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidatorShared {
         funcImportMap_(cx),
         arrayViews_(cx),
         compilerEnv_(CompileMode::Once, Tier::Optimized, OptimizedBackend::Ion,
-                     DebugEnabled::False, /* gc types */ false),
-        env_(/* gc types */ false, &compilerEnv_, Shareable::False,
-             ModuleKind::AsmJS) {
+                     DebugEnabled::False, /* ref types */ false,
+                     /* gc types */ false),
+        env_(&compilerEnv_, Shareable::False, ModuleKind::AsmJS) {
     compilerEnv_.computeParameters(/* gc types */ false);
     env_.minMemoryLength = RoundUpToNextValidAsmJSHeapLength(0);
   }
@@ -1433,7 +1433,7 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidatorShared {
   MOZ_MUST_USE bool initDummyFunction() {
     // This flows into FunctionBox, so must be tenured.
     dummyFunction_ = NewScriptedFunction(
-        cx_, 0, JSFunction::INTERPRETED, nullptr,
+        cx_, 0, FunctionFlags::INTERPRETED, nullptr,
         /* proto = */ nullptr, gc::AllocKind::FUNCTION, TenuredObject);
     if (!dummyFunction_) {
       return false;
@@ -2636,9 +2636,12 @@ class MOZ_STACK_CLASS FunctionValidator : public FunctionValidatorShared {
  private:
   MOZ_MUST_USE bool appendCallSiteLineNumber(ParseNode* node) {
     const TokenStreamAnyChars& anyChars = m().tokenStream().anyCharsAccess();
-
     auto lineToken = anyChars.lineToken(node->pn_pos.begin);
-    return callSiteLineNums_.append(anyChars.lineNumber(lineToken));
+    uint32_t lineNumber = anyChars.lineNumber(lineToken);
+    if (lineNumber > CallSiteDesc::MAX_LINE_OR_BYTECODE_VALUE) {
+      return fail(node, "line number exceeding implementation limits");
+    }
+    return callSiteLineNums_.append(lineNumber);
   }
 };
 
@@ -6473,7 +6476,7 @@ static bool GetDataProperty(JSContext* cx, HandleValue objVal,
 }
 
 static bool GetDataProperty(JSContext* cx, HandleValue objVal,
-                            ImmutablePropertyNamePtr field,
+                            const ImmutablePropertyNamePtr& field,
                             MutableHandleValue v) {
   // Help the conversion along for all the cx->names().* users.
   HandlePropertyName fieldHandle = field;
@@ -6902,7 +6905,7 @@ static bool HandleInstantiationFailure(JSContext* cx, CallArgs args,
   }
 
   RootedFunction fun(
-      cx, NewScriptedFunction(cx, 0, JSFunction::INTERPRETED_NORMAL, name,
+      cx, NewScriptedFunction(cx, 0, FunctionFlags::INTERPRETED_NORMAL, name,
                               /* proto = */ nullptr, gc::AllocKind::FUNCTION,
                               TenuredObject));
   if (!fun) {
@@ -6979,8 +6982,8 @@ static JSFunction* NewAsmJSModuleFunction(JSContext* cx, JSFunction* origFun,
                                           HandleObject moduleObj) {
   RootedAtom name(cx, origFun->explicitName());
 
-  JSFunction::Flags flags = origFun->isLambda() ? JSFunction::ASMJS_LAMBDA_CTOR
-                                                : JSFunction::ASMJS_CTOR;
+  FunctionFlags flags = origFun->isLambda() ? FunctionFlags::ASMJS_LAMBDA_CTOR
+                                            : FunctionFlags::ASMJS_CTOR;
   JSFunction* moduleFun = NewNativeConstructor(
       cx, InstantiateAsmJS, origFun->nargs(), name,
       gc::AllocKind::FUNCTION_EXTENDED, TenuredObject, flags);
@@ -7031,10 +7034,15 @@ static bool TypeFailureWarning(frontend::ParserBase& parser, const char* str) {
   return false;
 }
 
+// asm.js requires Ion to be available on the current hardware/OS and to be
+// enabled for wasm, since asm.js compilation goes via wasm.
+static bool IsAsmJSCompilerAvailable(JSContext* cx) {
+  return HasCompilerSupport(cx) && IonCanCompile() && cx->options().wasmIon();
+}
+
 static bool EstablishPreconditions(JSContext* cx,
                                    frontend::ParserBase& parser) {
-  // asm.js requires Ion.
-  if (!HasCompilerSupport(cx) || !IonCanCompile()) {
+  if (!IsAsmJSCompilerAvailable(cx)) {
     return TypeFailureWarning(parser, "Disabled by lack of compiler support");
   }
 
@@ -7107,7 +7115,7 @@ static bool DoCompileAsmJS(JSContext* cx, AsmJSParser<Unit>& parser,
   // asm.js module function. Special cases in the bytecode emitter avoid
   // generating bytecode for asm.js functions, allowing this asm.js module
   // function to be the finished result.
-  MOZ_ASSERT(funbox->function()->isInterpreted());
+  MOZ_ASSERT(funbox->isInterpreted());
   funbox->clobberFunction(moduleFun);
 
   // Success! Write to the console with a "warning" message indicating
@@ -7139,7 +7147,7 @@ bool js::IsAsmJSModule(JSFunction* fun) {
 }
 
 bool js::IsAsmJSFunction(JSFunction* fun) {
-  return fun->kind() == JSFunction::AsmJS;
+  return fun->kind() == FunctionFlags::AsmJS;
 }
 
 bool js::IsAsmJSStrictModeModuleOrFunction(JSFunction* fun) {
@@ -7157,9 +7165,7 @@ bool js::IsAsmJSStrictModeModuleOrFunction(JSFunction* fun) {
 bool js::IsAsmJSCompilationAvailable(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  // See EstablishPreconditions.
-  bool available =
-      HasCompilerSupport(cx) && IonCanCompile() && cx->options().asmJS();
+  bool available = cx->options().asmJS() && IsAsmJSCompilerAvailable(cx);
 
   args.rval().set(BooleanValue(available));
   return true;

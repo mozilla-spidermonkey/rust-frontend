@@ -1,4 +1,12 @@
-var {UrlClassifierTestUtils} = ChromeUtils.import("resource://testing-common/UrlClassifierTestUtils.jsm");
+var { UrlClassifierTestUtils } = ChromeUtils.import(
+  "resource://testing-common/UrlClassifierTestUtils.jsm"
+);
+
+ChromeUtils.defineModuleGetter(
+  this,
+  "ContentBlockingAllowList",
+  "resource://gre/modules/ContentBlockingAllowList.jsm"
+);
 
 /**
  * Waits for a load (or custom) event to finish in a given tab. If provided
@@ -27,8 +35,9 @@ function promiseTabLoadEvent(tab, url) {
 
   let loaded = BrowserTestUtils.browserLoaded(tab.linkedBrowser, false, handle);
 
-  if (url)
+  if (url) {
     BrowserTestUtils.loadURI(tab.linkedBrowser, url);
+  }
 
   return loaded;
 }
@@ -37,6 +46,14 @@ function openIdentityPopup() {
   let mainView = document.getElementById("identity-popup-mainView");
   let viewShown = BrowserTestUtils.waitForEvent(mainView, "ViewShown");
   gIdentityHandler._identityBox.click();
+  return viewShown;
+}
+
+function openProtectionsPopup() {
+  let mainView = document.getElementById("protections-popup-mainView");
+  let viewShown = BrowserTestUtils.waitForEvent(mainView, "ViewShown");
+  // TODO: This should click on the icon once we have it.
+  gIdentityHandler._trackingProtectionIconContainer.click();
   return viewShown;
 }
 
@@ -69,7 +86,9 @@ function waitForContentBlockingEvent(numChanges = 1, win = null) {
     let listener = {
       onContentBlockingEvent() {
         n = n + 1;
-        info("Received onContentBlockingEvent event " + n + " of " + numChanges);
+        info(
+          "Received onContentBlockingEvent event " + n + " of " + numChanges
+        );
         if (n >= numChanges) {
           win.gBrowser.removeProgressListener(listener);
           resolve(n);

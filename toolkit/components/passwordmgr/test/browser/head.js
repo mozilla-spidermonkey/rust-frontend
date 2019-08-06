@@ -1,27 +1,34 @@
 const DIRECTORY_PATH = "/browser/toolkit/components/passwordmgr/test/browser/";
 
 ChromeUtils.import("resource://gre/modules/LoginHelper.jsm", this);
+const { LoginManagerParent: LMP } = ChromeUtils.import(
+  "resource://gre/modules/LoginManagerParent.jsm"
+);
 ChromeUtils.import("resource://testing-common/LoginTestUtils.jsm", this);
 ChromeUtils.import("resource://testing-common/ContentTaskUtils.jsm", this);
 ChromeUtils.import("resource://testing-common/TelemetryTestUtils.jsm", this);
 
 add_task(async function common_initialize() {
-  await SpecialPowers.pushPrefEnv({"set": [["signon.rememberSignons", true]]});
+  await SpecialPowers.pushPrefEnv({ set: [["signon.rememberSignons", true]] });
 });
 
-registerCleanupFunction(async function cleanup_removeAllLoginsAndResetRecipes() {
-  await SpecialPowers.popPrefEnv();
+registerCleanupFunction(
+  async function cleanup_removeAllLoginsAndResetRecipes() {
+    await SpecialPowers.popPrefEnv();
 
-  Services.logins.removeAllLogins();
-  clearHttpAuths();
+    Services.logins.removeAllLogins();
+    clearHttpAuths();
+    Services.telemetry.clearEvents();
+    LMP._generatedPasswordsByPrincipalOrigin.clear();
 
-  let recipeParent = LoginTestUtils.recipes.getRecipeParent();
-  if (!recipeParent) {
-    // No need to reset the recipes if the recipe module wasn't even loaded.
-    return;
+    let recipeParent = LoginTestUtils.recipes.getRecipeParent();
+    if (!recipeParent) {
+      // No need to reset the recipes if the recipe module wasn't even loaded.
+      return;
+    }
+    await recipeParent.then(recipeParentResult => recipeParentResult.reset());
   }
-  await recipeParent.then(recipeParentResult => recipeParentResult.reset());
-});
+);
 
 /**
  * Loads a test page in `DIRECTORY_URL` which automatically submits to formsubmit.sjs and returns a
@@ -32,30 +39,43 @@ registerCleanupFunction(async function cleanup_removeAllLoginsAndResetRecipes() 
  * @param {String} [aOrigin="http://example.com"] - origin of the server to use
  *                                                  to load `aPageFile`.
  */
-function testSubmittingLoginForm(aPageFile, aTaskFn, aOrigin = "http://example.com") {
-  return BrowserTestUtils.withNewTab({
-    gBrowser,
-    url: aOrigin + DIRECTORY_PATH + aPageFile,
-  }, async function(browser) {
-    ok(true, "loaded " + aPageFile);
-    let fieldValues = await ContentTask.spawn(browser, undefined, async function() {
-      await ContentTaskUtils.waitForCondition(() => {
-        return content.location.pathname.endsWith("/formsubmit.sjs") &&
-          content.document.readyState == "complete";
-      }, "Wait for form submission load (formsubmit.sjs)");
-      let username = content.document.getElementById("user").textContent;
-      let password = content.document.getElementById("pass").textContent;
-      return {
-        username,
-        password,
-      };
-    });
-    ok(true, "form submission loaded");
-    if (aTaskFn) {
-      await aTaskFn(fieldValues);
+function testSubmittingLoginForm(
+  aPageFile,
+  aTaskFn,
+  aOrigin = "http://example.com"
+) {
+  return BrowserTestUtils.withNewTab(
+    {
+      gBrowser,
+      url: aOrigin + DIRECTORY_PATH + aPageFile,
+    },
+    async function(browser) {
+      ok(true, "loaded " + aPageFile);
+      let fieldValues = await ContentTask.spawn(
+        browser,
+        undefined,
+        async function() {
+          await ContentTaskUtils.waitForCondition(() => {
+            return (
+              content.location.pathname.endsWith("/formsubmit.sjs") &&
+              content.document.readyState == "complete"
+            );
+          }, "Wait for form submission load (formsubmit.sjs)");
+          let username = content.document.getElementById("user").textContent;
+          let password = content.document.getElementById("pass").textContent;
+          return {
+            username,
+            password,
+          };
+        }
+      );
+      ok(true, "form submission loaded");
+      if (aTaskFn) {
+        await aTaskFn(fieldValues);
+      }
+      return fieldValues;
     }
-    return fieldValues;
-  });
+  );
 }
 
 function checkOnlyLoginWasUsedTwice({ justChanged }) {
@@ -67,18 +87,26 @@ function checkOnlyLoginWasUsedTwice({ justChanged }) {
   is(logins[0].timesUsed, 2, "check .timesUsed for existing login submission");
   ok(logins[0].timeCreated < logins[0].timeLastUsed, "timeLastUsed bumped");
   if (justChanged) {
-    is(logins[0].timeLastUsed, logins[0].timePasswordChanged, "timeLastUsed == timePasswordChanged");
+    is(
+      logins[0].timeLastUsed,
+      logins[0].timePasswordChanged,
+      "timeLastUsed == timePasswordChanged"
+    );
   } else {
-    is(logins[0].timeCreated, logins[0].timePasswordChanged, "timeChanged not updated");
+    is(
+      logins[0].timeCreated,
+      logins[0].timePasswordChanged,
+      "timeChanged not updated"
+    );
   }
 }
 
 function clearHttpAuths() {
-  let authMgr = Cc["@mozilla.org/network/http-auth-manager;1"].
-              getService(Ci.nsIHttpAuthManager);
+  let authMgr = Cc["@mozilla.org/network/http-auth-manager;1"].getService(
+    Ci.nsIHttpAuthManager
+  );
   authMgr.clearAll();
 }
-
 
 // Begin popup notification (doorhanger) functions //
 
@@ -97,15 +125,31 @@ const DONT_CHANGE_BUTTON = "secondaryButton";
  * @param {Object} [browser = null] Optional browser whose notifications should be searched.
  * @return the found password popup notification.
  */
-function getCaptureDoorhanger(aKind, popupNotifications = PopupNotifications, browser = null) {
+function getCaptureDoorhanger(
+  aKind,
+  popupNotifications = PopupNotifications,
+  browser = null
+) {
   ok(true, "Looking for " + aKind + " popup notification");
   let notification = popupNotifications.getNotification("password", browser);
   if (notification) {
-    is(notification.options.passwordNotificationType, aKind, "Notification type matches.");
+    is(
+      notification.options.passwordNotificationType,
+      aKind,
+      "Notification type matches."
+    );
     if (aKind == "password-change") {
-      is(notification.mainAction.label, "Update", "Main action label matches update doorhanger.");
+      is(
+        notification.mainAction.label,
+        "Update",
+        "Main action label matches update doorhanger."
+      );
     } else if (aKind == "password-save") {
-      is(notification.mainAction.label, "Save", "Main action label matches save doorhanger.");
+      is(
+        notification.mainAction.label,
+        "Save",
+        "Main action label matches save doorhanger."
+      );
     }
   }
   return notification;
@@ -134,7 +178,9 @@ function clickDoorhangerButton(aPopup, aButtonIndex) {
     notification.secondaryButton.doCommand();
   } else {
     ok(true, "Triggering menuitem # " + aButtonIndex);
-    notification.menupopup.querySelectorAll("menuitem")[aButtonIndex].doCommand();
+    notification.menupopup
+      .querySelectorAll("menuitem")
+      [aButtonIndex].doCommand();
   }
 }
 
@@ -146,22 +192,190 @@ function clickDoorhangerButton(aPopup, aButtonIndex) {
  */
 async function checkDoorhangerUsernamePassword(username, password) {
   await BrowserTestUtils.waitForCondition(() => {
-    return document.getElementById("password-notification-username").value == username;
+    return (
+      document.getElementById("password-notification-username").value ==
+      username
+    );
   }, "Wait for nsLoginManagerPrompter writeDataToUI()");
-  is(document.getElementById("password-notification-username").value, username,
-     "Check doorhanger username");
-  is(document.getElementById("password-notification-password").value, password,
-     "Check doorhanger password");
+  is(
+    document.getElementById("password-notification-username").value,
+    username,
+    "Check doorhanger username"
+  );
+  is(
+    document.getElementById("password-notification-password").value,
+    password,
+    "Check doorhanger password"
+  );
 }
 
 // End popup notification (doorhanger) functions //
 
-async function waitForPasswordManagerDialog() {
+async function waitForPasswordManagerDialog(openingFunc) {
   let win;
+  await openingFunc();
   await TestUtils.waitForCondition(() => {
     win = Services.wm.getMostRecentWindow("Toolkit:PasswordManager");
     return win && win.document.getElementById("filter");
   }, "Waiting for the password manager dialog to open");
 
-  return win;
+  return {
+    filterValue: win.document.getElementById("filter").value,
+    async close() {
+      await BrowserTestUtils.closeWindow(win);
+    },
+  };
+}
+
+async function waitForPasswordManagerTab(openingFunc, waitForFilter) {
+  info("waiting for new tab to open");
+  let tabPromise = BrowserTestUtils.waitForNewTab(gBrowser, null);
+  await openingFunc();
+  let tab = await tabPromise;
+  ok(tab, "got password management tab");
+  let filterValue;
+  if (waitForFilter) {
+    filterValue = await ContentTask.spawn(tab.linkedBrowser, null, async () => {
+      let loginFilter = Cu.waiveXrays(
+        content.document.querySelector("login-filter")
+      );
+      await ContentTaskUtils.waitForCondition(
+        () => !!loginFilter.value,
+        "wait for login-filter to have a value"
+      );
+      return loginFilter.value;
+    });
+  }
+  return {
+    filterValue,
+    close() {
+      BrowserTestUtils.removeTab(tab);
+    },
+  };
+}
+
+function openPasswordManager(openingFunc, waitForFilter) {
+  return Services.prefs.getCharPref("signon.management.overrideURI")
+    ? waitForPasswordManagerTab(openingFunc, waitForFilter)
+    : waitForPasswordManagerDialog(openingFunc);
+}
+
+// Autocomplete popup related functions //
+
+function openACPopup(popup, browser, inputSelector) {
+  return new Promise(async resolve => {
+    let promiseShown = BrowserTestUtils.waitForEvent(popup, "popupshown");
+
+    await SimpleTest.promiseFocus(browser);
+    info("content window focused");
+
+    // Focus the username field to open the popup.
+    await ContentTask.spawn(browser, [inputSelector], function openAutocomplete(
+      sel
+    ) {
+      content.document.querySelector(sel).focus();
+    });
+
+    let shown = await promiseShown;
+    ok(shown, "autocomplete popup shown");
+    resolve(shown);
+  });
+}
+
+// Contextmenu functions //
+
+/**
+ * Synthesize mouse clicks to open the password manager context menu popup
+ * for a target password input element.
+ *
+ * assertCallback should return true if we should continue or else false.
+ */
+async function openPasswordContextMenu(
+  browser,
+  passwordInput,
+  assertCallback = null
+) {
+  const doc = browser.ownerDocument;
+  const CONTEXT_MENU = doc.getElementById("contentAreaContextMenu");
+  const POPUP_HEADER = doc.getElementById("fill-login");
+  const LOGIN_POPUP = doc.getElementById("fill-login-popup");
+
+  let contextMenuShownPromise = BrowserTestUtils.waitForEvent(
+    CONTEXT_MENU,
+    "popupshown"
+  );
+
+  // Synthesize a right mouse click over the password input element, we have to trigger
+  // both events because formfill code relies on this event happening before the contextmenu
+  // (which it does for real user input) in order to not show the password autocomplete.
+  let eventDetails = { type: "mousedown", button: 2 };
+  await BrowserTestUtils.synthesizeMouseAtCenter(
+    passwordInput,
+    eventDetails,
+    browser
+  );
+  // Synthesize a contextmenu event to actually open the context menu.
+  eventDetails = { type: "contextmenu", button: 2 };
+  await BrowserTestUtils.synthesizeMouseAtCenter(
+    passwordInput,
+    eventDetails,
+    browser
+  );
+
+  await contextMenuShownPromise;
+
+  if (assertCallback) {
+    let shouldContinue = await assertCallback();
+    if (!shouldContinue) {
+      return;
+    }
+  }
+
+  // Synthesize a mouse click over the fill login menu header.
+  let popupShownPromise = BrowserTestUtils.waitForCondition(
+    () => POPUP_HEADER.open && BrowserTestUtils.is_visible(LOGIN_POPUP)
+  );
+  EventUtils.synthesizeMouseAtCenter(POPUP_HEADER, {}, browser.ownerGlobal);
+  await popupShownPromise;
+}
+
+/**
+ * Use the contextmenu to fill a field with a generated password
+ */
+async function doFillGeneratedPasswordContextMenuItem(browser, passwordInput) {
+  await SimpleTest.promiseFocus(browser);
+  await openPasswordContextMenu(browser, passwordInput);
+
+  let loginPopup = document.getElementById("fill-login-popup");
+  let generatedPasswordItem = document.getElementById(
+    "fill-login-generated-password"
+  );
+  let generatedPasswordSeparator = document.getElementById(
+    "generated-password-separator"
+  );
+
+  // Check the content of the password manager popup
+  ok(BrowserTestUtils.is_visible(loginPopup), "Popup is visible");
+  ok(
+    BrowserTestUtils.is_visible(generatedPasswordItem),
+    "generated password item is visible"
+  );
+  ok(
+    BrowserTestUtils.is_visible(generatedPasswordSeparator),
+    "separator is visible"
+  );
+
+  let passwordChangedPromise = ContentTask.spawn(
+    browser,
+    [passwordInput],
+    async function(passwordInput) {
+      let input = content.document.querySelector(passwordInput);
+      await ContentTaskUtils.waitForEvent(input, "input");
+    }
+  );
+
+  generatedPasswordItem.doCommand();
+  info("Waiting for input event");
+  await passwordChangedPromise;
+  document.getElementById("contentAreaContextMenu").hidePopup();
 }

@@ -11,7 +11,7 @@
 #include "mozilla/gfx/2D.h"
 #include "mozilla/IntegerRange.h"
 #include "mozilla/MathAlgorithms.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/SVGContextPaint.h"
 
 #include "mozilla/Logging.h"
@@ -1574,20 +1574,26 @@ class GlyphBufferAzure {
     }
   }
 
-  // Ensure the buffer has enough space for aGlyphCount glyphs to be added.
+  // Ensure the buffer has enough space for aGlyphCount glyphs to be added,
+  // considering the supplied strike multipler aStrikeCount.
   // This MUST be called before OutputGlyph is used to actually store glyph
   // records in the buffer. It may be called repeated to add further capacity
   // in case we don't know up-front exactly what will be needed.
-  void AddCapacity(uint32_t aGlyphCount) {
+  void AddCapacity(uint32_t aGlyphCount, uint32_t aStrikeCount) {
+    // Calculate the new capacity and ensure it will fit within the maximum
+    // allowed capacity.
+    static const uint64_t kMaxCapacity = 64 * 1024;
+    mCapacity = uint32_t(std::min(
+        kMaxCapacity,
+        uint64_t(mCapacity) + uint64_t(aGlyphCount) * uint64_t(aStrikeCount)));
     // See if the required capacity fits within the already-allocated space
-    if (mCapacity + aGlyphCount <= mBufSize) {
-      mCapacity += aGlyphCount;
+    if (mCapacity <= mBufSize) {
       return;
     }
     // We need to grow the buffer: determine a new size, allocate, and
     // copy the existing data over if we didn't use realloc (which would
     // do it automatically).
-    mBufSize = std::max(mCapacity + aGlyphCount, mBufSize * 2);
+    mBufSize = std::max(mCapacity, mBufSize * 2);
     if (mBuffer == *mAutoBuffer.addr()) {
       // switching from autobuffer to malloc, so we need to copy
       mBuffer = reinterpret_cast<Glyph*>(moz_xmalloc(mBufSize * sizeof(Glyph)));
@@ -1596,12 +1602,15 @@ class GlyphBufferAzure {
       mBuffer = reinterpret_cast<Glyph*>(
           moz_xrealloc(mBuffer, mBufSize * sizeof(Glyph)));
     }
-    mCapacity += aGlyphCount;
   }
 
   void OutputGlyph(uint32_t aGlyphID, const gfx::Point& aPt) {
-    // Check that AddCapacity has been used appropriately!
-    MOZ_ASSERT(mNumGlyphs < mCapacity);
+    // If the buffer is full, flush to make room for the new glyph.
+    if (mNumGlyphs >= mCapacity) {
+      // Check that AddCapacity has been used appropriately!
+      MOZ_ASSERT(mCapacity > 0 && mNumGlyphs == mCapacity);
+      Flush();
+    }
     Glyph* glyph = mBuffer + mNumGlyphs++;
     glyph->mIndex = aGlyphID;
     glyph->mPosition = aPt;
@@ -1624,10 +1633,6 @@ class GlyphBufferAzure {
 
   // Render the buffered glyphs to the draw target.
   void FlushGlyphs() {
-    if (mRunParams.isRTL) {
-      std::reverse(mBuffer, mBuffer + mNumGlyphs);
-    }
-
     gfx::GlyphBuffer buf;
     buf.mGlyphs = mBuffer;
     buf.mNumGlyphs = mNumGlyphs;
@@ -1793,7 +1798,9 @@ template <gfxFont::FontComplexityT FC, gfxFont::SpacingT S>
 bool gfxFont::DrawGlyphs(const gfxShapedText* aShapedText,
                          uint32_t aOffset,  // offset in the textrun
                          uint32_t aCount,   // length of run to draw
-                         gfx::Point* aPt, GlyphBufferAzure& aBuffer) {
+                         gfx::Point* aPt,
+                         const gfx::Matrix* aOffsetMatrix,  // may be null
+                         GlyphBufferAzure& aBuffer) {
   float& inlineCoord = aBuffer.mFontParams.isVerticalFont ? aPt->y : aPt->x;
 
   const gfxShapedText::CompressedGlyph* glyphData =
@@ -1807,7 +1814,7 @@ bool gfxFont::DrawGlyphs(const gfxShapedText* aShapedText,
 
   // Allocate buffer space for the run, assuming all simple glyphs.
   uint32_t capacityMult = 1 + aBuffer.mFontParams.extraStrikes;
-  aBuffer.AddCapacity(capacityMult * aCount);
+  aBuffer.AddCapacity(aCount, capacityMult);
 
   bool emittedGlyphs = false;
 
@@ -1827,7 +1834,7 @@ bool gfxFont::DrawGlyphs(const gfxShapedText* aShapedText,
       uint32_t glyphCount = glyphData->GetGlyphCount();
       if (glyphCount > 0) {
         // Add extra buffer capacity to allow for multiple-glyph entry.
-        aBuffer.AddCapacity(capacityMult * (glyphCount - 1));
+        aBuffer.AddCapacity(glyphCount - 1, capacityMult);
         const gfxShapedText::DetailedGlyph* details =
             aShapedText->GetDetailedGlyphs(aOffset + i);
         MOZ_ASSERT(details, "missing DetailedGlyph!");
@@ -1843,7 +1850,10 @@ bool gfxFont::DrawGlyphs(const gfxShapedText* aShapedText,
               return false;
             }
           } else {
-            gfx::Point glyphPt(*aPt + details->mOffset);
+            gfx::Point glyphPt(
+                *aPt + (aOffsetMatrix
+                            ? aOffsetMatrix->TransformPoint(details->mOffset)
+                            : details->mOffset));
             DrawOneGlyph<FC>(details->mGlyphID, glyphPt, aBuffer,
                              &emittedGlyphs);
           }
@@ -2098,6 +2108,7 @@ void gfxFont::Draw(const gfxTextRun* aTextRun, uint32_t aStart, uint32_t aEnd,
   // return must be advanced in transformed space. So save the original point so
   // we can properly transform the advance later.
   gfx::Point origPt = *aPt;
+  const gfx::Matrix* offsetMatrix = nullptr;
 
   // Default to advancing along the +X direction (-X if RTL).
   fontParams.advanceDirection = aRunParams.isRTL ? -1.0f : 1.0f;
@@ -2145,6 +2156,14 @@ void gfxFont::Draw(const gfxTextRun* aTextRun, uint32_t aStart, uint32_t aEnd,
                    gfx::ShapedTextFlags::TEXT_ORIENT_VERTICAL_SIDEWAYS_LEFT
                ? wr::FontInstanceFlags_FLIP_Y
                : wr::FontInstanceFlags_FLIP_X));
+      // We also need to set up a transform for the glyph offset vector that
+      // may be present in DetailedGlyph records.
+      static const gfx::Matrix kSidewaysLeft = {0, -1, 1, 0, 0, 0};
+      static const gfx::Matrix kSidewaysRight = {0, 1, -1, 0, 0, 0};
+      offsetMatrix =
+          (aOrientation == ShapedTextFlags::TEXT_ORIENT_VERTICAL_SIDEWAYS_LEFT)
+              ? &kSidewaysLeft
+              : &kSidewaysRight;
     } else {
       // For non-WebRender targets, just push a rotation transform.
       matrixRestore.SetContext(aRunParams.context);
@@ -2214,9 +2233,19 @@ void gfxFont::Draw(const gfxTextRun* aTextRun, uint32_t aStart, uint32_t aEnd,
     gfx::Float xscale = CalcXScale(aRunParams.context->GetDrawTarget());
     fontParams.synBoldOnePixelOffset = aRunParams.direction * xscale;
     if (xscale != 0.0) {
-      // use as many strikes as needed for the the increased advance
-      fontParams.extraStrikes =
-          std::max(1, NS_lroundf(GetSyntheticBoldOffset() / xscale));
+      static const int32_t kMaxExtraStrikes = 128;
+      gfxFloat extraStrikes = GetSyntheticBoldOffset() / xscale;
+      if (extraStrikes > kMaxExtraStrikes) {
+        // if too many strikes are required, limit them and increase the step
+        // size to compensate
+        fontParams.extraStrikes = kMaxExtraStrikes;
+        fontParams.synBoldOnePixelOffset = aRunParams.direction *
+                                           GetSyntheticBoldOffset() /
+                                           fontParams.extraStrikes;
+      } else {
+        // use as many strikes as needed for the increased advance
+        fontParams.extraStrikes = NS_lroundf(std::max(1.0, extraStrikes));
+      }
     }
   } else {
     fontParams.synBoldOnePixelOffset = 0;
@@ -2252,21 +2281,21 @@ void gfxFont::Draw(const gfxTextRun* aTextRun, uint32_t aStart, uint32_t aEnd,
       if (aRunParams.spacing) {
         emittedGlyphs =
             DrawGlyphs<FontComplexityT::ComplexFont, SpacingT::HasSpacing>(
-                aTextRun, aStart, aEnd - aStart, aPt, buffer);
+                aTextRun, aStart, aEnd - aStart, aPt, offsetMatrix, buffer);
       } else {
         emittedGlyphs =
             DrawGlyphs<FontComplexityT::ComplexFont, SpacingT::NoSpacing>(
-                aTextRun, aStart, aEnd - aStart, aPt, buffer);
+                aTextRun, aStart, aEnd - aStart, aPt, offsetMatrix, buffer);
       }
     } else {
       if (aRunParams.spacing) {
         emittedGlyphs =
             DrawGlyphs<FontComplexityT::SimpleFont, SpacingT::HasSpacing>(
-                aTextRun, aStart, aEnd - aStart, aPt, buffer);
+                aTextRun, aStart, aEnd - aStart, aPt, offsetMatrix, buffer);
       } else {
         emittedGlyphs =
             DrawGlyphs<FontComplexityT::SimpleFont, SpacingT::NoSpacing>(
-                aTextRun, aStart, aEnd - aStart, aPt, buffer);
+                aTextRun, aStart, aEnd - aStart, aPt, offsetMatrix, buffer);
       }
     }
   }
@@ -2451,7 +2480,6 @@ gfxFont::RunMetrics gfxFont::Measure(const gfxTextRun* aTextRun,
   const gfxTextRun::CompressedGlyph* charGlyphs =
       aTextRun->GetCharacterGlyphs();
   bool isRTL = aTextRun->IsRightToLeft();
-  double direction = aTextRun->GetDirection();
   bool needsGlyphExtents = NeedsGlyphExtents(this, aTextRun);
   gfxGlyphExtents* extents =
       ((aBoundingBoxType == LOOSE_INK_EXTENTS && !needsGlyphExtents &&
@@ -2462,7 +2490,7 @@ gfxFont::RunMetrics gfxFont::Measure(const gfxTextRun* aTextRun,
           : GetOrCreateGlyphExtents(aTextRun->GetAppUnitsPerDevUnit());
   double x = 0;
   if (aSpacing) {
-    x += direction * aSpacing[0].mBefore;
+    x += aSpacing[0].mBefore;
   }
   uint32_t spaceGlyph = GetSpaceGlyph();
   bool allGlyphsInvisible = true;
@@ -2485,7 +2513,7 @@ gfxFont::RunMetrics gfxFont::Measure(const gfxTextRun* aTextRun,
         if (extentsWidth != gfxGlyphExtents::INVALID_WIDTH &&
             aBoundingBoxType == LOOSE_INK_EXTENTS) {
           UnionRange(x, &advanceMin, &advanceMax);
-          UnionRange(x + direction * extentsWidth, &advanceMin, &advanceMax);
+          UnionRange(x + extentsWidth, &advanceMin, &advanceMax);
         } else {
           gfxRect glyphRect;
           if (!extents->GetTightGlyphExtentsAppUnits(this, aRefDrawTarget,
@@ -2494,13 +2522,15 @@ gfxFont::RunMetrics gfxFont::Measure(const gfxTextRun* aTextRun,
                                 metrics.mBoundingBox.Height());
           }
           if (isRTL) {
-            glyphRect.MoveByX(-advance);
+            // In effect, swap left and right sidebearings of the glyph, for
+            // proper accumulation of potentially-overlapping glyph rects.
+            glyphRect.MoveToX(advance - glyphRect.XMost());
           }
           glyphRect.MoveByX(x);
           metrics.mBoundingBox = metrics.mBoundingBox.Union(glyphRect);
         }
       }
-      x += direction * advance;
+      x += advance;
     } else {
       allGlyphsInvisible = false;
       uint32_t glyphCount = glyphData->GetGlyphCount();
@@ -2523,12 +2553,12 @@ gfxFont::RunMetrics gfxFont::Measure(const gfxTextRun* aTextRun,
                                 metrics.mAscent + metrics.mDescent);
           }
           if (isRTL) {
-            glyphRect.MoveByX(-advance);
+            glyphRect.MoveToX(advance - glyphRect.XMost());
           }
           glyphRect.MoveByX(x + details->mOffset.x);
           glyphRect.MoveByY(details->mOffset.y);
           metrics.mBoundingBox = metrics.mBoundingBox.Union(glyphRect);
-          x += direction * advance;
+          x += advance;
         }
       }
     }
@@ -2538,7 +2568,7 @@ gfxFont::RunMetrics gfxFont::Measure(const gfxTextRun* aTextRun,
       if (i + 1 < aEnd) {
         space += aSpacing[i + 1 - aStart].mBefore;
       }
-      x += direction * space;
+      x += space;
     }
   }
 
@@ -2551,9 +2581,12 @@ gfxFont::RunMetrics gfxFont::Measure(const gfxTextRun* aTextRun,
                       metrics.mAscent + metrics.mDescent);
       metrics.mBoundingBox = metrics.mBoundingBox.Union(fontBox);
     }
-    if (isRTL) {
-      metrics.mBoundingBox -= gfxPoint(x, 0);
-    }
+  }
+
+  if (isRTL) {
+    // Reverse the effect of having swapped each glyph's sidebearings, to get
+    // the correct sidebearings of the merged bounding box.
+    metrics.mBoundingBox.MoveToX(x - metrics.mBoundingBox.XMost());
   }
 
   // If the font may be rendered with a fake-italic effect, we need to allow
@@ -2578,7 +2611,8 @@ gfxFont::RunMetrics gfxFont::Measure(const gfxTextRun* aTextRun,
     metrics.mBoundingBox.MoveByY(baselineOffset);
   }
 
-  metrics.mAdvanceWidth = x * direction;
+  metrics.mAdvanceWidth = x;
+
   return metrics;
 }
 

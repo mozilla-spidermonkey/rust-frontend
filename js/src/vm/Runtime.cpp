@@ -45,7 +45,6 @@
 #endif
 #include "util/Windows.h"
 #include "vm/DateTime.h"
-#include "vm/Debugger.h"
 #include "vm/JSAtom.h"
 #include "vm/JSObject.h"
 #include "vm/JSScript.h"
@@ -53,8 +52,10 @@
 #include "vm/TraceLoggingGraph.h"
 #include "wasm/WasmSignalHandlers.h"
 
+#include "debugger/DebugAPI-inl.h"
 #include "gc/GC-inl.h"
 #include "vm/JSContext-inl.h"
+#include "vm/Realm-inl.h"
 
 using namespace js;
 
@@ -108,6 +109,7 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
       destroyPrincipals(nullptr),
       readPrincipals(nullptr),
       warningReporter(nullptr),
+      selfHostedLazyScript(),
       geckoProfiler_(thisFromCtor()),
       trustedPrincipals_(nullptr),
       wrapObjectCallbacks(&DefaultWrapObjectCallbacks),
@@ -148,9 +150,6 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
       staticStrings(nullptr),
       commonNames(nullptr),
       wellKnownSymbols(nullptr),
-      jitSupportsFloatingPoint(false),
-      jitSupportsUnalignedAccesses(false),
-      jitSupportsSimd(false),
       offthreadIonCompilationEnabled_(true),
       parallelParsingEnabled_(true),
 #ifdef DEBUG
@@ -227,10 +226,6 @@ bool JSRuntime::init(JSContext* cx, uint32_t maxbytes,
   }
 
   js::ResetTimeZoneInternal(ResetTimeZoneMode::DontResetIfOffsetUnchanged);
-
-  jitSupportsFloatingPoint = js::jit::JitSupportsFloatingPoint();
-  jitSupportsUnalignedAccesses = js::jit::JitSupportsUnalignedAccesses();
-  jitSupportsSimd = js::jit::JitSupportsSimd();
 
   if (!parentRuntime) {
     sharedImmutableStrings_ = js::SharedImmutableStringsCache::Create();
@@ -379,9 +374,9 @@ void JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
     AutoLockScriptData lock(this);
     rtSizes->scriptData +=
         scriptDataTable(lock).shallowSizeOfExcludingThis(mallocSizeOf);
-    for (ScriptDataTable::Range r = scriptDataTable(lock).all(); !r.empty();
-         r.popFront()) {
-      rtSizes->scriptData += mallocSizeOf(r.front());
+    for (RuntimeScriptDataTable::Range r = scriptDataTable(lock).all();
+         !r.empty(); r.popFront()) {
+      rtSizes->scriptData += r.front()->sizeOfIncludingThis(mallocSizeOf);
     }
   }
 
@@ -439,9 +434,9 @@ static bool HandleInterrupt(JSContext* cx, bool invokeCallback) {
     if (cx->realm()->isDebuggee()) {
       ScriptFrameIter iter(cx);
       if (!iter.done() && cx->compartment() == iter.compartment() &&
-          iter.script()->stepModeEnabled()) {
+          DebugAPI::stepModeEnabled(iter.script())) {
         RootedValue rval(cx);
-        switch (Debugger::onSingleStep(cx, &rval)) {
+        switch (DebugAPI::onSingleStep(cx, &rval)) {
           case ResumeMode::Terminate:
             mozilla::recordreplay::InvalidateRecording(
                 "Debugger single-step produced an error");
@@ -449,8 +444,8 @@ static bool HandleInterrupt(JSContext* cx, bool invokeCallback) {
           case ResumeMode::Continue:
             return true;
           case ResumeMode::Return:
-            // See note in Debugger::propagateForcedReturn.
-            Debugger::propagateForcedReturn(cx, iter.abstractFramePtr(), rval);
+            // See note in DebugAPI::propagateForcedReturn.
+            DebugAPI::propagateForcedReturn(cx, iter.abstractFramePtr(), rval);
             mozilla::recordreplay::InvalidateRecording(
                 "Debugger single-step forced return");
             return false;
@@ -573,13 +568,13 @@ void JSRuntime::traceSharedIntlData(JSTracer* trc) {
 }
 
 FreeOp::FreeOp(JSRuntime* maybeRuntime, bool isDefault)
-    : JSFreeOp(maybeRuntime), isDefault(isDefault) {
+    : JSFreeOp(maybeRuntime), isDefault(isDefault), isCollecting_(!isDefault) {
   MOZ_ASSERT_IF(maybeRuntime, CurrentThreadCanAccessRuntime(maybeRuntime));
 }
 
 FreeOp::~FreeOp() {
   for (size_t i = 0; i < freeLaterList.length(); i++) {
-    free_(freeLaterList[i]);
+    freeUntracked(freeLaterList[i]);
   }
 
   if (!jitPoisonRanges.empty()) {
@@ -696,10 +691,6 @@ js::HashNumber JSRuntime::randomHashCode() {
   return HashNumber(randomHashCodeGenerator_->next());
 }
 
-void JSRuntime::updateMallocCounter(size_t nbytes) {
-  gc.updateMallocCounter(nbytes);
-}
-
 JS_FRIEND_API void* JSRuntime::onOutOfMemory(AllocFunction allocFunc,
                                              arena_id_t arena, size_t nbytes,
                                              void* reallocPtr,
@@ -794,7 +785,10 @@ void JSRuntime::decrementNumDebuggeeRealms() {
   MOZ_ASSERT(numDebuggeeRealms_ > 0);
   numDebuggeeRealms_--;
 
-  if (numDebuggeeRealms_ == 0) {
+  // Note: if we had shutdown leaks we can end up here while destroying the
+  // runtime. It's not safe to access JitRuntime trampolines because they're no
+  // longer traced.
+  if (numDebuggeeRealms_ == 0 && !isBeingDestroyed()) {
     jitRuntime()->baselineInterpreter().toggleDebuggerInstrumentation(false);
   }
 }
@@ -813,7 +807,10 @@ void JSRuntime::decrementNumDebuggeeRealmsObservingCoverage() {
   MOZ_ASSERT(numDebuggeeRealmsObservingCoverage_ > 0);
   numDebuggeeRealmsObservingCoverage_--;
 
-  if (numDebuggeeRealmsObservingCoverage_ == 0) {
+  // Note: if we had shutdown leaks we can end up here while destroying the
+  // runtime. It's not safe to access JitRuntime trampolines because they're no
+  // longer traced.
+  if (numDebuggeeRealmsObservingCoverage_ == 0 && !isBeingDestroyed()) {
     jit::BaselineInterpreter& interp = jitRuntime()->baselineInterpreter();
     interp.toggleCodeCoverageInstrumentation(false);
   }
@@ -835,7 +832,8 @@ bool js::CurrentThreadCanAccessZone(Zone* zone) {
 
 #ifdef DEBUG
 bool js::CurrentThreadIsPerformingGC() {
-  return TlsContext.get()->performingGC;
+  JSContext* cx = TlsContext.get();
+  return cx->defaultFreeOp()->isCollecting();
 }
 #endif
 
@@ -849,7 +847,62 @@ JS_FRIEND_API bool JS::IsProfilingEnabledForContext(JSContext* cx) {
   return cx->runtime()->geckoProfiler().enabled();
 }
 
+JS_FRIEND_API void JS::EnableRecordingAllocations(
+    JSContext* cx, JS::RecordAllocationsCallback callback, double probability) {
+  MOZ_ASSERT(cx);
+  MOZ_ASSERT(cx->isMainThreadContext());
+  cx->runtime()->startRecordingAllocations(probability, callback);
+}
+
+JS_FRIEND_API void JS::DisableRecordingAllocations(JSContext* cx) {
+  MOZ_ASSERT(cx);
+  MOZ_ASSERT(cx->isMainThreadContext());
+  cx->runtime()->stopRecordingAllocations();
+}
+
 JS_PUBLIC_API void JS::shadow::RegisterWeakCache(
     JSRuntime* rt, detail::WeakCacheBase* cachep) {
   rt->registerWeakCache(cachep);
+}
+
+void JSRuntime::startRecordingAllocations(
+    double probability, JS::RecordAllocationsCallback callback) {
+  allocationSamplingProbability = probability;
+  recordAllocationCallback = callback;
+
+  // Go through all of the existing realms, and turn on allocation tracking.
+  for (RealmsIter realm(this); !realm.done(); realm.next()) {
+    realm->setAllocationMetadataBuilder(&SavedStacks::metadataBuilder);
+    realm->chooseAllocationSamplingProbability();
+  }
+}
+
+void JSRuntime::stopRecordingAllocations() {
+  recordAllocationCallback = nullptr;
+  // Go through all of the existing realms, and turn on allocation tracking.
+  for (RealmsIter realm(this); !realm.done(); realm.next()) {
+    js::GlobalObject* global = realm->maybeGlobal();
+    if (!realm->isDebuggee() || !global ||
+        !DebugAPI::isObservedByDebuggerTrackingAllocations(*global)) {
+      // Only remove the allocation metadata builder if no Debuggers are
+      // tracking allocations.
+      realm->forgetAllocationMetadataBuilder();
+    }
+  }
+}
+
+// This function can run to ensure that when new realms are created
+// they have allocation logging turned on.
+void JSRuntime::ensureRealmIsRecordingAllocations(
+    Handle<GlobalObject*> global) {
+  if (recordAllocationCallback) {
+    if (!global->realm()->isRecordingAllocations()) {
+      // This is a new realm, turn on allocations for it.
+      global->realm()->setAllocationMetadataBuilder(
+          &SavedStacks::metadataBuilder);
+    }
+    // Ensure the probability is up to date with the current combination of
+    // debuggers and runtime profiling.
+    global->realm()->chooseAllocationSamplingProbability();
+  }
 }

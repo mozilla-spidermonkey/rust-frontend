@@ -10,18 +10,21 @@
 
 var gDebuggee;
 var gClient;
-var gThreadClient;
+var gThreadFront;
 
 function run_test() {
   initTestDebuggerServer();
   gDebuggee = addTestGlobal("test-conditional-breakpoint");
   gClient = new DebuggerClient(DebuggerServer.connectPipe());
   gClient.connect().then(function() {
-    attachTestTabAndResume(gClient, "test-conditional-breakpoint",
-                           function(response, targetFront, threadClient) {
-                             gThreadClient = threadClient;
-                             test_simple_breakpoint();
-                           });
+    attachTestTabAndResume(gClient, "test-conditional-breakpoint", function(
+      response,
+      targetFront,
+      threadFront
+    ) {
+      gThreadFront = threadFront;
+      test_simple_breakpoint();
+    });
   });
   do_test_pending();
 }
@@ -29,14 +32,11 @@ function run_test() {
 function test_simple_breakpoint() {
   let hitBreakpoint = false;
 
-  gThreadClient.once("paused", async function(packet) {
-    const source = await getSourceById(
-      gThreadClient,
-      packet.frame.where.actor
-    );
+  gThreadFront.once("paused", async function(packet) {
+    const source = await getSourceById(gThreadFront, packet.frame.where.actor);
     const location = { sourceUrl: source.url, line: 3 };
-    gThreadClient.setBreakpoint(location, { condition: "a === 1" });
-    gThreadClient.once("paused", function(packet) {
+    gThreadFront.setBreakpoint(location, { condition: "a === 1" });
+    gThreadFront.once("paused", function(packet) {
       Assert.equal(hitBreakpoint, false);
       hitBreakpoint = true;
 
@@ -45,15 +45,15 @@ function test_simple_breakpoint() {
       Assert.equal(packet.frame.where.line, 3);
 
       // Remove the breakpoint.
-      gThreadClient.removeBreakpoint(location);
+      gThreadFront.removeBreakpoint(location);
 
-      gThreadClient.resume().then(function() {
+      gThreadFront.resume().then(function() {
         finishClient(gClient);
       });
     });
 
     // Continue until the breakpoint is hit.
-    gThreadClient.resume();
+    gThreadFront.resume();
   });
 
   /* eslint-disable */

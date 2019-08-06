@@ -184,6 +184,11 @@ class MessageLogger(object):
                 'action'] in MessageLogger.VALID_ACTIONS):
             raise ValueError
 
+    def _fix_subtest_name(self, message):
+        """Make sure subtest name is a string"""
+        if 'subtest' in message and not isinstance(message['subtest'], six.string_types):
+            message['subtest'] = str(message['subtest'])
+
     def _fix_test_name(self, message):
         """Normalize a logged test path to match the relative path from the sourcedir.
         """
@@ -232,6 +237,7 @@ class MessageLogger(object):
                         message=fragment,
                     )
 
+            self._fix_subtest_name(message)
             self._fix_test_name(message)
             self._fix_message_format(message)
             messages.append(message)
@@ -851,7 +857,6 @@ class MochitestDesktop(object):
 
     # Path to the test script on the server
     TEST_PATH = "tests"
-    NESTED_OOP_TEST_PATH = "nested_oop"
     CHROME_PATH = "redirect.html"
 
     certdbNew = False
@@ -1102,8 +1107,6 @@ class MochitestDesktop(object):
             testURL = "/".join([testHost, self.CHROME_PATH])
         elif options.flavor == 'browser':
             testURL = "about:blank"
-        if options.nested_oop:
-            testURL = "/".join([testHost, self.NESTED_OOP_TEST_PATH])
         return testURL
 
     def getTestsByScheme(self, options, testsToFilter=None, disabled=True):
@@ -1708,6 +1711,12 @@ toolbar#nav-bar {
         if not options.enableCPOWWarnings:
             browserEnv["DISABLE_UNSAFE_CPOW_WARNINGS"] = "1"
 
+        if options.enable_webrender:
+            browserEnv["MOZ_WEBRENDER"] = "1"
+            browserEnv["MOZ_ACCELERATED"] = "1"
+        else:
+            browserEnv["MOZ_WEBRENDER"] = "0"
+
         return browserEnv
 
     def killNamedProc(self, pname, orphans=True):
@@ -1917,7 +1926,6 @@ toolbar#nav-bar {
         # Hardcoded prefs (TODO move these into a base profile)
         prefs = {
             "browser.tabs.remote.autostart": options.e10s,
-            "dom.ipc.tabs.nested.enabled": options.nested_oop,
             # Enable tracing output for detailed failures in case of
             # failing connection attempts, and hangs (bug 1397201)
             "marionette.log.level": "Trace",
@@ -2360,7 +2368,7 @@ toolbar#nav-bar {
 
         if marionette_exception is not None:
             exc, value, tb = marionette_exception
-            raise exc, value, tb
+            raise exc(value).with_traceback(tb)
 
         return status, self.lastTestSeen
 
@@ -2588,6 +2596,7 @@ toolbar#nav-bar {
                 'dom.serviceWorkers.parent_intercept', False),
             "socketprocess_e10s": self.extraPrefs.get(
                 'network.process.enabled', False),
+            "webrender": options.enable_webrender,
         })
 
         self.setTestRoot(options)
@@ -2605,6 +2614,13 @@ toolbar#nav-bar {
 
         tests = self.getActiveTests(options)
         self.logPreamble(tests)
+
+        if mozinfo.info['fission'] and not mozinfo.info['e10s']:
+            # Make sure this is logged *after* suite_start so it gets associated with the
+            # current suite in the summary formatters.
+            self.log.error("Fission is not supported without e10s.")
+            return 1
+
         tests = [t for t in tests if 'disabled' not in t]
 
         # Until we have all green, this does not run on a11y (for perf reasons)
@@ -3128,13 +3144,6 @@ def run_test_harness(parser, options):
 
     if hasattr(options, 'log'):
         delattr(options, 'log')
-
-    # windows10-aarch64 does not yet support crashreporter testing.
-    # see https://bugzilla.mozilla.org/show_bug.cgi?id=1536221
-    if mozinfo.os == "win" and mozinfo.processor == "aarch64":
-        # manually override the mozinfo.crashreporter value after MochitestDesktop
-        # is instantiated.
-        mozinfo.update({u"crashreporter": False})
 
     options.runByManifest = False
     if options.flavor in ('plain', 'browser', 'chrome'):

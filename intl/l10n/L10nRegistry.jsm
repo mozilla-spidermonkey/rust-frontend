@@ -81,7 +81,7 @@ const isParentProcess = appinfo.processType === appinfo.PROCESS_TYPE_DEFAULT;
  *
  * Notice: L10nRegistry is primarily an asynchronous API, but
  * it does provide a synchronous version of it's main method
- * for use by the `LocalizationSync` class.
+ * for use  by the `Localization` class when in `sync` state.
  * This API should be only used in very specialized cases and
  * the uses should be reviewed by the toolkit owner/peer.
  */
@@ -655,7 +655,12 @@ class FileSource {
       // `true` means that the file is indexed, but hasn't
       // been fetched yet.
       if (this.cache[fullPath] !== true) {
-        return this.cache[fullPath];
+        if (this.cache[fullPath] instanceof Promise && options.sync) {
+          console.warn(`[l10nregistry] Attempting to synchronously load file
+            ${fullPath} while it's being loaded asynchronously.`);
+        } else {
+          return this.cache[fullPath];
+        }
       }
     } else if (this.indexed) {
       return false;
@@ -666,7 +671,7 @@ class FileSource {
       if (data === false) {
         this.cache[fullPath] = false;
       } else {
-        this.cache[fullPath] = FluentResource.fromString(data);
+        this.cache[fullPath] = new FluentResource(data);
       }
 
       return this.cache[fullPath];
@@ -675,7 +680,7 @@ class FileSource {
     // async
     return this.cache[fullPath] = L10nRegistry.load(fullPath).then(
       data => {
-        return this.cache[fullPath] = FluentResource.fromString(data);
+        return this.cache[fullPath] = new FluentResource(data);
       },
       err => {
         this.cache[fullPath] = false;

@@ -35,7 +35,8 @@ static nsString GetFullPath(const nsAString& aLeaf) {
   return ret;
 }
 
-TEST(TestDllBlocklist, BlockDllByName) {
+TEST(TestDllBlocklist, BlockDllByName)
+{
   // The DLL name has capital letters, so this also tests that the comparison
   // is case-insensitive.
   NS_NAMED_LITERAL_STRING(kLeafName, "TestDllBlocklist_MatchByName.dll");
@@ -47,7 +48,8 @@ TEST(TestDllBlocklist, BlockDllByName) {
   EXPECT_TRUE(!::GetModuleHandleW(kLeafName.get()));
 }
 
-TEST(TestDllBlocklist, BlockDllByVersion) {
+TEST(TestDllBlocklist, BlockDllByVersion)
+{
   NS_NAMED_LITERAL_STRING(kLeafName, "TestDllBlocklist_MatchByVersion.dll");
   nsString dllPath = GetFullPath(kLeafName);
 
@@ -57,7 +59,8 @@ TEST(TestDllBlocklist, BlockDllByVersion) {
   EXPECT_TRUE(!::GetModuleHandleW(kLeafName.get()));
 }
 
-TEST(TestDllBlocklist, AllowDllByVersion) {
+TEST(TestDllBlocklist, AllowDllByVersion)
+{
   NS_NAMED_LITERAL_STRING(kLeafName, "TestDllBlocklist_AllowByVersion.dll");
   nsString dllPath = GetFullPath(kLeafName);
 
@@ -69,37 +72,39 @@ TEST(TestDllBlocklist, AllowDllByVersion) {
 
 #define DLL_BLOCKLIST_ENTRY(name, ...) {name, __VA_ARGS__},
 #define DLL_BLOCKLIST_STRING_TYPE const char*
-#include "mozilla/WindowsDllBlocklistDefs.h"
+#include "mozilla/WindowsDllBlocklistLegacyDefs.h"
 
-TEST(TestDllBlocklist, BlocklistIntegrity) {
+TEST(TestDllBlocklist, BlocklistIntegrity)
+{
   nsTArray<DLL_BLOCKLIST_STRING_TYPE> dupes;
   DECLARE_POINTER_TO_FIRST_DLL_BLOCKLIST_ENTRY(pFirst);
   DECLARE_POINTER_TO_LAST_DLL_BLOCKLIST_ENTRY(pLast);
 
-  EXPECT_FALSE(pLast->name || pLast->maxVersion || pLast->flags);
+  EXPECT_FALSE(pLast->mName || pLast->mMaxVersion || pLast->mFlags);
 
   for (size_t i = 0; i < mozilla::ArrayLength(gWindowsDllBlocklist) - 1; ++i) {
     auto pEntry = pFirst + i;
 
     // Validate name
-    EXPECT_TRUE(!!pEntry->name);
-    EXPECT_GT(strlen(pEntry->name), 3);
+    EXPECT_TRUE(!!pEntry->mName);
+    EXPECT_GT(strlen(pEntry->mName), 3);
 
     // Check the filename for valid characters.
-    for (auto pch = pEntry->name; *pch != 0; ++pch) {
+    for (auto pch = pEntry->mName; *pch != 0; ++pch) {
       EXPECT_FALSE(*pch >= 'A' && *pch <= 'Z');
     }
 
     // Check for duplicate entries
     for (auto&& dupe : dupes) {
-      EXPECT_NE(stricmp(dupe, pEntry->name), 0);
+      EXPECT_NE(stricmp(dupe, pEntry->mName), 0);
     }
 
-    dupes.AppendElement(pEntry->name);
+    dupes.AppendElement(pEntry->mName);
   }
 }
 
-TEST(TestDllBlocklist, BlockThreadWithLoadLibraryEntryPoint) {
+TEST(TestDllBlocklist, BlockThreadWithLoadLibraryEntryPoint)
+{
   // Only supported on Nightly
 #if defined(NIGHTLY_BUILD)
   using ThreadProc = unsigned(__stdcall*)(void*);
@@ -133,4 +138,3 @@ TEST(TestDllBlocklist, BlockThreadWithLoadLibraryEntryPoint) {
   EXPECT_TRUE(!::GetModuleHandleW(kLeafNameW.get()));
 #endif  // defined(NIGHTLY_BUILD)
 }
-

@@ -92,7 +92,9 @@
 #endif
 
 #include "mozilla/Preferences.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_apz.h"
+#include "mozilla/StaticPrefs_general.h"
+#include "mozilla/StaticPrefs_gfx.h"
 
 #include <dlfcn.h>
 
@@ -1804,22 +1806,35 @@ void nsChildView::AddWindowOverlayWebRenderCommands(layers::WebRenderBridgeChild
 }
 
 bool nsChildView::PreRender(WidgetRenderingContext* aContext) {
-  UniquePtr<GLManager> manager(GLManager::CreateGLManager(aContext->mLayerManager));
-  gl::GLContext* gl = manager ? manager->gl() : aContext->mGL;
-  if (!gl) {
-    return true;
-  }
-
   // The lock makes sure that we don't attempt to tear down the view while
   // compositing. That would make us unable to call postRender on it when the
   // composition is done, thus keeping the GL context locked forever.
   mViewTearDownLock.Lock();
 
-  NSOpenGLContext* glContext = GLContextCGL::Cast(gl)->GetNSOpenGLContext();
+  bool canComposite = PreRenderImpl(aContext);
 
-  if (![mView preRender:glContext]) {
+  if (!canComposite) {
     mViewTearDownLock.Unlock();
     return false;
+  }
+  return true;
+}
+
+bool nsChildView::PreRenderImpl(WidgetRenderingContext* aContext) {
+  UniquePtr<GLManager> manager(GLManager::CreateGLManager(aContext->mLayerManager));
+  gl::GLContext* gl = manager ? manager->gl() : aContext->mGL;
+  if (gl) {
+    return [mView preRender:GLContextCGL::Cast(gl)->GetNSOpenGLContext()];
+  }
+
+  // BasicCompositor.
+  MOZ_RELEASE_ASSERT(mGLPresenter, "Should have been set up in InitCompositor");
+  if (![mView preRender:mGLPresenter->GetNSOpenGLContext()]) {
+    return false;
+  }
+
+  if (!mBasicCompositorImage) {
+    mBasicCompositorImage = MakeUnique<RectTextureImage>();
   }
   return true;
 }
@@ -1827,10 +1842,8 @@ bool nsChildView::PreRender(WidgetRenderingContext* aContext) {
 void nsChildView::PostRender(WidgetRenderingContext* aContext) {
   UniquePtr<GLManager> manager(GLManager::CreateGLManager(aContext->mLayerManager));
   gl::GLContext* gl = manager ? manager->gl() : aContext->mGL;
-  if (!gl) {
-    return;
-  }
-  NSOpenGLContext* glContext = GLContextCGL::Cast(gl)->GetNSOpenGLContext();
+  NSOpenGLContext* glContext =
+      gl ? GLContextCGL::Cast(gl)->GetNSOpenGLContext() : mGLPresenter->GetNSOpenGLContext();
   [mView postRender:glContext];
   mViewTearDownLock.Unlock();
 }
@@ -2318,23 +2331,12 @@ void nsChildView::UpdateBoundsFromView() { mBounds = CocoaPointsToDevPixels([mVi
 
 already_AddRefed<gfx::DrawTarget> nsChildView::StartRemoteDrawingInRegion(
     LayoutDeviceIntRegion& aInvalidRegion, BufferMode* aBufferMode) {
-  // should have created the GLPresenter in InitCompositor.
-  MOZ_ASSERT(mGLPresenter);
-  if (!mGLPresenter) {
-    mGLPresenter = GLPresenter::CreateForWindow(this);
-
-    if (!mGLPresenter) {
-      return nullptr;
-    }
-  }
+  MOZ_RELEASE_ASSERT(mGLPresenter);
 
   LayoutDeviceIntRegion dirtyRegion(aInvalidRegion);
   LayoutDeviceIntSize renderSize = mBounds.Size();
 
-  if (!mBasicCompositorImage) {
-    mBasicCompositorImage = MakeUnique<RectTextureImage>();
-  }
-
+  MOZ_RELEASE_ASSERT(mBasicCompositorImage, "Should have created this in PreRender.");
   RefPtr<gfx::DrawTarget> drawTarget = mBasicCompositorImage->BeginUpdate(renderSize, dirtyRegion);
 
   if (!drawTarget) {
@@ -2373,9 +2375,6 @@ bool nsChildView::InitCompositor(Compositor* aCompositor) {
 }
 
 void nsChildView::DoRemoteComposition(const LayoutDeviceIntRect& aRenderRect) {
-  if (![mView preRender:mGLPresenter->GetNSOpenGLContext()]) {
-    return;
-  }
   mGLPresenter->BeginFrame(aRenderRect.Size());
 
   // Draw the result from the basic compositor.
@@ -2386,8 +2385,6 @@ void nsChildView::DoRemoteComposition(const LayoutDeviceIntRect& aRenderRect) {
   DrawWindowOverlay(mGLPresenter.get(), aRenderRect);
 
   mGLPresenter->EndFrame();
-
-  [mView postRender:mGLPresenter->GetNSOpenGLContext()];
 }
 
 @interface NonDraggableView : NSView
@@ -3289,7 +3286,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
   // Make the context opaque for fullscreen (since it performs better), and transparent
   // for windowed (since we need it for rounded corners), but allow overriding
   // it to opaque for testing purposes, even if that breaks the rounded corners.
-  GLint opaque = aOpaque || StaticPrefs::CompositorGLContextOpaque();
+  GLint opaque = aOpaque || StaticPrefs::gfx_compositor_glcontext_opaque();
   [mGLContext setValues:&opaque forParameter:NSOpenGLCPSurfaceOpacity];
   CGLUnlockContext((CGLContextObj)[mGLContext CGLContextObj]);
 }
@@ -4392,7 +4389,7 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
     geckoChildDeathGrip->DispatchAPZWheelInputEvent(wheelEvent, false);
   } else {
     ScrollWheelInput::ScrollMode scrollMode = ScrollWheelInput::SCROLLMODE_INSTANT;
-    if (StaticPrefs::SmoothScrollEnabled() && StaticPrefs::WheelSmoothScrollEnabled()) {
+    if (StaticPrefs::general_smoothScroll() && StaticPrefs::general_smoothScroll_mouseWheel()) {
       scrollMode = ScrollWheelInput::SCROLLMODE_SMOOTH;
     }
     ScrollWheelInput wheelEvent(eventIntervalTime, eventTimeStamp, modifiers, scrollMode,

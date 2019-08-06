@@ -1756,6 +1756,22 @@ void JSObject::fixDictionaryShapeAfterSwap() {
   }
 }
 
+bool js::ObjectMayBeSwapped(const JSObject* obj) {
+  const js::Class* clasp = obj->getClass();
+
+  // We want to optimize Window/globals and Gecko doesn't require transplanting
+  // them (only the WindowProxy around them). A Window may be a DOMClass, so we
+  // explicitly check if this is a global.
+  if (clasp->isGlobal()) {
+    return false;
+  }
+
+  // WindowProxy, Wrapper, DeadProxyObject, DOMProxy, and DOMClass (non-global)
+  // types may be swapped. It is hard to detect DOMProxy from shell, so target
+  // proxies in general.
+  return clasp->isProxy() || clasp->isDOMClass();
+}
+
 static MOZ_MUST_USE bool CopyProxyValuesBeforeSwap(
     JSContext* cx, ProxyObject* proxy, MutableHandleValueVector values) {
   MOZ_ASSERT(values.empty());
@@ -1830,6 +1846,11 @@ void JSObject::swap(JSContext* cx, HandleObject a, HandleObject b) {
   if (!JSObject::getGroup(cx, b)) {
     oomUnsafe.crash("JSObject::swap");
   }
+
+  // Only certain types of objects are allowed to be swapped. This allows the
+  // JITs to better optimize objects that can never swap.
+  MOZ_RELEASE_ASSERT(js::ObjectMayBeSwapped(a));
+  MOZ_RELEASE_ASSERT(js::ObjectMayBeSwapped(b));
 
   /*
    * Neither object may be in the nursery, but ensure we update any embedded
@@ -2309,12 +2330,13 @@ JSProtoKey JS::IdentifyStandardInstanceOrPrototype(JSObject* obj) {
 }
 
 JSProtoKey JS::IdentifyStandardConstructor(JSObject* obj) {
-  // Note that NATIVE_CTOR does not imply that we are a standard constructor,
-  // but the converse is true (at least until we start having self-hosted
-  // constructors for standard classes). This lets us avoid a costly loop for
-  // many functions (which, depending on the call site, may be the common case).
+  // Note that isNativeConstructor does not imply that we are a standard
+  // constructor, but the converse is true (at least until we start having
+  // self-hosted constructors for standard classes). This lets us avoid a costly
+  // loop for many functions (which, depending on the call site, may be the
+  // common case).
   if (!obj->is<JSFunction>() ||
-      !(obj->as<JSFunction>().flags() & JSFunction::NATIVE_CTOR)) {
+      !(obj->as<JSFunction>().flags().isNativeConstructor())) {
     return JSProto_Null;
   }
 

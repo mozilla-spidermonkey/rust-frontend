@@ -11,7 +11,10 @@
 #include "ScrollAnimationPhysics.h"  // for kScrollSeriesTimeoutMs
 
 #include "mozilla/MouseEvents.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_apz.h"
+#include "mozilla/StaticPrefs_layout.h"
+#include "mozilla/StaticPrefs_mousewheel.h"
+#include "mozilla/StaticPrefs_test.h"
 #include "mozilla/Telemetry.h"                // for Telemetry
 #include "mozilla/layers/IAPZCTreeManager.h"  // for AllowedTouchBehavior
 #include "OverscrollHandoffState.h"
@@ -406,7 +409,7 @@ bool WheelBlockState::MaybeTimeout(const ScrollWheelInput& aEvent) {
     // early.
     TimeDuration duration = TimeStamp::Now() - mLastMouseMove;
     if (duration.ToMilliseconds() >=
-        StaticPrefs::MouseWheelIgnoreMoveDelayMs()) {
+        StaticPrefs::mousewheel_transaction_ignoremovedelay()) {
       TBS_LOG("%p wheel transaction timed out after mouse move\n", this);
       EndTransaction();
       return true;
@@ -423,13 +426,13 @@ bool WheelBlockState::MaybeTimeout(const TimeStamp& aTimeStamp) {
   // seen wheel event.
   TimeDuration duration = aTimeStamp - mLastEventTime;
   if (duration.ToMilliseconds() <
-      StaticPrefs::MouseWheelTransactionTimeoutMs()) {
+      StaticPrefs::mousewheel_transaction_timeout()) {
     return false;
   }
 
   TBS_LOG("%p wheel transaction timed out\n", this);
 
-  if (StaticPrefs::MouseScrollTestingEnabled()) {
+  if (StaticPrefs::test_mousescroll()) {
     RefPtr<AsyncPanZoomController> apzc = GetTargetApzc();
     apzc->NotifyMozMouseScrollEvent(
         NS_LITERAL_STRING("MozMouseScrollTransactionTimeout"));
@@ -454,7 +457,7 @@ void WheelBlockState::OnMouseMove(const ScreenIntPoint& aPoint) {
     TimeStamp now = TimeStamp::Now();
     TimeDuration duration = now - mLastEventTime;
     if (duration.ToMilliseconds() >=
-        StaticPrefs::MouseWheelIgnoreMoveDelayMs()) {
+        StaticPrefs::mousewheel_transaction_ignoremovedelay()) {
       mLastMouseMove = now;
     }
   }

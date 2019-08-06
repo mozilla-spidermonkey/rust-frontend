@@ -28,7 +28,7 @@
 #include "GeckoProfiler.h"
 #include "VideoFrameContainer.h"
 #include "mozilla/AbstractThread.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/Unused.h"
 #include "mtransport/runnable_utils.h"
 #include "VideoUtils.h"
@@ -941,7 +941,8 @@ void MediaStreamGraphImpl::DeviceChanged() {
   // and acted upon on the graph thread.
   if (!NS_IsMainThread()) {
     RefPtr<nsIRunnable> runnable =
-        WrapRunnable(this, &MediaStreamGraphImpl::DeviceChanged);
+        WrapRunnable(RefPtr<MediaStreamGraphImpl>(this),
+                     &MediaStreamGraphImpl::DeviceChanged);
     mAbstractMainThread->Dispatch(runnable.forget());
     return;
   }
@@ -956,6 +957,10 @@ void MediaStreamGraphImpl::DeviceChanged() {
     // messages.
     MediaStreamGraphImpl* mGraphImpl;
   };
+
+  // Reset the latency, it will get fetched again next time it's queried.
+  MOZ_ASSERT(NS_IsMainThread());
+  mAudioOutputLatency = 0.0;
 
   AppendMessage(MakeUnique<Message>(this));
 }
@@ -1343,6 +1348,12 @@ void MediaStreamGraphImpl::Process() {
 
 bool MediaStreamGraphImpl::UpdateMainThreadState() {
   MOZ_ASSERT(OnGraphThread());
+  if (mForceShutDown) {
+    for (MediaStream* stream : AllStreams()) {
+      stream->NotifyForcedShutdown();
+    }
+  }
+
   MonitorAutoLock lock(mMonitor);
   bool finalUpdate =
       mForceShutDown || (IsEmpty() && mBackMessageQueue.IsEmpty());
@@ -1852,7 +1863,6 @@ MediaStream::MediaStream()
       mMainThreadFinished(false),
       mFinishedNotificationSent(false),
       mMainThreadDestroyed(false),
-      mNrOfMainThreadUsers(0),
       mGraph(nullptr) {
   MOZ_COUNT_CTOR(MediaStream);
 }
@@ -2004,8 +2014,6 @@ void MediaStream::DestroyImpl() {
 }
 
 void MediaStream::Destroy() {
-  NS_ASSERTION(mNrOfMainThreadUsers == 0,
-               "Do not mix Destroy() and RegisterUser()/UnregisterUser()");
   // Keep this stream alive until we leave this method
   RefPtr<MediaStream> kungFuDeathGrip = this;
 
@@ -2025,23 +2033,6 @@ void MediaStream::Destroy() {
   // but our kungFuDeathGrip above will have kept this stream alive if
   // necessary.
   mMainThreadDestroyed = true;
-}
-
-void MediaStream::RegisterUser() {
-  MOZ_ASSERT(NS_IsMainThread());
-  ++mNrOfMainThreadUsers;
-}
-
-void MediaStream::UnregisterUser() {
-  MOZ_ASSERT(NS_IsMainThread());
-
-  --mNrOfMainThreadUsers;
-  NS_ASSERTION(mNrOfMainThreadUsers >= 0, "Double-removal of main thread user");
-  NS_ASSERTION(!IsDestroyed(),
-               "Do not mix Destroy() and RegisterUser()/UnregisterUser()");
-  if (mNrOfMainThreadUsers == 0) {
-    Destroy();
-  }
 }
 
 void MediaStream::AddAudioOutput(void* aKey) {
@@ -2443,6 +2434,7 @@ void SourceMediaStream::DestroyImpl() {
   // Hold mMutex while mGraph is reset so that other threads holding mMutex
   // can null-check know that the graph will not destroyed.
   MutexAutoLock lock(mMutex);
+  mUpdateTracks.Clear();
   MediaStream::DestroyImpl();
 }
 
@@ -3192,7 +3184,8 @@ MediaStreamGraphImpl::MediaStreamGraphImpl(GraphDriverType aDriverRequested,
       mCanRunMessagesSynchronously(false)
 #endif
       ,
-      mMainThreadGraphTime(0, "MediaStreamGraphImpl::mMainThreadGraphTime") {
+      mMainThreadGraphTime(0, "MediaStreamGraphImpl::mMainThreadGraphTime"),
+      mAudioOutputLatency(0.0) {
   if (mRealtime) {
     if (aDriverRequested == AUDIO_THREAD_DRIVER) {
       // Always start with zero input channels, and no particular preferences
@@ -3511,7 +3504,7 @@ ProcessedMediaStream* MediaStreamGraph::CreateTrackUnionStream() {
   return stream;
 }
 
-ProcessedMediaStream* MediaStreamGraph::CreateAudioCaptureStream(
+AudioCaptureStream* MediaStreamGraph::CreateAudioCaptureStream(
     TrackID aTrackId) {
   AudioCaptureStream* stream = new AudioCaptureStream(aTrackId);
   AddStream(stream);
@@ -3719,9 +3712,7 @@ void MediaStreamGraphImpl::ApplyAudioContextOperationImpl(
                                                 aOperation, aFlags);
 
       SystemClockDriver* driver;
-      if (nextDriver) {
-        MOZ_ASSERT(!nextDriver->AsAudioCallbackDriver());
-      } else {
+      if (!nextDriver) {
         driver = new SystemClockDriver(this);
         MonitorAutoLock lock(mMonitor);
         CurrentDriver()->SwitchAtNextIteration(driver);
@@ -3794,6 +3785,29 @@ void MediaStreamGraph::ApplyAudioContextOperation(
   MediaStreamGraphImpl* graphImpl = static_cast<MediaStreamGraphImpl*>(this);
   graphImpl->AppendMessage(MakeUnique<AudioContextOperationControlMessage>(
       aDestinationStream, aStreams, aOperation, aPromise, aFlags));
+}
+
+double MediaStreamGraph::AudioOutputLatency() {
+  return static_cast<MediaStreamGraphImpl*>(this)->AudioOutputLatency();
+}
+
+double MediaStreamGraphImpl::AudioOutputLatency() {
+  MOZ_ASSERT(NS_IsMainThread());
+  if (mAudioOutputLatency != 0.0) {
+    return mAudioOutputLatency;
+  }
+  MonitorAutoLock lock(mMonitor);
+  if (CurrentDriver()->AsAudioCallbackDriver()) {
+    mAudioOutputLatency = CurrentDriver()
+                              ->AsAudioCallbackDriver()
+                              ->AudioOutputLatency()
+                              .ToSeconds();
+  } else {
+    // Failure mode: return 0.0 if running on a normal thread.
+    mAudioOutputLatency = 0.0;
+  }
+
+  return mAudioOutputLatency;
 }
 
 bool MediaStreamGraph::IsNonRealtime() const {

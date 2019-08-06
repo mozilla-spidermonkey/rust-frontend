@@ -15,7 +15,7 @@
 #include "mozilla/EventStates.h"
 #include "mozilla/HTMLEditor.h"
 #include "mozilla/PresShell.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_dom.h"
 
 #include "nsCOMPtr.h"
 #include "nsString.h"
@@ -179,7 +179,7 @@ bool IsValidSelectionPoint(nsFrameSelection* aFrameSel, nsINode* aNode) {
   }
 
   limiter = aFrameSel->GetAncestorLimiter();
-  return !limiter || nsContentUtils::ContentIsDescendantOf(aNode, limiter);
+  return !limiter || aNode->IsInclusiveDescendantOf(limiter);
 }
 
 namespace mozilla {
@@ -1245,7 +1245,8 @@ nsresult nsFrameSelection::TakeFocus(nsIContent* aNewFocus,
       RefPtr<nsRange> newRange = new nsRange(aNewFocus);
 
       newRange->CollapseTo(aNewFocus, aContentOffset);
-      mDomSelections[index]->AddRange(*newRange, IgnoreErrors());
+      mDomSelections[index]->AddRangeAndSelectFramesAndNotifyListeners(
+          *newRange, IgnoreErrors());
       mBatching = batching;
       mChangesDuringBatching = changes;
     } else {
@@ -1275,9 +1276,8 @@ nsresult nsFrameSelection::TakeFocus(nsIContent* aNewFocus,
       if (htmlEditor) {
         nsINode* cellparent = GetCellParent(aNewFocus);
         nsCOMPtr<nsINode> editorHostNode = htmlEditor->GetActiveEditingHost();
-        editableCell =
-            cellparent && editorHostNode &&
-            nsContentUtils::ContentIsDescendantOf(cellparent, editorHostNode);
+        editableCell = cellparent && editorHostNode &&
+                       cellparent->IsInclusiveDescendantOf(editorHostNode);
         if (editableCell) {
           mCellParent = cellparent;
 #ifdef DEBUG_TABLE_SELECTION
@@ -1622,7 +1622,7 @@ nsIFrame* nsFrameSelection::GetFrameToPageSelect() const {
       if (scrollStyles.mVertical == StyleOverflow::Hidden) {
         continue;
       }
-      uint32_t directions = scrollableFrame->GetPerceivedScrollingDirections();
+      uint32_t directions = scrollableFrame->GetAvailableScrollingDirections();
       if (directions & nsIScrollableFrame::VERTICAL) {
         // If there is sub scrollable frame, let's use its page size to select.
         return frame;
@@ -2243,7 +2243,8 @@ nsresult nsFrameSelection::HandleTableSelection(nsINode* aParentContent,
 
             // Deselect cell by removing its range from selection
             ErrorResult err;
-            mDomSelections[index]->RemoveRange(*range, err);
+            mDomSelections[index]
+                ->RemoveRangeAndUnselectFramesAndNotifyListeners(*range, err);
             return err.StealNSResult();
           }
         }
@@ -2323,7 +2324,8 @@ nsresult nsFrameSelection::UnselectCells(nsIContent* aTableContent,
       if (aRemoveOutsideOfCellRange) {
         if (curRowIndex < minRowIndex || curRowIndex > maxRowIndex ||
             curColIndex < minColIndex || curColIndex > maxColIndex) {
-          mDomSelections[index]->RemoveRange(*range, IgnoreErrors());
+          mDomSelections[index]->RemoveRangeAndUnselectFramesAndNotifyListeners(
+              *range, IgnoreErrors());
           // Since we've removed the range, decrement pointer to next range
           mSelectedCellIndex--;
         }
@@ -2348,7 +2350,8 @@ nsresult nsFrameSelection::UnselectCells(nsIContent* aTableContent,
             maxColIndex >= 0 &&
             origColIndex + actualColSpan - 1 >=
                 static_cast<uint32_t>(minColIndex)) {
-          mDomSelections[index]->RemoveRange(*range, IgnoreErrors());
+          mDomSelections[index]->RemoveRangeAndUnselectFramesAndNotifyListeners(
+              *range, IgnoreErrors());
           // Since we've removed the range, decrement pointer to next range
           mSelectedCellIndex--;
         }
@@ -2638,7 +2641,7 @@ nsresult nsFrameSelection::CreateAndAddRange(nsINode* aContainer,
   if (!mDomSelections[index]) return NS_ERROR_NULL_POINTER;
 
   ErrorResult err;
-  mDomSelections[index]->AddRange(*range, err);
+  mDomSelections[index]->AddRangeAndSelectFramesAndNotifyListeners(*range, err);
   return err.StealNSResult();
 }
 

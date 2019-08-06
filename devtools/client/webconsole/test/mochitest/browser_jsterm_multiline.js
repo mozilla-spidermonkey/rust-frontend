@@ -9,37 +9,38 @@
 
 "use strict";
 
-const TEST_URI = "http://example.com/browser/devtools/client/webconsole/" +
-                 "test/mochitest/test-console.html";
+const TEST_URI =
+  "http://example.com/browser/devtools/client/webconsole/" +
+  "test/mochitest/test-console.html";
 const ALL_CHANNELS = Ci.nsITelemetry.DATASET_ALL_CHANNELS;
 
 const SHOULD_ENTER_MULTILINE = [
-  {input: "function foo() {" },
-  {input: "var a = 1," },
-  {input: "var a = 1;", shiftKey: true },
-  {input: "function foo() { }", shiftKey: true },
-  {input: "function" },
-  {input: "(x) =>" },
-  {input: "let b = {" },
-  {input: "let a = [" },
-  {input: "{" },
-  {input: "{ bob: 3343," },
-  {input: "function x(y=" },
-  {input: "Array.from(" },
+  { input: "function foo() {" },
+  { input: "var a = 1," },
+  { input: "var a = 1;", shiftKey: true },
+  { input: "function foo() { }", shiftKey: true },
+  { input: "function" },
+  { input: "(x) =>" },
+  { input: "let b = {" },
+  { input: "let a = [" },
+  { input: "{" },
+  { input: "{ bob: 3343," },
+  { input: "function x(y=" },
+  { input: "Array.from(" },
   // shift + enter creates a new line despite parse errors
-  {input: "{2,}", shiftKey: true },
+  { input: "{2,}", shiftKey: true },
 ];
 const SHOULD_EXECUTE = [
-  {input: "function foo() { }" },
-  {input: "var a = 1;" },
-  {input: "function foo() { var a = 1; }" },
-  {input: '"asdf"' },
-  {input: "99 + 3" },
-  {input: "1, 2, 3" },
+  { input: "function foo() { }" },
+  { input: "var a = 1;" },
+  { input: "function foo() { var a = 1; }" },
+  { input: '"asdf"' },
+  { input: "99 + 3" },
+  { input: "1, 2, 3" },
   // errors
-  {input: "function f(x) { let y = 1, }" },
-  {input: "function f(x=,) {" },
-  {input: "{2,}" },
+  { input: "function f(x) { let y = 1, }" },
+  { input: "function f(x=,) {" },
+  { input: "{2,}" },
 ];
 
 const SINGLE_LINE_DATA = {
@@ -76,15 +77,6 @@ const DATA = [
 ];
 
 add_task(async function() {
-  // Run test with legacy JsTerm
-  await pushPref("devtools.webconsole.jsterm.codeMirror", false);
-  await performTests();
-  // And then run it with the CodeMirror-powered one.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", true);
-  await performTests();
-});
-
-async function performTests() {
   // Let's reset the counts.
   Services.telemetry.clearEvents();
 
@@ -93,9 +85,8 @@ async function performTests() {
   ok(!snapshot.parent, "No events have been logged for the main process");
 
   const hud = await openNewTabAndConsole(TEST_URI);
-  const {jsterm} = hud;
 
-  for (const {input, shiftKey} of SHOULD_ENTER_MULTILINE) {
+  for (const { input, shiftKey } of SHOULD_ENTER_MULTILINE) {
     setInputValue(hud, input);
     EventUtils.synthesizeKey("VK_RETURN", { shiftKey });
 
@@ -105,7 +96,7 @@ async function performTests() {
     is(newValue, input + "\n", "A new line was added");
   }
 
-  for (const {input, shiftKey} of SHOULD_EXECUTE) {
+  for (const { input, shiftKey } of SHOULD_EXECUTE) {
     setInputValue(hud, input);
     EventUtils.synthesizeKey("VK_RETURN", { shiftKey });
 
@@ -113,21 +104,28 @@ async function performTests() {
     is(getInputValue(hud), "", "Input is cleared");
   }
 
-  await jsterm.execute("document.\nlocation.\nhref");
+  await executeAndWaitForMessage(
+    hud,
+    "document.\nlocation.\nhref",
+    TEST_URI,
+    ".result"
+  );
 
   checkEventTelemetry();
-}
+});
 
 function checkEventTelemetry() {
   const snapshot = Services.telemetry.snapshotEvents(ALL_CHANNELS, true);
-  const events = snapshot.parent.filter(event => event[1] === "devtools.main" &&
-                                                  event[2] === "execute_js" &&
-                                                  event[3] === "webconsole" &&
-                                                  event[4] === null
+  const events = snapshot.parent.filter(
+    event =>
+      event[1] === "devtools.main" &&
+      event[2] === "execute_js" &&
+      event[3] === "webconsole" &&
+      event[4] === null
   );
 
   for (const i in DATA) {
-    const [ timestamp, category, method, object, value, extra ] = events[i];
+    const [timestamp, category, method, object, value, extra] = events[i];
     const expected = DATA[i];
 
     // ignore timestamp

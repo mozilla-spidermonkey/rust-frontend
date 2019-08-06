@@ -118,6 +118,7 @@ void nsContainerFrame::AppendFrames(ChildListID aListID,
 }
 
 void nsContainerFrame::InsertFrames(ChildListID aListID, nsIFrame* aPrevFrame,
+                                    const nsLineList::iterator* aPrevFrameLine,
                                     nsFrameList& aFrameList) {
   MOZ_ASSERT(aListID == kPrincipalList || aListID == kNoReflowPrincipalList,
              "unexpected child list");
@@ -1490,8 +1491,7 @@ bool nsContainerFrame::MoveInlineOverflowToChildList(nsIFrame* aLineContainer) {
       // container if the container has prev continuation.
       if (aLineContainer->GetPrevContinuation()) {
         ReparentFloatsForInlineChild(aLineContainer,
-                                     prevOverflowFrames->FirstChild(), true,
-                                     ReparentingDirection::Forwards);
+                                     prevOverflowFrames->FirstChild(), true);
       }
       // When pushing and pulling frames we need to check for whether
       // any views need to be reparented.
@@ -1639,9 +1639,9 @@ nsIFrame* nsContainerFrame::PullNextInFlowChild(
 }
 
 /* static */
-void nsContainerFrame::ReparentFloatsForInlineChild(
-    nsIFrame* aOurLineContainer, nsIFrame* aFrame, bool aReparentSiblings,
-    ReparentingDirection aDirection) {
+void nsContainerFrame::ReparentFloatsForInlineChild(nsIFrame* aOurLineContainer,
+                                                    nsIFrame* aFrame,
+                                                    bool aReparentSiblings) {
   // XXXbz this would be better if it took a nsFrameList or a frame
   // list slice....
   NS_ASSERTION(aOurLineContainer->GetNextContinuation() ||
@@ -1661,7 +1661,7 @@ void nsContainerFrame::ReparentFloatsForInlineChild(
   NS_ASSERTION(ourBlock, "Not a block, but broke vertically?");
 
   while (true) {
-    ourBlock->ReparentFloats(aFrame, frameBlock, false, aDirection);
+    ourBlock->ReparentFloats(aFrame, frameBlock, false);
 
     if (!aReparentSiblings) return;
     nsIFrame* next = aFrame->GetNextSibling();
@@ -1674,8 +1674,7 @@ void nsContainerFrame::ReparentFloatsForInlineChild(
     // trust that the frames in the sibling chain all have the same parent,
     // because lazy reparenting may be going on. If we find a different
     // parent we need to redo our analysis.
-    ReparentFloatsForInlineChild(aOurLineContainer, next, aReparentSiblings,
-                                 aDirection);
+    ReparentFloatsForInlineChild(aOurLineContainer, next, aReparentSiblings);
     return;
   }
 }
@@ -1878,8 +1877,9 @@ nsresult nsOverflowContinuationTracker::Insert(nsIFrame* aOverflowCont,
   }
 
   // If we need to reflow it, mark it dirty
-  if (aReflowStatus.NextInFlowNeedsReflow())
-    aOverflowCont->AddStateBits(NS_FRAME_IS_DIRTY);
+  if (aReflowStatus.NextInFlowNeedsReflow()) {
+    aOverflowCont->MarkSubtreeDirty();
+  }
 
   // It's in our list, just step forward
   StepForward();
@@ -1891,11 +1891,11 @@ nsresult nsOverflowContinuationTracker::Insert(nsIFrame* aOverflowCont,
       "OverflowContTracker in unexpected state");
 
   if (addToList) {
-    // Convert all non-overflow-container continuations of aOverflowCont
+    // Convert all non-overflow-container next-in-flows of aOverflowCont
     // into overflow containers and move them to our overflow
-    // tracker. This preserves the invariant that the next-continuations
+    // tracker. This preserves the invariant that the next-in-flows
     // of an overflow container are also overflow containers.
-    nsIFrame* f = aOverflowCont->GetNextContinuation();
+    nsIFrame* f = aOverflowCont->GetNextInFlow();
     if (f && (!(f->GetStateBits() & NS_FRAME_IS_OVERFLOW_CONTAINER) ||
               (!reparented && f->GetParent() == mParent) ||
               (reparented && f->GetParent() != mParent))) {

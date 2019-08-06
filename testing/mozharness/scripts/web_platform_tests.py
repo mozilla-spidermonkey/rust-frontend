@@ -66,7 +66,7 @@ class WebPlatformTest(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidM
             "action": "store_true",
             "dest": "enable_webrender",
             "default": False,
-            "help": "Tries to enable the WebRender compositor."}
+            "help": "Enable the WebRender compositor in Gecko."}
          ],
         [["--headless"], {
             "action": "store_true",
@@ -98,6 +98,12 @@ class WebPlatformTest(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidM
             "dest": "extra_prefs",
             "default": [],
             "help": "Defines an extra user preference."}
+         ],
+        [["--include"], {
+            "action": "store",
+            "dest": "include",
+            "default": None,
+            "help": "URL prefix to include."}
          ],
     ] + copy.deepcopy(testing_config_options) + \
         copy.deepcopy(code_coverage_config_options)
@@ -246,6 +252,8 @@ class WebPlatformTest(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidM
 
         if not c["e10s"]:
             cmd.append("--disable-e10s")
+        if c["enable_webrender"]:
+            cmd.append("--enable-webrender")
 
         if c["single_stylo_traversal"]:
             cmd.append("--stylo-threads=1")
@@ -293,6 +301,8 @@ class WebPlatformTest(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidM
                                           str_format_values=str_format_values))
             cmd.extend(self.query_tests_args(try_tests,
                                              str_format_values=str_format_values))
+        if "include" in c and c["include"]:
+            cmd.append("--include=%s" % c["include"])
 
         return cmd
 
@@ -350,9 +360,6 @@ class WebPlatformTest(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidM
 
         if self.config['allow_software_gl_layers']:
             env['MOZ_LAYERS_ALLOW_SOFTWARE_GL'] = '1'
-        if self.config['enable_webrender']:
-            env['MOZ_WEBRENDER'] = '1'
-            env['MOZ_ACCELERATED'] = '1'
         if self.config['headless']:
             env['MOZ_HEADLESS'] = '1'
             env['MOZ_HEADLESS_WIDTH'] = self.config['headless_width']

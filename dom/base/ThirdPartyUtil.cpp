@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "ThirdPartyUtil.h"
+#include "nsGlobalWindowOuter.h"
 #include "nsNetCID.h"
 #include "nsNetUtil.h"
 #include "nsIChannel.h"
@@ -23,7 +24,6 @@
 #include "mozilla/StaticPtr.h"
 #include "mozilla/Unused.h"
 #include "nsGlobalWindowOuter.h"
-#include "nsPIDOMWindow.h"
 
 NS_IMPL_ISUPPORTS(ThirdPartyUtil, mozIThirdPartyUtil)
 
@@ -197,9 +197,9 @@ ThirdPartyUtil::IsThirdPartyWindow(mozIDOMWindowProxy* aWindow, nsIURI* aURI,
 
   nsPIDOMWindowOuter* current = nsPIDOMWindowOuter::From(aWindow);
   do {
-    // We use GetScriptableParent rather than GetParent because we consider
-    // <iframe mozbrowser> to be a top-level frame.
-    nsPIDOMWindowOuter* parent = current->GetScriptableParent();
+    // We use GetInProcessScriptableParent rather than GetParent because we
+    // consider <iframe mozbrowser> to be a top-level frame.
+    nsPIDOMWindowOuter* parent = current->GetInProcessScriptableParent();
     // We don't use SameCOMIdentity here since we know that nsPIDOMWindowOuter
     // is only implemented by nsGlobalWindowOuter, so different objects of that
     // type will not have different nsISupports COM identities, and checking the
@@ -381,12 +381,8 @@ ThirdPartyUtil::GetBaseDomain(nsIURI* aHostURI, nsACString& aBaseDomain) {
   // only way we can get a base domain consisting of the empty string, which
   // means we can safely perform foreign tests on such URIs where "not foreign"
   // means "the involved URIs are all file://".
-  if (aBaseDomain.IsEmpty()) {
-    bool isFileURI = false;
-    aHostURI->SchemeIs("file", &isFileURI);
-    if (!isFileURI) {
-      return NS_ERROR_INVALID_ARG;
-    }
+  if (aBaseDomain.IsEmpty() && !aHostURI->SchemeIs("file")) {
+    return NS_ERROR_INVALID_ARG;
   }
 
   return NS_OK;

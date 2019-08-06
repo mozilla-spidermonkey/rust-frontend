@@ -11,7 +11,7 @@
 
 var gDebuggee;
 var gClient;
-var gThreadClient;
+var gThreadFront;
 
 Services.prefs.setBoolPref("security.allow_eval_with_system_principal", true);
 
@@ -24,25 +24,28 @@ function run_test() {
   gDebuggee = addTestGlobal("test-stack");
   gClient = new DebuggerClient(DebuggerServer.connectPipe());
   gClient.connect().then(function() {
-    attachTestTabAndResume(gClient, "test-stack",
-                           function(response, targetFront, threadClient) {
-                             gThreadClient = threadClient;
-                             test_pause_frame();
-                           });
+    attachTestTabAndResume(gClient, "test-stack", function(
+      response,
+      targetFront,
+      threadFront
+    ) {
+      gThreadFront = threadFront;
+      test_pause_frame();
+    });
   });
   do_test_pending();
 }
 
 function test_pause_frame() {
-  gThreadClient.once("paused", function(packet) {
-    gThreadClient.once("paused", function(packet) {
+  gThreadFront.once("paused", function(packet) {
+    gThreadFront.once("paused", function(packet) {
       Assert.equal(packet.why.type, "exception");
       Assert.equal(packet.why.exception, 42);
-      gThreadClient.resume().then(() => finishClient(gClient));
+      gThreadFront.resume().then(() => finishClient(gClient));
     });
 
-    gThreadClient.pauseOnExceptions(true, false);
-    gThreadClient.resume();
+    gThreadFront.pauseOnExceptions(true, false);
+    gThreadFront.resume();
   });
 
   /* eslint-disable */

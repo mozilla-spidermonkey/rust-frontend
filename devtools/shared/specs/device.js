@@ -8,15 +8,18 @@ const deviceSpec = generateActorSpec({
   typeName: "device",
 
   events: {
-    "multi-e10s-updated": {
-      type: "multi-e10s-updated",
-      isMultiE10s: Arg(0, "boolean"),
+    "can-debug-sw-updated": {
+      type: "can-debug-sw-updated",
+      canDebugServiceWorkers: Arg(0, "boolean"),
     },
   },
 
   methods: {
-    getDescription: {request: {}, response: { value: RetVal("json")}},
-    screenshotToDataURL: {request: {}, response: { value: RetVal("longstring")}},
+    getDescription: { request: {}, response: { value: RetVal("json") } },
+    screenshotToDataURL: {
+      request: {},
+      response: { value: RetVal("longstring") },
+    },
   },
 });
 

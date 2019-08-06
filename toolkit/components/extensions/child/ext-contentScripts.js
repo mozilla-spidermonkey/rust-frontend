@@ -1,10 +1,12 @@
 /* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* vim: set sts=2 sw=2 et tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
-var {
-  ExtensionError,
-} = ExtensionUtils;
+var { ExtensionError } = ExtensionUtils;
 
 /**
  * Represents (in the child extension process) a content script registered
@@ -31,13 +33,15 @@ class ContentScriptChild {
     this.unregistered = true;
 
     await this.context.childManager.callParentAsyncFunction(
-      "contentScripts.unregister", [this.scriptId]);
+      "contentScripts.unregister",
+      [this.scriptId]
+    );
 
     this.context = null;
   }
 
   api() {
-    const {context} = this;
+    const { context } = this;
 
     // TODO(rpl): allow to read the options related to the registered content script?
     return {
@@ -55,12 +59,15 @@ this.contentScripts = class extends ExtensionAPI {
         register(options) {
           return context.cloneScope.Promise.resolve().then(async () => {
             const scriptId = await context.childManager.callParentAsyncFunction(
-              "contentScripts.register", [options]);
+              "contentScripts.register",
+              [options]
+            );
 
             const registeredScript = new ContentScriptChild(context, scriptId);
 
-            return Cu.cloneInto(registeredScript.api(), context.cloneScope,
-                                {cloneFunctions: true});
+            return Cu.cloneInto(registeredScript.api(), context.cloneScope, {
+              cloneFunctions: true,
+            });
           });
         },
       },

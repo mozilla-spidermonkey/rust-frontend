@@ -1,16 +1,19 @@
 /* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* vim: set sts=2 sw=2 et tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
 /* exported registerContentScript, unregisterContentScript */
 /* global registerContentScript, unregisterContentScript */
 
-var {ExtensionUtils} = ChromeUtils.import("resource://gre/modules/ExtensionUtils.jsm");
+var { ExtensionUtils } = ChromeUtils.import(
+  "resource://gre/modules/ExtensionUtils.jsm"
+);
 
-var {
-  ExtensionError,
-  getUniqueId,
-} = ExtensionUtils;
+var { ExtensionError, getUniqueId } = ExtensionUtils;
 
 /**
  * Represents (in the main browser process) a content script registered
@@ -25,7 +28,7 @@ var {
  *        JSON API schema file).
  */
 class ContentScriptParent {
-  constructor({context, details}) {
+  constructor({ context, details }) {
     this.context = context;
     this.scriptId = getUniqueId();
     this.blobURLs = new Set();
@@ -59,7 +62,7 @@ class ContentScriptParent {
   }
 
   _convertOptions(details) {
-    const {context} = this;
+    const { context } = this;
 
     const options = {
       matches: details.matches,
@@ -74,7 +77,7 @@ class ContentScriptParent {
     };
 
     const convertCodeToURL = (data, mime) => {
-      const blob = new context.cloneScope.Blob(data, {type: mime});
+      const blob = new context.cloneScope.Blob(data, { type: mime });
       const blobURL = context.cloneScope.URL.createObjectURL(blob);
 
       this.blobURLs.add(blobURL);
@@ -112,7 +115,7 @@ class ContentScriptParent {
 
 this.contentScripts = class extends ExtensionAPI {
   getAPI(context) {
-    const {extension} = context;
+    const { extension } = context;
 
     // Map of the content script registered from the extension context.
     //
@@ -144,13 +147,17 @@ this.contentScripts = class extends ExtensionAPI {
       contentScripts: {
         async register(details) {
           for (let origin of details.matches) {
-            if (!extension.whiteListedHosts.subsumes(new MatchPattern(origin))) {
-              throw new ExtensionError(`Permission denied to register a content script for ${origin}`);
+            if (
+              !extension.whiteListedHosts.subsumes(new MatchPattern(origin))
+            ) {
+              throw new ExtensionError(
+                `Permission denied to register a content script for ${origin}`
+              );
             }
           }
 
-          const contentScript = new ContentScriptParent({context, details});
-          const {scriptId} = contentScript;
+          const contentScript = new ContentScriptParent({ context, details });
+          const { scriptId } = contentScript;
 
           parentScriptsMap.set(scriptId, contentScript);
 

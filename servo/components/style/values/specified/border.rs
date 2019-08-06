@@ -47,13 +47,20 @@ use style_traits::{CssWriter, ParseError, ToCss};
 pub enum BorderStyle {
     Hidden,
     None,
+    #[cfg(any(feature = "gecko", feature = "servo-layout-2013"))]
     Inset,
+    #[cfg(any(feature = "gecko", feature = "servo-layout-2013"))]
     Groove,
+    #[cfg(any(feature = "gecko", feature = "servo-layout-2013"))]
     Outset,
+    #[cfg(any(feature = "gecko", feature = "servo-layout-2013"))]
     Ridge,
+    #[cfg(any(feature = "gecko", feature = "servo-layout-2013"))]
     Dotted,
+    #[cfg(any(feature = "gecko", feature = "servo-layout-2013"))]
     Dashed,
     Solid,
+    #[cfg(any(feature = "gecko", feature = "servo-layout-2013"))]
     Double,
 }
 
@@ -242,7 +249,7 @@ impl Parse for BorderSpacing {
         input: &mut Parser<'i, 't>,
     ) -> Result<Self, ParseError<'i>> {
         Size2D::parse_with(context, input, |context, input| {
-            NonNegativeLength::parse_quirky(context, input, AllowQuirks::Yes).map(From::from)
+            NonNegativeLength::parse_quirky(context, input, AllowQuirks::Yes)
         })
         .map(GenericBorderSpacing)
     }

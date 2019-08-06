@@ -19,9 +19,9 @@ use std::fmt::{self, Write};
 use style_traits::{CssWriter, ToCss};
 
 pub use crate::values::specified::TextAlignKeyword as TextAlign;
-pub use crate::values::specified::TextTransform;
 pub use crate::values::specified::{LineBreak, OverflowWrap, WordBreak};
 pub use crate::values::specified::{TextDecorationLine, TextEmphasisPosition};
+pub use crate::values::specified::{TextDecorationSkipInk, TextTransform};
 
 /// A computed value for the `initial-letter` property.
 pub type InitialLetter = GenericInitialLetter<CSSFloat, CSSInteger>;
@@ -172,17 +172,16 @@ impl TextDecorationsInEffect {
     /// Computes the text-decorations in effect for a given style.
     #[cfg(feature = "servo")]
     pub fn from_style(style: &StyleBuilder) -> Self {
-        use crate::values::computed::Display;
-
         // Start with no declarations if this is an atomic inline-level box;
         // otherwise, start with the declarations in effect and add in the text
         // decorations that this block specifies.
-        let mut result = match style.get_box().clone_display() {
-            Display::InlineBlock | Display::InlineTable => Self::default(),
-            _ => style
+        let mut result = if style.get_box().clone_display().is_atomic_inline_level() {
+            Self::default()
+        } else {
+            style
                 .get_parent_inherited_text()
                 .text_decorations_in_effect
-                .clone(),
+                .clone()
         };
 
         let line = style.get_text().clone_text_decoration_line();

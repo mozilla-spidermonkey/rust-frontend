@@ -1,6 +1,8 @@
 "use strict";
 
-const {UrlbarTestUtils} = ChromeUtils.import("resource://testing-common/UrlbarTestUtils.jsm");
+const { UrlbarTestUtils } = ChromeUtils.import(
+  "resource://testing-common/UrlbarTestUtils.jsm"
+);
 
 const TEST_ENGINE_NAME = "Foo";
 const TEST_ENGINE_BASENAME = "testEngine.xml";
@@ -10,7 +12,6 @@ const ONEOFF_URLBAR_PREF = "browser.urlbar.oneOffSearches";
 
 const urlbar = document.getElementById("urlbar");
 const searchPopup = document.getElementById("PopupSearchAutoComplete");
-const urlbarPopup = document.getElementById("PopupAutoCompleteRichResult");
 const searchOneOff = searchPopup.oneOffButtons;
 const urlBarOneOff = UrlbarTestUtils.getOneOffSearchButtons(window);
 
@@ -38,9 +39,12 @@ add_task(async function init() {
 });
 
 add_task(async function test_searchBarChangeEngine() {
-  let oneOffButton = await openPopupAndGetEngineButton(true, searchPopup,
-                                                       searchOneOff,
-                                                       SEARCHBAR_BASE_ID);
+  let oneOffButton = await openPopupAndGetEngineButton(
+    true,
+    searchPopup,
+    searchOneOff,
+    SEARCHBAR_BASE_ID
+  );
 
   const setDefaultEngineMenuItem = searchOneOff.querySelector(
     ".search-one-offs-context-set-default"
@@ -53,12 +57,21 @@ add_task(async function test_searchBarChangeEngine() {
   // This also checks the engine correctly changed.
   await promise;
 
-  Assert.equal(oneOffButton.id, SEARCHBAR_BASE_ID + originalEngine.name,
-               "Should now have the original engine's id for the button");
-  Assert.equal(oneOffButton.getAttribute("tooltiptext"), originalEngine.name,
-               "Should now have the original engine's name for the tooltip");
-  Assert.equal(oneOffButton.image, originalEngine.iconURI.spec,
-               "Should now have the original engine's uri for the image");
+  Assert.equal(
+    oneOffButton.id,
+    SEARCHBAR_BASE_ID + originalEngine.name,
+    "Should now have the original engine's id for the button"
+  );
+  Assert.equal(
+    oneOffButton.getAttribute("tooltiptext"),
+    originalEngine.name,
+    "Should now have the original engine's name for the tooltip"
+  );
+  Assert.equal(
+    oneOffButton.image,
+    originalEngine.iconURI.spec,
+    "Should now have the original engine's uri for the image"
+  );
 
   await promiseClosePopup(searchPopup);
 });
@@ -72,9 +85,12 @@ add_task(async function test_urlBarChangeEngine() {
   // Ensure the engine is reset.
   resetEngine();
 
-  let oneOffButton = await openPopupAndGetEngineButton(false, urlbarPopup,
-                                                       urlBarOneOff,
-                                                       URLBAR_BASE_ID);
+  let oneOffButton = await openPopupAndGetEngineButton(
+    false,
+    null,
+    urlBarOneOff,
+    URLBAR_BASE_ID
+  );
 
   const setDefaultEngineMenuItem = urlBarOneOff.querySelector(
     ".search-one-offs-context-set-default"
@@ -90,17 +106,26 @@ add_task(async function test_urlBarChangeEngine() {
   let defaultEngine = await Services.search.getDefault();
 
   // For the urlbar, we should keep the new engine's icon.
-  Assert.equal(oneOffButton.id, URLBAR_BASE_ID + defaultEngine.name,
-               "Should now have the original engine's id for the button");
-  Assert.equal(oneOffButton.getAttribute("tooltiptext"), defaultEngine.name,
-               "Should now have the original engine's name for the tooltip");
-  Assert.equal(oneOffButton.image, defaultEngine.iconURI.spec,
-               "Should now have the original engine's uri for the image");
+  Assert.equal(
+    oneOffButton.id,
+    URLBAR_BASE_ID + defaultEngine.name,
+    "Should now have the original engine's id for the button"
+  );
+  Assert.equal(
+    oneOffButton.getAttribute("tooltiptext"),
+    defaultEngine.name,
+    "Should now have the original engine's name for the tooltip"
+  );
+  Assert.equal(
+    oneOffButton.image,
+    defaultEngine.iconURI.spec,
+    "Should now have the original engine's uri for the image"
+  );
 
   await UrlbarTestUtils.promisePopupClose(window);
 
   // Move the cursor out of the panel area to avoid messing with other tests.
-  await EventUtils.synthesizeNativeMouseMove(urlbarPopup);
+  await EventUtils.synthesizeNativeMouseMove(urlbar);
 });
 
 /**
@@ -113,7 +138,11 @@ function promisedefaultEngineChanged() {
   return new Promise(resolve => {
     function observer(aSub, aTopic, aData) {
       if (aData == "engine-default") {
-        Assert.equal(Services.search.defaultEngine.name, TEST_ENGINE_NAME, "defaultEngine set");
+        Assert.equal(
+          Services.search.defaultEngine.name,
+          TEST_ENGINE_NAME,
+          "defaultEngine set"
+        );
         Services.obs.removeObserver(observer, "browser-search-engine-modified");
         resolve();
       }
@@ -136,7 +165,12 @@ function promisedefaultEngineChanged() {
  * @returns {object} Returns an object that represents the one off button for the
  *                          test engine.
  */
-async function openPopupAndGetEngineButton(isSearch, popup, oneOffInstance, baseId) {
+async function openPopupAndGetEngineButton(
+  isSearch,
+  popup,
+  oneOffInstance,
+  baseId
+) {
   info("Opening panel");
 
   // We have to open the popups in differnt ways.
@@ -165,12 +199,21 @@ async function openPopupAndGetEngineButton(isSearch, popup, oneOffInstance, base
       break;
     }
   }
-  Assert.notEqual(oneOffButton, undefined,
-                  "One-off for test engine should exist");
-  Assert.equal(oneOffButton.getAttribute("tooltiptext"), TEST_ENGINE_NAME,
-               "One-off should have the tooltip set to the engine name");
-  Assert.equal(oneOffButton.id, baseId + TEST_ENGINE_NAME,
-               "Should have the correct id");
+  Assert.notEqual(
+    oneOffButton,
+    undefined,
+    "One-off for test engine should exist"
+  );
+  Assert.equal(
+    oneOffButton.getAttribute("tooltiptext"),
+    TEST_ENGINE_NAME,
+    "One-off should have the tooltip set to the engine name"
+  );
+  Assert.equal(
+    oneOffButton.id,
+    baseId + TEST_ENGINE_NAME,
+    "Should have the correct id"
+  );
 
   // Open the context menu on the one-off.
   let promise = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");

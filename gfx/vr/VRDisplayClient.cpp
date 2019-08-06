@@ -59,11 +59,6 @@ already_AddRefed<VRDisplayPresentation> VRDisplayClient::BeginPresentation(
 
 void VRDisplayClient::PresentationDestroyed() { --mPresentationCount; }
 
-void VRDisplayClient::ZeroSensor() {
-  VRManagerChild* vm = VRManagerChild::Get();
-  vm->SendResetSensor(mDisplayInfo.mDisplayID);
-}
-
 void VRDisplayClient::SetGroupMask(uint32_t aGroupMask) {
   VRManagerChild* vm = VRManagerChild::Get();
   vm->SendSetGroupMask(mDisplayInfo.mDisplayID, aGroupMask);
@@ -96,7 +91,7 @@ void VRDisplayClient::FireEvents() {
   // Check if we need to trigger onvrdisplayactivate event
   if (!bLastEventWasMounted && mDisplayInfo.mDisplayState.isMounted) {
     bLastEventWasMounted = true;
-    if (StaticPrefs::VRAutoActivateEnabled()) {
+    if (StaticPrefs::dom_vr_autoactivate_enabled()) {
       vm->FireDOMVRDisplayMountedEvent(mDisplayInfo.mDisplayID);
     }
   }
@@ -104,7 +99,7 @@ void VRDisplayClient::FireEvents() {
   // Check if we need to trigger onvrdisplaydeactivate event
   if (bLastEventWasMounted && !mDisplayInfo.mDisplayState.isMounted) {
     bLastEventWasMounted = false;
-    if (StaticPrefs::VRAutoActivateEnabled()) {
+    if (StaticPrefs::dom_vr_autoactivate_enabled()) {
       vm->FireDOMVRDisplayUnmountedEvent(mDisplayInfo.mDisplayID);
     }
   }

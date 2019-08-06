@@ -2,14 +2,23 @@
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
 const URL_1 = "about:robots";
-const URL_2 = "data:text/html;charset=UTF-8," +
-  encodeURIComponent("<div id=\"remote-page\">foo</div>");
+const URL_2 =
+  "data:text/html;charset=UTF-8," +
+  encodeURIComponent('<div id="remote-page">foo</div>');
 
 add_task(async function() {
   info("Open a tab on a URL supporting only running in parent process");
   const tab = await addTab(URL_1);
-  is(tab.linkedBrowser.currentURI.spec, URL_1, "We really are on the expected document");
-  is(tab.linkedBrowser.getAttribute("remote"), "", "And running in parent process");
+  is(
+    tab.linkedBrowser.currentURI.spec,
+    URL_1,
+    "We really are on the expected document"
+  );
+  is(
+    tab.linkedBrowser.getAttribute("remote"),
+    "",
+    "And running in parent process"
+  );
 
   let toolbox = await openToolboxForTab(tab);
 
@@ -21,7 +30,11 @@ add_task(async function() {
   BrowserTestUtils.loadURI(gBrowser, URL_2);
   await onLoaded;
 
-  is(tab.linkedBrowser.getAttribute("remote"), "true", "Navigated to a data: URI and switching to remote");
+  is(
+    tab.linkedBrowser.getAttribute("remote"),
+    "true",
+    "Navigated to a data: URI and switching to remote"
+  );
 
   info("Waiting for the toolbox to be destroyed");
   await onToolboxDestroyed;
@@ -34,8 +47,13 @@ add_task(async function() {
 
   info("Veryify we are inspecting the new document");
   const console = await toolbox.selectTool("webconsole");
-  const { jsterm } = console.hud;
-  const url = await jsterm.execute("document.location.href");
-  // Uses includes as the old console frontend prints a timestamp
-  ok(url.textContent.includes(URL_2), "The console inspects the second document");
+  const { ui } = console.hud;
+  ui.wrapper.dispatchEvaluateExpression("document.location.href");
+  await waitUntil(() => ui.outputNode.querySelector(".result"));
+  const url = ui.outputNode.querySelector(".result");
+
+  ok(
+    url.textContent.includes(URL_2),
+    "The console inspects the second document"
+  );
 });

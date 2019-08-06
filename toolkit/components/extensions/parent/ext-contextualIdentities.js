@@ -1,15 +1,25 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
-ChromeUtils.defineModuleGetter(this, "ContextualIdentityService",
-                               "resource://gre/modules/ContextualIdentityService.jsm");
-XPCOMUtils.defineLazyPreferenceGetter(this, "containersEnabled",
-                                      "privacy.userContext.enabled");
+ChromeUtils.defineModuleGetter(
+  this,
+  "ContextualIdentityService",
+  "resource://gre/modules/ContextualIdentityService.jsm"
+);
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "containersEnabled",
+  "privacy.userContext.enabled"
+);
 
-var {ExtensionPreferencesManager} = ChromeUtils.import("resource://gre/modules/ExtensionPreferencesManager.jsm");
+var { ExtensionPreferencesManager } = ChromeUtils.import(
+  "resource://gre/modules/ExtensionPreferencesManager.jsm"
+);
 
-var {
-  ExtensionError,
-} = ExtensionUtils;
+var { ExtensionError } = ExtensionUtils;
 
 const CONTAINER_PREF_INSTALL_DEFAULTS = {
   "privacy.userContext.enabled": true,
@@ -124,10 +134,14 @@ ExtensionPreferencesManager.addSetting(CONTAINERS_ENABLED_SETTING_NAME, {
 
 this.contextualIdentities = class extends ExtensionAPI {
   onStartup() {
-    let {extension} = this;
+    let { extension } = this;
 
     if (extension.hasPermission("contextualIdentities")) {
-      ExtensionPreferencesManager.setSetting(extension.id, CONTAINERS_ENABLED_SETTING_NAME, extension.id);
+      ExtensionPreferencesManager.setSetting(
+        extension.id,
+        CONTAINERS_ENABLED_SETTING_NAME,
+        extension.id
+      );
     }
   }
 
@@ -138,10 +152,14 @@ this.contextualIdentities = class extends ExtensionAPI {
           checkAPIEnabled();
           let containerId = getContainerForCookieStoreId(cookieStoreId);
           if (!containerId) {
-            throw new ExtensionError(`Invalid contextual identity: ${cookieStoreId}`);
+            throw new ExtensionError(
+              `Invalid contextual identity: ${cookieStoreId}`
+            );
           }
 
-          let identity = ContextualIdentityService.getPublicIdentityFromId(containerId);
+          let identity = ContextualIdentityService.getPublicIdentityFromId(
+            containerId
+          );
           return convertIdentity(identity);
         },
 
@@ -149,8 +167,12 @@ this.contextualIdentities = class extends ExtensionAPI {
           checkAPIEnabled();
           let identities = [];
           ContextualIdentityService.getPublicIdentities().forEach(identity => {
-            if (details.name &&
-                ContextualIdentityService.getUserContextLabel(identity.userContextId) != details.name) {
+            if (
+              details.name &&
+              ContextualIdentityService.getUserContextLabel(
+                identity.userContextId
+              ) != details.name
+            ) {
               return;
             }
 
@@ -165,9 +187,11 @@ this.contextualIdentities = class extends ExtensionAPI {
           getContainerIcon(details.icon);
           getContainerColor(details.color);
 
-          let identity = ContextualIdentityService.create(details.name,
-                                                          details.icon,
-                                                          details.color);
+          let identity = ContextualIdentityService.create(
+            details.name,
+            details.icon,
+            details.color
+          );
           return convertIdentity(identity);
         },
 
@@ -175,12 +199,18 @@ this.contextualIdentities = class extends ExtensionAPI {
           checkAPIEnabled();
           let containerId = getContainerForCookieStoreId(cookieStoreId);
           if (!containerId) {
-            throw new ExtensionError(`Invalid contextual identity: ${cookieStoreId}`);
+            throw new ExtensionError(
+              `Invalid contextual identity: ${cookieStoreId}`
+            );
           }
 
-          let identity = ContextualIdentityService.getPublicIdentityFromId(containerId);
+          let identity = ContextualIdentityService.getPublicIdentityFromId(
+            containerId
+          );
           if (!identity) {
-            throw new ExtensionError(`Invalid contextual identity: ${cookieStoreId}`);
+            throw new ExtensionError(
+              `Invalid contextual identity: ${cookieStoreId}`
+            );
           }
 
           if (details.name !== null) {
@@ -197,10 +227,17 @@ this.contextualIdentities = class extends ExtensionAPI {
             identity.icon = details.icon;
           }
 
-          if (!ContextualIdentityService.update(identity.userContextId,
-                                                identity.name, identity.icon,
-                                                identity.color)) {
-            throw new ExtensionError(`Contextual identity failed to update: ${cookieStoreId}`);
+          if (
+            !ContextualIdentityService.update(
+              identity.userContextId,
+              identity.name,
+              identity.icon,
+              identity.color
+            )
+          ) {
+            throw new ExtensionError(
+              `Contextual identity failed to update: ${cookieStoreId}`
+            );
           }
 
           return convertIdentity(identity);
@@ -210,19 +247,27 @@ this.contextualIdentities = class extends ExtensionAPI {
           checkAPIEnabled();
           let containerId = getContainerForCookieStoreId(cookieStoreId);
           if (!containerId) {
-            throw new ExtensionError(`Invalid contextual identity: ${cookieStoreId}`);
+            throw new ExtensionError(
+              `Invalid contextual identity: ${cookieStoreId}`
+            );
           }
 
-          let identity = ContextualIdentityService.getPublicIdentityFromId(containerId);
+          let identity = ContextualIdentityService.getPublicIdentityFromId(
+            containerId
+          );
           if (!identity) {
-            throw new ExtensionError(`Invalid contextual identity: ${cookieStoreId}`);
+            throw new ExtensionError(
+              `Invalid contextual identity: ${cookieStoreId}`
+            );
           }
 
           // We have to create the identity object before removing it.
           let convertedIdentity = convertIdentity(identity);
 
           if (!ContextualIdentityService.remove(identity.userContextId)) {
-            throw new ExtensionError(`Contextual identity failed to remove: ${cookieStoreId}`);
+            throw new ExtensionError(
+              `Contextual identity failed to remove: ${cookieStoreId}`
+            );
           }
 
           return convertedIdentity;
@@ -235,13 +280,16 @@ this.contextualIdentities = class extends ExtensionAPI {
             let observer = (subject, topic) => {
               let convertedIdentity = convertIdentityFromObserver(subject);
               if (convertedIdentity) {
-                fire.async({contextualIdentity: convertedIdentity});
+                fire.async({ contextualIdentity: convertedIdentity });
               }
             };
 
             Services.obs.addObserver(observer, "contextual-identity-created");
             return () => {
-              Services.obs.removeObserver(observer, "contextual-identity-created");
+              Services.obs.removeObserver(
+                observer,
+                "contextual-identity-created"
+              );
             };
           },
         }).api(),
@@ -253,13 +301,16 @@ this.contextualIdentities = class extends ExtensionAPI {
             let observer = (subject, topic) => {
               let convertedIdentity = convertIdentityFromObserver(subject);
               if (convertedIdentity) {
-                fire.async({contextualIdentity: convertedIdentity});
+                fire.async({ contextualIdentity: convertedIdentity });
               }
             };
 
             Services.obs.addObserver(observer, "contextual-identity-updated");
             return () => {
-              Services.obs.removeObserver(observer, "contextual-identity-updated");
+              Services.obs.removeObserver(
+                observer,
+                "contextual-identity-updated"
+              );
             };
           },
         }).api(),
@@ -271,17 +322,19 @@ this.contextualIdentities = class extends ExtensionAPI {
             let observer = (subject, topic) => {
               let convertedIdentity = convertIdentityFromObserver(subject);
               if (convertedIdentity) {
-                fire.async({contextualIdentity: convertedIdentity});
+                fire.async({ contextualIdentity: convertedIdentity });
               }
             };
 
             Services.obs.addObserver(observer, "contextual-identity-deleted");
             return () => {
-              Services.obs.removeObserver(observer, "contextual-identity-deleted");
+              Services.obs.removeObserver(
+                observer,
+                "contextual-identity-deleted"
+              );
             };
           },
         }).api(),
-
       },
     };
 

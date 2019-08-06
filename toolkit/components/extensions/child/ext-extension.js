@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
 this.extension = class extends ExtensionAPI {
@@ -29,15 +33,24 @@ this.extension = class extends ExtensionAPI {
           }
 
           if (fetchProperties !== null) {
-            if (fetchProperties.type !== null && view.viewType != fetchProperties.type) {
+            if (
+              fetchProperties.type !== null &&
+              view.viewType != fetchProperties.type
+            ) {
               continue;
             }
 
-            if (fetchProperties.windowId !== null && view.windowId != fetchProperties.windowId) {
+            if (
+              fetchProperties.windowId !== null &&
+              view.windowId != fetchProperties.windowId
+            ) {
               continue;
             }
 
-            if (fetchProperties.tabId !== null && view.tabId != fetchProperties.tabId) {
+            if (
+              fetchProperties.tabId !== null &&
+              view.tabId != fetchProperties.tabId
+            ) {
               continue;
             }
           }
@@ -49,6 +62,6 @@ this.extension = class extends ExtensionAPI {
       };
     }
 
-    return {extension: api};
+    return { extension: api };
   }
 };

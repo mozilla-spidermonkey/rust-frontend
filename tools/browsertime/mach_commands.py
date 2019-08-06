@@ -44,6 +44,44 @@ import mozpack.path as mozpath
 BROWSERTIME_ROOT = os.path.dirname(__file__)
 
 
+def node_path():
+    from mozbuild.nodeutil import find_node_executable
+    node, _ = find_node_executable()
+
+    return os.path.abspath(node)
+
+
+def package_path():
+    '''The path to the `browsertime` directory.
+
+    Override the default with the `BROWSERTIME` environment variable.'''
+    override = os.environ.get('BROWSERTIME', None)
+    if override:
+        return override
+
+    return mozpath.join(BROWSERTIME_ROOT, 'node_modules', 'browsertime')
+
+
+def browsertime_path():
+    '''The path to the `browsertime.js` script.'''
+    # On Windows, invoking `node_modules/.bin/browsertime{.cmd}`
+    # doesn't work when invoked as an argument to our specific
+    # binary.  Since we want our version of node, invoke the
+    # actual script directly.
+    return mozpath.join(
+        package_path(),
+        'bin',
+        'browsertime.js')
+
+
+def visualmetrics_path():
+    '''The path to the `visualmetrics.py` script.'''
+    return mozpath.join(
+        package_path(),
+        'vendor',
+        'visualmetrics.py')
+
+
 def host_platform():
     is_64bits = sys.maxsize > 2**32
 
@@ -131,22 +169,24 @@ class MachBrowsertime(MachCommandBase):
         sys.path.append(mozpath.join(self.topsrcdir, 'tools', 'lint', 'eslint'))
         import setup_helper
 
-        if host_platform().startswith('linux'):
+        if not os.environ.get('MOZ_AUTOMATION') and host_platform().startswith('linux'):
             # On Linux ImageMagick needs to be installed manually, and `mach bootstrap` doesn't
             # do that (yet).  Provide some guidance.
-            import which
-            im_programs = ('compare', 'convert', 'mogrify')
             try:
-                for im_program in im_programs:
-                    which.which(im_program)
-            except which.WhichError as e:
-                print('Error: {} On Linux, ImageMagick must be on the PATH. '
-                      'Install ImageMagick manually and try again (or update PATH). '
-                      'On Ubuntu and Debian, try `sudo apt-get install imagemagick`. '
-                      'On Fedora, try `sudo dnf install imagemagick`. '
-                      'On CentOS, try `sudo yum install imagemagick`.'
-                      .format(e))
-                return 1
+                from shutil import which
+            except ImportError:
+                from shutil_which import which
+
+            im_programs = ('compare', 'convert', 'mogrify')
+            for im_program in im_programs:
+                prog = which(im_program)
+                if not prog:
+                    print('Error: On Linux, ImageMagick must be on the PATH. '
+                          'Install ImageMagick manually and try again (or update PATH). '
+                          'On Ubuntu and Debian, try `sudo apt-get install imagemagick`. '
+                          'On Fedora, try `sudo dnf install imagemagick`. '
+                          'On CentOS, try `sudo yum install imagemagick`.')
+                    return 1
 
         # Download the visualmetrics.py requirements.
         artifact_cache = ArtifactCache(self.artifact_cache_path,
@@ -188,59 +228,22 @@ class MachBrowsertime(MachCommandBase):
         status = setup_helper.package_setup(
             BROWSERTIME_ROOT,
             'browsertime',
-            should_clobber=should_clobber)
+            should_clobber=should_clobber,
+            no_optional=bool(os.environ.get('MOZ_AUTOMATION')))
 
         if status:
             return status
 
         return self.check()
 
-    @property
-    def node_path(self):
-        from mozbuild.nodeutil import find_node_executable
-        node, _ = find_node_executable()
-
-        return os.path.abspath(node)
-
     def node(self, args):
         r'''Invoke node (interactively) with the given arguments.'''
         return self.run_process(
-            [self.node_path] + args,
+            [node_path()] + args,
             append_env=self.append_env(),
             pass_thru=True,  # Allow user to run Node interactively.
             ensure_exit_code=False,  # Don't throw on non-zero exit code.
             cwd=mozpath.join(self.topsrcdir))
-
-    @property
-    def package_path(self):
-        r'''The path to the `browsertime` directory.
-
-        Override the default with the `BROWSERTIME` environment variable.'''
-        override = os.environ.get('BROWSERTIME', None)
-        if override:
-            return override
-
-        return mozpath.join(BROWSERTIME_ROOT, 'node_modules', 'browsertime')
-
-    @property
-    def browsertime_path(self):
-        '''The path to the `browsertime.js` script.'''
-        # On Windows, invoking `node_modules/.bin/browsertime{.cmd}`
-        # doesn't work when invoked as an argument to our specific
-        # binary.  Since we want our version of node, invoke the
-        # actual script directly.
-        return mozpath.join(
-            self.package_path,
-            'bin',
-            'browsertime.js')
-
-    @property
-    def visualmetrics_path(self):
-        '''The path to the `visualmetrics.py` script.'''
-        return mozpath.join(
-            self.package_path,
-            'vendor',
-            'visualmetrics.py')
 
     def append_env(self, append_path=True):
         fetches = host_fetches[host_platform()]
@@ -270,15 +273,21 @@ class MachBrowsertime(MachCommandBase):
         # scripts, finds the binary we're invoking with.  Without this, it's
         # easy for compiled extensions to get mismatched versions of the Node.js
         # extension API.
-        node_dir = os.path.dirname(self.node_path)
+        node_dir = os.path.dirname(node_path())
         path = [node_dir] + path
-
-        # Ensure that `/usr/bin/env python` in `visualmetrics.py` finds our
-        # virtualenv Python.
-        path = [os.path.dirname(self.virtualenv_manager.python_path)] + path
 
         append_env = {
             'PATH': os.pathsep.join(path),
+
+            # Bug 1560193: The JS library browsertime uses to execute commands
+            # (execa) will muck up the PATH variable and put the directory that
+            # node is in first in path. If this is globally-installed node,
+            # that means `/usr/bin` will be inserted first which means that we
+            # will get `/usr/bin/python` for `python`.
+            #
+            # Our fork of browsertime supports a `PYTHON` environment variable
+            # that points to the exact python executable to use.
+            'PYTHON': self.virtualenv_manager.python_path,
         }
 
         if path_to_imagemagick:
@@ -312,7 +321,7 @@ class MachBrowsertime(MachCommandBase):
 
         args = ['--check']
         status = self.run_process(
-            [self.virtualenv_manager.python_path, self.visualmetrics_path] + args,
+            [self.virtualenv_manager.python_path, visualmetrics_path()] + args,
             # For --check, don't allow user's path to interfere with
             # path testing except on Linux, where ImageMagick needs to
             # be installed manually.
@@ -334,7 +343,7 @@ class MachBrowsertime(MachCommandBase):
         sys.stdout.flush()
         sys.stderr.flush()
 
-        return self.node([self.browsertime_path] + ['--version'])
+        return self.node([browsertime_path()] + ['--version'])
 
     def extra_default_args(self, args=[]):
         # Add Mozilla-specific default arguments.  This is tricky because browsertime is quite
@@ -394,7 +403,7 @@ class MachBrowsertime(MachCommandBase):
 
         self._activate_virtualenv()
 
-        return self.node([self.browsertime_path] + self.extra_default_args(args) + args)
+        return self.node([browsertime_path()] + self.extra_default_args(args) + args)
 
     @Command('visualmetrics', category='testing',
              description='Run visualmetrics.py')
@@ -425,7 +434,7 @@ class MachBrowsertime(MachCommandBase):
                 '75',
                 '-vvvv']
         return self.run_process(
-            [self.visualmetrics_path] + args,
+            [visualmetrics_path()] + args,
             append_env=self.append_env(),
             pass_thru=True,
             ensure_exit_code=False,  # Don't throw on non-zero exit code.

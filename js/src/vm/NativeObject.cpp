@@ -11,11 +11,11 @@
 #include "mozilla/CheckedInt.h"
 #include "mozilla/DebugOnly.h"
 
+#include "debugger/DebugAPI.h"
 #include "gc/Marking.h"
 #include "jit/BaselineIC.h"
 #include "js/CharacterEncoding.h"
 #include "js/Value.h"
-#include "vm/Debugger.h"
 #include "vm/EqualityOperations.h"  // js::SameValue
 #include "vm/TypedArrayObject.h"
 
@@ -418,8 +418,12 @@ bool NativeObject::addDenseElementPure(JSContext* cx, NativeObject* obj) {
   return true;
 }
 
-static void FreeSlots(JSContext* cx, HeapSlot* slots) {
+static inline void FreeSlots(JSContext* cx, NativeObject* obj,
+                             HeapSlot* slots) {
   if (cx->isHelperThreadContext()) {
+    js_free(slots);
+  } else if (obj->isTenured()) {
+    MOZ_ASSERT(!cx->nursery().isInside(slots));
     js_free(slots);
   } else {
     cx->nursery().freeBuffer(slots);
@@ -433,22 +437,24 @@ void NativeObject::shrinkSlots(JSContext* cx, uint32_t oldCount,
   if (newCount == 0) {
     RemoveCellMemory(this, numDynamicSlots() * sizeof(HeapSlot),
                      MemoryUse::ObjectSlots);
-    FreeSlots(cx, slots_);
+    FreeSlots(cx, this, slots_);
     slots_ = nullptr;
     return;
   }
 
   MOZ_ASSERT_IF(!is<ArrayObject>(), newCount >= SLOT_CAPACITY_MIN);
 
+  // Update the memory tracking whether or not the reallocation succeeds,
+  // because we have no way to tell the buffer size if it fails.
+  RemoveCellMemory(this, oldCount * sizeof(HeapSlot), MemoryUse::ObjectSlots);
+  AddCellMemory(this, newCount * sizeof(HeapSlot), MemoryUse::ObjectSlots);
+
   HeapSlot* newslots =
       ReallocateObjectBuffer<HeapSlot>(cx, this, slots_, oldCount, newCount);
   if (!newslots) {
     cx->recoverFromOutOfMemory();
-    return; /* Leave slots at its old size. */
+    return;  // Leave slots at its old size.
   }
-
-  RemoveCellMemory(this, oldCount * sizeof(HeapSlot), MemoryUse::ObjectSlots);
-  AddCellMemory(this, newCount * sizeof(HeapSlot), MemoryUse::ObjectSlots);
 
   slots_ = newslots;
 }

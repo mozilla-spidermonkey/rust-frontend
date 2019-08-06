@@ -12,7 +12,8 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/Tokenizer.h"
 #include "mozilla/ScopeExit.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_gfx.h"
+#include "mozilla/StaticPrefs_webgl.h"
 #include "mozilla/Unused.h"
 #include "mozilla/webrender/RenderThread.h"
 #include "nsDirectoryServiceDefs.h"
@@ -36,6 +37,7 @@
 #  ifdef MOZ_WAYLAND
 #    include <gdk/gdkwayland.h>
 #    include <dlfcn.h>
+#    include "mozilla/widget/nsWaylandDisplay.h"
 #  endif  // MOZ_WIDGET_GTK
 #endif    // MOZ_WAYLAND
 
@@ -85,7 +87,7 @@ PRLibrary* LoadApitraceLibrary() {
   if (!path) return nullptr;
 
   // Initialization of gfx prefs here is only needed during the unit tests...
-  if (!StaticPrefs::UseApitrace()) {
+  if (!StaticPrefs::gfx_apitrace_enabled_AtStartup()) {
     return nullptr;
   }
 
@@ -211,9 +213,6 @@ static bool IsAccelAngleSupported(const nsCOMPtr<nsIGfxInfo>& gfxInfo,
   if (wr::RenderThread::IsInRenderThread()) {
     // We can only enter here with WebRender, so assert that this is a
     // WebRender-enabled build.
-#ifndef MOZ_BUILD_WEBRENDER
-    MOZ_ASSERT(false);
-#endif
     return true;
   }
   int32_t angleSupport;
@@ -281,22 +280,20 @@ AngleErrorReporting gAngleErrorReporter;
 
 static EGLDisplay GetAndInitDisplayForAccelANGLE(
     GLLibraryEGL& egl, nsACString* const out_failureId) {
-  EGLDisplay ret = 0;
-
   if (wr::RenderThread::IsInRenderThread()) {
     return GetAndInitDisplayForWebRender(egl, EGL_DEFAULT_DISPLAY);
   }
 
   FeatureState& d3d11ANGLE = gfxConfig::GetFeature(Feature::D3D11_HW_ANGLE);
 
-  if (!StaticPrefs::WebGLANGLETryD3D11())
+  if (!StaticPrefs::webgl_angle_try_d3d11()) {
     d3d11ANGLE.UserDisable("User disabled D3D11 ANGLE by pref",
                            NS_LITERAL_CSTRING("FAILURE_ID_ANGLE_PREF"));
-
-  if (StaticPrefs::WebGLANGLEForceD3D11())
+  }
+  if (StaticPrefs::webgl_angle_force_d3d11()) {
     d3d11ANGLE.UserForceEnable(
         "User force-enabled D3D11 ANGLE on disabled hardware");
-
+  }
   gAngleErrorReporter.SetFailureId(out_failureId);
 
   auto guardShutdown = mozilla::MakeScopeExit([&] {
@@ -306,16 +303,21 @@ static EGLDisplay GetAndInitDisplayForAccelANGLE(
     //       will live longer than the ANGLE display so we're fine.
   });
 
-  if (gfxConfig::IsForcedOnByUser(Feature::D3D11_HW_ANGLE)) {
-    return GetAndInitDisplay(egl, LOCAL_EGL_D3D11_ONLY_DISPLAY_ANGLE);
-  }
-
+  EGLDisplay ret = nullptr;
   if (d3d11ANGLE.IsEnabled()) {
-    ret = GetAndInitDisplay(egl, LOCAL_EGL_D3D11_ELSE_D3D9_DISPLAY_ANGLE);
+    ret = egl.fGetDisplay(
+        EGL_DEFAULT_DISPLAY);  // This will try d3d11, then d3d9.
+  } else {
+    // D3D9-only.
+    const EGLint attribs[] = {LOCAL_EGL_PLATFORM_ANGLE_TYPE_ANGLE,
+                              LOCAL_EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE,
+                              LOCAL_EGL_NONE};
+    ret = egl.fGetPlatformDisplayEXT(LOCAL_EGL_PLATFORM_ANGLE_ANGLE,
+                                     EGL_DEFAULT_DISPLAY, attribs);
   }
 
-  if (!ret) {
-    ret = GetAndInitDisplay(egl, EGL_DEFAULT_DISPLAY);
+  if (ret && !egl.fInitialize(ret, nullptr, nullptr)) {
+    ret = nullptr;
   }
 
   if (!ret && out_failureId->IsEmpty()) {
@@ -741,7 +743,7 @@ EGLDisplay GLLibraryEGL::CreateDisplay(bool forceAccel,
     bool shouldTryWARP = !forceAccel;  // Only if ANGLE not supported or fails
 
     // If WARP preferred, will override ANGLE support
-    if (StaticPrefs::WebGLANGLEForceWARP()) {
+    if (StaticPrefs::webgl_angle_force_warp()) {
       shouldTryWARP = true;
       shouldTryAccel = false;
       if (accelAngleFailureId.IsEmpty()) {
@@ -787,10 +789,7 @@ EGLDisplay GLLibraryEGL::CreateDisplay(bool forceAccel,
     // Some drivers doesn't support EGL_DEFAULT_DISPLAY
     GdkDisplay* gdkDisplay = gdk_display_get_default();
     if (!GDK_IS_X11_DISPLAY(gdkDisplay)) {
-      static auto sGdkWaylandDisplayGetWlDisplay =
-          (wl_display * (*)(GdkDisplay*))
-              dlsym(RTLD_DEFAULT, "gdk_wayland_display_get_wl_display");
-      nativeDisplay = sGdkWaylandDisplayGetWlDisplay(gdkDisplay);
+      nativeDisplay = WaylandDisplayGetWLDisplay(gdkDisplay);
       if (!nativeDisplay) {
         NS_WARNING("Failed to get wl_display.");
         return nullptr;

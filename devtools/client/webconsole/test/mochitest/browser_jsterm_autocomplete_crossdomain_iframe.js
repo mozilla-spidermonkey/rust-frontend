@@ -6,25 +6,19 @@
 
 "use strict";
 
-const TEST_URI = "http://example.com/browser/devtools/client/webconsole/" +
-                 "test/mochitest/test-iframe-parent.html";
+const TEST_URI =
+  "http://example.com/browser/devtools/client/webconsole/" +
+  "test/mochitest/test-iframe-parent.html";
 
 add_task(async function() {
-  // Run test with legacy JsTerm
-  await pushPref("devtools.webconsole.jsterm.codeMirror", false);
-  await performTests();
-  // And then run it with the CodeMirror-powered one.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", true);
-  await performTests();
-});
-
-async function performTests() {
   const hud = await openNewTabAndConsole(TEST_URI);
-  const { jsterm } = hud;
 
-  const onParentTitle = waitForMessage(hud, "iframe parent");
-  jsterm.execute("document.title");
-  await onParentTitle;
+  await executeAndWaitForMessage(
+    hud,
+    "document.title",
+    "iframe parent",
+    ".result"
+  );
   ok(true, "root document's title is accessible");
 
   // Make sure we don't throw when trying to autocomplete
@@ -37,11 +31,16 @@ async function performTests() {
   const onPermissionDeniedMessage = waitForMessage(hud, "Permission denied");
   EventUtils.synthesizeKey("KEY_Enter");
   const permissionDenied = await onPermissionDeniedMessage;
-  ok(permissionDenied.node.classList.contains("error"),
-    "A message error is shown when trying to inspect window[0]");
+  ok(
+    permissionDenied.node.classList.contains("error"),
+    "A message error is shown when trying to inspect window[0]"
+  );
 
-  const onParentLocation = waitForMessage(hud, "test-iframe-parent.html");
-  hud.jsterm.execute("window.location");
-  await onParentLocation;
+  await executeAndWaitForMessage(
+    hud,
+    "window.location",
+    "test-iframe-parent.html",
+    ".result"
+  );
   ok(true, "root document's location is accessible");
-}
+});

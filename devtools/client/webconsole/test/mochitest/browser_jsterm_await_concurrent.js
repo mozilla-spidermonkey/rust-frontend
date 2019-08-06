@@ -5,33 +5,29 @@
 
 "use strict";
 
-const TEST_URI = "data:text/html;charset=utf-8,Web Console test top-level await";
+const TEST_URI =
+  "data:text/html;charset=utf-8,Web Console test top-level await";
 
 add_task(async function() {
   // Enable await mapping.
   await pushPref("devtools.debugger.features.map-await-expression", true);
-
-  // Run test with legacy JsTerm
-  await pushPref("devtools.webconsole.jsterm.codeMirror", false);
-  await performTests();
-  // And then run it with the CodeMirror-powered one.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", true);
-  await performTests();
-});
-
-async function performTests() {
   const hud = await openNewTabAndConsole(TEST_URI);
-  const {jsterm} = hud;
 
   hud.ui.clearOutput();
   const delays = [3000, 500, 9000, 6000];
-  const inputs = delays.map(delay => `await new Promise(
-    r => setTimeout(() => r("await-concurrent-" + ${delay}), ${delay}))`);
+  const inputs = delays.map(
+    delay => `await new Promise(
+    r => setTimeout(() => r("await-concurrent-" + ${delay}), ${delay}))`
+  );
 
   // Let's wait for the message that sould be displayed last.
-  const onMessage = waitForMessage(hud, "await-concurrent-9000", ".message.result");
+  const onMessage = waitForMessage(
+    hud,
+    "await-concurrent-9000",
+    ".message.result"
+  );
   for (const input of inputs) {
-    jsterm.execute(input);
+    execute(hud, input);
   }
   await onMessage;
 
@@ -44,6 +40,9 @@ async function performTests() {
     `"await-concurrent-6000"`,
     `"await-concurrent-9000"`,
   ];
-  is(JSON.stringify(messagesText, null, 2), JSON.stringify(expectedMessages, null, 2),
-    "The output contains the the expected messages, in the expected order");
-}
+  is(
+    JSON.stringify(messagesText, null, 2),
+    JSON.stringify(expectedMessages, null, 2),
+    "The output contains the the expected messages, in the expected order"
+  );
+});

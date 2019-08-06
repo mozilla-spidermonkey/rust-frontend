@@ -5,41 +5,55 @@
 
 var EXPORTED_SYMBOLS = ["NetErrorChild"];
 
-const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const {ActorChild} = ChromeUtils.import("resource://gre/modules/ActorChild.jsm");
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { ActorChild } = ChromeUtils.import(
+  "resource://gre/modules/ActorChild.jsm"
+);
 
-ChromeUtils.defineModuleGetter(this, "WebNavigationFrames",
-                               "resource://gre/modules/WebNavigationFrames.jsm");
+ChromeUtils.defineModuleGetter(
+  this,
+  "WebNavigationFrames",
+  "resource://gre/modules/WebNavigationFrames.jsm"
+);
 
 XPCOMUtils.defineLazyGlobalGetters(this, ["URL"]);
 
 XPCOMUtils.defineLazyGetter(this, "gPipNSSBundle", function() {
-  return Services.strings.createBundle("chrome://pipnss/locale/pipnss.properties");
+  return Services.strings.createBundle(
+    "chrome://pipnss/locale/pipnss.properties"
+  );
 });
 XPCOMUtils.defineLazyGetter(this, "gNSSErrorsBundle", function() {
-  return Services.strings.createBundle("chrome://pipnss/locale/nsserrors.properties");
+  return Services.strings.createBundle(
+    "chrome://pipnss/locale/nsserrors.properties"
+  );
 });
 
-const SEC_ERROR_BASE          = Ci.nsINSSErrorsService.NSS_SEC_ERROR_BASE;
-const SEC_ERROR_REUSED_ISSUER_AND_SERIAL           = SEC_ERROR_BASE + 138;
+const SEC_ERROR_BASE = Ci.nsINSSErrorsService.NSS_SEC_ERROR_BASE;
+const SEC_ERROR_REUSED_ISSUER_AND_SERIAL = SEC_ERROR_BASE + 138;
 
 const SSL_ERROR_BASE = Ci.nsINSSErrorsService.NSS_SSL_ERROR_BASE;
-const SSL_ERROR_SSL_DISABLED  = SSL_ERROR_BASE + 20;
-const SSL_ERROR_SSL2_DISABLED  = SSL_ERROR_BASE + 14;
+const SSL_ERROR_SSL_DISABLED = SSL_ERROR_BASE + 20;
+const SSL_ERROR_SSL2_DISABLED = SSL_ERROR_BASE + 14;
 
 const PREF_SSL_IMPACT_ROOTS = ["security.tls.version.", "security.ssl3."];
 
 function getSerializedSecurityInfo(docShell) {
-  let serhelper = Cc["@mozilla.org/network/serialization-helper;1"]
-                    .getService(Ci.nsISerializationHelper);
+  let serhelper = Cc["@mozilla.org/network/serialization-helper;1"].getService(
+    Ci.nsISerializationHelper
+  );
 
-  let securityInfo = docShell.failedChannel && docShell.failedChannel.securityInfo;
+  let securityInfo =
+    docShell.failedChannel && docShell.failedChannel.securityInfo;
   if (!securityInfo) {
     return "";
   }
-  securityInfo.QueryInterface(Ci.nsITransportSecurityInfo)
-              .QueryInterface(Ci.nsISerializable);
+  securityInfo
+    .QueryInterface(Ci.nsITransportSecurityInfo)
+    .QueryInterface(Ci.nsISerializable);
 
   return serhelper.serializeToString(securityInfo);
 }
@@ -66,49 +80,33 @@ class NetErrorChild extends ActorChild {
     let doc = aEvent.originalTarget.ownerDocument || aEvent.originalTarget;
 
     switch (aEvent.type) {
-    case "AboutNetErrorLoad":
-      this.onPageLoad(aEvent.originalTarget, doc.defaultView);
-      break;
-    case "AboutNetErrorSetAutomatic":
-      this.onSetAutomatic(aEvent);
-      break;
-    case "AboutNetErrorResetPreferences":
-      this.onResetPreferences(aEvent);
-      break;
-    case "click":
-      if (aEvent.button == 0) {
-        if (this.isAboutCertError(doc)) {
+      case "AboutNetErrorLoad":
+        this.onPageLoad(doc.defaultView);
+        break;
+      case "AboutNetErrorSetAutomatic":
+        this.onSetAutomatic(aEvent);
+        break;
+      case "AboutNetErrorResetPreferences":
+        this.onResetPreferences(aEvent);
+        break;
+      case "click":
+        if (aEvent.button == 0) {
+          if (this.isAboutCertError(doc)) {
+            this.recordClick(aEvent.originalTarget);
+            this.onCertError(aEvent.originalTarget, doc.defaultView);
+          } else {
+            this.onClick(aEvent);
+          }
+        } else if (this.isAboutCertError(doc)) {
           this.recordClick(aEvent.originalTarget);
-          this.onCertError(aEvent.originalTarget, doc.defaultView);
-        } else {
-          this.onClick(aEvent);
         }
-      } else if (this.isAboutCertError(doc)) {
-          this.recordClick(aEvent.originalTarget);
-      }
-      break;
-    }
-  }
-
-  receiveMessage(msg) {
-    if (msg.name == "CertErrorDetails") {
-      let frameDocShell = WebNavigationFrames.findDocShell(msg.data.frameId, this.docShell);
-      // We need nsIWebNavigation to access docShell.document.
-      frameDocShell && frameDocShell.QueryInterface(Ci.nsIWebNavigation);
-      if (!frameDocShell || !this.isAboutCertError(frameDocShell.document)) {
-        return;
-      }
-
-      let data = msg.data;
-      let win = frameDocShell.document.ownerGlobal;
-      let event = Cu.cloneInto({ detail: data }, win);
-      win.dispatchEvent(new win.CustomEvent("ShowCertErrorDetails", event));
+        break;
     }
   }
 
   changedCertPrefs() {
     let prefSSLImpact = PREF_SSL_IMPACT_ROOTS.reduce((prefs, root) => {
-       return prefs.concat(Services.prefs.getChildList(root));
+      return prefs.concat(Services.prefs.getChildList(root));
     }, []);
     for (let prefName of prefSSLImpact) {
       if (Services.prefs.prefHasUserValue(prefName)) {
@@ -155,36 +153,32 @@ class NetErrorChild extends ActorChild {
       // Note that this is different from before where we used PR_ErrorToString.
       msg2 = nss_error_id_str;
     }
-    let msg = gPipNSSBundle.formatStringFromName("SSLConnectionErrorPrefix2",
-                                                 [hostString, msg2]);
+    let msg = gPipNSSBundle.formatStringFromName("SSLConnectionErrorPrefix2", [
+      hostString,
+      msg2,
+    ]);
 
     if (nss_error_id_str && msg2 != nss_error_id_str) {
-      msg += gPipNSSBundle.formatStringFromName("certErrorCodePrefix3",
-                                                [nss_error_id_str]) + "\n";
+      msg +=
+        gPipNSSBundle.formatStringFromName("certErrorCodePrefix3", [
+          nss_error_id_str,
+        ]) + "\n";
     }
     return msg;
   }
 
-  onPageLoad(originalTarget, win) {
+  onPageLoad(win) {
     // Values for telemtery bins: see TLS_ERROR_REPORT_UI in Histograms.json
     const TLS_ERROR_REPORT_TELEMETRY_UI_SHOWN = 0;
 
-    let hideAddExceptionButton = false;
-
-    if (this.isAboutCertError(win.document)) {
-      this.onCertError(originalTarget, win);
-      hideAddExceptionButton =
-        Services.prefs.getBoolPref("security.certerror.hideAddException", false);
-    }
     if (this.isAboutNetError(win.document)) {
       let docShell = win.docShell;
       if (docShell) {
-        let {securityInfo} = docShell.failedChannel;
+        let { securityInfo } = docShell.failedChannel;
         // We don't have a securityInfo when this is for example a DNS error.
         if (securityInfo) {
           securityInfo.QueryInterface(Ci.nsITransportSecurityInfo);
-          let msg = this._getErrorMessageFromCode(securityInfo,
-                                                  win.document);
+          let msg = this._getErrorMessageFromCode(securityInfo, win.document);
           let id = win.document.getElementById("errorShortDescText");
           id.textContent = msg;
         }
@@ -193,20 +187,26 @@ class NetErrorChild extends ActorChild {
       let learnMoreLink = win.document.getElementById("learnMoreLink");
       let baseURL = Services.urlFormatter.formatURLPref("app.support.baseURL");
       learnMoreLink.setAttribute("href", baseURL + "connection-not-secure");
+
+      let automatic = Services.prefs.getBoolPref(
+        "security.ssl.errorReporting.automatic"
+      );
+      win.dispatchEvent(
+        new win.CustomEvent("AboutNetErrorOptions", {
+          detail: JSON.stringify({
+            enabled: Services.prefs.getBoolPref(
+              "security.ssl.errorReporting.enabled"
+            ),
+            changedCertPrefs: this.changedCertPrefs(),
+            automatic,
+          }),
+        })
+      );
+
+      this.mm.sendAsyncMessage("Browser:SSLErrorReportTelemetry", {
+        reportStatus: TLS_ERROR_REPORT_TELEMETRY_UI_SHOWN,
+      });
     }
-
-    let automatic = Services.prefs.getBoolPref("security.ssl.errorReporting.automatic");
-    win.dispatchEvent(new win.CustomEvent("AboutNetErrorOptions", {
-      detail: JSON.stringify({
-        enabled: Services.prefs.getBoolPref("security.ssl.errorReporting.enabled"),
-        changedCertPrefs: this.changedCertPrefs(),
-        automatic,
-        hideAddExceptionButton,
-      }),
-    }));
-
-    this.mm.sendAsyncMessage("Browser:SSLErrorReportTelemetry",
-                            {reportStatus: TLS_ERROR_REPORT_TELEMETRY_UI_SHOWN});
   }
 
   onResetPreferences(evt) {
@@ -223,12 +223,13 @@ class NetErrorChild extends ActorChild {
       let win = evt.originalTarget.ownerGlobal;
       let docShell = win.docShell;
 
-      let {securityInfo} = docShell.failedChannel;
+      let { securityInfo } = docShell.failedChannel;
       securityInfo.QueryInterface(Ci.nsITransportSecurityInfo);
-      let {host, port} = win.document.mozDocumentURIIfNotForErrorPages;
+      let { host, port } = win.document.mozDocumentURIIfNotForErrorPages;
 
-      let errorReporter = Cc["@mozilla.org/securityreporter;1"]
-                            .getService(Ci.nsISecurityReporter);
+      let errorReporter = Cc["@mozilla.org/securityreporter;1"].getService(
+        Ci.nsISecurityReporter
+      );
       errorReporter.reportTLSError(securityInfo, host, port);
     }
   }
@@ -238,7 +239,7 @@ class NetErrorChild extends ActorChild {
       frameId: WebNavigationFrames.getFrameId(win),
       location: win.document.location.href,
       elementId: target.getAttribute("id"),
-      isTopFrame: (win.parent === win),
+      isTopFrame: win.parent === win,
       securityInfoAsString: getSerializedSecurityInfo(win.docShell),
     });
   }
@@ -258,15 +259,21 @@ class NetErrorChild extends ActorChild {
     // Telemetry values for events are max. 80 bytes.
     let errorCode = doc.body.getAttribute("code").substring(0, 40);
     let panel = doc.getElementById("badCertAdvancedPanel");
-    Services.telemetry.recordEvent("security.ui.certerror", "click", telemetryId, errorCode, {
-      "panel_open": (panel.style.display == "none").toString(),
-      "has_sts": (cssClass == "badStsCert").toString(),
-      "is_frame": (doc.ownerGlobal.parent != doc.ownerGlobal).toString(),
-    });
+    Services.telemetry.recordEvent(
+      "security.ui.certerror",
+      "click",
+      telemetryId,
+      errorCode,
+      {
+        panel_open: (panel.style.display == "none").toString(),
+        has_sts: (cssClass == "badStsCert").toString(),
+        is_frame: (doc.ownerGlobal.parent != doc.ownerGlobal).toString(),
+      }
+    );
   }
 
   onClick(event) {
-    let {documentURI} = event.target.ownerDocument;
+    let { documentURI } = event.target.ownerDocument;
 
     let elmId = event.originalTarget.getAttribute("id");
     if (elmId == "returnButton") {
@@ -274,7 +281,10 @@ class NetErrorChild extends ActorChild {
       return;
     }
 
-    if (!event.originalTarget.classList.contains("try-again") || !/e=netOffline/.test(documentURI)) {
+    if (
+      !event.originalTarget.classList.contains("try-again") ||
+      !/e=netOffline/.test(documentURI)
+    ) {
       return;
     }
     // browser front end will handle clearing offline mode and refreshing

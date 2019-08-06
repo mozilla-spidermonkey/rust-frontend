@@ -1,8 +1,15 @@
-#ifndef mozilla_dom_l10n_L10nOverlays_h__
-#define mozilla_dom_l10n_L10nOverlays_h__
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#ifndef mozilla_dom_l10n_L10nOverlays_h
+#define mozilla_dom_l10n_L10nOverlays_h
 
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/L10nOverlaysBinding.h"
+#include "mozilla/dom/LocalizationBinding.h"
 
 namespace mozilla {
 namespace dom {
@@ -19,9 +26,10 @@ class L10nOverlays {
    * will be used for translating the matching source child.
    */
   static void TranslateElement(const GlobalObject& aGlobal, Element& aElement,
-                               const L10nValue& aTranslation,
+                               const L10nMessage& aTranslation,
                                Nullable<nsTArray<L10nOverlaysError>>& aErrors);
-  static void TranslateElement(Element& aElement, const L10nValue& aTranslation,
+  static void TranslateElement(Element& aElement,
+                               const L10nMessage& aTranslation,
                                nsTArray<L10nOverlaysError>& aErrors,
                                ErrorResult& aRv);
 

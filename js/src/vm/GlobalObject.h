@@ -95,6 +95,7 @@ class GlobalObject : public NativeObject {
     DATE_TIME_FORMAT_PROTO,
     PLURAL_RULES_PROTO,
     RELATIVE_TIME_FORMAT_PROTO,
+    LOCALE_PROTO,
     MODULE_PROTO,
     IMPORT_ENTRY_PROTO,
     EXPORT_ENTRY_PROTO,
@@ -106,6 +107,7 @@ class GlobalObject : public NativeObject {
     FOR_OF_PIC_CHAIN,
     WINDOW_PROXY,
     GLOBAL_THIS_RESOLVED,
+    INSTRUMENTATION,
 
     /* Total reserved-slot count for global objects. */
     RESERVED_SLOTS
@@ -537,6 +539,11 @@ class GlobalObject : public NativeObject {
                              initIntlObject);
   }
 
+  static JSObject* getOrCreateLocalePrototype(JSContext* cx,
+                                              Handle<GlobalObject*> global) {
+    return getOrCreateObject(cx, global, LOCALE_PROTO, initIntlObject);
+  }
+
   static bool ensureModulePrototypesCreated(JSContext* cx,
                                             Handle<GlobalObject*> global);
 
@@ -839,6 +846,9 @@ class GlobalObject : public NativeObject {
   // Implemented in builtin/intl/IntlObject.cpp.
   static bool initIntlObject(JSContext* cx, Handle<GlobalObject*> global);
 
+  // Implemented in builtin/intl/Locale.cpp.
+  static bool addLocaleConstructor(JSContext* cx, HandleObject intl);
+
   // Implemented in builtin/ModuleObject.cpp
   static bool initModuleProto(JSContext* cx, Handle<GlobalObject*> global);
   static bool initImportEntryProto(JSContext* cx, Handle<GlobalObject*> global);
@@ -855,8 +865,7 @@ class GlobalObject : public NativeObject {
                                       Handle<GlobalObject*> global,
                                       const JSFunctionSpec* builtins);
 
-  typedef js::Vector<js::WeakHeapPtr<js::Debugger*>, 0, js::SystemAllocPolicy>
-      DebuggerVector;
+  using DebuggerVector = Vector<WeakHeapPtr<Debugger*>, 0, ZoneAllocPolicy>;
 
   /*
    * The collection of Debugger objects debugging this global. If this global
@@ -891,6 +900,15 @@ class GlobalObject : public NativeObject {
   }
   void setWindowProxy(JSObject* windowProxy) {
     setReservedSlot(WINDOW_PROXY, ObjectValue(*windowProxy));
+  }
+
+  JSObject* getInstrumentationHolder() const {
+    Value v = getReservedSlot(INSTRUMENTATION);
+    MOZ_ASSERT(v.isObject() || v.isUndefined());
+    return v.isObject() ? &v.toObject() : nullptr;
+  }
+  void setInstrumentationHolder(JSObject* instrumentation) {
+    setReservedSlot(INSTRUMENTATION, ObjectValue(*instrumentation));
   }
 
   // A class used in place of a prototype during off-thread parsing.

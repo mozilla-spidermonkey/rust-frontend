@@ -3,9 +3,9 @@
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
 <panel id="protections-popup"
+       class="panel-no-padding"
        type="arrow"
        hidden="true"
-       photon="true"
        role="alertdialog"
        onpopupshown="gProtectionsHandler.onPopupShown(event);"
        onpopuphidden="gProtectionsHandler.onPopupHidden(event);"
@@ -15,42 +15,257 @@
                   mainViewId="protections-popup-mainView">
     <panelview id="protections-popup-mainView"
                descriptionheightworkaround="true">
-      <vbox id="protections-popup-mainView-panel-header">
-        <label>
+      <hbox id="protections-popup-mainView-panel-header"
+            onclick="gProtectionsHandler.onHeaderClicked(event);">
+        <label id="protections-popup-main-header-label">
           <html:span id="protections-popup-mainView-panel-header-span"/>
         </label>
-      </vbox>
+        <description id="protections-popup-toast-panel-tp-on-desc">&protections.etpON.header;</description>
+        <description id="protections-popup-toast-panel-tp-off-desc">&protections.etpOFF.header;</description>
+      </hbox>
 
-      <hbox id="protections-popup-tp-switch-section" class="identity-popup-section">
-        <vbox id="protections-popup-tp-switch-label-box" flex="1">
-          <label id="protections-popup-tp-switch-on-header">Tracking protection is ON for this site</label>
-          <label id="protections-popup-tp-switch-off-header">Tracking protection is OFF for this site</label>
-          <label id="protections-popup-tp-switch-breakage-link" class="text-link">Site not working?</label>
+      <hbox id="protections-popup-tp-switch-section" class="protections-popup-section">
+        <vbox class="protections-popup-tp-switch-label-box" flex="1">
+          <label class="protections-popup-tp-switch-on-header">&protections.etpON.header;</label>
+          <label class="protections-popup-tp-switch-off-header">&protections.etpOFF.header;</label>
+          <label id="protections-popup-tp-switch-breakage-link"
+                 class="text-link"
+                 onclick="gProtectionsHandler.showSiteNotWorkingView();">&protections.siteNotWorking.label;</label>
         </vbox>
-        <vbox id="protections-popup-tp-switch-box">
+        <vbox class="protections-popup-tp-switch-box">
           <toolbarbutton id="protections-popup-tp-switch"
-              enabled="false"
-              oncommand="gProtectionsHandler.onTPSwitchCommand();" />
+                         class="protections-popup-tp-switch"
+                         enabled="false"
+                         oncommand="gProtectionsHandler.onTPSwitchCommand();" />
         </vbox>
       </hbox>
 
-      <vbox id="protections-popup-settings-section"
-            class="identity-popup-section">
-        <toolbarbutton id="protections-popup-settings-button"
-                       oncommand="ContentBlocking.openPreferences();">
-          <image class="protection-settings-icon"/>
-          <label class="protections-popup-settings-label" flex="1">Protection Settings</label>
-        </toolbarbutton>
-      </vbox>
-
-      <hbox id="protections-popup-footer">
-        <description id="protections-popup-trackers-blocked-counter-description"
-                     flex="1"/>
-        <label id="protections-popup-show-full-report-link"
-               is="text-link"
-               useoriginprincipal="true"
-               href="about:protections">Show Full Report</label>
+      <!-- Tracking Protection Section -->
+      <hbox id="tracking-protection-container" class="protections-popup-section">
+        <vbox id="protections-popup-content" flex="1">
+          <vbox id="protections-popup-category-list">
+            <toolbarbutton id="protections-popup-category-tracking-protection"
+                           onclick="gProtectionsHandler.showTrackersSubview();"
+                           class="protections-popup-category" align="center"
+                           wrap="true">
+              <image class="protections-popup-category-icon tracking-protection-icon"/>
+              <label flex="1" class="protections-popup-category-label">&contentBlocking.trackingProtection3.label;</label>
+              <label flex="1" id="protections-popup-tracking-protection-state-label" class="protections-popup-category-state-label"/>
+            </toolbarbutton>
+            <toolbarbutton id="protections-popup-category-socialblock"
+                           onclick="gProtectionsHandler.showSocialblockerSubview();"
+                           class="protections-popup-category" align="center">
+              <image class="protections-popup-category-icon socialblock-icon"/>
+              <label flex="1"
+              class="protections-popup-category-label">&contentBlocking.socialblock.label;</label>
+              <label flex="1" id="protections-popup-socialblock-state-label" class="protections-popup-category-state-label"/>
+            </toolbarbutton>
+            <toolbarbutton id="protections-popup-category-cookies"
+                           onclick="gProtectionsHandler.showCookiesSubview();"
+                           class="protections-popup-category" align="center"
+                           wrap="true">
+              <image class="protections-popup-category-icon thirdpartycookies-icon"/>
+              <label flex="1" id="protections-popup-category-label-default"
+                     class="protections-popup-category-label">&contentBlocking.cookies.label;</label>
+              <label flex="1" id="protections-popup-cookies-state-label" class="protections-popup-category-state-label"/>
+            </toolbarbutton>
+            <toolbarbutton id="protections-popup-category-cryptominers"
+                           onclick="gProtectionsHandler.showCryptominersSubview();"
+                           class="protections-popup-category" align="center"
+                           wrap="true">
+              <image class="protections-popup-category-icon cryptominers-icon"/>
+              <label flex="1" class="protections-popup-category-label">&contentBlocking.cryptominers.label;</label>
+              <label flex="1" id="protections-popup-cryptominers-state-label" class="protections-popup-category-state-label"/>
+            </toolbarbutton>
+            <toolbarbutton id="protections-popup-category-fingerprinters"
+                           onclick="gProtectionsHandler.showFingerprintersSubview();"
+                           class="protections-popup-category" align="center"
+                           wrap="true">
+              <image class="protections-popup-category-icon fingerprinters-icon"/>
+              <label flex="1" class="protections-popup-category-label">&contentBlocking.fingerprinters.label;</label>
+              <label flex="1" id="protections-popup-fingerprinters-state-label" class="protections-popup-category-state-label"/>
+            </toolbarbutton>
+          </vbox>
+        </vbox>
       </hbox>
+
+      <vbox id="protections-popup-footer" class="protections-popup-section">
+        <toolbarbutton id="protections-popup-settings-button"
+                       class="protections-popup-footer-button"
+                       oncommand="gProtectionsHandler.openPreferences();">
+          <image class="protections-popup-footer-icon protections-popup-settings-icon"/>
+          <label class="protections-popup-footer-button-label" flex="1">&protections.settings.label;</label>
+        </toolbarbutton>
+        <stack id="protections-popup-show-report-stack">
+          <toolbarbutton id="protections-popup-show-report-button"
+                         class="protections-popup-footer-button"
+                         oncommand="gProtectionsHandler.openProtections(true);">
+            <image class="protections-popup-footer-icon protections-popup-show-report-icon"/>
+            <label class="protections-popup-footer-button-label" flex="1">&protections.report.label;</label>
+          </toolbarbutton>
+          <hbox id="protections-popup-trackers-blocked-counter-box"
+                align="center"
+                right="0">
+            <description id="protections-popup-trackers-blocked-counter-description"
+                         onclick="gProtectionsHandler.openProtections(true);"/>
+          </hbox>
+        </stack>
+      </vbox>
+    </panelview>
+
+    <!-- Site Not Working? SubView -->
+    <panelview id="protections-popup-siteNotWorkingView"
+               title="&protections.siteNotWorkingView.title;"
+               descriptionheightworkaround="true"
+               flex="1">
+        <hbox id="protections-popup-siteNotWorkingView-header">
+          <vbox class="protections-popup-tp-switch-label-box" flex="1">
+            <label class="protections-popup-tp-switch-on-header"
+              hidden="true">&protections.etpON.header;</label>
+            <label class="protections-popup-tp-switch-off-header"
+              hidden="true">&protections.etpOFF.header;</label>
+          </vbox>
+          <vbox class="protections-popup-tp-switch-box">
+            <toolbarbutton id="protections-popup-siteNotWorking-tp-switch"
+                           class="protections-popup-tp-switch"
+                           enabled="false"
+                           oncommand="gProtectionsHandler.onTPSwitchCommand();" />
+          </vbox>
+        </hbox>
+        <vbox id="protections-popup-siteNotWorkingView-body" flex="1">
+          <label>&protections.siteNotWorkingView.header;</label>
+          <label>
+            <html:ul id="protections-popup-siteNotWorkingView-body-issue-list">
+              <html:li>&protections.siteNotWorkingView.issueList.logInFields;</html:li>
+              <html:li>&protections.siteNotWorkingView.issueList.forms;</html:li>
+              <html:li>&protections.siteNotWorkingView.issueList.payments;</html:li>
+              <html:li>&protections.siteNotWorkingView.issueList.comments;</html:li>
+              <html:li>&protections.siteNotWorkingView.issueList.videos;</html:li>
+            </html:ul>
+          </label>
+        </vbox>
+        <hbox id="protections-popup-siteNotWorkingView-footer"
+              class="panel-footer">
+          <label id="protections-popup-siteNotWorkingView-siteStillBroken" flex="1">&protections.siteNotWorkingView.siteStillBroken.label;</label>
+          <label id="protections-popup-siteNotWorkingView-sendReport"
+            onclick="gProtectionsHandler.showSendReportView();"
+            class="text-link">&protections.siteNotWorkingView.sendReport.label;</label>
+        </hbox>
+    </panelview>
+
+    <!-- Trackers SubView -->
+    <panelview id="protections-popup-trackersView"
+               role="document"
+               title="&contentBlocking.trackersView.label;"
+               descriptionheightworkaround="true">
+        <vbox id="protections-popup-trackersView-list" class="protections-popup-list">
+        </vbox>
+        <hbox id="protections-popup-trackersView-strict-info">
+          <image/>
+          <label>&contentBlocking.trackersView.strictInfo.label;</label>
+        </hbox>
+        <vbox class="panel-footer">
+          <button id="protections-popup-trackersView-settings-button"
+                  label="&contentBlocking.manageSettings.label;"
+                  accesskey="&contentBlocking.manageSettings.accesskey;"
+                  oncommand="gProtectionsHandler.openPreferences();"/>
+        </vbox>
+    </panelview>
+
+    <!-- Social Block SubView -->
+    <panelview id="protections-popup-socialblockView"
+               role="document"
+               title="&contentBlocking.socialblockView.label;"
+               descriptionheightworkaround="true">
+        <vbox id="protections-popup-socialblockView-heading">
+          <description>&contentBlocking.socialblockView.description;</description>
+        </vbox>
+        <vbox id="protections-popup-socialblockView-list" class="protections-popup-list">
+        </vbox>
+        <vbox class="panel-footer">
+          <button id="protections-popup-socialblockView-settings-button"
+                  label="&contentBlocking.manageSettings.label;"
+                  accesskey="&contentBlocking.manageSettings.accesskey;"
+                  oncommand="gProtectionsHandler.openPreferences();"/>
+        </vbox>
+    </panelview>
+
+    <!-- Cookies SubView -->
+    <panelview id="protections-popup-cookiesView"
+               role="document"
+               title="&contentBlocking.cookiesView.label;"
+               descriptionheightworkaround="true">
+        <vbox id="protections-popup-cookiesView-list" class="protections-popup-list">
+        </vbox>
+        <vbox class="panel-footer">
+          <button id="protections-popup-cookiesView-settings-button"
+                  label="&contentBlocking.manageSettings.label;"
+                  accesskey="&contentBlocking.manageSettings.accesskey;"
+                  oncommand="gProtectionsHandler.openPreferences();"/>
+        </vbox>
+    </panelview>
+
+    <!-- Fingerprinters SubView -->
+    <panelview id="protections-popup-fingerprintersView"
+               role="document"
+               title="&contentBlocking.fingerprintersView.label;"
+               descriptionheightworkaround="true">
+        <vbox id="protections-popup-fingerprintersView-list" class="protections-popup-list">
+        </vbox>
+        <vbox class="panel-footer">
+          <button id="protections-popup-fingerprintersView-settings-button"
+                  label="&contentBlocking.manageSettings.label;"
+                  accesskey="&contentBlocking.manageSettings.accesskey;"
+                  oncommand="gProtectionsHandler.openPreferences();"/>
+        </vbox>
+    </panelview>
+
+    <!-- Cryptominers SubView -->
+    <panelview id="protections-popup-cryptominersView"
+               role="document"
+               title="&contentBlocking.cryptominersView.label;"
+               descriptionheightworkaround="true">
+        <vbox id="protections-popup-cryptominersView-list" class="protections-popup-list">
+        </vbox>
+        <vbox class="panel-footer">
+          <button id="protections-popup-cryptominersView-settings-button"
+                  label="&contentBlocking.manageSettings.label;"
+                  accesskey="&contentBlocking.manageSettings.accesskey;"
+                  oncommand="gProtectionsHandler.openPreferences();"/>
+        </vbox>
+    </panelview>
+
+    <!-- Send Report SubView -->
+    <panelview id="protections-popup-sendReportView"
+               title="&contentBlocking.breakageReportView.title;"
+               descriptionheightworkaround="true">
+        <vbox id="protections-popup-sendReportView-heading">
+          <description>
+            &contentBlocking.breakageReportView3.description;
+            <label id="protections-popup-sendReportView-learn-more"
+                   is="text-link">&contentBlocking.breakageReportView2.learnMore;</label>
+          </description>
+        </vbox>
+        <vbox id="protections-popup-sendReportView-body" class="panel-view-body-unscrollable">
+          <vbox class="protections-popup-sendReportView-collection-section">
+            <label>&contentBlocking.breakageReportView.collection.url.label;</label>
+            <html:input readonly="readonly" id="protections-popup-sendReportView-collection-url"/>
+          </vbox>
+          <vbox class="protections-popup-sendReportView-collection-section">
+            <label>&contentBlocking.breakageReportView2.collection.comments.label;</label>
+            <html:textarea id="protections-popup-sendReportView-collection-comments"/>
+          </vbox>
+        </vbox>
+        <vbox id="protections-popup-sendReportView-footer"
+              class="panel-footer">
+          <button id="protections-popup-sendReportView-cancel"
+                  label="&contentBlocking.breakageReportView.cancel.label;"
+                  oncommand="gProtectionsHandler._protectionsPopupMultiView.goBack();"/>
+          <button id="protections-popup-sendReportView-submit"
+                  default="true"
+                  label="&contentBlocking.breakageReportView.sendReport.label;"
+                  oncommand="gProtectionsHandler.onSendReportClicked();"/>
+        </vbox>
     </panelview>
   </panelmultiview>
 </panel>

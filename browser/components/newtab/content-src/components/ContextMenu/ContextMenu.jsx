@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 import React from "react";
 
 export class ContextMenu extends React.PureComponent {
@@ -40,14 +44,30 @@ export class ContextMenu extends React.PureComponent {
     // Disabling focus on the menu span allows the first tab to focus on the first menu item instead of the wrapper.
     return (
       // eslint-disable-next-line jsx-a11y/interactive-supports-focus
-      <span role="menu" className="context-menu" onClick={this.onClick} onKeyDown={this.onClick} >
-      <ul className="context-menu-list">
-        {this.props.options.map((option, i) => (option.type === "separator" ?
-          (<li key={i} className="separator" />) :
-          (option.type !== "empty" && <ContextMenuItem key={i} option={option} hideContext={this.hideContext} tabIndex="0" />)
-        ))}
-      </ul>
-    </span>);
+      <span className="context-menu">
+        <ul
+          role="menu"
+          onClick={this.onClick}
+          onKeyDown={this.onClick}
+          className="context-menu-list"
+        >
+          {this.props.options.map((option, i) =>
+            option.type === "separator" ? (
+              <li key={i} className="separator" role="separator" />
+            ) : (
+              option.type !== "empty" && (
+                <ContextMenuItem
+                  key={i}
+                  option={option}
+                  hideContext={this.hideContext}
+                  keyboardAccess={this.props.keyboardAccess}
+                />
+              )
+            )
+          )}
+        </ul>
+      </span>
+    );
   }
 }
 
@@ -56,6 +76,8 @@ export class ContextMenuItem extends React.PureComponent {
     super(props);
     this.onClick = this.onClick.bind(this);
     this.onKeyDown = this.onKeyDown.bind(this);
+    this.onKeyUp = this.onKeyUp.bind(this);
+    this.focusFirst = this.focusFirst.bind(this);
   }
 
   onClick() {
@@ -63,28 +85,41 @@ export class ContextMenuItem extends React.PureComponent {
     this.props.option.onClick();
   }
 
+  // Focus the first menu item if the menu was accessed via the keyboard.
+  focusFirst(button) {
+    if (this.props.keyboardAccess && button) {
+      button.focus();
+    }
+  }
+
   // This selects the correct node based on the key pressed
   focusSibling(target, key) {
     const parent = target.parentNode;
-    const closestSiblingSelector = (key === "ArrowUp") ? "previousSibling" : "nextSibling";
+    const closestSiblingSelector =
+      key === "ArrowUp" ? "previousSibling" : "nextSibling";
     if (!parent[closestSiblingSelector]) {
       return;
     }
     if (parent[closestSiblingSelector].firstElementChild) {
       parent[closestSiblingSelector].firstElementChild.focus();
     } else {
-      parent[closestSiblingSelector][closestSiblingSelector].firstElementChild.focus();
+      parent[closestSiblingSelector][
+        closestSiblingSelector
+      ].firstElementChild.focus();
     }
   }
 
   onKeyDown(event) {
-    const {option} = this.props;
+    const { option } = this.props;
     switch (event.key) {
       case "Tab":
         // tab goes down in context menu, shift + tab goes up in context menu
         // if we're on the last item, one more tab will close the context menu
         // similarly, if we're on the first item, one more shift + tab will close it
-        if ((event.shiftKey && option.first) || (!event.shiftKey && option.last)) {
+        if (
+          (event.shiftKey && option.first) ||
+          (!event.shiftKey && option.last)
+        ) {
           this.props.hideContext();
         }
         break;
@@ -94,6 +129,8 @@ export class ContextMenuItem extends React.PureComponent {
         this.focusSibling(event.target, event.key);
         break;
       case "Enter":
+      case " ":
+        event.preventDefault();
         this.props.hideContext();
         option.onClick();
         break;
@@ -103,14 +140,32 @@ export class ContextMenuItem extends React.PureComponent {
     }
   }
 
+  // Prevents the default behavior of spacebar
+  // scrolling the page & auto-triggering buttons.
+  onKeyUp(event) {
+    if (event.key === " ") {
+      event.preventDefault();
+    }
+  }
+
   render() {
-    const {option} = this.props;
+    const { option } = this.props;
     return (
-      <li role="menuitem" className="context-menu-item" >
-        <button className={option.disabled ? "disabled" : ""} tabIndex="0" onClick={this.onClick} onKeyDown={this.onKeyDown}>
-          {option.icon && <span className={`icon icon-spacer icon-${option.icon}`} />}
-          {option.label}
+      <li role="presentation" className="context-menu-item">
+        <button
+          className={option.disabled ? "disabled" : ""}
+          role="menuitem"
+          onClick={this.onClick}
+          onKeyDown={this.onKeyDown}
+          onKeyUp={this.onKeyUp}
+          ref={option.first ? this.focusFirst : null}
+        >
+          {option.icon && (
+            <span className={`icon icon-spacer icon-${option.icon}`} />
+          )}
+          <span data-l10n-id={option.string_id || option.id} />
         </button>
-      </li>);
+      </li>
+    );
   }
 }

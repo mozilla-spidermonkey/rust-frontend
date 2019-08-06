@@ -46,61 +46,16 @@ function Requests() {
  * This reducer is responsible for maintaining list of request
  * within the Network panel.
  */
-/* eslint-disable complexity */
 function requestsReducer(state = Requests(), action) {
   switch (action.type) {
     // Appending new request into the list/map.
     case ADD_REQUEST: {
-      const nextState = { ...state };
-
-      const newRequest = {
-        id: action.id,
-        ...action.data,
-        urlDetails: getUrlDetails(action.data.url),
-      };
-
-      nextState.requests = mapSet(state.requests, newRequest.id, newRequest);
-
-      // Update the started/ended timestamps.
-      const { startedMillis } = action.data;
-      if (startedMillis < state.firstStartedMillis) {
-        nextState.firstStartedMillis = startedMillis;
-      }
-      if (startedMillis > state.lastEndedMillis) {
-        nextState.lastEndedMillis = startedMillis;
-      }
-
-      // Select the request if it was preselected and there is no other selection.
-      if (state.preselectedId && state.preselectedId === action.id) {
-        nextState.selectedId = state.selectedId || state.preselectedId;
-        nextState.preselectedId = null;
-      }
-
-      return nextState;
+      return addRequest(state, action);
     }
 
     // Update an existing request (with received data).
     case UPDATE_REQUEST: {
-      const { requests, lastEndedMillis } = state;
-
-      let request = requests.get(action.id);
-      if (!request) {
-        return state;
-      }
-
-      request = {
-        ...request,
-        ...processNetworkUpdates(action.data, request),
-      };
-      const requestEndTime = request.startedMillis +
-        (request.eventTimings ? request.eventTimings.totalTime : 0);
-
-      return {
-        ...state,
-        requests: mapSet(state.requests, action.id, request),
-        lastEndedMillis: requestEndTime > lastEndedMillis ?
-          requestEndTime : lastEndedMillis,
-      };
+      return updateRequest(state, action);
     }
 
     // Remove all requests in the list. Create fresh new state
@@ -134,8 +89,7 @@ function requestsReducer(state = Requests(), action) {
     }
 
     case RIGHT_CLICK_REQUEST: {
-      const { requests } = state;
-      const clickedRequest = requests.get(action.id);
+      const clickedRequest = state.requests.get(action.id);
       return {
         ...state,
         clickedRequest,
@@ -152,7 +106,7 @@ function requestsReducer(state = Requests(), action) {
       // When a new request with a given id is added in future, select it immediately.
       // where we know in advance the ID of the request, at a time when it
       // wasn't sent yet.
-      return closeCustomRequest({...state, preselectedId: action.id});
+      return closeCustomRequest({ ...state, preselectedId: action.id });
     }
 
     // Pause/resume button clicked.
@@ -183,9 +137,61 @@ function requestsReducer(state = Requests(), action) {
       return state;
   }
 }
-/* eslint-enable complexity */
 
 // Helpers
+
+function addRequest(state, action) {
+  const nextState = { ...state };
+
+  const newRequest = {
+    id: action.id,
+    ...action.data,
+    urlDetails: getUrlDetails(action.data.url),
+  };
+
+  nextState.requests = mapSet(state.requests, newRequest.id, newRequest);
+
+  // Update the started/ended timestamps.
+  const { startedMillis } = action.data;
+  if (startedMillis < state.firstStartedMillis) {
+    nextState.firstStartedMillis = startedMillis;
+  }
+  if (startedMillis > state.lastEndedMillis) {
+    nextState.lastEndedMillis = startedMillis;
+  }
+
+  // Select the request if it was preselected and there is no other selection.
+  if (state.preselectedId && state.preselectedId === action.id) {
+    nextState.selectedId = state.selectedId || state.preselectedId;
+    nextState.preselectedId = null;
+  }
+
+  return nextState;
+}
+
+function updateRequest(state, action) {
+  const { requests, lastEndedMillis } = state;
+
+  let request = requests.get(action.id);
+  if (!request) {
+    return state;
+  }
+
+  request = {
+    ...request,
+    ...processNetworkUpdates(action.data, request),
+  };
+  const requestEndTime =
+    request.startedMillis +
+    (request.eventTimings ? request.eventTimings.totalTime : 0);
+
+  return {
+    ...state,
+    requests: mapSet(state.requests, action.id, request),
+    lastEndedMillis:
+      requestEndTime > lastEndedMillis ? requestEndTime : lastEndedMillis,
+  };
+}
 
 function cloneRequest(state, id) {
   const { requests } = state;
@@ -237,8 +243,10 @@ function closeCustomRequest(state) {
   return {
     ...state,
     // Only custom requests can be removed
-    [(removedRequest && removedRequest.isCustom)
-      && "requests"]: mapDelete(requests, selectedId),
+    [removedRequest && removedRequest.isCustom && "requests"]: mapDelete(
+      requests,
+      selectedId
+    ),
     preselectedId: hasPreselectedId ? null : preselectedId,
     selectedId: hasPreselectedId ? preselectedId : null,
   };

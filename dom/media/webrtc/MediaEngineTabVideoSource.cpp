@@ -134,7 +134,7 @@ nsString MediaEngineTabVideoSource::GetGroupId() const {
 nsresult MediaEngineTabVideoSource::Allocate(
     const dom::MediaTrackConstraints& aConstraints,
     const MediaEnginePrefs& aPrefs, const nsString& aDeviceId,
-    const mozilla::ipc::PrincipalInfo& aPrincipalInfo,
+    const nsString& aGroupId, const mozilla::ipc::PrincipalInfo& aPrincipalInfo,
     const char** aOutBadConstraint) {
   AssertIsOnOwningThread();
 
@@ -146,13 +146,14 @@ nsresult MediaEngineTabVideoSource::Allocate(
                   : -1;
   mState = kAllocated;
 
-  return Reconfigure(aConstraints, aPrefs, aDeviceId, aOutBadConstraint);
+  return Reconfigure(aConstraints, aPrefs, aDeviceId, aGroupId,
+                     aOutBadConstraint);
 }
 
 nsresult MediaEngineTabVideoSource::Reconfigure(
     const dom::MediaTrackConstraints& aConstraints,
     const mozilla::MediaEnginePrefs& aPrefs, const nsString& aDeviceId,
-    const char** aOutBadConstraint) {
+    const nsString& aGroupId, const char** aOutBadConstraint) {
   AssertIsOnOwningThread();
   MOZ_ASSERT(mState != kReleased);
 
@@ -191,6 +192,7 @@ nsresult MediaEngineTabVideoSource::Reconfigure(
         mBufWidthMax = bufWidthMax;
         mBufHeightMax = bufHeightMax;
         mTimePerFrame = timePerFrame;
+        *mSettings = MediaTrackSettings();
         mSettings->mScrollWithPage.Construct(scrollWithPage);
         mSettings->mWidth.Construct(bufWidthMax);
         mSettings->mHeight.Construct(bufHeightMax);
@@ -198,31 +200,21 @@ nsresult MediaEngineTabVideoSource::Reconfigure(
         if (viewportOffsetX.isSome()) {
           mSettings->mViewportOffsetX.Construct(*viewportOffsetX);
           mViewportOffsetX = *viewportOffsetX;
-        } else {
-          mSettings->mViewportOffsetX.Reset();
         }
         if (viewportOffsetY.isSome()) {
           mSettings->mViewportOffsetY.Construct(*viewportOffsetY);
           mViewportOffsetY = *viewportOffsetY;
-        } else {
-          mSettings->mViewportOffsetY.Reset();
         }
         if (viewportWidth.isSome()) {
           mSettings->mViewportWidth.Construct(*viewportWidth);
           mViewportWidth = *viewportWidth;
-        } else {
-          mSettings->mViewportWidth.Reset();
         }
         if (viewportHeight.isSome()) {
           mSettings->mViewportHeight.Construct(*viewportHeight);
           mViewportHeight = *viewportHeight;
-        } else {
-          mSettings->mViewportHeight.Reset();
         }
         if (windowId != -1) {
           mSettings->mBrowserWindow.Construct(windowId);
-        } else {
-          mSettings->mBrowserWindow.Reset();
         }
       }));
   return NS_OK;

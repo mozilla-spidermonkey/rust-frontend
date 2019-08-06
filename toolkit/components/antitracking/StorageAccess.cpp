@@ -7,6 +7,9 @@
 #include "mozilla/dom/Document.h"
 #include "mozilla/net/CookieSettings.h"
 #include "mozilla/AntiTrackingCommon.h"
+#include "mozilla/StaticPrefs_browser.h"
+#include "mozilla/StaticPrefs_network.h"
+#include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/StorageAccess.h"
 #include "nsICookieService.h"
 #include "nsICookieSettings.h"
@@ -135,12 +138,8 @@ static StorageAccess InternalStorageAllowedCheck(
   if (!uri) {
     Unused << aPrincipal->GetURI(getter_AddRefs(uri));
   }
-  if (uri) {
-    bool isAbout = false;
-    MOZ_ALWAYS_SUCCEEDS(uri->SchemeIs("about", &isAbout));
-    if (isAbout) {
-      return access;
-    }
+  if (uri && uri->SchemeIs("about")) {
+    return access;
   }
 
   if (!StorageDisabledByAntiTracking(aWindow, aChannel, aPrincipal, aURI,

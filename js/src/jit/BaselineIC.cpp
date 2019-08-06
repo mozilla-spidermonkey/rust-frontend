@@ -34,6 +34,7 @@
 #include "jit/VMFunctions.h"
 #include "js/Conversions.h"
 #include "js/GCVector.h"
+#include "vm/BytecodeUtil.h"
 #include "vm/JSFunction.h"
 #include "vm/Opcodes.h"
 #include "vm/SelfHosting.h"
@@ -159,7 +160,7 @@ class MOZ_RAII FallbackStubAllocator {
 bool JitScript::initICEntriesAndBytecodeTypeMap(JSContext* cx,
                                                 JSScript* script) {
   MOZ_ASSERT(cx->realm()->jitRealm());
-  MOZ_ASSERT(jit::IsBaselineEnabled(cx));
+  MOZ_ASSERT(jit::IsBaselineInterpreterEnabled());
 
   MOZ_ASSERT(numICEntries() == script->numICEntries());
 
@@ -224,7 +225,7 @@ bool JitScript::initICEntriesAndBytecodeTypeMap(JSContext* cx,
 
     // Note: if the script is very large there will be more JOF_TYPESET ops
     // than bytecode type sets. See JSScript::MaxBytecodeTypeSets.
-    if ((CodeSpec[op].format & JOF_TYPESET) &&
+    if (BytecodeOpHasTypeSet(op) &&
         typeMapIndex < JSScript::MaxBytecodeTypeSets) {
       typeMap[typeMapIndex] = script->pcToOffset(pc);
       typeMapIndex++;
@@ -1091,11 +1092,9 @@ bool ICMonitoredFallbackStub::addMonitorStubForValue(JSContext* cx,
   return typeMonitorFallback->addMonitorStubForValue(cx, frame, types, val);
 }
 
-static MOZ_MUST_USE bool TypeMonitorResult(JSContext* cx,
-                                           ICMonitoredFallbackStub* stub,
-                                           BaselineFrame* frame,
-                                           HandleScript script, jsbytecode* pc,
-                                           HandleValue val) {
+bool TypeMonitorResult(JSContext* cx, ICMonitoredFallbackStub* stub,
+                       BaselineFrame* frame, HandleScript script,
+                       jsbytecode* pc, HandleValue val) {
   AutoSweepJitScript sweep(script);
   StackTypeSet* types = script->jitScript()->bytecodeTypes(sweep, script, pc);
   JitScript::MonitorBytecodeType(cx, script, pc, types, val);

@@ -8,8 +8,12 @@
 
 const { L10N } = require("../utils/l10n");
 
-loader.lazyRequireGetter(this, "HarExporter",
-  "devtools/client/netmonitor/src/har/har-exporter", true);
+loader.lazyRequireGetter(
+  this,
+  "HarExporter",
+  "devtools/client/netmonitor/src/har/har-exporter",
+  true
+);
 
 loader.lazyGetter(this, "HarImporter", function() {
   return require("../har/har-importer").HarImporter;
@@ -42,11 +46,17 @@ var HarMenuUtils = {
    */
   openHarFile(actions, openSplitConsole) {
     const fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
-    fp.init(window, L10N.getStr("netmonitor.har.importHarDialogTitle"),
-      Ci.nsIFilePicker.modeOpen);
+    fp.init(
+      window,
+      L10N.getStr("netmonitor.har.importHarDialogTitle"),
+      Ci.nsIFilePicker.modeOpen
+    );
 
     // Append file filters
-    fp.appendFilter(L10N.getStr("netmonitor.har.importDialogHARFilter"), "*.har");
+    fp.appendFilter(
+      L10N.getStr("netmonitor.har.importDialogHARFilter"),
+      "*.har"
+    );
     fp.appendFilter(L10N.getStr("netmonitor.har.importDialogAllFilter"), "*.*");
 
     fp.open(rv => {
@@ -85,7 +95,7 @@ var HarMenuUtils = {
 
 function readFile(file) {
   return new Promise(resolve => {
-    const { OS } = Cu.import("resource://gre/modules/osfile.jsm", {});
+    const { OS } = Cu.import("resource://gre/modules/osfile.jsm");
     OS.File.read(file.path).then(data => {
       const decoder = new TextDecoder();
       resolve(decoder.decode(data));

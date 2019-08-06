@@ -90,6 +90,10 @@ if gl_provider == 'CGL':
     SOURCES += [
         'SharedSurfaceIO.cpp',
     ]
+    OS_LIBS += [
+        '-framework IOSurface',
+    ]
+
 elif gl_provider == 'EAGL':
     # These files include ObjC headers that are unfriendly to unified builds
     SOURCES += [
@@ -149,6 +153,10 @@ CXXFLAGS += CONFIG['MOZ_CAIRO_CFLAGS']
 CXXFLAGS += CONFIG['TK_CFLAGS']
 CFLAGS += CONFIG['MOZ_CAIRO_CFLAGS']
 CFLAGS += CONFIG['TK_CFLAGS']
+
+if CONFIG['MOZ_WAYLAND']:
+    CXXFLAGS += CONFIG['MOZ_WAYLAND_CFLAGS']
+    CFLAGS += CONFIG['MOZ_WAYLAND_CFLAGS']
 
 LOCAL_INCLUDES += CONFIG['SKIA_INCLUDES']
 

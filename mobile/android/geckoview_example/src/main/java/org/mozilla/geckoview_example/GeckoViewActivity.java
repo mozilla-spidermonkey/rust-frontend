@@ -16,6 +16,8 @@ import org.mozilla.geckoview.GeckoRuntimeSettings;
 import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.GeckoSessionSettings;
 import org.mozilla.geckoview.GeckoView;
+import org.mozilla.geckoview.WebExtension;
+import org.mozilla.geckoview.WebExtensionController;
 import org.mozilla.geckoview.WebRequestError;
 
 import android.Manifest;
@@ -58,7 +60,6 @@ import java.util.Locale;
 
 public class GeckoViewActivity extends AppCompatActivity {
     private static final String LOGTAG = "GeckoViewActivity";
-    private static final String DEFAULT_URL = "about:blank";
     private static final String USE_MULTIPROCESS_EXTRA = "use_multiprocess";
     private static final String FULL_ACCESSIBILITY_TREE_EXTRA = "full_accessibility_tree";
     private static final String SEARCH_URI_BASE = "https://www.google.com/search?q=";
@@ -154,6 +155,21 @@ public class GeckoViewActivity extends AppCompatActivity {
                     .crashHandler(ExampleCrashHandler.class);
 
             sGeckoRuntime = GeckoRuntime.create(this, runtimeSettingsBuilder.build());
+
+            sGeckoRuntime.getWebExtensionController().setTabDelegate(new WebExtensionController.TabDelegate() {
+                @Override
+                public GeckoResult<GeckoSession> onNewTab(WebExtension source, String uri) {
+                    final TabSession newSession = createSession();
+                    mToolbarView.updateTabCount();
+                    return GeckoResult.fromValue(newSession);
+                }
+                @Override
+                public GeckoResult<AllowOrDeny> onCloseTab(WebExtension source, GeckoSession session) {
+                    TabSession tabSession = mTabSessionManager.getSession(session);
+                    closeTab(tabSession);
+                    return GeckoResult.ALLOW;
+                }
+            });
         }
 
         if(savedInstanceState == null) {
@@ -172,8 +188,9 @@ public class GeckoViewActivity extends AppCompatActivity {
                 mGeckoView.setSession(session);
             } else {
                 session = createSession();
+                session.open(sGeckoRuntime);
                 mTabSessionManager.setCurrentSession(session);
-                mGeckoView.setSession(session, sGeckoRuntime);
+                mGeckoView.setSession(session);
 
                 loadFromIntent(getIntent());
             }
@@ -247,7 +264,9 @@ public class GeckoViewActivity extends AppCompatActivity {
         session.open(sGeckoRuntime);
         mTabSessionManager.setCurrentSession(session);
         mGeckoView.setSession(session);
-        session.loadUri(mCurrentUri != null ? mCurrentUri : DEFAULT_URL);
+        if (mCurrentUri != null) {
+            session.loadUri(mCurrentUri);
+        }
     }
 
     @Override
@@ -406,7 +425,9 @@ public class GeckoViewActivity extends AppCompatActivity {
 
     private void loadFromIntent(final Intent intent) {
         final Uri uri = intent.getData();
-        mTabSessionManager.getCurrentSession().loadUri(uri != null ? uri.toString() : DEFAULT_URL);
+        if (uri != null) {
+            mTabSessionManager.getCurrentSession().loadUri(uri.toString());
+        }
     }
 
     @Override
@@ -449,19 +470,10 @@ public class GeckoViewActivity extends AppCompatActivity {
     private void downloadFile(GeckoSession.WebResponseInfo response) {
         mTabSessionManager.getCurrentSession()
                 .getUserAgent()
-                .then(new GeckoResult.OnValueListener<String, Void>() {
-            @Override
-            public GeckoResult<Void> onValue(String userAgent) throws Throwable {
-                downloadFile(response, userAgent);
-                return null;
-            }
-        }, new GeckoResult.OnExceptionListener<Void>() {
-            @Override
-            public GeckoResult<Void> onException(Throwable exception) throws Throwable {
-                // getUserAgent() cannot fail.
-                throw new IllegalStateException("Could not get UserAgent string.");
-            }
-        });
+                .accept(userAgent -> downloadFile(response, userAgent),
+                        exception -> {
+                    throw new IllegalStateException("Could not get UserAgent string.");
+                });
     }
 
     private void downloadFile(GeckoSession.WebResponseInfo response, String userAgent) {
@@ -622,7 +634,6 @@ public class GeckoViewActivity extends AppCompatActivity {
         public void onCrash(GeckoSession session) {
             Log.e(LOGTAG, "Crashed, reopening session");
             session.open(sGeckoRuntime);
-            session.loadUri(DEFAULT_URL);
         }
 
         @Override
@@ -886,16 +897,8 @@ public class GeckoViewActivity extends AppCompatActivity {
 
         @Override
         public GeckoResult<GeckoSession> onNewSession(final GeckoSession session, final String uri) {
-            GeckoSession newSession = new GeckoSession(session.getSettings());
-
-            Intent intent = new Intent(GeckoViewActivity.this, SessionActivity.class);
-            intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET);
-            intent.setAction(Intent.ACTION_VIEW);
-            intent.setData(Uri.parse(uri));
-            intent.putExtra("session", newSession);
-
-            startActivity(intent);
-
+            final TabSession newSession = createSession();
+            mToolbarView.updateTabCount();
             return GeckoResult.fromValue(newSession);
         }
 

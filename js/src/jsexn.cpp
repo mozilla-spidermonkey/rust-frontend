@@ -340,7 +340,8 @@ JSString* js::ComputeStackString(JSContext* cx) {
 static void exn_finalize(FreeOp* fop, JSObject* obj) {
   MOZ_ASSERT(fop->maybeOnHelperThread());
   if (JSErrorReport* report = obj->as<ErrorObject>().getErrorReport()) {
-    fop->delete_(report);
+    // Bug 1560019: This allocation is not currently tracked.
+    fop->deleteUntracked(report);
   }
 }
 
@@ -581,7 +582,7 @@ JSObject* ErrorObject::createConstructor(JSContext* cx, JSProtoKey key) {
     }
 
     ctor = NewFunctionWithProto(
-        cx, Error, 1, JSFunction::NATIVE_CTOR, nullptr, ClassName(key, cx),
+        cx, Error, 1, FunctionFlags::NATIVE_CTOR, nullptr, ClassName(key, cx),
         proto, gc::AllocKind::FUNCTION_EXTENDED, SingletonObject);
   }
 

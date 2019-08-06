@@ -11,6 +11,7 @@
 #include "builtin/AtomicsObject.h"
 #include "builtin/intl/Collator.h"
 #include "builtin/intl/DateTimeFormat.h"
+#include "builtin/intl/Locale.h"
 #include "builtin/intl/NumberFormat.h"
 #include "builtin/intl/PluralRules.h"
 #include "builtin/intl/RelativeTimeFormat.h"
@@ -108,6 +109,7 @@ static bool CanInlineCrossRealm(InlinableNative native) {
 
     case InlinableNative::IntlGuardToCollator:
     case InlinableNative::IntlGuardToDateTimeFormat:
+    case InlinableNative::IntlGuardToLocale:
     case InlinableNative::IntlGuardToNumberFormat:
     case InlinableNative::IntlGuardToPluralRules:
     case InlinableNative::IntlGuardToRelativeTimeFormat:
@@ -161,7 +163,6 @@ static bool CanInlineCrossRealm(InlinableNative native) {
     case InlinableNative::IntrinsicTypedArrayLength:
     case InlinableNative::IntrinsicTypedArrayByteOffset:
     case InlinableNative::IntrinsicTypedArrayElementShift:
-    case InlinableNative::IntrinsicSetDisjointTypedElements:
     case InlinableNative::IntrinsicObjectIsTypedObject:
     case InlinableNative::IntrinsicObjectIsTransparentTypedObject:
     case InlinableNative::IntrinsicObjectIsOpaqueTypedObject:
@@ -315,6 +316,8 @@ IonBuilder::InliningResult IonBuilder::inlineNativeCall(CallInfo& callInfo,
       return inlineGuardToClass(callInfo, &CollatorObject::class_);
     case InlinableNative::IntlGuardToDateTimeFormat:
       return inlineGuardToClass(callInfo, &DateTimeFormatObject::class_);
+    case InlinableNative::IntlGuardToLocale:
+      return inlineGuardToClass(callInfo, &LocaleObject::class_);
     case InlinableNative::IntlGuardToNumberFormat:
       return inlineGuardToClass(callInfo, &NumberFormatObject::class_);
     case InlinableNative::IntlGuardToPluralRules:
@@ -551,8 +554,6 @@ IonBuilder::InliningResult IonBuilder::inlineNativeCall(CallInfo& callInfo,
       return inlineTypedArrayByteOffset(callInfo);
     case InlinableNative::IntrinsicTypedArrayElementShift:
       return inlineTypedArrayElementShift(callInfo);
-    case InlinableNative::IntrinsicSetDisjointTypedElements:
-      return inlineSetDisjointTypedElements(callInfo);
 
     // TypedObject intrinsics.
     case InlinableNative::IntrinsicObjectIsTypedObject:
@@ -2234,13 +2235,17 @@ IonBuilder::InliningResult IonBuilder::inlineStrFromCodePoint(
   if (getInlineReturnType() != MIRType::String) {
     return InliningStatus_NotInlined;
   }
-  if (callInfo.getArg(0)->type() != MIRType::Int32) {
+  MIRType argType = callInfo.getArg(0)->type();
+  if (argType != MIRType::Int32 && argType != MIRType::Double) {
     return InliningStatus_NotInlined;
   }
 
   callInfo.setImplicitlyUsedUnchecked();
 
-  MFromCodePoint* string = MFromCodePoint::New(alloc(), callInfo.getArg(0));
+  auto* codePoint = MToNumberInt32::New(alloc(), callInfo.getArg(0));
+  current->add(codePoint);
+
+  MFromCodePoint* string = MFromCodePoint::New(alloc(), codePoint);
   current->add(string);
   current->push(string);
   return InliningStatus_Inlined;
@@ -3320,49 +3325,6 @@ IonBuilder::InliningResult IonBuilder::inlineTypedArrayElementShift(
   current->add(ins);
   current->push(ins);
 
-  callInfo.setImplicitlyUsedUnchecked();
-  return InliningStatus_Inlined;
-}
-
-IonBuilder::InliningResult IonBuilder::inlineSetDisjointTypedElements(
-    CallInfo& callInfo) {
-  MOZ_ASSERT(!callInfo.constructing());
-  MOZ_ASSERT(callInfo.argc() == 3);
-
-  // Initial argument requirements.
-
-  MDefinition* target = callInfo.getArg(0);
-  if (target->type() != MIRType::Object) {
-    return InliningStatus_NotInlined;
-  }
-
-  if (getInlineReturnType() != MIRType::Undefined) {
-    return InliningStatus_NotInlined;
-  }
-
-  MDefinition* targetOffset = callInfo.getArg(1);
-  MOZ_ASSERT(targetOffset->type() == MIRType::Int32);
-
-  MDefinition* sourceTypedArray = callInfo.getArg(2);
-  if (sourceTypedArray->type() != MIRType::Object) {
-    return InliningStatus_NotInlined;
-  }
-
-  // Only attempt to optimize if |target| and |sourceTypedArray| are both
-  // definitely typed arrays.  (The former always is.  The latter is not,
-  // necessarily, because of wrappers.)
-  if (!IsTypedArrayObject(constraints(), target) ||
-      !IsTypedArrayObject(constraints(), sourceTypedArray)) {
-    return InliningStatus_NotInlined;
-  }
-
-  auto sets = MSetDisjointTypedElements::New(alloc(), target, targetOffset,
-                                             sourceTypedArray);
-  current->add(sets);
-
-  pushConstant(UndefinedValue());
-
-  MOZ_TRY(resumeAfter(sets));
   callInfo.setImplicitlyUsedUnchecked();
   return InliningStatus_Inlined;
 }

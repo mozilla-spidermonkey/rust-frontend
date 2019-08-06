@@ -69,13 +69,14 @@ def create_args():
                      debug_mode=False,
                      page_cycles=None,
                      page_timeout=None,
+                     test_url_params=None,
                      host=None,
                      run_local=True)
 
     def inner(**kwargs):
         for next_arg in kwargs:
-            print next_arg
-            print kwargs[next_arg]
+            print(next_arg)
+            print(kwargs[next_arg])
             setattr(args, next_arg, kwargs[next_arg])
         return args
 

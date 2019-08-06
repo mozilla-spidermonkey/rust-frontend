@@ -112,10 +112,10 @@ EXPORTS += [
     'jsfriendapi.h',
     'jspubtd.h',
     'jstypes.h',
-    'perf/jsperf.h',
 ]
 
 EXPORTS.js += [
+    '../public/AllocationRecording.h',
     '../public/AllocPolicy.h',
     '../public/ArrayBuffer.h',
     '../public/BuildId.h',
@@ -212,6 +212,7 @@ UNIFIED_SOURCES += [
     'builtin/intl/CommonFunctions.cpp',
     'builtin/intl/DateTimeFormat.cpp',
     'builtin/intl/IntlObject.cpp',
+    'builtin/intl/Locale.cpp',
     'builtin/intl/NumberFormat.cpp',
     'builtin/intl/PluralRules.cpp',
     'builtin/intl/RelativeTimeFormat.cpp',
@@ -247,7 +248,6 @@ UNIFIED_SOURCES += [
     'jsexn.cpp',
     'jsfriendapi.cpp',
     'jsnum.cpp',
-    'perf/jsperf.cpp',
     'proxy/BaseProxyHandler.cpp',
     'proxy/CrossCompartmentWrapper.cpp',
     'proxy/DeadObjectProxy.cpp',
@@ -282,8 +282,6 @@ UNIFIED_SOURCES += [
     'vm/CompilationAndEvaluation.cpp',
     'vm/Compression.cpp',
     'vm/DateTime.cpp',
-    'vm/Debugger.cpp',
-    'vm/DebuggerMemory.cpp',
     'vm/EnvironmentObject.cpp',
     'vm/EqualityOperations.cpp',
     'vm/ErrorObject.cpp',
@@ -295,6 +293,7 @@ UNIFIED_SOURCES += [
     'vm/HelperThreads.cpp',
     'vm/Id.cpp',
     'vm/Initialization.cpp',
+    'vm/Instrumentation.cpp',
     'vm/Iteration.cpp',
     'vm/JSAtom.cpp',
     'vm/JSContext.cpp',
@@ -346,9 +345,6 @@ UNIFIED_SOURCES += [
 #   RtlGenRandom declaration's calling convention in <ntsecapi.h> on Windows.
 # jsutil.cpp cannot be built in unified mode because it is needed for
 #   check-vanilla-allocations.
-# perf/ProfilingStack.cpp cannot be built in unified mode because we want to
-#   suppress warnings due to usage of the system allocator, and this allows it
-#   to have a deterministic object name.
 # util/DoubleToString.cpp cannot be built in unified mode because we want to
 #   suppress compiler warnings in third-party dtoa.c.
 # vm/Interpreter.cpp is gigantic and destroys incremental build times for any
@@ -404,19 +400,9 @@ if CONFIG['MOZ_VTUNE']:
     ]
     SOURCES['vtune/ittnotify_static.c'].flags += ['-Wno-varargs', '-Wno-unknown-pragmas']
 
-if CONFIG['HAVE_LINUX_PERF_EVENT_H']:
-    SOURCES += [
-        'perf/pm_linux.cpp'
-    ]
-    if CONFIG['LINUX_HEADERS_INCLUDES']:
-        SOURCES['perf/pm_linux.cpp'].flags += [CONFIG['LINUX_HEADERS_INCLUDES']]
-else:
-    SOURCES += [
-        'perf/pm_stub.cpp'
-    ]
-
 DIRS += [
     'build',
+    'debugger',
     'frontend',
     'frontend-rs',
     'gc',
@@ -439,6 +425,7 @@ selfhosted.inputs = [
     'builtin/Array.js',
     'builtin/AsyncFunction.js',
     'builtin/AsyncIteration.js',
+    'builtin/BigInt.js',
     'builtin/Classes.js',
     'builtin/Date.js',
     'builtin/Error.js',
@@ -450,9 +437,11 @@ selfhosted.inputs = [
     'builtin/intl/DateTimeFormat.js',
     'builtin/intl/IntlObject.js',
     'builtin/intl/LangTagMappingsGenerated.js',
+    'builtin/intl/Locale.js',
     'builtin/intl/NumberFormat.js',
     'builtin/intl/PluralRules.js',
     'builtin/intl/RelativeTimeFormat.js',
+    'builtin/intl/UnicodeExtensionsGenerated.js',
     'builtin/Iterator.js',
     'builtin/Map.js',
     'builtin/Module.js',

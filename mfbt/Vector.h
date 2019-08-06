@@ -24,12 +24,6 @@
 
 #include <new>  // for placement new
 
-/* Silence dire "bugs in previous versions of MSVC have been fixed" warnings */
-#ifdef _MSC_VER
-#  pragma warning(push)
-#  pragma warning(disable : 4345)
-#endif
-
 namespace mozilla {
 
 template <typename T, size_t N, class AllocPolicy>
@@ -844,7 +838,7 @@ class MOZ_NON_PARAM Vector final : private AllocPolicy {
 
 template <typename T, size_t N, class AP>
 MOZ_ALWAYS_INLINE Vector<T, N, AP>::Vector(AP aAP)
-    : AP(aAP),
+    : AP(std::move(aAP)),
       mLength(0),
       mTail(kInlineCapacity, 0)
 #ifdef DEBUG
@@ -1518,9 +1512,5 @@ inline void Vector<T, N, AP>::swap(Vector& aOther) {
 }
 
 }  // namespace mozilla
-
-#ifdef _MSC_VER
-#  pragma warning(pop)
-#endif
 
 #endif /* mozilla_Vector_h */

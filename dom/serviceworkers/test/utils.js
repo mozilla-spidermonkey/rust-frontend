@@ -4,23 +4,12 @@ function waitForState(worker, state, context) {
       resolve(context);
       return;
     }
-    worker.addEventListener('statechange', function onStateChange() {
+    worker.addEventListener("statechange", function onStateChange() {
       if (worker.state === state) {
-        worker.removeEventListener('statechange', onStateChange);
+        worker.removeEventListener("statechange", onStateChange);
         resolve(context);
       }
     });
-  });
-}
-
-function waitForControlled(win) {
-  return new Promise(resolve => {
-    if (win.navigator.serviceWorker.controller) {
-      return resolve();
-    }
-
-    win.navigator.serviceWorker.addEventListener('controllerchange', resolve,
-                                                 { once: true });
   });
 }
 
@@ -31,12 +20,12 @@ function waitForControlled(win) {
  * `content.wrappedJSObject.registerAndWaitForActive`.
  */
 async function registerAndWaitForActive(...args) {
-  console.log('...calling register');
+  console.log("...calling register");
   const reg = await navigator.serviceWorker.register(...args);
   // Unless registration resurrection happens, the SW should be in the
   // installing slot.
-  console.log('...waiting for activation');
-  await waitForState(reg.installing, 'activated', reg);
+  console.log("...waiting for activation");
+  await waitForState(reg.installing, "activated", reg);
   console.log("...activated!");
   return reg;
 }
@@ -50,13 +39,16 @@ async function registerAndWaitForActive(...args) {
  * call.
  */
 function createIframeAndWaitForMessage(url) {
-  const iframe = document.createElement('iframe');
+  const iframe = document.createElement("iframe");
   document.body.appendChild(iframe);
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     window.addEventListener(
-      'message',
-      (event) => { resolve(event.data); },
-      { once: true });
+      "message",
+      event => {
+        resolve(event.data);
+      },
+      { once: true }
+    );
     iframe.src = url;
   });
 }
@@ -69,13 +61,16 @@ function createIframeAndWaitForMessage(url) {
  * call.
  */
 function createNestedIframeAndWaitForMessage(url) {
-  const iframe = document.getElementsByTagName('iframe')[0];
+  const iframe = document.getElementsByTagName("iframe")[0];
   iframe.contentWindow.postMessage("create nested iframe", "*");
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     window.addEventListener(
-      'message',
-      (event) => { resolve(event.data); },
-      { once: true });
+      "message",
+      event => {
+        resolve(event.data);
+      },
+      { once: true }
+    );
   });
 }
 

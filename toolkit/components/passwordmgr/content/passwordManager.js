@@ -4,14 +4,22 @@
 
 /** * =================== SAVED SIGNONS CODE =================== ***/
 /* eslint-disable-next-line no-var */
-var {AppConstants} = ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+var { AppConstants } = ChromeUtils.import(
+  "resource://gre/modules/AppConstants.jsm"
+);
 /* eslint-disable-next-line no-var */
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+var { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
-ChromeUtils.defineModuleGetter(this, "DeferredTask",
-                               "resource://gre/modules/DeferredTask.jsm");
-ChromeUtils.defineModuleGetter(this, "PlacesUtils",
-                               "resource://gre/modules/PlacesUtils.jsm");
+ChromeUtils.defineModuleGetter(
+  this,
+  "DeferredTask",
+  "resource://gre/modules/DeferredTask.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
+  "PlacesUtils",
+  "resource://gre/modules/PlacesUtils.jsm"
+);
 
 // Default value for signon table sorting
 let lastSignonSortColumn = "origin";
@@ -30,7 +38,6 @@ let signonsIntro;
 let removeButton;
 let removeAllButton;
 let signonsTree;
-let autofillCheckbox;
 
 let signonReloadDisplay = {
   observe(subject, topic, data) {
@@ -49,7 +56,9 @@ let signonReloadDisplay = {
           if (filterField && filterField.value != "") {
             FilterPasswords();
           }
-          signonsTree.ensureRowIsVisible(signonsTree.view.selection.currentIndex);
+          signonsTree.ensureRowIsVisible(
+            signonsTree.view.selection.currentIndex
+          );
           break;
       }
       Services.obs.notifyObservers(null, "passwordmgr-dialog-updated");
@@ -58,11 +67,13 @@ let signonReloadDisplay = {
 };
 
 // Formatter for localization.
-let dateFormatter = new Services.intl.DateTimeFormat(undefined,
-                                                     { dateStyle: "medium" });
-let dateAndTimeFormatter = new Services.intl.DateTimeFormat(undefined,
-                                                            { dateStyle: "medium",
-                                                              timeStyle: "short" });
+let dateFormatter = new Services.intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+});
+let dateAndTimeFormatter = new Services.intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
 
 function Startup() {
   // be prepared to reload the display if anything changes
@@ -72,48 +83,51 @@ function Startup() {
   filterField = document.getElementById("filter");
   togglePasswordsButton = document.getElementById("togglePasswords");
   signonsIntro = document.getElementById("signonsIntro");
-  autofillCheckbox = document.getElementById("passwordAutofillCheckbox");
   removeButton = document.getElementById("removeSignon");
   removeAllButton = document.getElementById("removeAllSignons");
 
   document.l10n.setAttributes(togglePasswordsButton, "show-passwords");
   document.l10n.setAttributes(signonsIntro, "logins-description-all");
-  document.l10n.setAttributes(autofillCheckbox, "auto-fill-logins-and-passwords");
-  autofillCheckbox.checked = Services.prefs.getBoolPref("signon.autofillForms");
   document.l10n.setAttributes(removeAllButton, "remove-all");
 
-  document.getElementsByTagName("treecols")[0].addEventListener("click", (event) => {
-    let { target, button } = event;
-    let sortField = target.getAttribute("data-field-name");
+  document
+    .getElementsByTagName("treecols")[0]
+    .addEventListener("click", event => {
+      let { target, button } = event;
+      let sortField = target.getAttribute("data-field-name");
 
-    if (target.nodeName != "treecol" || button != 0 || !sortField) {
-      return;
-    }
+      if (target.nodeName != "treecol" || button != 0 || !sortField) {
+        return;
+      }
 
-    SignonColumnSort(sortField);
-    Services.telemetry.getKeyedHistogramById("PWMGR_MANAGE_SORTED").add(sortField);
-  });
+      SignonColumnSort(sortField);
+      Services.telemetry
+        .getKeyedHistogramById("PWMGR_MANAGE_SORTED")
+        .add(sortField);
+    });
 
   LoadSignons();
 
   // filter the table if requested by caller
-  if (window.arguments &&
-      window.arguments[0] &&
-      window.arguments[0].filterString) {
+  if (
+    window.arguments &&
+    window.arguments[0] &&
+    window.arguments[0].filterString
+  ) {
     setFilter(window.arguments[0].filterString);
   }
 
   FocusFilterBox();
-  document.l10n.translateElements(document.querySelectorAll("[data-l10n-id]")).then(
-    () => window.sizeToContent());
-}
-
-function watchLoginAutofill() {
-  Services.prefs.setBoolPref("signon.autofillForms", autofillCheckbox.checked);
+  document.l10n
+    .translateElements(document.querySelectorAll("[data-l10n-id]"))
+    .then(() => window.sizeToContent());
 }
 
 function Shutdown() {
-  Services.obs.removeObserver(signonReloadDisplay, "passwordmgr-storage-changed");
+  Services.obs.removeObserver(
+    signonReloadDisplay,
+    "passwordmgr-storage-changed"
+  );
 }
 
 function setFilter(aFilterString) {
@@ -143,9 +157,9 @@ let signonsTreeView = {
     let signon = GetVisibleLogins()[row];
     switch (column.id) {
       case "siteCol":
-        return signon.httpRealm ?
-               (signon.origin + " (" + signon.httpRealm + ")") :
-               signon.origin;
+        return signon.httpRealm
+          ? signon.origin + " (" + signon.httpRealm + ")"
+          : signon.origin;
       case "userCol":
         return signon.username || "";
       case "passwordCol":
@@ -314,7 +328,9 @@ function LoadSignons() {
 }
 
 function GetVisibleLogins() {
-  return signonsTreeView._filterSet.length ? signonsTreeView._filterSet : signons;
+  return signonsTreeView._filterSet.length
+    ? signonsTreeView._filterSet
+    : signons;
 }
 
 function GetTreeSelections() {
@@ -346,7 +362,7 @@ function SignonSelected() {
 }
 
 function DeleteSignon() {
-  let syncNeeded = (signonsTreeView._filterSet.length != 0);
+  let syncNeeded = signonsTreeView._filterSet.length != 0;
   let tree = signonsTree;
   let view = signonsTreeView;
   let table = GetVisibleLogins();
@@ -366,7 +382,7 @@ function DeleteSignon() {
   for (let j = 0; j < table.length; j++) {
     if (table[j] == null) {
       let k = j;
-      while ((k < table.length) && (table[k] == null)) {
+      while (k < table.length && table[k] == null) {
         k++;
       }
       table.splice(j, k - j);
@@ -378,7 +394,8 @@ function DeleteSignon() {
   // update selection and/or buttons
   if (table.length) {
     // update selection
-    let nextSelection = (selections[0] < table.length) ? selections[0] : table.length - 1;
+    let nextSelection =
+      selections[0] < table.length ? selections[0] : table.length - 1;
     tree.view.selection.select(nextSelection);
   } else {
     // disable buttons
@@ -392,11 +409,20 @@ function DeleteSignon() {
 async function DeleteAllSignons() {
   // Confirm the user wants to remove all passwords
   let dummy = { value: false };
-  if (Services.prompt.confirmEx(window,
-                                await document.l10n.formatValue("remove-all-passwords-title"),
-                                await document.l10n.formatValue("remove-all-passwords-prompt"),
-                                Services.prompt.STD_YES_NO_BUTTONS + Services.prompt.BUTTON_POS_1_DEFAULT,
-                                null, null, null, null, dummy) == 1) { // 1 == "No" button
+  if (
+    Services.prompt.confirmEx(
+      window,
+      await document.l10n.formatValue("remove-all-passwords-title"),
+      await document.l10n.formatValue("remove-all-passwords-prompt"),
+      Services.prompt.STD_YES_NO_BUTTONS + Services.prompt.BUTTON_POS_1_DEFAULT,
+      null,
+      null,
+      null,
+      null,
+      dummy
+    ) == 1
+  ) {
+    // 1 == "No" button
     return;
   }
 
@@ -424,13 +450,20 @@ async function DeleteAllSignons() {
   removeAllButton.setAttribute("disabled", "true");
   FinalizeSignonDeletions(syncNeeded);
   Services.telemetry.getHistogramById("PWMGR_MANAGE_DELETED_ALL").add(1);
-  Services.obs.notifyObservers(null, "weave:telemetry:histogram", "PWMGR_MANAGE_DELETED_ALL");
+  Services.obs.notifyObservers(
+    null,
+    "weave:telemetry:histogram",
+    "PWMGR_MANAGE_DELETED_ALL"
+  );
 }
 
 async function TogglePasswordVisible() {
-  if (showingPasswords || await masterPasswordLogin(AskUserShowPasswords)) {
+  if (showingPasswords || (await masterPasswordLogin(AskUserShowPasswords))) {
     showingPasswords = !showingPasswords;
-    document.l10n.setAttributes(togglePasswordsButton, showingPasswords ? "hide-passwords" : "show-passwords");
+    document.l10n.setAttributes(
+      togglePasswordsButton,
+      showingPasswords ? "hide-passwords" : "show-passwords"
+    );
     document.getElementById("passwordCol").hidden = !showingPasswords;
     FilterPasswords();
   }
@@ -438,25 +471,44 @@ async function TogglePasswordVisible() {
   // Notify observers that the password visibility toggling is
   // completed.  (Mostly useful for tests)
   Services.obs.notifyObservers(null, "passwordmgr-password-toggle-complete");
-  Services.telemetry.getHistogramById("PWMGR_MANAGE_VISIBILITY_TOGGLED").add(showingPasswords);
-  Services.obs.notifyObservers(null, "weave:telemetry:histogram", "PWMGR_MANAGE_VISIBILITY_TOGGLED");
+  Services.telemetry
+    .getHistogramById("PWMGR_MANAGE_VISIBILITY_TOGGLED")
+    .add(showingPasswords);
+  Services.obs.notifyObservers(
+    null,
+    "weave:telemetry:histogram",
+    "PWMGR_MANAGE_VISIBILITY_TOGGLED"
+  );
 }
 
 async function AskUserShowPasswords() {
   let dummy = { value: false };
 
   // Confirm the user wants to display passwords
-  return Services.prompt.confirmEx(window,
-                                   null,
-                                   await document.l10n.formatValue("no-master-password-prompt"), Services.prompt.STD_YES_NO_BUTTONS,
-                                   null, null, null, null, dummy) == 0; // 0=="Yes" button
+  return (
+    Services.prompt.confirmEx(
+      window,
+      null,
+      await document.l10n.formatValue("no-master-password-prompt"),
+      Services.prompt.STD_YES_NO_BUTTONS,
+      null,
+      null,
+      null,
+      null,
+      dummy
+    ) == 0
+  ); // 0=="Yes" button
 }
 
 function FinalizeSignonDeletions(syncNeeded) {
   for (let s = 0; s < deletedSignons.length; s++) {
     Services.logins.removeLogin(deletedSignons[s]);
     Services.telemetry.getHistogramById("PWMGR_MANAGE_DELETED").add(1);
-    Services.obs.notifyObservers(null, "weave:telemetry:histogram", "PWMGR_MANAGE_DELETED");
+    Services.obs.notifyObservers(
+      null,
+      "weave:telemetry:histogram",
+      "PWMGR_MANAGE_DELETED"
+    );
   }
   // If the deletion has been performed in a filtered view, reflect the deletion in the unfiltered table.
   // See bug 405389.
@@ -475,9 +527,11 @@ function HandleSignonKeyPress(e) {
   if (signonsTree.getAttribute("editing")) {
     return;
   }
-  if (e.keyCode == KeyboardEvent.DOM_VK_DELETE ||
-      (AppConstants.platform == "macosx" &&
-       e.keyCode == KeyboardEvent.DOM_VK_BACK_SPACE)) {
+  if (
+    e.keyCode == KeyboardEvent.DOM_VK_DELETE ||
+    (AppConstants.platform == "macosx" &&
+      e.keyCode == KeyboardEvent.DOM_VK_BACK_SPACE)
+  ) {
     DeleteSignon();
     e.preventDefault();
   }
@@ -511,7 +565,8 @@ function SignonColumnSort(column) {
   lastSortedCol.removeAttribute("sortDirection");
 
   // determine if sort is to be ascending or descending
-  lastSignonSortAscending = (column == lastSignonSortColumn) ? !lastSignonSortAscending : true;
+  lastSignonSortAscending =
+    column == lastSignonSortColumn ? !lastSignonSortAscending : true;
 
   // sort
   lastSignonSortColumn = column;
@@ -519,12 +574,14 @@ function SignonColumnSort(column) {
 
   // set the sortDirection attribute to get the styling going
   // first we need to get the right element
-  sortedCol.setAttribute("sortDirection", lastSignonSortAscending ?
-                                          "ascending" : "descending");
+  sortedCol.setAttribute(
+    "sortDirection",
+    lastSignonSortAscending ? "ascending" : "descending"
+  );
 }
 
 function SignonClearFilter() {
-  let singleSelection = (signonsTreeView.selection.count == 1);
+  let singleSelection = signonsTreeView.selection.count == 1;
 
   // Clear the Tree Display
   signonsTreeView.rowCount = 0;
@@ -560,16 +617,23 @@ function SignonMatchesFilter(aSignon, aFilterValue) {
   if (aSignon.origin.toLowerCase().includes(aFilterValue)) {
     return true;
   }
-  if (aSignon.username &&
-      aSignon.username.toLowerCase().includes(aFilterValue)) {
+  if (
+    aSignon.username &&
+    aSignon.username.toLowerCase().includes(aFilterValue)
+  ) {
     return true;
   }
-  if (aSignon.httpRealm &&
-      aSignon.httpRealm.toLowerCase().includes(aFilterValue)) {
+  if (
+    aSignon.httpRealm &&
+    aSignon.httpRealm.toLowerCase().includes(aFilterValue)
+  ) {
     return true;
   }
-  if (showingPasswords && aSignon.password &&
-      aSignon.password.toLowerCase().includes(aFilterValue)) {
+  if (
+    showingPasswords &&
+    aSignon.password &&
+    aSignon.password.toLowerCase().includes(aFilterValue)
+  ) {
     return true;
   }
 
@@ -587,9 +651,13 @@ function SignonSaveState() {
   signonsTreeView._lastSelectedRanges = [];
   let rangeCount = seln.getRangeCount();
   for (let i = 0; i < rangeCount; ++i) {
-    let min = {}; let max = {};
+    let min = {};
+    let max = {};
     seln.getRangeAt(i, min, max);
-    signonsTreeView._lastSelectedRanges.push({ min: min.value, max: max.value });
+    signonsTreeView._lastSelectedRanges.push({
+      min: min.value,
+      max: max.value,
+    });
   }
 }
 
@@ -626,54 +694,68 @@ function FilterPasswords() {
 
 function CopySiteUrl() {
   // Copy selected site url to clipboard
-  let clipboard = Cc["@mozilla.org/widget/clipboardhelper;1"].
-                  getService(Ci.nsIClipboardHelper);
+  let clipboard = Cc["@mozilla.org/widget/clipboardhelper;1"].getService(
+    Ci.nsIClipboardHelper
+  );
   let row = signonsTree.currentIndex;
-  let url = signonsTreeView.getCellText(row, {id: "siteCol"});
+  let url = signonsTreeView.getCellText(row, { id: "siteCol" });
   clipboard.copyString(url);
 }
 
-function CopyPassword() {
+async function CopyPassword() {
   // Don't copy passwords if we aren't already showing the passwords & a master
   // password hasn't been entered.
-  if (!showingPasswords && !masterPasswordLogin()) {
+  if (!showingPasswords && !(await masterPasswordLogin())) {
     return;
   }
   // Copy selected signon's password to clipboard
-  let clipboard = Cc["@mozilla.org/widget/clipboardhelper;1"].
-                  getService(Ci.nsIClipboardHelper);
+  let clipboard = Cc["@mozilla.org/widget/clipboardhelper;1"].getService(
+    Ci.nsIClipboardHelper
+  );
   let row = signonsTree.currentIndex;
-  let password = signonsTreeView.getCellText(row, {id: "passwordCol" });
+  let password = signonsTreeView.getCellText(row, { id: "passwordCol" });
   clipboard.copyString(password);
   Services.telemetry.getHistogramById("PWMGR_MANAGE_COPIED_PASSWORD").add(1);
-  Services.obs.notifyObservers(null, "weave:telemetry:histogram", "PWMGR_MANAGE_COPIED_PASSWORD");
+  Services.obs.notifyObservers(
+    null,
+    "weave:telemetry:histogram",
+    "PWMGR_MANAGE_COPIED_PASSWORD"
+  );
 }
 
 function CopyUsername() {
   // Copy selected signon's username to clipboard
-  let clipboard = Cc["@mozilla.org/widget/clipboardhelper;1"].
-                  getService(Ci.nsIClipboardHelper);
+  let clipboard = Cc["@mozilla.org/widget/clipboardhelper;1"].getService(
+    Ci.nsIClipboardHelper
+  );
   let row = signonsTree.currentIndex;
-  let username = signonsTreeView.getCellText(row, {id: "userCol" });
+  let username = signonsTreeView.getCellText(row, { id: "userCol" });
   clipboard.copyString(username);
   Services.telemetry.getHistogramById("PWMGR_MANAGE_COPIED_USERNAME").add(1);
-  Services.obs.notifyObservers(null, "weave:telemetry:histogram", "PWMGR_MANAGE_COPIED_USERNAME");
+  Services.obs.notifyObservers(
+    null,
+    "weave:telemetry:histogram",
+    "PWMGR_MANAGE_COPIED_USERNAME"
+  );
 }
 
 function EditCellInSelectedRow(columnName) {
   let row = signonsTree.currentIndex;
   let columnElement = getColumnByName(columnName);
-  signonsTree.startEditing(row, signonsTree.columns.getColumnFor(columnElement));
+  signonsTree.startEditing(
+    row,
+    signonsTree.columns.getColumnFor(columnElement)
+  );
 }
 
 function LaunchSiteUrl() {
   let row = signonsTree.currentIndex;
-  let url = signonsTreeView.getCellText(row, {id: "siteCol"});
+  let url = signonsTreeView.getCellText(row, { id: "siteCol" });
   window.openWebLinkIn(url, "tab");
 }
 
 function UpdateContextMenu() {
-  let singleSelection = (signonsTreeView.selection.count == 1);
+  let singleSelection = signonsTreeView.selection.count == 1;
   let menuItems = new Map();
   let menupopup = document.getElementById("signonsTreeContextMenu");
   for (let menuItem of menupopup.querySelectorAll("menuitem")) {
@@ -718,8 +800,9 @@ function UpdateContextMenu() {
 
 async function masterPasswordLogin(noPasswordCallback) {
   // This doesn't harm if passwords are not encrypted
-  let tokendb = Cc["@mozilla.org/security/pk11tokendb;1"]
-                    .createInstance(Ci.nsIPK11TokenDB);
+  let tokendb = Cc["@mozilla.org/security/pk11tokendb;1"].createInstance(
+    Ci.nsIPK11TokenDB
+  );
   let token = tokendb.getInternalKeyToken();
 
   // If there is no master password, still give the user a chance to opt-out of displaying passwords
@@ -749,7 +832,11 @@ function escapeKeyHandler() {
 }
 
 function OpenMigrator() {
-  const { MigrationUtils } = ChromeUtils.import("resource:///modules/MigrationUtils.jsm");
+  const { MigrationUtils } = ChromeUtils.import(
+    "resource:///modules/MigrationUtils.jsm"
+  );
   // We pass in the type of source we're using for use in telemetry:
-  MigrationUtils.showMigrationWizard(window, [MigrationUtils.MIGRATION_ENTRYPOINT_PASSWORDS]);
+  MigrationUtils.showMigrationWizard(window, [
+    MigrationUtils.MIGRATION_ENTRYPOINT_PASSWORDS,
+  ]);
 }

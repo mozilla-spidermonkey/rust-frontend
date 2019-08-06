@@ -166,7 +166,7 @@ float Gecko_MediaFeatures_GetResolution(const Document* aDocument) {
 
 static const Document* TopDocument(const Document* aDocument) {
   const Document* current = aDocument;
-  while (const Document* parent = current->GetParentDocument()) {
+  while (const Document* parent = current->GetInProcessParentDocument()) {
     current = parent;
   }
   return current;
@@ -248,6 +248,10 @@ StylePrefersColorScheme Gecko_MediaFeatures_PrefersColorScheme(
     return StylePrefersColorScheme::Light;
   }
   if (nsPresContext* pc = aDocument->GetPresContext()) {
+    if (auto devtoolsOverride = pc->GetOverridePrefersColorScheme()) {
+      return *devtoolsOverride;
+    }
+
     if (pc->IsPrintingOrPrintPreview()) {
       return StylePrefersColorScheme::Light;
     }

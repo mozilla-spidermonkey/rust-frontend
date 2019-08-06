@@ -13,18 +13,51 @@
 .meta {
   display: flex;
   align-items: center;
-  padding: 10px 18px;
+  padding: 5px 18px;
   border-bottom: 1px solid var(--in-content-box-border-color);
-  background-color: var(--in-content-box-info-background);
-  position: sticky;
-  top: 0;
+  background-color: var(--in-content-box-background);
+  color: var(--in-content-deemphasized-text);
+  font-size: 0.8em;
+}
+
+#login-sort {
+  background-color: transparent;
+  padding-inline-start: 0;
+  min-height: initial;
+  font: inherit;
+  font-weight: 600;
+  color: var(--in-content-text-color) !important;
+}
+
+#login-sort > option {
+  font-weight: normal;
 }
 
 .count {
-  flex: auto;
+  flex-grow: 1;
   text-align: end;
-  font-size: smaller;
   margin-inline-start: 18px;
+}
+
+.container {
+  display: contents;
+}
+
+:host(.no-logins) ol,
+:host(:not(.no-logins)) .intro {
+  display: none;
+}
+
+.intro {
+  text-align: center;
+  padding: 1em;
+  max-width: 50ch; /* This should be kept in sync with login-list-item username and title max-width */
+  flex-grow: 1;
+  border-bottom: 1px solid var(--in-content-box-border-color);
+}
+
+.intro span {
+  font-size: 0.85em;
 }
 
 ol {
@@ -32,4 +65,75 @@ ol {
   margin-bottom: 0;
   padding-inline-start: 0;
   overflow: hidden auto;
+  flex-grow: 1;
+  box-shadow: inset 0 -10px 10px -10px var(--grey-90-a20);
+}
+
+.create-login-button {
+  margin: 16px;
+}
+
+.login-list-item {
+  display: block;
+  padding: 10px;
+  padding-inline-end: 18px;
+  padding-inline-start: 14px;
+  border-inline-start: 4px solid transparent;
+  border-bottom: 1px solid var(--in-content-box-border-color);
+}
+
+.login-list-item:hover {
+  background-color: var(--in-content-box-background-hover);
+}
+
+.login-list-item:hover:active {
+  background-color: var(--in-content-box-background-active);
+}
+
+.login-list-item.keyboard-selected {
+  border-inline-start-color: var(--in-content-border-active-shadow);
+  background-color: var(--in-content-box-background-odd);
+}
+
+.login-list-item.selected {
+  border-inline-start-color: var(--in-content-border-highlight);
+  background-color: var(--in-content-box-background-hover);
+}
+
+.login-list-item.selected .title {
+  font-weight: 600;
+}
+
+.title,
+.username {
+  display: block;
+  max-width: 50ch;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.username {
+  font-size: 0.85em;
+  color: var(--in-content-deemphasized-text);
+}
+
+.login-list-item.breached {
+  padding-inline-end: 48px;
+  background-image: url("chrome://global/skin/icons/warning.svg");
+  background-position: right 24px center;
+  background-repeat: no-repeat;
+  -moz-context-properties: fill;
+  fill: var(--red-90);
+}
+
+.login-list-item.breached:dir(rtl) {
+  background-position: left 24px center;
+}
+
+@supports -moz-bool-pref("browser.in-content.dark-mode") {
+  @media (prefers-color-scheme: dark) {
+    .login-list-item.breached {
+      fill: var(--red-60);
+    }
+  }
 }

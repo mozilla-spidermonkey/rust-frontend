@@ -2699,10 +2699,14 @@ void TypeZone::addPendingRecompile(JSContext* cx, JSScript* script) {
   // Trigger recompilation of any callers inlining this script.
   if (JitScript* jitScript = script->jitScript()) {
     AutoSweepJitScript sweep(script);
-    for (const RecompileInfo& info : jitScript->inlinedCompilations(sweep)) {
-      addPendingRecompile(cx, info);
+    RecompileInfoVector* inlinedCompilations =
+        jitScript->maybeInlinedCompilations(sweep);
+    if (inlinedCompilations) {
+      for (const RecompileInfo& info : *inlinedCompilations) {
+        addPendingRecompile(cx, info);
+      }
+      inlinedCompilations->clearAndFree();
     }
-    jitScript->inlinedCompilations(sweep).clearAndFree();
   }
 }
 
@@ -3046,7 +3050,7 @@ void ObjectGroup::markUnknown(const AutoSweepObjectGroup& sweep,
   clearProperties(sweep);
 }
 
-void ObjectGroup::detachNewScript(bool writeBarrier, ObjectGroup* replacement) {
+void ObjectGroup::detachNewScript(bool isSweeping, ObjectGroup* replacement) {
   // Clear the TypeNewScript from this ObjectGroup and, if it has been
   // analyzed, remove it from the newObjectGroups table so that it will not be
   // produced by calling 'new' on the associated function anymore.
@@ -3075,7 +3079,7 @@ void ObjectGroup::detachNewScript(bool writeBarrier, ObjectGroup* replacement) {
     MOZ_ASSERT(!replacement);
   }
 
-  setAddendum(Addendum_None, nullptr, writeBarrier);
+  setAddendum(Addendum_None, nullptr, isSweeping);
 }
 
 void ObjectGroup::maybeClearNewScriptOnOOM() {
@@ -3094,7 +3098,7 @@ void ObjectGroup::maybeClearNewScriptOnOOM() {
   addFlags(sweep, OBJECT_FLAG_NEW_SCRIPT_CLEARED);
 
   // This method is called during GC sweeping, so don't trigger pre barriers.
-  detachNewScript(/* writeBarrier = */ false, nullptr);
+  detachNewScript(/* isSweeping = */ true, nullptr);
 
   js_delete(newScript);
 }
@@ -3118,7 +3122,7 @@ void ObjectGroup::clearNewScript(JSContext* cx,
     newScript->function()->setNewScriptCleared();
   }
 
-  detachNewScript(/* writeBarrier = */ true, replacement);
+  detachNewScript(/* isSweeping = */ false, replacement);
 
   if (!cx->isHelperThreadContext()) {
     bool found = newScript->rollbackPartiallyInitializedObjects(cx, this);
@@ -3440,7 +3444,7 @@ void JitScript::MonitorBytecodeTypeSlow(JSContext* cx, JSScript* script,
 /* static */
 void JitScript::MonitorBytecodeType(JSContext* cx, JSScript* script,
                                     jsbytecode* pc, const js::Value& rval) {
-  MOZ_ASSERT(CodeSpec[*pc].format & JOF_TYPESET);
+  MOZ_ASSERT(BytecodeOpHasTypeSet(JSOp(*pc)));
 
   if (!script->jitScript()) {
     return;
@@ -4410,8 +4414,8 @@ void JitScript::sweepTypes(const js::AutoSweepJitScript& sweep, Zone* zone) {
   TypeZone& types = zone->types;
 
   // Sweep the inlinedCompilations Vector.
-  {
-    RecompileInfoVector& inlinedCompilations = this->inlinedCompilations(sweep);
+  if (maybeInlinedCompilations(sweep)) {
+    RecompileInfoVector& inlinedCompilations = *maybeInlinedCompilations(sweep);
     size_t dest = 0;
     for (size_t i = 0; i < inlinedCompilations.length(); i++) {
       if (inlinedCompilations[i].shouldSweep(types)) {
@@ -4507,10 +4511,12 @@ AutoClearTypeInferenceStateOnOOM::AutoClearTypeInferenceStateOnOOM(Zone* zone)
 
 AutoClearTypeInferenceStateOnOOM::~AutoClearTypeInferenceStateOnOOM() {
   if (zone->types.hadOOMSweepingTypes()) {
+    gc::AutoSetThreadIsSweeping threadIsSweeping;
     JSRuntime* rt = zone->runtimeFromMainThread();
+    FreeOp fop(rt);
     js::CancelOffThreadIonCompile(rt);
     zone->setPreservingCode(false);
-    zone->discardJitCode(rt->defaultFreeOp(), Zone::KeepBaselineCode);
+    zone->discardJitCode(&fop, Zone::KeepBaselineCode);
     zone->types.clearAllNewScriptsOnOOM();
   }
 

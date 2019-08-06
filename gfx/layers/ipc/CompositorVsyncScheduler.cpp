@@ -16,7 +16,8 @@
 #endif
 #include "mozilla/AutoRestore.h"  // for AutoRestore
 #include "mozilla/DebugOnly.h"    // for DebugOnly
-#include "mozilla/StaticPrefs.h"  // for StaticPrefs
+#include "mozilla/StaticPrefs_gfx.h"
+#include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/gfx/2D.h"       // for DrawTarget
 #include "mozilla/gfx/Point.h"    // for IntSize
 #include "mozilla/gfx/Rect.h"     // for IntSize
@@ -78,9 +79,10 @@ CompositorVsyncScheduler::CompositorVsyncScheduler(
 
   // mAsapScheduling is set on the main thread during init,
   // but is only accessed after on the compositor thread.
-  mAsapScheduling = StaticPrefs::LayersCompositionFrameRate() == 0 ||
-                    gfxPlatform::IsInLayoutAsapMode() ||
-                    recordreplay::IsRecordingOrReplaying();
+  mAsapScheduling =
+      StaticPrefs::layers_offmainthreadcomposition_frame_rate() == 0 ||
+      gfxPlatform::IsInLayoutAsapMode() ||
+      recordreplay::IsRecordingOrReplaying();
 }
 
 CompositorVsyncScheduler::~CompositorVsyncScheduler() {
@@ -255,7 +257,7 @@ void CompositorVsyncScheduler::Composite(VsyncId aId,
         mozilla::Telemetry::COMPOSITE_FRAME_ROUNDTRIP_TIME,
         compositeFrameTotal.ToMilliseconds());
   } else if (mVsyncNotificationsSkipped++ >
-             StaticPrefs::CompositorUnobserveCount()) {
+             StaticPrefs::gfx_vsync_compositor_unobserve_count_AtStartup()) {
     UnobserveVsync();
   }
 }

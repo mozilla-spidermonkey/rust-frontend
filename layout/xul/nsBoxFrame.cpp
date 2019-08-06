@@ -493,6 +493,9 @@ void nsBoxFrame::DidReflow(nsPresContext* aPresContext,
       mState & (NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN);
   nsFrame::DidReflow(aPresContext, aReflowInput);
   AddStateBits(preserveBits);
+  if (preserveBits & NS_FRAME_IS_DIRTY) {
+    this->MarkSubtreeDirty();
+  }
 }
 
 bool nsBoxFrame::HonorPrintBackgroundSettings() {
@@ -881,6 +884,7 @@ void nsBoxFrame::RemoveFrame(ChildListID aListID, nsIFrame* aOldFrame) {
 }
 
 void nsBoxFrame::InsertFrames(ChildListID aListID, nsIFrame* aPrevFrame,
+                              const nsLineList::iterator* aPrevFrameLine,
                               nsFrameList& aFrameList) {
   NS_ASSERTION(!aPrevFrame || aPrevFrame->GetParent() == this,
                "inserting after sibling frame with different parent");

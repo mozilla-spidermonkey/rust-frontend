@@ -16,7 +16,7 @@
 #include "mozIGeckoMediaPluginService.h"
 #include "mozilla/CDMProxy.h"
 #include "mozilla/EMEUtils.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_media.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Unused.h"
 #include "nsAutoPtr.h"
@@ -383,7 +383,7 @@ already_AddRefed<MediaDataDecoder> EMEDecoderModule::CreateVideoDecoder(
     const CreateDecoderParams& aParams) {
   MOZ_ASSERT(aParams.mConfig.mCrypto.IsEncrypted());
 
-  if (StaticPrefs::MediaEmeVideoBlank()) {
+  if (StaticPrefs::media_eme_video_blank()) {
     EME_LOG("EMEDecoderModule::CreateVideoDecoder() creating a blank decoder.");
     RefPtr<PlatformDecoderModule> m(CreateBlankDecoderModule());
     return m->CreateVideoDecoder(aParams);
@@ -418,7 +418,7 @@ already_AddRefed<MediaDataDecoder> EMEDecoderModule::CreateAudioDecoder(
   MOZ_ASSERT(!SupportsMimeType(aParams.mConfig.mMimeType, nullptr));
   MOZ_ASSERT(mPDM);
 
-  if (StaticPrefs::MediaEmeAudioBlank()) {
+  if (StaticPrefs::media_eme_audio_blank()) {
     EME_LOG("EMEDecoderModule::CreateAudioDecoder() creating a blank decoder.");
     RefPtr<PlatformDecoderModule> m(CreateBlankDecoderModule());
     return m->CreateAudioDecoder(aParams);

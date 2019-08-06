@@ -167,6 +167,7 @@ enum {
   JS_TELEMETRY_GC_NURSERY_BYTES,
   JS_TELEMETRY_GC_PRETENURE_COUNT,
   JS_TELEMETRY_GC_NURSERY_PROMOTION_RATE,
+  JS_TELEMETRY_GC_TENURED_SURVIVAL_RATE,
   JS_TELEMETRY_GC_MARK_RATE,
   JS_TELEMETRY_GC_TIME_BETWEEN_S,
   JS_TELEMETRY_GC_TIME_BETWEEN_SLICES_MS,
@@ -1058,6 +1059,18 @@ MOZ_ALWAYS_INLINE bool CheckRecursionLimitWithStackPointer(JSContext* cx,
   return true;
 }
 
+MOZ_ALWAYS_INLINE bool CheckRecursionLimitWithExtra(JSContext* cx,
+                                                    size_t extra) {
+  char stackDummy;
+  char* sp = &stackDummy;
+#if JS_STACK_GROWTH_DIRECTION > 0
+  sp += extra;
+#else
+  sp -= extra;
+#endif
+  return CheckRecursionLimitWithStackPointer(cx, sp);
+}
+
 MOZ_ALWAYS_INLINE bool CheckSystemRecursionLimit(JSContext* cx) {
   return CheckRecursionLimit(cx,
                              GetNativeStackLimit(cx, JS::StackForSystemCode));
@@ -1239,7 +1252,8 @@ typedef DOMProxyShadowsResult (*DOMProxyShadowsCheck)(JSContext* cx,
                                                       JS::HandleId id);
 JS_FRIEND_API void SetDOMProxyInformation(
     const void* domProxyHandlerFamily,
-    DOMProxyShadowsCheck domProxyShadowsCheck);
+    DOMProxyShadowsCheck domProxyShadowsCheck,
+    const void* domRemoteProxyHandlerFamily);
 
 const void* GetDOMProxyHandlerFamily();
 DOMProxyShadowsCheck GetDOMProxyShadowsCheck();
@@ -1247,6 +1261,8 @@ inline bool DOMProxyIsShadowing(DOMProxyShadowsResult result) {
   return result == Shadows || result == ShadowsViaDirectExpando ||
          result == ShadowsViaIndirectExpando;
 }
+
+const void* GetDOMRemoteProxyHandlerFamily();
 
 // Callbacks and other information for use by the JITs when optimizing accesses
 // on xray wrappers.
@@ -2614,6 +2630,10 @@ extern JS_FRIEND_API JSObject* ToWindowIfWindowProxy(JSObject* obj);
 extern bool AddMozDateTimeFormatConstructor(JSContext* cx,
                                             JS::Handle<JSObject*> intl);
 
+// Create and add the Intl.Locale constructor function to the provided object.
+// This function throws if called more than once per realm/global object.
+extern bool AddLocaleConstructor(JSContext* cx, JS::Handle<JSObject*> intl);
+
 class MOZ_STACK_CLASS JS_FRIEND_API AutoAssertNoContentJS {
  public:
   explicit AutoAssertNoContentJS(JSContext* cx);
@@ -2664,6 +2684,12 @@ extern JS_FRIEND_API void LogDtor(void* self, const char* type, uint32_t sz);
  * and not malloc allocated memory associated with GC things.
  */
 extern JS_FRIEND_API uint64_t GetGCHeapUsageForObjectZone(JSObject* obj);
+
+/**
+ * Return whether a global object's realm has had instrumentation enabled by a
+ * Debugger.
+ */
+extern JS_FRIEND_API bool GlobalHasInstrumentation(JSObject* global);
 
 } /* namespace js */
 

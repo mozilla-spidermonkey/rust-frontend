@@ -37,30 +37,30 @@ const TEST_URI = `data:text/html,<meta charset=utf8>
   </script>`;
 
 add_task(async function() {
-  // Run test with legacy JsTerm
-  await pushPref("devtools.webconsole.jsterm.codeMirror", false);
-  await performTests();
-  // And then run it with the CodeMirror-powered one.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", true);
-  await performTests();
-});
-
-async function performTests() {
   const hud = await openNewTabAndConsole(TEST_URI);
-  const {jsterm} = hud;
-  const {autocompletePopup} = jsterm;
+  const { jsterm } = hud;
+  const { autocompletePopup } = jsterm;
 
   for (const helper of HELPERS) {
     await setInputValueForAutocompletion(hud, helper);
-    const autocompleteItems = getPopupLabels(autocompletePopup).filter(l => l === helper);
-    is(autocompleteItems.length, 1,
-      `There's no duplicated "${helper}" item in the autocomplete popup`);
+    const autocompleteItems = getPopupLabels(autocompletePopup).filter(
+      l => l === helper
+    );
+    is(
+      autocompleteItems.length,
+      1,
+      `There's no duplicated "${helper}" item in the autocomplete popup`
+    );
 
     await executeAndWaitForMessage(
-      hud, `${helper}()`, `"${PREFIX + helper}"`, ".result");
+      hud,
+      `${helper}()`,
+      `"${PREFIX + helper}"`,
+      ".result"
+    );
     ok(true, `output is correct for ${helper}()`);
   }
-}
+});
 
 function getPopupLabels(popup) {
   return popup.getItems().map(item => item.label);

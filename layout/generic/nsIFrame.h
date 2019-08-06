@@ -600,7 +600,9 @@ class nsIFrame : public nsQueryFrame {
         mMayHaveTransformAnimation(false),
         mMayHaveOpacityAnimation(false),
         mAllDescendantsAreInvisible(false),
-        mInScrollAnchorChain(false) {
+        mHasBSizeChange(false),
+        mInScrollAnchorChain(false),
+        mDescendantMayDependOnItsStaticPosition(false) {
     MOZ_ASSERT(mComputedStyle);
     MOZ_ASSERT(mPresContext);
     mozilla::PodZero(&mOverflow);
@@ -2128,12 +2130,10 @@ class nsIFrame : public nsQueryFrame {
   /**
    * Flow member functions
    */
-  virtual nsIFrame* GetPrevInFlowVirtual() const = 0;
-  nsIFrame* GetPrevInFlow() const { return GetPrevInFlowVirtual(); }
+  virtual nsIFrame* GetPrevInFlow() const = 0;
   virtual void SetPrevInFlow(nsIFrame*) = 0;
 
-  virtual nsIFrame* GetNextInFlowVirtual() const = 0;
-  nsIFrame* GetNextInFlow() const { return GetNextInFlowVirtual(); }
+  virtual nsIFrame* GetNextInFlow() const = 0;
   virtual void SetNextInFlow(nsIFrame*) = 0;
 
   /**
@@ -2157,6 +2157,12 @@ class nsIFrame : public nsQueryFrame {
    * directly; PresShell::FrameNeedsReflow() will call it instead.
    */
   virtual void MarkIntrinsicISizesDirty() = 0;
+
+  /**
+   * Make this frame and all descendants dirty (if not already).
+   * Exceptions: XULBoxFrame and TableColGroupFrame children.
+   */
+  void MarkSubtreeDirty();
 
   /**
    * Get the min-content intrinsic inline size of the frame.  This must be
@@ -4093,6 +4099,8 @@ class nsIFrame : public nsQueryFrame {
   void SetMayHaveOpacityAnimation() { mMayHaveOpacityAnimation = true; }
 
   // Returns true if this frame is visible or may have visible descendants.
+  // Note: This function is accurate only on primary frames, because
+  // mAllDescendantsAreInvisible is not updated on continuations.
   bool IsVisibleOrMayHaveVisibleDescendants() const {
     return !mAllDescendantsAreInvisible || StyleVisibility()->IsVisible();
   }
@@ -4180,6 +4188,19 @@ class nsIFrame : public nsQueryFrame {
   bool MayHaveWillChangeBudget() { return mMayHaveWillChangeBudget; }
   void SetMayHaveWillChangeBudget(bool aHasBudget) {
     mMayHaveWillChangeBudget = aHasBudget;
+  }
+
+  bool HasBSizeChange() const { return mHasBSizeChange; }
+  void SetHasBSizeChange(bool aHasBSizeChange) {
+    mHasBSizeChange = aHasBSizeChange;
+  }
+
+  bool DescendantMayDependOnItsStaticPosition() const {
+    return mDescendantMayDependOnItsStaticPosition;
+  }
+
+  void SetDescendantMayDependOnItsStaticPosition(bool aValue) {
+    mDescendantMayDependOnItsStaticPosition = aValue;
   }
 
   /**
@@ -4401,10 +4422,19 @@ class nsIFrame : public nsQueryFrame {
    */
   bool mAllDescendantsAreInvisible : 1;
 
+  bool mHasBSizeChange : 1;
+
   /**
    * True if we are or contain the scroll anchor for a scrollable frame.
    */
   bool mInScrollAnchorChain : 1;
+
+  /**
+   * True if we may have any descendant whose positioning may depend on its
+   * static position (and thus which we need to recompute the position for if we
+   * move).
+   */
+  bool mDescendantMayDependOnItsStaticPosition : 1;
 
  protected:
   // Helpers

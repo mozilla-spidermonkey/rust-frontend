@@ -26,6 +26,7 @@
 
   <linkset>
     <html:link rel="localization" href="branding/brand.ftl"/>
+    <html:link rel="localization" href="browser/branding/brandings.ftl"/>
     <html:link rel="localization" href="browser/branding/sync-brand.ftl"/>
     <html:link rel="localization" href="browser/preferences/preferences.ftl"/>
     <!-- Used by fontbuilder.js -->
@@ -181,16 +182,16 @@
             is="search-textbox" id="searchInput"
             data-l10n-id="search-input-box"
             data-l10n-attrs="style"
-            hidden="true" clickSelectsAll="true"/>
+            hidden="true"/>
         </hbox>
         <vbox id="mainPrefPane">
-#include searchResults.xul
-#include main.xul
-#include home.xul
-#include search.xul
-#include privacy.xul
-#include containers.xul
-#include sync.xul
+#include searchResults.inc.xul
+#include main.inc.xul
+#include home.inc.xul
+#include search.inc.xul
+#include privacy.inc.xul
+#include containers.inc.xul
+#include sync.inc.xul
         </vbox>
       </vbox>
     </vbox>

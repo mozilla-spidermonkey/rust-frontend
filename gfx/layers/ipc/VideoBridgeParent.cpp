@@ -24,6 +24,14 @@ VideoBridgeParent::VideoBridgeParent() : mClosed(false) {
 
 VideoBridgeParent::~VideoBridgeParent() { sVideoBridgeSingleton = nullptr; }
 
+void VideoBridgeParent::Open(Endpoint<PVideoBridgeParent>&& aEndpoint) {
+  RefPtr<VideoBridgeParent> parent = new VideoBridgeParent();
+  if (!aEndpoint.Bind(parent)) {
+    // We can't recover from this.
+    MOZ_CRASH("Failed to bind RemoteDecoderManagerParent to endpoint");
+  }
+}
+
 /* static */
 VideoBridgeParent* VideoBridgeParent::GetSingleton() {
   return sVideoBridgeSingleton;
@@ -64,7 +72,7 @@ bool VideoBridgeParent::DeallocPTextureParent(PTextureParent* actor) {
 }
 
 void VideoBridgeParent::SendAsyncMessage(
-    const InfallibleTArray<AsyncParentMessageData>& aMessage) {
+    const nsTArray<AsyncParentMessageData>& aMessage) {
   MOZ_ASSERT(false, "AsyncMessages not supported");
 }
 

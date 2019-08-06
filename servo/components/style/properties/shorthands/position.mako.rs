@@ -5,6 +5,7 @@
 <%namespace name="helpers" file="/helpers.mako.rs" />
 
 <%helpers:shorthand name="flex-flow"
+                    engines="gecko servo-2013"
                     sub_properties="flex-direction flex-wrap"
                     extra_prefixes="webkit"
                     derive_serialize="True"
@@ -44,6 +45,7 @@
 </%helpers:shorthand>
 
 <%helpers:shorthand name="flex"
+                    engines="gecko servo-2013"
                     sub_properties="flex-grow flex-shrink flex-basis"
                     extra_prefixes="webkit"
                     derive_serialize="True"
@@ -108,9 +110,13 @@
     }
 </%helpers:shorthand>
 
-<%helpers:shorthand name="gap" alias="grid-gap" sub_properties="row-gap column-gap"
-                    spec="https://drafts.csswg.org/css-align-3/#gap-shorthand"
-                    products="gecko">
+<%helpers:shorthand
+    name="gap"
+    engines="gecko"
+    alias="grid-gap"
+    sub_properties="row-gap column-gap"
+    spec="https://drafts.csswg.org/css-align-3/#gap-shorthand"
+>
   use crate::properties::longhands::{row_gap, column_gap};
 
   pub fn parse_value<'i, 't>(context: &ParserContext, input: &mut Parser<'i, 't>)
@@ -139,11 +145,15 @@
 </%helpers:shorthand>
 
 % for kind in ["row", "column"]:
-<%helpers:shorthand name="grid-${kind}" sub_properties="grid-${kind}-start grid-${kind}-end"
-                    spec="https://drafts.csswg.org/css-grid/#propdef-grid-${kind}"
-                    products="gecko">
+<%helpers:shorthand
+    name="grid-${kind}"
+    sub_properties="grid-${kind}-start grid-${kind}-end"
+    engines="gecko",
+    spec="https://drafts.csswg.org/css-grid/#propdef-grid-${kind}"
+>
     use crate::values::specified::GridLine;
     use crate::parser::Parse;
+    use crate::Zero;
 
     // NOTE: Since both the shorthands have the same code, we should (re-)use code from one to implement
     // the other. This might not be a big deal for now, but we should consider looking into this in the future
@@ -157,8 +167,8 @@
             GridLine::parse(context, input)?
         } else {
             let mut line = GridLine::auto();
-            if start.line_num.is_none() && !start.is_span {
-                line.ident = start.ident.clone();       // ident from start value should be taken
+            if start.line_num.is_zero() && !start.is_span {
+                line.ident = start.ident.clone(); // ident from start value should be taken
             }
 
             line
@@ -180,12 +190,15 @@
 </%helpers:shorthand>
 % endfor
 
-<%helpers:shorthand name="grid-area"
-                    sub_properties="grid-row-start grid-row-end grid-column-start grid-column-end"
-                    spec="https://drafts.csswg.org/css-grid/#propdef-grid-area"
-                    products="gecko">
+<%helpers:shorthand
+    name="grid-area"
+    engines="gecko"
+    sub_properties="grid-row-start grid-row-end grid-column-start grid-column-end"
+    spec="https://drafts.csswg.org/css-grid/#propdef-grid-area"
+>
     use crate::values::specified::GridLine;
     use crate::parser::Parse;
+    use crate::Zero;
 
     // The code is the same as `grid-{row,column}` except that this can have four values at most.
     pub fn parse_value<'i, 't>(
@@ -194,7 +207,7 @@
     ) -> Result<Longhands, ParseError<'i>> {
         fn line_with_ident_from(other: &GridLine) -> GridLine {
             let mut this = GridLine::auto();
-            if other.line_num.is_none() && !other.is_span {
+            if other.line_num.is_zero() && !other.is_span {
                 this.ident = other.ident.clone();
             }
 
@@ -247,10 +260,12 @@
     }
 </%helpers:shorthand>
 
-<%helpers:shorthand name="grid-template"
-                    sub_properties="grid-template-rows grid-template-columns grid-template-areas"
-                    spec="https://drafts.csswg.org/css-grid/#propdef-grid-template"
-                    products="gecko">
+<%helpers:shorthand
+    name="grid-template"
+    engines="gecko"
+    sub_properties="grid-template-rows grid-template-columns grid-template-areas"
+    spec="https://drafts.csswg.org/css-grid/#propdef-grid-template"
+>
     use crate::parser::Parse;
     use servo_arc::Arc;
     use crate::values::generics::grid::{TrackSize, TrackList, TrackListType};
@@ -474,11 +489,13 @@
     }
 </%helpers:shorthand>
 
-<%helpers:shorthand name="grid"
-                    sub_properties="grid-template-rows grid-template-columns grid-template-areas
-                                    grid-auto-rows grid-auto-columns grid-auto-flow"
-                    spec="https://drafts.csswg.org/css-grid/#propdef-grid"
-                    products="gecko">
+<%helpers:shorthand
+    name="grid"
+    engines="gecko"
+    sub_properties="grid-template-rows grid-template-columns grid-template-areas
+                    grid-auto-rows grid-auto-columns grid-auto-flow"
+    spec="https://drafts.csswg.org/css-grid/#propdef-grid"
+>
     use crate::parser::Parse;
     use crate::properties::longhands::{grid_auto_columns, grid_auto_rows, grid_auto_flow};
     use crate::values::generics::grid::{GridTemplateComponent, TrackListType};
@@ -627,9 +644,12 @@
     }
 </%helpers:shorthand>
 
-<%helpers:shorthand name="place-content" sub_properties="align-content justify-content"
-                    spec="https://drafts.csswg.org/css-align/#propdef-place-content"
-                    products="gecko">
+<%helpers:shorthand
+    name="place-content"
+    engines="gecko"
+    sub_properties="align-content justify-content"
+    spec="https://drafts.csswg.org/css-align/#propdef-place-content"
+>
     use crate::values::specified::align::{AlignContent, JustifyContent, ContentDistribution, AxisDirection};
 
     pub fn parse_value<'i, 't>(
@@ -679,9 +699,12 @@
     }
 </%helpers:shorthand>
 
-<%helpers:shorthand name="place-self" sub_properties="align-self justify-self"
-                    spec="https://drafts.csswg.org/css-align/#place-self-property"
-                    products="gecko">
+<%helpers:shorthand
+    name="place-self"
+    engines="gecko"
+    sub_properties="align-self justify-self"
+    spec="https://drafts.csswg.org/css-align/#place-self-property"
+>
     use crate::values::specified::align::{AlignSelf, JustifySelf, SelfAlignment, AxisDirection};
 
     pub fn parse_value<'i, 't>(
@@ -717,9 +740,12 @@
     }
 </%helpers:shorthand>
 
-<%helpers:shorthand name="place-items" sub_properties="align-items justify-items"
-                    spec="https://drafts.csswg.org/css-align/#place-items-property"
-                    products="gecko">
+<%helpers:shorthand
+    name="place-items"
+    engines="gecko"
+    sub_properties="align-items justify-items"
+    spec="https://drafts.csswg.org/css-align/#place-items-property"
+>
     use crate::values::specified::align::{AlignItems, JustifyItems};
     use crate::parser::Parse;
 
@@ -762,6 +788,7 @@ ${helpers.four_sides_shorthand(
     "inset",
     "%s",
     "specified::LengthPercentageOrAuto::parse",
+    engines="gecko servo-2013",
     spec="https://drafts.csswg.org/css-logical/#propdef-inset",
     allow_quirks="No",
 )}
@@ -771,6 +798,7 @@ ${helpers.two_properties_shorthand(
     "inset-block-start",
     "inset-block-end",
     "specified::LengthPercentageOrAuto::parse",
+    engines="gecko servo-2013",
     spec="https://drafts.csswg.org/css-logical/#propdef-inset-block"
 )}
 
@@ -779,5 +807,6 @@ ${helpers.two_properties_shorthand(
     "inset-inline-start",
     "inset-inline-end",
     "specified::LengthPercentageOrAuto::parse",
+    engines="gecko servo-2013",
     spec="https://drafts.csswg.org/css-logical/#propdef-inset-inline"
 )}

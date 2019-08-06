@@ -2,7 +2,9 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const {HUDService} = require("devtools/client/webconsole/hudservice");
+const {
+  BrowserConsoleManager,
+} = require("devtools/client/webconsole/browser-console-manager");
 
 function test() {
   waitForExplicitFinish();
@@ -12,8 +14,10 @@ function test() {
     openScratchpad(runTests);
   });
 
-  BrowserTestUtils.loadURI(gBrowser, "data:text/html;charset=utf8,test Scratchpad." +
-                   "openErrorConsole()");
+  BrowserTestUtils.loadURI(
+    gBrowser,
+    "data:text/html;charset=utf8,test Scratchpad." + "openErrorConsole()"
+  );
 }
 
 function runTests() {
@@ -21,14 +25,14 @@ function runTests() {
     Services.obs.removeObserver(observer, "web-console-created");
     aSubject.QueryInterface(Ci.nsISupportsString);
 
-    const hud = HUDService.getBrowserConsole();
+    const hud = BrowserConsoleManager.getBrowserConsole();
     ok(hud, "browser console is open");
     is(aSubject.data, hud.hudId, "notification hudId is correct");
 
-    HUDService.toggleBrowserConsole().then(finish);
+    BrowserConsoleManager.toggleBrowserConsole().then(finish);
   }, "web-console-created");
 
-  const hud = HUDService.getBrowserConsole();
+  const hud = BrowserConsoleManager.getBrowserConsole();
   ok(!hud, "browser console is not open");
   info("wait for the browser console to open from Scratchpad");
 

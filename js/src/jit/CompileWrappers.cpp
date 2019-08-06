@@ -38,10 +38,6 @@ GeckoProfilerRuntime& CompileRuntime::geckoProfiler() {
   return runtime()->geckoProfiler();
 }
 
-bool CompileRuntime::jitSupportsFloatingPoint() {
-  return runtime()->jitSupportsFloatingPoint;
-}
-
 bool CompileRuntime::hadOutOfMemory() { return runtime()->hadOutOfMemory; }
 
 bool CompileRuntime::profilingScripts() { return runtime()->profilingScripts; }
@@ -147,13 +143,13 @@ uint32_t* CompileZone::addressOfNurseryAllocCount() {
 }
 
 bool CompileZone::canNurseryAllocateStrings() {
-  return nurseryExists() &&
+  return nurseryEnabled() &&
          zone()->runtimeFromAnyThread()->gc.nursery().canAllocateStrings() &&
          zone()->allocNurseryStrings;
 }
 
-bool CompileZone::nurseryExists() {
-  return zone()->runtimeFromAnyThread()->gc.nursery().exists();
+bool CompileZone::nurseryEnabled() {
+  return zone()->runtimeFromAnyThread()->gc.nursery().isEnabled();
 }
 
 void CompileZone::setMinorGCShouldCancelIonCompilations() {

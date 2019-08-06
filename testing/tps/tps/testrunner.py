@@ -2,6 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import, print_function
+
 import json
 import os
 import re
@@ -152,7 +154,7 @@ class TPSTestRunner(object):
         f.write(msg)
         f.close()
         if printToConsole:
-            print msg
+            print(msg)
 
     def writeToResultFile(self, postdata, body=None,
                           sendTo=['crossweave@mozilla.com']):
@@ -266,7 +268,7 @@ class TPSTestRunner(object):
                 break
 
         for profilename in profiles:
-            print "### Cleanup Profile ", profilename
+            print("### Cleanup Profile ", profilename)
             cleanup_phase = TPSTestPhase(
                 'cleanup-' + profilename,
                 profiles[profilename], testname,
@@ -340,7 +342,7 @@ class TPSTestRunner(object):
 
         self.log(logstr, True)
         for phase in phaselist:
-            print "\t%s: %s" % (phase.phase, phase.status)
+            print("\t{}: {}".format(phase.phase, phase.status))
 
         return resultdata
 
@@ -421,9 +423,9 @@ class TPSTestRunner(object):
             self.rlock.release()
 
         # dump out a summary of test results
-        print 'Test Summary\n'
+        print('Test Summary\n')
         for test in self.postdata.get('tests', {}):
-            print '%s | %s | %s' % (test['state'], test['name'], test['message'])
+            print('{} | {} | {}'.format(test['state'], test['name'], test['message']))
 
     def run_test_group(self):
         self.results = []
@@ -446,7 +448,7 @@ class TPSTestRunner(object):
             for (filename, meta) in testfiles['tests'].items():
                 skip_reason = meta.get("disabled")
                 if skip_reason:
-                    print 'Skipping test %s - %s' % (filename, skip_reason)
+                    print('Skipping test {} - {}'.format(filename, skip_reason))
                 else:
                     testlist.append(filename)
         except ValueError:
@@ -474,8 +476,8 @@ class TPSTestRunner(object):
             else:
                 self.numfailed += 1
                 if self.stop_on_error:
-                    print '\nTest failed with --stop-on-error specified; ' \
-                          'not running any more tests.\n'
+                    print('\nTest failed with --stop-on-error specified; '
+                          'not running any more tests.\n')
                     break
 
         self.mozhttpd.stop()

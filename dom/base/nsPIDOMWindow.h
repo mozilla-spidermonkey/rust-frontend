@@ -25,7 +25,6 @@
 #define DOM_WINDOW_THAWED_TOPIC "dom-window-thawed"
 
 class nsDOMOfflineResourceList;
-class nsDOMWindowList;
 class nsGlobalWindowInner;
 class nsGlobalWindowOuter;
 class nsIArray;
@@ -349,8 +348,8 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
   virtual mozilla::dom::CustomElementRegistry* CustomElements() = 0;
 
   // XXX: This is called on inner windows
-  virtual nsPIDOMWindowOuter* GetScriptableTop() = 0;
-  virtual nsPIDOMWindowOuter* GetScriptableParent() = 0;
+  virtual nsPIDOMWindowOuter* GetInProcessScriptableTop() = 0;
+  virtual nsPIDOMWindowOuter* GetInProcessScriptableParent() = 0;
   virtual already_AddRefed<nsPIWindowRoot> GetTopWindowRoot() = 0;
 
   mozilla::dom::EventTarget* GetChromeEventHandler() const {
@@ -545,8 +544,6 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
   virtual mozilla::dom::Location* Location() = 0;
 
   virtual nsresult GetControllers(nsIControllers** aControllers) = 0;
-
-  virtual nsDOMWindowList* GetFrames() = 0;
 
   virtual nsresult GetInnerWidth(int32_t* aWidth) = 0;
   virtual nsresult GetInnerHeight(int32_t* aHeight) = 0;
@@ -781,24 +778,25 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
    * This function does not cross chrome-content boundaries, so if this
    * window's parent is of a different type, |top| will return this window.
    *
-   * When script reads the top property, we run GetScriptableTop, which
-   * will not cross an <iframe mozbrowser> boundary.
+   * When script reads the top property, we run GetInProcessScriptableTop,
+   * which will not cross an <iframe mozbrowser> boundary.
    *
    * In contrast, C++ calls to GetTop are forwarded to GetRealTop, which
    * ignores <iframe mozbrowser> boundaries.
    */
 
-  virtual already_AddRefed<nsPIDOMWindowOuter> GetTop() = 0;  // Outer only
-  virtual already_AddRefed<nsPIDOMWindowOuter> GetParent() = 0;
-  virtual nsPIDOMWindowOuter* GetScriptableTop() = 0;
-  virtual nsPIDOMWindowOuter* GetScriptableParent() = 0;
+  virtual already_AddRefed<nsPIDOMWindowOuter>
+  GetInProcessTop() = 0;  // Outer only
+  virtual already_AddRefed<nsPIDOMWindowOuter> GetInProcessParent() = 0;
+  virtual nsPIDOMWindowOuter* GetInProcessScriptableTop() = 0;
+  virtual nsPIDOMWindowOuter* GetInProcessScriptableParent() = 0;
   virtual already_AddRefed<nsPIWindowRoot> GetTopWindowRoot() = 0;
 
   /**
-   * Behaves identically to GetScriptableParent except that it returns null
-   * if GetScriptableParent would return this window.
+   * Behaves identically to GetInProcessScriptableParent except that it
+   * returns null if GetInProcessScriptableParent would return this window.
    */
-  virtual nsPIDOMWindowOuter* GetScriptableParentOrNull() = 0;
+  virtual nsPIDOMWindowOuter* GetInProcessScriptableParentOrNull() = 0;
 
   virtual bool IsTopLevelWindowActive() = 0;
 
@@ -1012,7 +1010,7 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
    */
   virtual nsresult OpenNoNavigate(const nsAString& aUrl, const nsAString& aName,
                                   const nsAString& aOptions,
-                                  nsPIDOMWindowOuter** _retval) = 0;
+                                  mozilla::dom::BrowsingContext** _retval) = 0;
 
   /**
    * Fire a popup blocked event on the document.
@@ -1045,19 +1043,17 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
   virtual already_AddRefed<mozilla::dom::Selection> GetSelection() = 0;
   virtual already_AddRefed<nsPIDOMWindowOuter> GetOpener() = 0;
 
-  virtual nsDOMWindowList* GetFrames() = 0;
-
   // aLoadState will be passed on through to the windowwatcher.
   // aForceNoOpener will act just like a "noopener" feature in aOptions except
   //                will not affect any other window features.
   virtual nsresult Open(const nsAString& aUrl, const nsAString& aName,
                         const nsAString& aOptions,
                         nsDocShellLoadState* aLoadState, bool aForceNoOpener,
-                        nsPIDOMWindowOuter** _retval) = 0;
+                        mozilla::dom::BrowsingContext** _retval) = 0;
   virtual nsresult OpenDialog(const nsAString& aUrl, const nsAString& aName,
                               const nsAString& aOptions,
                               nsISupports* aExtraArgument,
-                              nsPIDOMWindowOuter** _retval) = 0;
+                              mozilla::dom::BrowsingContext** _retval) = 0;
 
   virtual nsresult GetInnerWidth(int32_t* aWidth) = 0;
   virtual nsresult GetInnerHeight(int32_t* aHeight) = 0;

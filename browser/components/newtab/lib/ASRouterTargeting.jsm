@@ -1,29 +1,68 @@
-const {FilterExpressions} = ChromeUtils.import("resource://gre/modules/components-utils/FilterExpressions.jsm");
-const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-ChromeUtils.defineModuleGetter(this, "ASRouterPreferences",
-  "resource://activity-stream/lib/ASRouterPreferences.jsm");
-ChromeUtils.defineModuleGetter(this, "AddonManager",
-  "resource://gre/modules/AddonManager.jsm");
-ChromeUtils.defineModuleGetter(this, "NewTabUtils",
-  "resource://gre/modules/NewTabUtils.jsm");
-ChromeUtils.defineModuleGetter(this, "ProfileAge",
-  "resource://gre/modules/ProfileAge.jsm");
-ChromeUtils.defineModuleGetter(this, "ShellService",
-  "resource:///modules/ShellService.jsm");
-ChromeUtils.defineModuleGetter(this, "TelemetryEnvironment",
-  "resource://gre/modules/TelemetryEnvironment.jsm");
-ChromeUtils.defineModuleGetter(this, "AppConstants",
-  "resource://gre/modules/AppConstants.jsm");
-ChromeUtils.defineModuleGetter(this, "AttributionCode",
-  "resource:///modules/AttributionCode.jsm");
+const { FilterExpressions } = ChromeUtils.import(
+  "resource://gre/modules/components-utils/FilterExpressions.jsm"
+);
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
+
+ChromeUtils.defineModuleGetter(
+  this,
+  "ASRouterPreferences",
+  "resource://activity-stream/lib/ASRouterPreferences.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
+  "AddonManager",
+  "resource://gre/modules/AddonManager.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
+  "NewTabUtils",
+  "resource://gre/modules/NewTabUtils.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
+  "ProfileAge",
+  "resource://gre/modules/ProfileAge.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
+  "ShellService",
+  "resource:///modules/ShellService.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
+  "TelemetryEnvironment",
+  "resource://gre/modules/TelemetryEnvironment.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
+  "AppConstants",
+  "resource://gre/modules/AppConstants.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
+  "AttributionCode",
+  "resource:///modules/AttributionCode.jsm"
+);
+XPCOMUtils.defineLazyServiceGetter(
+  this,
+  "UpdateManager",
+  "@mozilla.org/updates/update-manager;1",
+  "nsIUpdateManager"
+);
 
 const FXA_USERNAME_PREF = "services.sync.username";
 const FXA_ENABLED_PREF = "identity.fxaccounts.enabled";
 const SEARCH_REGION_PREF = "browser.search.region";
 const MOZ_JEXL_FILEPATH = "mozjexl";
 
-const {activityStreamProvider: asProvider} = NewTabUtils;
+const { activityStreamProvider: asProvider } = NewTabUtils;
 
 const FRECENT_SITES_UPDATE_INTERVAL = 6 * 60 * 60 * 1000; // Six hours
 const FRECENT_SITES_IGNORE_BLOCKED = false;
@@ -36,7 +75,11 @@ const FRECENT_SITES_MIN_FRECENCY = 100;
  * @param options {{}?} Options object passsed to ActivityStreamProvider method
  * @param updateInterval {number?} Update interval for query. Defaults to FRECENT_SITES_UPDATE_INTERVAL
  */
-function CachedTargetingGetter(property, options = null, updateInterval = FRECENT_SITES_UPDATE_INTERVAL) {
+function CachedTargetingGetter(
+  property,
+  options = null,
+  updateInterval = FRECENT_SITES_UPDATE_INTERVAL
+) {
   return {
     _lastUpdated: 0,
     _value: null,
@@ -45,25 +88,20 @@ function CachedTargetingGetter(property, options = null, updateInterval = FRECEN
       this._lastUpdated = 0;
       this._value = null;
     },
-    get() {
-      return new Promise(async (resolve, reject) => {
-        const now = Date.now();
-        if (now - this._lastUpdated >= updateInterval) {
-          try {
-            this._value = await asProvider[property](options);
-            this._lastUpdated = now;
-          } catch (e) {
-            Cu.reportError(e);
-            reject(e);
-          }
-        }
-        resolve(this._value);
-      });
+    async get() {
+      const now = Date.now();
+      if (now - this._lastUpdated >= updateInterval) {
+        this._value = await asProvider[property](options);
+        this._lastUpdated = now;
+      }
+      return this._value;
     },
   };
 }
 
-function CheckBrowserNeedsUpdate(updateInterval = FRECENT_SITES_UPDATE_INTERVAL) {
+function CheckBrowserNeedsUpdate(
+  updateInterval = FRECENT_SITES_UPDATE_INTERVAL
+) {
   const UpdateChecker = Cc["@mozilla.org/updates/update-checker;1"];
   const checker = {
     _lastUpdated: 0,
@@ -92,8 +130,10 @@ function CheckBrowserNeedsUpdate(updateInterval = FRECENT_SITES_UPDATE_INTERVAL)
           QueryInterface: ChromeUtils.generateQI(["nsIUpdateCheckListener"]),
         };
 
-        if (UpdateChecker && (now - this._lastUpdated >= updateInterval)) {
-          const checkerInstance = UpdateChecker.createInstance(Ci.nsIUpdateChecker);
+        if (UpdateChecker && now - this._lastUpdated >= updateInterval) {
+          const checkerInstance = UpdateChecker.createInstance(
+            Ci.nsIUpdateChecker
+          );
           checkerInstance.checkForUpdates(updateServiceListener, true);
           this._lastUpdated = now;
         } else {
@@ -113,16 +153,13 @@ const QueryCache = {
     });
   },
   queries: {
-    TopFrecentSites: new CachedTargetingGetter(
-      "getTopFrecentSites",
-      {
-        ignoreBlocked: FRECENT_SITES_IGNORE_BLOCKED,
-        numItems: FRECENT_SITES_NUM_ITEMS,
-        topsiteFrecency: FRECENT_SITES_MIN_FRECENCY,
-        onePerDomain: true,
-        includeFavicon: false,
-      }
-    ),
+    TopFrecentSites: new CachedTargetingGetter("getTopFrecentSites", {
+      ignoreBlocked: FRECENT_SITES_IGNORE_BLOCKED,
+      numItems: FRECENT_SITES_NUM_ITEMS,
+      topsiteFrecency: FRECENT_SITES_MIN_FRECENCY,
+      onePerDomain: true,
+      includeFavicon: false,
+    }),
     TotalBookmarksCount: new CachedTargetingGetter("getTotalBookmarksCount"),
     CheckBrowserNeedsUpdate: new CheckBrowserNeedsUpdate(),
   },
@@ -149,9 +186,12 @@ const QueryCache = {
  */
 function sortMessagesByWeightedRank(messages) {
   return messages
-    .map(message => ({message, rank: Math.pow(Math.random(), 1 / message.weight)}))
+    .map(message => ({
+      message,
+      rank: Math.pow(Math.random(), 1 / message.weight),
+    }))
     .sort((a, b) => b.rank - a.rank)
-    .map(({message}) => message);
+    .map(({ message }) => message);
 }
 
 /**
@@ -172,15 +212,47 @@ function sortMessagesByTargeting(messages) {
   });
 }
 
+/**
+ * Sort messages in descending order based on the value of `priority`
+ * Messages with no `priority` are ranked lowest (even after a message with
+ * priority 0).
+ */
+function sortMessagesByPriority(messages) {
+  return messages.sort((a, b) => {
+    if (isNaN(a.priority) && isNaN(b.priority)) {
+      return 0;
+    }
+    if (!isNaN(a.priority) && isNaN(b.priority)) {
+      return -1;
+    }
+    if (isNaN(a.priority) && !isNaN(b.priority)) {
+      return 1;
+    }
+
+    // Descending order; higher priority comes first
+    if (a.priority > b.priority) {
+      return -1;
+    }
+    if (a.priority < b.priority) {
+      return 1;
+    }
+
+    return 0;
+  });
+}
+
 const TargetingGetters = {
   get locale() {
     return Services.locale.appLocaleAsLangTag;
   },
   get localeLanguageCode() {
-    return Services.locale.appLocaleAsLangTag && Services.locale.appLocaleAsLangTag.substr(0, 2);
+    return (
+      Services.locale.appLocaleAsLangTag &&
+      Services.locale.appLocaleAsLangTag.substr(0, 2)
+    );
   },
   get browserSettings() {
-    const {settings} = TelemetryEnvironment.currentEnvironment;
+    const { settings } = TelemetryEnvironment.currentEnvironment;
     return {
       // This way of getting attribution is deprecated - use atttributionData instead
       attribution: settings.attribution,
@@ -208,8 +280,14 @@ const TargetingGetters = {
   },
   get sync() {
     return {
-      desktopDevices: Services.prefs.getIntPref("services.sync.clients.devices.desktop", 0),
-      mobileDevices: Services.prefs.getIntPref("services.sync.clients.devices.mobile", 0),
+      desktopDevices: Services.prefs.getIntPref(
+        "services.sync.clients.devices.desktop",
+        0
+      ),
+      mobileDevices: Services.prefs.getIntPref(
+        "services.sync.clients.devices.mobile",
+        0
+      ),
       totalDevices: Services.prefs.getIntPref("services.sync.numClients", 0),
     };
   },
@@ -218,8 +296,8 @@ const TargetingGetters = {
     return Services.prefs.getBoolPref("xpinstall.enabled", true);
   },
   get addonsInfo() {
-    return AddonManager.getActiveAddons(["extension", "service"])
-      .then(({addons, fullData}) => {
+    return AddonManager.getActiveAddons(["extension", "service"]).then(
+      ({ addons, fullData }) => {
         const info = {};
         for (const addon of addons) {
           info[addon.id] = {
@@ -236,20 +314,24 @@ const TargetingGetters = {
             });
           }
         }
-        return {addons: info, isFullData: fullData};
-      });
+        return { addons: info, isFullData: fullData };
+      }
+    );
   },
   get searchEngines() {
     return new Promise(resolve => {
       // Note: calling init ensures this code is only executed after Search has been initialized
-      Services.search.getVisibleEngines().then(engines => {
-        resolve({
-          current: Services.search.defaultEngine.identifier,
-          installed: engines
-            .map(engine => engine.identifier)
-            .filter(engine => engine),
-        });
-      }).catch(() => resolve({installed: [], current: ""}));
+      Services.search
+        .getVisibleEngines()
+        .then(engines => {
+          resolve({
+            current: Services.search.defaultEngine.identifier,
+            installed: engines
+              .map(engine => engine.identifier)
+              .filter(engine => engine),
+          });
+        })
+        .catch(() => resolve({ installed: [], current: "" }));
     });
   },
   get isDefaultBrowser() {
@@ -262,21 +344,25 @@ const TargetingGetters = {
     return Services.prefs.getIntPref("devtools.selfxss.count");
   },
   get topFrecentSites() {
-    return QueryCache.queries.TopFrecentSites.get().then(sites => sites.map(site => (
-      {
+    return QueryCache.queries.TopFrecentSites.get().then(sites =>
+      sites.map(site => ({
         url: site.url,
-        host: (new URL(site.url)).hostname,
+        host: new URL(site.url).hostname,
         frecency: site.frecency,
         lastVisitDate: site.lastVisitDate,
-      }
-    )));
+      }))
+    );
   },
   get pinnedSites() {
-    return NewTabUtils.pinnedLinks.links.map(site => (site ? {
-      url: site.url,
-      host: (new URL(site.url)).hostname,
-      searchTopSite: site.searchTopSite,
-    } : {}));
+    return NewTabUtils.pinnedLinks.links.map(site =>
+      site
+        ? {
+            url: site.url,
+            host: new URL(site.url).hostname,
+            searchTopSite: site.searchTopSite,
+          }
+        : {}
+    );
   },
   get providerCohorts() {
     return ASRouterPreferences.providers.reduce((prev, current) => {
@@ -308,6 +394,34 @@ const TargetingGetters = {
 
     return false;
   },
+  get hasAccessedFxAPanel() {
+    return Services.prefs.getBoolPref(
+      "identity.fxaccounts.toolbar.accessed",
+      true
+    );
+  },
+  get isWhatsNewPanelEnabled() {
+    return Services.prefs.getBoolPref(
+      "browser.messaging-system.whatsNewPanel.enabled",
+      false
+    );
+  },
+  get earliestFirefoxVersion() {
+    if (UpdateManager.updateCount) {
+      const earliestFirefoxVersion = UpdateManager.getUpdateAt(
+        UpdateManager.updateCount - 1
+      ).previousAppVersion;
+      return parseInt(earliestFirefoxVersion.match(/\d+/), 10);
+    }
+
+    return null;
+  },
+  get isFxABadgeEnabled() {
+    return Services.prefs.getBoolPref(
+      "browser.messaging-system.fxatoolbarbadge.enabled",
+      false
+    );
+  },
 };
 
 this.ASRouterTargeting = {
@@ -320,26 +434,42 @@ this.ASRouterTargeting = {
 
   // Combines the getter properties of two objects without evaluating them
   combineContexts(contextA = {}, contextB = {}) {
-    const sameProperty = Object.keys(contextA).find(p => Object.keys(contextB).includes(p));
+    const sameProperty = Object.keys(contextA).find(p =>
+      Object.keys(contextB).includes(p)
+    );
     if (sameProperty) {
-      Cu.reportError(`Property ${sameProperty} exists in both contexts and is overwritten.`);
+      Cu.reportError(
+        `Property ${sameProperty} exists in both contexts and is overwritten.`
+      );
     }
 
     const context = {};
-    Object.defineProperties(context, Object.getOwnPropertyDescriptors(contextA));
-    Object.defineProperties(context, Object.getOwnPropertyDescriptors(contextB));
+    Object.defineProperties(
+      context,
+      Object.getOwnPropertyDescriptors(contextA)
+    );
+    Object.defineProperties(
+      context,
+      Object.getOwnPropertyDescriptors(contextB)
+    );
 
     return context;
   },
 
   isMatch(filterExpression, customContext) {
-    return FilterExpressions.eval(filterExpression, this.combineContexts(this.Environment, customContext));
+    return FilterExpressions.eval(
+      filterExpression,
+      this.combineContexts(this.Environment, customContext)
+    );
   },
 
   isTriggerMatch(trigger = {}, candidateMessageTrigger = {}) {
     if (trigger.id !== candidateMessageTrigger.id) {
       return false;
-    } else if (!candidateMessageTrigger.params && !candidateMessageTrigger.patterns) {
+    } else if (
+      !candidateMessageTrigger.params &&
+      !candidateMessageTrigger.patterns
+    ) {
       return true;
     }
 
@@ -347,10 +477,14 @@ this.ASRouterTargeting = {
       return false;
     }
 
-    return (candidateMessageTrigger.params &&
-      candidateMessageTrigger.params.includes(trigger.param.host)) ||
+    return (
+      (candidateMessageTrigger.params &&
+        candidateMessageTrigger.params.includes(trigger.param.host)) ||
       (candidateMessageTrigger.patterns &&
-        new MatchPatternSet(candidateMessageTrigger.patterns).matches(trigger.param.url));
+        new MatchPatternSet(candidateMessageTrigger.patterns).matches(
+          trigger.param.url
+        ))
+    );
   },
 
   /**
@@ -372,7 +506,9 @@ this.ASRouterTargeting = {
     } catch (error) {
       Cu.reportError(error);
       if (onError) {
-        const type = error.fileName.includes(MOZ_JEXL_FILEPATH) ? this.ERROR_TYPES.MALFORMED_EXPRESSION : this.ERROR_TYPES.OTHER_ERROR;
+        const type = error.fileName.includes(MOZ_JEXL_FILEPATH)
+          ? this.ERROR_TYPES.MALFORMED_EXPRESSION
+          : this.ERROR_TYPES.OTHER_ERROR;
         onError(type, error, message);
       }
       result = false;
@@ -380,39 +516,84 @@ this.ASRouterTargeting = {
     return result;
   },
 
+  _getSortedMessages(messages) {
+    const weightSortedMessages = sortMessagesByWeightedRank([...messages]);
+    const sortedMessages = sortMessagesByTargeting(weightSortedMessages);
+    return sortMessagesByPriority(sortedMessages);
+  },
+
+  _getCombinedContext(trigger, context) {
+    const triggerContext = trigger ? trigger.context : {};
+    return this.combineContexts(context, triggerContext);
+  },
+
+  _isMessageMatch(message, trigger, context, onError) {
+    return (
+      message &&
+      (trigger
+        ? this.isTriggerMatch(trigger, message.trigger)
+        : !message.trigger) &&
+      // If a trigger expression was passed to this function, the message should match it.
+      // Otherwise, we should choose a message with no trigger property (i.e. a message that can show up at any time)
+      this.checkMessageTargeting(message, context, onError)
+    );
+  },
+
   /**
    * findMatchingMessage - Given an array of messages, returns one message
    *                       whos targeting expression evaluates to true
    *
    * @param {Array} messages An array of AS router messages
-   * @param {obj} impressions An object containing impressions, where keys are message ids
    * @param {trigger} string A trigger expression if a message for that trigger is desired
    * @param {obj|null} context A FilterExpression context. Defaults to TargetingGetters above.
+   * @param {func} onError A function to handle errors (takes two params; error, message)
    * @returns {obj} an AS router message
    */
-  async findMatchingMessage({messages, trigger, context, onError}) {
-    const weightSortedMessages = sortMessagesByWeightedRank([...messages]);
-    const sortedMessages = sortMessagesByTargeting(weightSortedMessages);
-    const triggerContext = trigger ? trigger.context : {};
-    const combinedContext = this.combineContexts(context, triggerContext);
+  async findMatchingMessage({ messages, trigger, context, onError }) {
+    const sortedMessages = this._getSortedMessages(messages);
+    const combinedContext = this._getCombinedContext(trigger, context);
 
     for (const candidate of sortedMessages) {
       if (
-        candidate &&
-        (trigger ? this.isTriggerMatch(trigger, candidate.trigger) : !candidate.trigger) &&
-        // If a trigger expression was passed to this function, the message should match it.
-        // Otherwise, we should choose a message with no trigger property (i.e. a message that can show up at any time)
-        await this.checkMessageTargeting(candidate, combinedContext, onError)
+        await this._isMessageMatch(candidate, trigger, combinedContext, onError)
       ) {
         return candidate;
       }
     }
-
     return null;
+  },
+
+  /**
+   * findAllMatchingMessages - Given an array of messages, returns an array of
+   *                           messages that that match the targeting.
+   *
+   * @param {Array} messages An array of AS router messages.
+   * @param {trigger} string A trigger expression if a message for that trigger is desired.
+   * @param {obj|null} context A FilterExpression context. Defaults to TargetingGetters above.
+   * @param {func} onError A function to handle errors (takes two params; error, message)
+   * @returns {Array} An array of AS router messages that match.
+   */
+  async findAllMatchingMessages({ messages, trigger, context, onError }) {
+    const sortedMessages = this._getSortedMessages(messages);
+    const combinedContext = this._getCombinedContext(trigger, context);
+    const matchingMessages = [];
+
+    for (const candidate of sortedMessages) {
+      if (
+        await this._isMessageMatch(candidate, trigger, combinedContext, onError)
+      ) {
+        matchingMessages.push(candidate);
+      }
+    }
+    return matchingMessages;
   },
 };
 
 // Export for testing
 this.QueryCache = QueryCache;
 this.CachedTargetingGetter = CachedTargetingGetter;
-this.EXPORTED_SYMBOLS = ["ASRouterTargeting", "QueryCache", "CachedTargetingGetter"];
+this.EXPORTED_SYMBOLS = [
+  "ASRouterTargeting",
+  "QueryCache",
+  "CachedTargetingGetter",
+];

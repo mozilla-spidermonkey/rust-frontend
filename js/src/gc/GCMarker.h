@@ -130,6 +130,7 @@ class MarkStack {
 
   static const size_t DefaultCapacity = SIZE_MAX;
 
+  // The unit for MarkStack::capacity() is mark stack entries.
   size_t capacity() { return stack().length(); }
 
   size_t position() const { return topIndex_; }
@@ -230,11 +231,8 @@ class GCMarker : public JSTracer {
   explicit GCMarker(JSRuntime* rt);
   MOZ_MUST_USE bool init(JSGCMode gcMode);
 
-  void setMaxCapacity(size_t maxCap) {
-    blackStack.setMaxCapacity(maxCap);
-    grayStack.setMaxCapacity(maxCap);
-  }
-  size_t maxCapacity() const { return blackStack.maxCapacity(); }
+  void setMaxCapacity(size_t maxCap) { stack.setMaxCapacity(maxCap); }
+  size_t maxCapacity() const { return stack.maxCapacity(); }
 
   void start();
   void stop();
@@ -310,10 +308,7 @@ class GCMarker : public JSTracer {
 
   MOZ_MUST_USE bool markUntilBudgetExhausted(SliceBudget& budget);
 
-  void setGCMode(JSGCMode mode) {
-    blackStack.setGCMode(mode);
-    grayStack.setGCMode(mode);
-  }
+  void setGCMode(JSGCMode mode) { stack.setGCMode(mode); }
 
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
 
@@ -375,13 +370,11 @@ class GCMarker : public JSTracer {
 
   inline void pushValueArray(JSObject* obj, HeapSlot* start, HeapSlot* end);
 
-  bool isMarkStackEmpty() {
-    return blackStack.isEmpty() && grayStack.isEmpty();
-  }
+  bool isMarkStackEmpty() { return stack.isEmpty(); }
 
-  bool hasBlackEntries() const { return !blackStack.isEmpty(); }
+  bool hasBlackEntries() const { return stack.position() > grayPosition; }
 
-  bool hasGrayEntries() const { return !grayStack.isEmpty(); }
+  bool hasGrayEntries() const { return grayPosition > 0 && !stack.isEmpty(); }
 
   MOZ_MUST_USE bool restoreValueArray(
       const gc::MarkStack::SavedValueArray& array, HeapSlot** vpp,
@@ -405,17 +398,14 @@ class GCMarker : public JSTracer {
   template <typename F>
   void forEachDelayedMarkingArena(F&& f);
 
-  /* The stack of items to mark black. */
-  gc::MarkStack blackStack;
-  /* The stack of items to mark (CC) gray. */
-  gc::MarkStack grayStack;
+  /* The mark stack. Pointers in this stack are "gray" in the GC sense. */
+  gc::MarkStack stack;
+
+  /* Stack entries at positions below this are considered gray. */
+  MainThreadData<size_t> grayPosition;
 
   /* The color is only applied to objects and functions. */
   MainThreadData<gc::MarkColor> color;
-
-  gc::MarkStack& currentStack() {
-    return color == gc::MarkColor::Black ? blackStack : grayStack;
-  }
 
   /* Pointer to the top of the stack of arenas we are delaying marking on. */
   MainThreadData<js::gc::Arena*> delayedMarkingList;

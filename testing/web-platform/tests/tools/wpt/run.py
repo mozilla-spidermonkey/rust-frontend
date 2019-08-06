@@ -251,9 +251,9 @@ Consider installing certutil via your OS package manager or directly.""")
         kwargs["extra_prefs"].append("media.navigator.streams.fake=true")
 
 
-class Fennec(BrowserSetup):
-    name = "fennec"
-    browser_cls = browser.Fennec
+class FirefoxAndroid(BrowserSetup):
+    name = "firefox_android"
+    browser_cls = browser.FirefoxAndroid
 
     def setup_kwargs(self, kwargs):
         pass
@@ -310,6 +310,15 @@ class ChromeAndroid(BrowserSetup):
                 raise WptrunError("Unable to locate or install chromedriver binary")
 
 
+class ChromeiOS(BrowserSetup):
+    name = "chrome_ios"
+    browser_cls = browser.ChromeiOS
+
+    def setup_kwargs(self, kwargs):
+        if kwargs["webdriver_binary"] is None:
+            raise WptrunError("Unable to locate or install chromedriver binary")
+
+
 class Opera(BrowserSetup):
     name = "opera"
     browser_cls = browser.Opera
@@ -338,15 +347,23 @@ class EdgeChromium(BrowserSetup):
     browser_cls = browser.EdgeChromium
 
     def setup_kwargs(self, kwargs):
+        browser_channel = kwargs["browser_channel"]
+        if kwargs["binary"] is None:
+            binary = self.browser.find_binary(channel=browser_channel)
+            if binary:
+                kwargs["binary"] = self.browser.find_binary()
+            else:
+                raise WptrunError("Unable to locate Edge binary")
         if kwargs["webdriver_binary"] is None:
             webdriver_binary = self.browser.find_webdriver()
 
-            if webdriver_binary is None:
+            # Install browser if none are found or if it's found in venv path
+            if webdriver_binary is None or webdriver_binary in self.venv.bin_path:
                 install = self.prompt_install("msedgedriver")
 
                 if install:
                     logger.info("Downloading msedgedriver")
-                    webdriver_binary = self.browser.install_webdriver(dest=self.venv.bin_path)
+                    webdriver_binary = self.browser.install_webdriver(dest=self.venv.bin_path, channel=browser_channel)
             else:
                 logger.info("Using webdriver binary %s" % webdriver_binary)
 
@@ -354,7 +371,7 @@ class EdgeChromium(BrowserSetup):
                 kwargs["webdriver_binary"] = webdriver_binary
             else:
                 raise WptrunError("Unable to locate or install msedgedriver binary")
-        if kwargs["browser_channel"] == "dev":
+        if browser_channel == "dev":
             logger.info("Automatically turning on experimental features for Edge Dev")
             kwargs["binary_args"].append("--enable-experimental-web-platform-features")
 
@@ -493,10 +510,11 @@ class Epiphany(BrowserSetup):
 
 
 product_setup = {
-    "fennec": Fennec,
     "firefox": Firefox,
+    "firefox_android": FirefoxAndroid,
     "chrome": Chrome,
     "chrome_android": ChromeAndroid,
+    "chrome_ios": ChromeiOS,
     "edgechromium": EdgeChromium,
     "edge": Edge,
     "edge_webdriver": EdgeWebDriver,

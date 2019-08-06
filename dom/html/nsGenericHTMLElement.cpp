@@ -16,7 +16,8 @@
 #include "mozilla/MouseEvents.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/TextEditor.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_browser.h"
+#include "mozilla/StaticPrefs_layout.h"
 
 #include "nscore.h"
 #include "nsGenericHTMLElement.h"
@@ -510,7 +511,7 @@ HTMLFormElement* nsGenericHTMLElement::FindAncestorForm(
       // we're one of those inputs-in-a-table that have a hacked mForm pointer
       // and a subtree containing both us and the form got removed from the
       // DOM.
-      if (nsContentUtils::ContentIsDescendantOf(aCurrentForm, prevContent)) {
+      if (aCurrentForm->IsInclusiveDescendantOf(prevContent)) {
         return aCurrentForm;
       }
     }
@@ -523,23 +524,9 @@ bool nsGenericHTMLElement::CheckHandleEventForAnchorsPreconditions(
     EventChainVisitor& aVisitor) {
   MOZ_ASSERT(nsCOMPtr<Link>(do_QueryObject(this)),
              "should be called only when |this| implements |Link|");
-
-  if (!aVisitor.mPresContext) {
-    // We need a pres context to do link stuff. Some events (e.g. mutation
-    // events) don't have one.
-    // XXX: ideally, shouldn't we be able to do what we need without one?
-    return false;
-  }
-
-  // Need to check if we hit an imagemap area and if so see if we're handling
-  // the event on that map or on a link farther up the tree.  If we're on a
-  // link farther up, do nothing.
-  nsCOMPtr<nsIContent> target =
-      aVisitor.mPresContext->EventStateManager()->GetEventTargetContent(
-          aVisitor.mEvent);
-
-  return !target || !target->IsHTMLElement(nsGkAtoms::area) ||
-         IsHTMLElement(nsGkAtoms::area);
+  // When disconnected, only <a> should navigate away per
+  // https://html.spec.whatwg.org/#cannot-navigate
+  return IsInComposedDoc() || IsHTMLElement(nsGkAtoms::a);
 }
 
 void nsGenericHTMLElement::GetEventTargetParentForAnchors(
@@ -877,10 +864,9 @@ bool nsGenericHTMLElement::ParseBackgroundAttribute(int32_t aNamespaceID,
       aAttribute == nsGkAtoms::background && !aValue.IsEmpty()) {
     // Resolve url to an absolute url
     Document* doc = OwnerDoc();
-    nsCOMPtr<nsIURI> baseURI = GetBaseURI();
     nsCOMPtr<nsIURI> uri;
     nsresult rv = nsContentUtils::NewURIWithDocumentCharset(
-        getter_AddRefs(uri), aValue, doc, baseURI);
+        getter_AddRefs(uri), aValue, doc, GetBaseURI());
     if (NS_FAILED(rv)) {
       return false;
     }
@@ -976,7 +962,9 @@ bool nsGenericHTMLElement::ParseAlignValue(const nsAString& aString,
 
       {"top", StyleVerticalAlignKeyword::Top},
       {"middle", StyleVerticalAlignKeyword::MozMiddleWithBaseline},
-      {"bottom", StyleVerticalAlignKeyword::Bottom},
+
+      // Intentionally not bottom.
+      {"bottom", StyleVerticalAlignKeyword::Baseline},
 
       {"center", StyleVerticalAlignKeyword::MozMiddleWithBaseline},
       {"baseline", StyleVerticalAlignKeyword::Baseline},
@@ -1038,12 +1026,12 @@ bool nsGenericHTMLElement::ParseDivAlignValue(const nsAString& aString,
 bool nsGenericHTMLElement::ParseImageAttribute(nsAtom* aAttribute,
                                                const nsAString& aString,
                                                nsAttrValue& aResult) {
-  if ((aAttribute == nsGkAtoms::width) || (aAttribute == nsGkAtoms::height)) {
-    return aResult.ParseSpecialIntValue(aString);
+  if (aAttribute == nsGkAtoms::width || aAttribute == nsGkAtoms::height ||
+      aAttribute == nsGkAtoms::hspace || aAttribute == nsGkAtoms::vspace) {
+    return aResult.ParseHTMLDimension(aString);
   }
-  if ((aAttribute == nsGkAtoms::hspace) || (aAttribute == nsGkAtoms::vspace) ||
-      (aAttribute == nsGkAtoms::border)) {
-    return aResult.ParseIntWithBounds(aString, 0);
+  if (aAttribute == nsGkAtoms::border) {
+    return aResult.ParseNonNegativeIntValue(aString);
   }
   return false;
 }
@@ -1224,6 +1212,22 @@ void nsGenericHTMLElement::MapVAlignAttributeInto(
   }
 }
 
+static void MapDimensionAttributeInto(MappedDeclarations& aDecls,
+                                      nsCSSPropertyID aProp,
+                                      const nsAttrValue& aValue) {
+  MOZ_ASSERT(!aDecls.PropertyIsSet(aProp),
+             "Why mapping the same property twice?");
+  if (aValue.Type() == nsAttrValue::eInteger) {
+    return aDecls.SetPixelValue(aProp, aValue.GetIntegerValue());
+  }
+  if (aValue.Type() == nsAttrValue::ePercent) {
+    return aDecls.SetPercentValue(aProp, aValue.GetPercentValue());
+  }
+  if (aValue.Type() == nsAttrValue::eDoubleValue) {
+    return aDecls.SetPixelValue(aProp, aValue.GetDoubleValue());
+  }
+}
+
 void nsGenericHTMLElement::MapImageMarginAttributeInto(
     const nsMappedAttributes* aAttributes, MappedDeclarations& aDecls) {
   const nsAttrValue* value;
@@ -1231,67 +1235,65 @@ void nsGenericHTMLElement::MapImageMarginAttributeInto(
   // hspace: value
   value = aAttributes->GetAttr(nsGkAtoms::hspace);
   if (value) {
-    if (value->Type() == nsAttrValue::eInteger) {
-      aDecls.SetPixelValueIfUnset(eCSSProperty_margin_left,
-                                  (float)value->GetIntegerValue());
-      aDecls.SetPixelValueIfUnset(eCSSProperty_margin_right,
-                                  (float)value->GetIntegerValue());
-    } else if (value->Type() == nsAttrValue::ePercent) {
-      aDecls.SetPercentValueIfUnset(eCSSProperty_margin_left,
-                                    value->GetPercentValue());
-      aDecls.SetPercentValueIfUnset(eCSSProperty_margin_right,
-                                    value->GetPercentValue());
-    }
+    MapDimensionAttributeInto(aDecls, eCSSProperty_margin_left, *value);
+    MapDimensionAttributeInto(aDecls, eCSSProperty_margin_right, *value);
   }
 
   // vspace: value
   value = aAttributes->GetAttr(nsGkAtoms::vspace);
   if (value) {
-    if (value->Type() == nsAttrValue::eInteger) {
-      aDecls.SetPixelValueIfUnset(eCSSProperty_margin_top,
-                                  (float)value->GetIntegerValue());
-      aDecls.SetPixelValueIfUnset(eCSSProperty_margin_bottom,
-                                  (float)value->GetIntegerValue());
-    } else if (value->Type() == nsAttrValue::ePercent) {
-      aDecls.SetPercentValueIfUnset(eCSSProperty_margin_top,
-                                    value->GetPercentValue());
-      aDecls.SetPercentValueIfUnset(eCSSProperty_margin_bottom,
-                                    value->GetPercentValue());
-    }
+    MapDimensionAttributeInto(aDecls, eCSSProperty_margin_top, *value);
+    MapDimensionAttributeInto(aDecls, eCSSProperty_margin_bottom, *value);
   }
 }
 
 void nsGenericHTMLElement::MapWidthAttributeInto(
     const nsMappedAttributes* aAttributes, MappedDeclarations& aDecls) {
-  // width: value
-  if (!aDecls.PropertyIsSet(eCSSProperty_width)) {
-    const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::width);
-    if (value && value->Type() == nsAttrValue::eInteger) {
-      aDecls.SetPixelValue(eCSSProperty_width, (float)value->GetIntegerValue());
-    } else if (value && value->Type() == nsAttrValue::ePercent) {
-      aDecls.SetPercentValue(eCSSProperty_width, value->GetPercentValue());
-    }
+  if (const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::width)) {
+    MapDimensionAttributeInto(aDecls, eCSSProperty_width, *value);
   }
 }
 
 void nsGenericHTMLElement::MapHeightAttributeInto(
     const nsMappedAttributes* aAttributes, MappedDeclarations& aDecls) {
-  // height: value
-  if (!aDecls.PropertyIsSet(eCSSProperty_height)) {
-    const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::height);
-    if (value && value->Type() == nsAttrValue::eInteger) {
-      aDecls.SetPixelValue(eCSSProperty_height,
-                           (float)value->GetIntegerValue());
-    } else if (value && value->Type() == nsAttrValue::ePercent) {
-      aDecls.SetPercentValue(eCSSProperty_height, value->GetPercentValue());
-    }
+  if (const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::height)) {
+    MapDimensionAttributeInto(aDecls, eCSSProperty_height, *value);
   }
 }
 
 void nsGenericHTMLElement::MapImageSizeAttributesInto(
     const nsMappedAttributes* aAttributes, MappedDeclarations& aDecls) {
-  nsGenericHTMLElement::MapWidthAttributeInto(aAttributes, aDecls);
-  nsGenericHTMLElement::MapHeightAttributeInto(aAttributes, aDecls);
+  auto* width = aAttributes->GetAttr(nsGkAtoms::width);
+  auto* height = aAttributes->GetAttr(nsGkAtoms::height);
+  if (width) {
+    MapDimensionAttributeInto(aDecls, eCSSProperty_width, *width);
+  }
+  if (height) {
+    MapDimensionAttributeInto(aDecls, eCSSProperty_height, *height);
+  }
+  // NOTE(emilio): If we implement the unrestricted aspect-ratio proposal, we
+  // probably need to make this attribute mapping not apply to things like
+  // <marquee> and <table>, which right now can go through this path.
+  if (StaticPrefs::layout_css_width_and_height_map_to_aspect_ratio_enabled() &&
+      width && height) {
+    Maybe<double> w;
+    if (width->Type() == nsAttrValue::eInteger) {
+      w.emplace(width->GetIntegerValue());
+    } else if (width->Type() == nsAttrValue::eDoubleValue) {
+      w.emplace(width->GetDoubleValue());
+    }
+
+    Maybe<double> h;
+    if (height->Type() == nsAttrValue::eInteger) {
+      h.emplace(height->GetIntegerValue());
+    } else if (height->Type() == nsAttrValue::eDoubleValue) {
+      h.emplace(height->GetDoubleValue());
+    }
+
+    if (w && h && *w != 0 && *h != 0) {
+      aDecls.SetNumberValue(eCSSProperty_aspect_ratio, *w / *h);
+    }
+  }
 }
 
 void nsGenericHTMLElement::MapImageBorderAttributeInto(
@@ -1378,6 +1380,46 @@ uint32_t nsGenericHTMLElement::GetUnsignedIntAttr(nsAtom* aAttr,
   }
 
   return attrVal->GetIntegerValue();
+}
+
+uint32_t nsGenericHTMLElement::GetDimensionAttrAsUnsignedInt(
+    nsAtom* aAttr, uint32_t aDefault) const {
+  const nsAttrValue* attrVal = mAttrs.GetAttr(aAttr);
+  if (!attrVal) {
+    return aDefault;
+  }
+
+  if (attrVal->Type() == nsAttrValue::eInteger) {
+    return attrVal->GetIntegerValue();
+  }
+
+  if (attrVal->Type() == nsAttrValue::ePercent) {
+    // This is a nasty hack.  When we parsed the value, we stored it as an
+    // ePercent, not eInteger, because there was a '%' after it in the string.
+    // But the spec says to basically re-parse the string as an integer.
+    // Luckily, we can just return the value we have stored.  But
+    // GetPercentValue() divides it by 100, so we need to multiply it back.
+    return uint32_t(attrVal->GetPercentValue() * 100.0f);
+  }
+
+  if (attrVal->Type() == nsAttrValue::eDoubleValue) {
+    return uint32_t(attrVal->GetDoubleValue());
+  }
+
+  // Unfortunately, the set of values that are valid dimensions is not a
+  // superset of values that are valid unsigned ints.  In particular "+100" is
+  // not a valid dimension, but should parse as the unsigned int "100".  So if
+  // we got here and we don't have a valid dimension value, just try re-parsing
+  // the string we have as an integer.
+  nsAutoString val;
+  attrVal->ToString(val);
+  nsContentUtils::ParseHTMLIntegerResultFlags result;
+  int32_t parsedInt = nsContentUtils::ParseHTMLInteger(val, &result);
+  if ((result & nsContentUtils::eParseHTMLInteger_Error) || parsedInt < 0) {
+    return aDefault;
+  }
+
+  return parsedInt;
 }
 
 void nsGenericHTMLElement::GetURIAttr(nsAtom* aAttr, nsAtom* aBaseAttr,
@@ -1570,7 +1612,7 @@ void nsGenericHTMLFormElement::ClearForm(bool aRemoveFromForm,
   AfterClearForm(aUnbindOrDelete);
 }
 
-Element* nsGenericHTMLFormElement::GetFormElement() { return mForm; }
+HTMLFormElement* nsGenericHTMLFormElement::GetFormElement() { return mForm; }
 
 HTMLFieldSetElement* nsGenericHTMLFormElement::GetFieldSet() {
   return mFieldSet;
@@ -2479,29 +2521,29 @@ void nsGenericHTMLElement::ChangeEditableState(int32_t aChange) {
 //----------------------------------------------------------------------
 
 nsGenericHTMLFormElementWithState::nsGenericHTMLFormElementWithState(
-    already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo, uint8_t aType)
-    : nsGenericHTMLFormElement(std::move(aNodeInfo), aType) {
+    already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo,
+    FromParser aFromParser, uint8_t aType)
+    : nsGenericHTMLFormElement(std::move(aNodeInfo), aType),
+      mControlNumber(!!(aFromParser & FROM_PARSER_NETWORK)
+                         ? OwnerDoc()->GetNextControlNumber()
+                         : -1) {
   mStateKey.SetIsVoid(true);
 }
 
-nsresult nsGenericHTMLFormElementWithState::GenerateStateKey() {
+void nsGenericHTMLFormElementWithState::GenerateStateKey() {
   // Keep the key if already computed
   if (!mStateKey.IsVoid()) {
-    return NS_OK;
+    return;
   }
 
   Document* doc = GetUncomposedDoc();
   if (!doc) {
-    return NS_OK;
+    mStateKey.Truncate();
+    return;
   }
 
   // Generate the state key
-  nsresult rv = nsContentUtils::GenerateStateKey(this, doc, mStateKey);
-
-  if (NS_FAILED(rv)) {
-    mStateKey.SetIsVoid(true);
-    return rv;
-  }
+  nsContentUtils::GenerateStateKey(this, doc, mStateKey);
 
   // If the state key is blank, this is anonymous content or for whatever
   // reason we are not supposed to save/restore state: keep it as such.
@@ -2509,7 +2551,6 @@ nsresult nsGenericHTMLFormElementWithState::GenerateStateKey() {
     // Add something unique to content so layout doesn't muck us up.
     mStateKey += "-C";
   }
-  return NS_OK;
 }
 
 PresState* nsGenericHTMLFormElementWithState::GetPrimaryPresState() {
@@ -2557,6 +2598,9 @@ nsGenericHTMLFormElementWithState::GetLayoutHistory(bool aRead) {
 }
 
 bool nsGenericHTMLFormElementWithState::RestoreFormControlState() {
+  MOZ_ASSERT(!mStateKey.IsVoid(),
+             "GenerateStateKey must already have been called");
+
   if (mStateKey.IsEmpty()) {
     return false;
   }
@@ -2579,6 +2623,12 @@ bool nsGenericHTMLFormElementWithState::RestoreFormControlState() {
 
 void nsGenericHTMLFormElementWithState::NodeInfoChanged(Document* aOldDoc) {
   nsGenericHTMLElement::NodeInfoChanged(aOldDoc);
+
+  // We need to regenerate the state key now we're in a new document.  Clearing
+  // mControlNumber means we stop considering this control to be parser
+  // inserted, and we'll generate a state key based on its position in the
+  // document rather than the order it was inserted into the document.
+  mControlNumber = -1;
   mStateKey.SetIsVoid(true);
 }
 
@@ -2636,9 +2686,9 @@ nsresult nsGenericHTMLElement::NewURIFromString(const nsAString& aURISpec,
 
   nsCOMPtr<Document> doc = OwnerDoc();
 
-  nsCOMPtr<nsIURI> baseURI = GetBaseURI();
   nsresult rv =
-      nsContentUtils::NewURIWithDocumentCharset(aURI, aURISpec, doc, baseURI);
+      nsContentUtils::NewURIWithDocumentCharset(aURI, aURISpec, doc,
+                                                GetBaseURI());
   NS_ENSURE_SUCCESS(rv, rv);
 
   bool equal;

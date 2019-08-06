@@ -4,10 +4,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 %endif
 
-#editBookmarkPanel > .panel-arrowcontainer > .panel-arrowcontent {
-  padding: 0;
-}
-
 #editBookmarkPanelTitle {
   margin-inline-start: 32px;
 }
@@ -47,37 +43,36 @@
   position: absolute;
   height: 100%;
   width: 100%;
-  transition: all 0.25s cubic-bezier(0.07, 0.95, 0, 1);
+  transition: transform 0.25s cubic-bezier(0.07, 0.95, 0, 1);
 }
 
 #editBookmarkPanelRecommendation[disabled] {
   transform: translateY(-100%);
 }
 
-#editBookmarkPanelRecommendation > div {
+#editBookmarkPanelRecommendation #cfrMessageContainer {
   border-radius: 2px;
   display: flex;
   flex-direction: column;
-  height: 150px;
+  min-height: 150px;
   cursor: pointer;
   position: relative;
   padding: 0 16px;
+}
+
+#editBookmarkPanelRecommendation #cfrMessageContainer.longMessagePadding {
+  padding-bottom: 10px;
 }
 
 #editBookmarkPanelRecommendation > div::-moz-focus-inner {
   border: none;
 }
 
-#editBookmarkPanelRecommendation > div h1 {
-  max-width: 215px;
-}
-
 #editBookmarkPanelRecommendationTitle {
   font-size: 16px;
   font-weight: 400;
   line-height: 1.25;
-  margin-bottom: 6px;
-  padding-top: 2px;
+  margin: 0;
 }
 
 #editBookmarkPanelRecommendationContent {
@@ -103,11 +98,17 @@
   text-decoration: underline;
 }
 
+#editBookmarkPanelRecommendation .cfrMessageHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  margin-bottom: 6px;
+  margin-top: 10px;
+  padding-top: 2px;
+}
+
 #editBookmarkPanelRecommendation #cfrClose {
-  position: absolute;
   padding: 10px;
-  inset-inline-end: 8px;
-  top: 15px;
   width: 12px;
   height: 12px;
   border: none;
@@ -157,6 +158,11 @@ html|img#editBookmarkPanelFavicon[src] {
   background-repeat: no-repeat;
   background-size: cover;
   margin: 0 2px;
+  /* When adjusting the height for long CFR messages we want the animations
+   * to align. The delay is used to force the animation to start when the
+   * panel message has finished sliding down. */
+  transition: height 0.28s cubic-bezier(0.07, 0.95, 0, 1);
+  transition-delay: 10ms;
 }
 
 #editBookmarkPanelRows,

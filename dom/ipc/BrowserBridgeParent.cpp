@@ -38,14 +38,13 @@ nsresult BrowserBridgeParent::Init(const nsString& aPresentationURL,
                                    const uint32_t& aChromeFlags, TabId aTabId) {
   mIPCOpen = true;
 
-  // FIXME: This should actually use a non-bogus TabContext, probably inherited
-  // from our Manager().
-  OriginAttributes attrs;
-  attrs.mInIsolatedMozBrowser = false;
-  attrs.SyncAttributesWithPrivateBrowsing(false);
+  // We can inherit most TabContext fields for the new BrowserParent actor from
+  // our Manager BrowserParent.
   MutableTabContext tabContext;
-  tabContext.SetTabContext(false, 0, UIStateChangeType_Set, attrs,
-                           aPresentationURL);
+  tabContext.SetTabContext(false, Manager()->ChromeOuterWindowID(),
+                           Manager()->ShowFocusRings(),
+                           Manager()->OriginAttributesRef(), aPresentationURL,
+                           Manager()->GetMaxTouchPoints());
 
   ProcessPriority initialPriority = PROCESS_PRIORITY_FOREGROUND;
 
@@ -114,6 +113,7 @@ BrowserParent* BrowserBridgeParent::Manager() {
 void BrowserBridgeParent::Destroy() {
   if (mBrowserParent) {
     mBrowserParent->Destroy();
+    mBrowserParent->SetBrowserBridgeParent(nullptr);
     mBrowserParent = nullptr;
   }
 }

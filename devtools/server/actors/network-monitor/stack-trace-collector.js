@@ -6,17 +6,27 @@
 
 "use strict";
 
-const {Ci, components} = require("chrome");
+const { Ci, components } = require("chrome");
 const Services = require("Services");
 
-loader.lazyRequireGetter(this, "ChannelEventSinkFactory",
-                         "devtools/server/actors/network-monitor/channel-event-sink",
-                         true);
-loader.lazyRequireGetter(this, "matchRequest",
-                         "devtools/server/actors/network-monitor/network-observer",
-                         true);
-loader.lazyRequireGetter(this, "WebConsoleUtils",
-                         "devtools/server/actors/webconsole/utils", true);
+loader.lazyRequireGetter(
+  this,
+  "ChannelEventSinkFactory",
+  "devtools/server/actors/network-monitor/channel-event-sink",
+  true
+);
+loader.lazyRequireGetter(
+  this,
+  "matchRequest",
+  "devtools/server/actors/network-monitor/network-observer",
+  true
+);
+loader.lazyRequireGetter(
+  this,
+  "WebConsoleUtils",
+  "devtools/server/actors/webconsole/utils",
+  true
+);
 
 function StackTraceCollector(filters, netmonitors) {
   this.filters = filters;
@@ -31,7 +41,10 @@ StackTraceCollector.prototype = {
     ChannelEventSinkFactory.getService().registerCollector(this);
     this.onGetStack = this.onGetStack.bind(this);
     for (const { messageManager } of this.netmonitors) {
-      messageManager.addMessageListener("debug:request-stack:request", this.onGetStack);
+      messageManager.addMessageListener(
+        "debug:request-stack:request",
+        this.onGetStack
+      );
     }
   },
 
@@ -40,8 +53,10 @@ StackTraceCollector.prototype = {
     Services.obs.removeObserver(this, "network-monitor-alternate-stack");
     ChannelEventSinkFactory.getService().unregisterCollector(this);
     for (const { messageManager } of this.netmonitors) {
-      messageManager.removeMessageListener("debug:request-stack:request",
-        this.onGetStack);
+      messageManager.removeMessageListener(
+        "debug:request-stack:request",
+        this.onGetStack
+      );
     }
   },
 
@@ -66,13 +81,19 @@ StackTraceCollector.prototype = {
     try {
       channel = subject.QueryInterface(Ci.nsIHttpChannel);
       id = channel.channelId;
-    } catch (e) {
+    } catch (e1) {
       // WebSocketChannels do not have IDs, so use the URL. When a WebSocket is
       // opened in a content process, a channel is created locally but the HTTP
       // channel for the connection lives entirely in the parent process. When
       // the server code running in the parent sees that HTTP channel, it will
       // look for the creation stack using the websocket's URL.
-      channel = subject.QueryInterface(Ci.nsIWebSocketChannel);
+      try {
+        channel = subject.QueryInterface(Ci.nsIWebSocketChannel);
+      } catch (e2) {
+        // Channels which don't implement the above interfaces can appear here,
+        // such as nsIFileChannel. Ignore these channels.
+        return;
+      }
       id = channel.URI.spec;
     }
 

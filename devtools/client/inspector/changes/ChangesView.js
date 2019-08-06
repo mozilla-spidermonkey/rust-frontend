@@ -6,29 +6,34 @@
 
 "use strict";
 
-const { createFactory, createElement } = require("devtools/client/shared/vendor/react");
+const {
+  createFactory,
+  createElement,
+} = require("devtools/client/shared/vendor/react");
 const { Provider } = require("devtools/client/shared/vendor/react-redux");
 
-loader.lazyRequireGetter(this, "ChangesContextMenu", "devtools/client/inspector/changes/ChangesContextMenu");
-loader.lazyRequireGetter(this, "clipboardHelper", "devtools/shared/platform/clipboard");
+loader.lazyRequireGetter(
+  this,
+  "ChangesContextMenu",
+  "devtools/client/inspector/changes/ChangesContextMenu"
+);
+loader.lazyRequireGetter(
+  this,
+  "clipboardHelper",
+  "devtools/shared/platform/clipboard"
+);
 
 const ChangesApp = createFactory(require("./components/ChangesApp"));
 const { getChangesStylesheet } = require("./selectors/changes");
 
 const {
-  TELEMETRY_SCALAR_CONTEXTMENU,
-  TELEMETRY_SCALAR_CONTEXTMENU_COPY,
   TELEMETRY_SCALAR_CONTEXTMENU_COPY_DECLARATION,
   TELEMETRY_SCALAR_CONTEXTMENU_COPY_RULE,
-  TELEMETRY_SCALAR_COPY,
   TELEMETRY_SCALAR_COPY_ALL_CHANGES,
   TELEMETRY_SCALAR_COPY_RULE,
 } = require("./constants");
 
-const {
-  resetChanges,
-  trackChange,
-} = require("./actions/changes");
+const { resetChanges, trackChange } = require("./actions/changes");
 
 class ChangesView {
   constructor(inspector, window) {
@@ -42,7 +47,6 @@ class ChangesView {
     this.onClearChanges = this.onClearChanges.bind(this);
     this.onChangesFront = this.onChangesFront.bind(this);
     this.onContextMenu = this.onContextMenu.bind(this);
-    this.onCopy = this.onCopy.bind(this);
     this.onCopyAllChanges = this.copyAllChanges.bind(this);
     this.onCopyRule = this.copyRule.bind(this);
     this.destroy = this.destroy.bind(this);
@@ -61,7 +65,6 @@ class ChangesView {
   init() {
     const changesApp = ChangesApp({
       onContextMenu: this.onContextMenu,
-      onCopy: this.onCopy,
       onCopyAllChanges: this.onCopyAllChanges,
       onCopyRule: this.onCopyRule,
     });
@@ -71,11 +74,15 @@ class ChangesView {
     this._getChangesFront();
 
     // Expose the provider to let inspector.js use it in setupSidebar.
-    this.provider = createElement(Provider, {
-      id: "changesview",
-      key: "changesview",
-      store: this.store,
-    }, changesApp);
+    this.provider = createElement(
+      Provider,
+      {
+        id: "changesview",
+        key: "changesview",
+        store: this.store,
+      },
+      changesApp
+    );
 
     this.inspector.target.on("will-navigate", this.onClearChanges);
   }
@@ -160,8 +167,10 @@ class ChangesView {
    *        Host element of a CSS declaration rendered the Changes panel.
    */
   copyDeclaration(element) {
-    const name = element.querySelector(".changes__declaration-name").textContent;
-    const value = element.querySelector(".changes__declaration-value").textContent;
+    const name = element.querySelector(".changes__declaration-name")
+      .textContent;
+    const value = element.querySelector(".changes__declaration-value")
+      .textContent;
     const isRemoved = element.classList.contains("diff-remove");
     const text = isRemoved ? `/* ${name}: ${value}; */` : `${name}: ${value};`;
     clipboardHelper.copyString(text);
@@ -197,7 +206,6 @@ class ChangesView {
    */
   copySelection() {
     clipboardHelper.copyString(this.window.getSelection().toString());
-    this.telemetry.scalarAdd(TELEMETRY_SCALAR_CONTEXTMENU_COPY, 1);
   }
 
   onAddChange(change) {
@@ -215,27 +223,13 @@ class ChangesView {
    */
   onContextMenu(e) {
     this.contextMenu.show(e);
-    this.telemetry.scalarAdd(TELEMETRY_SCALAR_CONTEXTMENU, 1);
-  }
-
-  /**
-   * Event handler for the "copy" event fired when content is copied to the clipboard.
-   * We don't change the default behavior. We only log the increment count of this action.
-   */
-  onCopy() {
-    this.telemetry.scalarAdd(TELEMETRY_SCALAR_COPY, 1);
   }
 
   /**
    * Destruction function called when the inspector is destroyed.
    */
-  async destroy() {
+  destroy() {
     this.store.dispatch(resetChanges());
-
-    // ensure we finish waiting for the front before destroying.
-    const changesFront = await this.changesFrontPromise;
-    changesFront.off("add-change", this.onAddChange);
-    changesFront.off("clear-changes", this.onClearChanges);
 
     this.document = null;
     this.inspector = null;

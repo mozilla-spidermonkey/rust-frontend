@@ -255,7 +255,7 @@ toolbar[brighttext] {
 }
 
 #PanelUI-profilerIframe {
-  width: 352px;
+  width: 450px;
 }
 
 #preferences-button {
@@ -594,4 +594,8 @@ toolbarbutton.bookmark-item {
 
 .bookmark-item[query][hostContainer] {
   list-style-image: url("chrome://browser/skin/places/folder.svg");
+}
+
+#whats-new-menu-button {
+  list-style-image: url("chrome://browser/skin/whatsnew.svg");
 }

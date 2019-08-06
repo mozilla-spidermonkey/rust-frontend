@@ -7,11 +7,31 @@
 /* global XPCNativeWrapper */
 
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
-const { Cu } = require("chrome");
-loader.lazyRequireGetter(this, "Parser", "resource://devtools/shared/Parser.jsm", true);
-loader.lazyRequireGetter(this, "formatCommand", "devtools/server/actors/webconsole/commands", true);
-loader.lazyRequireGetter(this, "isCommand", "devtools/server/actors/webconsole/commands", true);
-loader.lazyRequireGetter(this, "WebConsoleCommands", "devtools/server/actors/webconsole/utils", true);
+
+loader.lazyRequireGetter(
+  this,
+  "Reflect",
+  "resource://gre/modules/reflect.jsm",
+  true
+);
+loader.lazyRequireGetter(
+  this,
+  "formatCommand",
+  "devtools/server/actors/webconsole/commands",
+  true
+);
+loader.lazyRequireGetter(
+  this,
+  "isCommand",
+  "devtools/server/actors/webconsole/commands",
+  true
+);
+loader.lazyRequireGetter(
+  this,
+  "WebConsoleCommands",
+  "devtools/server/actors/webconsole/utils",
+  true
+);
 
 function isObject(value) {
   return Object(value) === value;
@@ -21,7 +41,7 @@ function isObject(value) {
  * Evaluates a string using the debugger API.
  *
  * To allow the variables view to update properties from the Web Console we
- * provide the "bindObjectActor" mechanism: the Web Console tells the
+ * provide the "selectedObjectActor" mechanism: the Web Console tells the
  * ObjectActor ID for which it desires to evaluate an expression. The
  * Debugger.Object pointed at by the actor ID is bound such that it is
  * available during expression evaluation (executeInGlobalWithBindings()).
@@ -44,7 +64,7 @@ function isObject(value) {
  * Console Commands helpers - they need to be Debugger.Objects coming from the
  * jsdebugger's Debugger instance.
  *
- * When |bindObjectActor| is used objects can come from different iframes,
+ * When |selectedObjectActor| is used objects can come from different iframes,
  * from different domains. To avoid permission-related errors when objects
  * come from a different window, we also determine the object's own global,
  * such that evaluation happens in the context of that global. This means that
@@ -55,12 +75,10 @@ function isObject(value) {
  *        String to evaluate.
  * @param object [options]
  *        Options for evaluation:
- *        - bindObjectActor: the ObjectActor ID to use for evaluation.
+ *        - selectedObjectActor: the ObjectActor ID to use for evaluation.
  *          |evalWithBindings()| will be called with one additional binding:
  *          |_self| which will point to the Debugger.Object of the given
- *          ObjectActor.
- *        - selectedObjectActor: Like bindObjectActor, but executes with the
- *          top level window as the global.
+ *          ObjectActor. Executes with the top level window as the global.
  *        - frameActor: the FrameActor ID to use for evaluation. The given
  *        debugger frame is used for evaluation, instead of the global window.
  *        - selectedNodeActor: the NodeActor ID of the currently selected node
@@ -98,7 +116,8 @@ exports.evalWithDebugger = function(string, options = {}, webConsole) {
 
   // Ready to evaluate the string.
   helpers.evalInput = string;
-  const evalOptions = typeof options.url === "string" ? { url: options.url } : null;
+  const evalOptions =
+    typeof options.url === "string" ? { url: options.url } : null;
 
   updateConsoleInputEvaluation(dbg, dbgWindow, webConsole);
 
@@ -131,7 +150,11 @@ function getEvalResult(string, evalOptions, bindings, frame, dbgWindow) {
   if (frame) {
     return frame.evalWithBindings(string, bindings, evalOptions);
   }
-  const result = dbgWindow.executeInGlobalWithBindings(string, bindings, evalOptions);
+  const result = dbgWindow.executeInGlobalWithBindings(
+    string,
+    bindings,
+    evalOptions
+  );
   // Attempt to initialize any declarations found in the evaluated string
   // since they may now be stuck in an "initializing" state due to the
   // error. Already-initialized bindings will be ignored.
@@ -147,7 +170,7 @@ function parseErrorOutput(dbgWindow, string) {
   // since it's already being handled elsewhere and we are only interested
   // in initializing bindings.
   try {
-    ast = Parser.reflectionAPI.parse(string);
+    ast = Reflect.parse(string);
   } catch (ex) {
     return;
   }
@@ -231,8 +254,11 @@ function getEvalInput(string) {
   }
 
   // Add easter egg for console.mihai().
-  if (trimmedString == "console.mihai()" || trimmedString == "console.mihai();") {
-    return "\"http://incompleteness.me/blog/2015/02/09/console-dot-mihai/\"";
+  if (
+    trimmedString == "console.mihai()" ||
+    trimmedString == "console.mihai();"
+  ) {
+    return '"http://incompleteness.me/blog/2015/02/09/console-dot-mihai/"';
   }
   return string;
 }
@@ -244,16 +270,18 @@ function getFrameDbg(options, webConsole) {
   // Find the Debugger.Frame of the given FrameActor.
   const frameActor = webConsole.conn.getActor(options.frameActor);
   if (frameActor) {
-     // If we've been given a frame actor in whose scope we should evaluate the
-     // expression, be sure to use that frame's Debugger (that is, the JavaScript
-     // debugger's Debugger) for the whole operation, not the console's Debugger.
-     // (One Debugger will treat a different Debugger's Debugger.Object instances
-     // as ordinary objects, not as references to be followed, so mixing
-     // debuggers causes strange behaviors.)
+    // If we've been given a frame actor in whose scope we should evaluate the
+    // expression, be sure to use that frame's Debugger (that is, the JavaScript
+    // debugger's Debugger) for the whole operation, not the console's Debugger.
+    // (One Debugger will treat a different Debugger's Debugger.Object instances
+    // as ordinary objects, not as references to be followed, so mixing
+    // debuggers causes strange behaviors.)
     return { frame: frameActor.frame, dbg: frameActor.threadActor.dbg };
   }
-  return DevToolsUtils.reportException("evalWithDebugger",
-    Error("The frame actor was not found: " + options.frameActor));
+  return DevToolsUtils.reportException(
+    "evalWithDebugger",
+    Error("The frame actor was not found: " + options.frameActor)
+  );
 }
 
 function evalReplay(frame, dbg, string) {
@@ -264,10 +292,10 @@ function evalReplay(frame, dbg, string) {
     try {
       result = frame.eval(string);
     } catch (e) {
-      result = { "throw": e };
+      result = { throw: e };
     }
   } else {
-    result = { "throw": "Cannot evaluate while replaying without a frame" };
+    result = { throw: "Cannot evaluate while replaying without a frame" };
   }
   return {
     result: result,
@@ -283,13 +311,11 @@ function getDbgWindow(options, dbg, webConsole) {
 
   // If we have an object to bind to |_self|, create a Debugger.Object
   // referring to that object, belonging to dbg.
-  if (!options.bindObjectActor && !options.selectedObjectActor) {
+  if (!options.selectedObjectActor) {
     return { bindSelf: null, dbgWindow };
   }
 
-  const objActor = webConsole.getActorByID(
-    options.bindObjectActor || options.selectedObjectActor
-  );
+  const objActor = webConsole.getActorByID(options.selectedObjectActor);
 
   if (!objActor) {
     return { bindSelf: null, dbgWindow };
@@ -306,15 +332,6 @@ function getDbgWindow(options, dbg, webConsole) {
   // that is, without wrappers. The evalWithBindings call will then wrap
   // jsVal appropriately for the evaluation compartment.
   const bindSelf = dbgWindow.makeDebuggeeValue(jsVal);
-  if (options.bindObjectActor) {
-    const global = Cu.getGlobalForObject(jsVal);
-    try {
-      const _dbgWindow = dbg.makeGlobalObjectReference(global);
-      return { bindSelf, dbgWindow: _dbgWindow };
-    } catch (err) {
-      // The above will throw if `global` is invisible to debugger.
-    }
-  }
   return { bindSelf, dbgWindow };
 }
 
@@ -351,8 +368,9 @@ function bindCommands(isCmd, dbgWindow, bindSelf, frame, helpers) {
   // helper function we set. We will not overwrite these functions with the Web Console
   // commands. The exception being "print" which should exist everywhere as
   // `window.print`, and that we don't want to trigger from the console.
-  const availableHelpers = [...WebConsoleCommands._originalCommands.keys()]
-    .filter(h => h !== "print");
+  const availableHelpers = [
+    ...WebConsoleCommands._originalCommands.keys(),
+  ].filter(h => h !== "print");
 
   let helpersToDisable = [];
   const helperCache = {};
@@ -366,8 +384,9 @@ function bindCommands(isCmd, dbgWindow, bindSelf, frame, helpers) {
         helpersToDisable = availableHelpers.filter(name => !!env.find(name));
       }
     } else {
-      helpersToDisable = availableHelpers.filter(name =>
-        !!dbgWindow.getOwnPropertyDescriptor(name));
+      helpersToDisable = availableHelpers.filter(
+        name => !!dbgWindow.getOwnPropertyDescriptor(name)
+      );
     }
     // if we do not have the command key as a prefix, screenshot is disabled by default
     helpersToDisable.push("screenshot");

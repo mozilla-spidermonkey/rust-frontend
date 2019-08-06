@@ -326,7 +326,8 @@ void UniqueStacks::StreamNonJITFrame(const FrameKey& aFrame) {
     OPTIMIZATIONS = 3,
     LINE = 4,
     COLUMN = 5,
-    CATEGORY = 6
+    CATEGORY = 6,
+    SUBCATEGORY = 7
   };
 
   AutoArraySchemaWriter writer(mFrameTableWriter, *mUniqueStrings);
@@ -344,6 +345,7 @@ void UniqueStacks::StreamNonJITFrame(const FrameKey& aFrame) {
     const ProfilingCategoryPairInfo& info =
         GetProfilingCategoryPairInfo(*data.mCategoryPair);
     writer.IntElement(CATEGORY, uint32_t(info.mCategory));
+    writer.IntElement(SUBCATEGORY, info.mSubcategoryIndex);
   }
 }
 
@@ -842,23 +844,7 @@ void ProfileBuffer::StreamProfilerOverheadToJSON(
   aWriter.StartArrayProperty("data");
   double firstTime = 0.0;
   double lastTime = 0.0;
-  struct Stats {
-    unsigned n = 0;
-    double sum = 0;
-    double min = std::numeric_limits<double>::max();
-    double max = 0;
-    void Count(double v) {
-      ++n;
-      sum += v;
-      if (v < min) {
-        min = v;
-      }
-      if (v > max) {
-        max = v;
-      }
-    }
-  };
-  Stats intervals, overheads, lockings, cleanings, counters, threads;
+  ProfilerStats intervals, overheads, lockings, cleanings, counters, threads;
   while (e.Has()) {
     // valid sequence: ProfilerOverheadTime, ProfilerOverheadDuration * 4
     if (e.Get().IsProfilerOverheadTime()) {

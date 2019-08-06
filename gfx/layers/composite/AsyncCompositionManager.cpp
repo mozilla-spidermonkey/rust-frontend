@@ -10,7 +10,8 @@
 #include "Layers.h"                 // for Layer, ContainerLayer, etc
 #include "gfxPoint.h"               // for gfxPoint, gfxSize
 #include "mozilla/ServoBindings.h"  // for Servo_AnimationValue_GetOpacity, etc
-#include "mozilla/StaticPrefs.h"    // for StaticPrefs
+#include "mozilla/StaticPrefs_apz.h"
+#include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/WidgetUtils.h"    // for ComputeTransformForRotation
 #include "mozilla/gfx/BaseRect.h"   // for BaseRect
 #include "mozilla/gfx/Point.h"      // for RoundedToInt, PointTyped
@@ -33,7 +34,7 @@
 #include "nsRect.h"                  // for mozilla::gfx::IntRect
 #include "nsRegion.h"                // for nsIntRegion
 #include "nsTArray.h"                // for nsTArray, nsTArray_Impl, etc
-#include "nsTArrayForwardDeclare.h"  // for InfallibleTArray
+#include "nsTArrayForwardDeclare.h"  // for nsTArray
 #include "UnitTransforms.h"          // for TransformTo
 #if defined(MOZ_WIDGET_ANDROID)
 #  include <android/log.h>
@@ -789,7 +790,7 @@ static bool SampleAnimations(Layer* aLayer,
 }
 
 void AsyncCompositionManager::RecordShadowTransforms(Layer* aLayer) {
-  MOZ_ASSERT(StaticPrefs::CollectScrollTransforms());
+  MOZ_ASSERT(StaticPrefs::gfx_vsync_collect_scroll_transforms());
   MOZ_ASSERT(CompositorThreadHolder::IsInCompositorThread());
 
   ForEachNodePostOrder<ForwardIterator>(aLayer, [this](Layer* layer) {
@@ -1472,7 +1473,7 @@ bool AsyncCompositionManager::TransformShadowTree(
   trans *= gfx::Matrix4x4::From2D(mWorldTransform);
   rootComposite->SetShadowBaseTransform(trans);
 
-  if (StaticPrefs::CollectScrollTransforms()) {
+  if (StaticPrefs::gfx_vsync_collect_scroll_transforms()) {
     RecordShadowTransforms(root);
   }
 

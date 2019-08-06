@@ -6,13 +6,24 @@
 
 const EXPORTED_SYMBOLS = ["LoginManagerContextMenu"];
 
-const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
-ChromeUtils.defineModuleGetter(this, "LoginHelper",
-                               "resource://gre/modules/LoginHelper.jsm");
-ChromeUtils.defineModuleGetter(this, "LoginManagerParent",
-                               "resource://gre/modules/LoginManagerParent.jsm");
+ChromeUtils.defineModuleGetter(
+  this,
+  "LoginHelper",
+  "resource://gre/modules/LoginHelper.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
+  "LoginManagerParent",
+  "resource://gre/modules/LoginManagerParent.jsm"
+);
+XPCOMUtils.defineLazyGetter(this, "log", () => {
+  return LoginHelper.createLogger("LoginManagerContextMenu");
+});
 
 /**
  * Password manager object for the browser contextual menu.
@@ -25,14 +36,14 @@ this.LoginManagerContextMenu = {
    *        An identifier generated for the input element via ContentDOMReference.
    * @param {xul:browser} browser
    *        The browser for the document the context menu was open on.
-   * @param {nsIURI} documentURI
-   *        The URI of the document that the context menu was activated from.
-   *        This isn't the same as the browser's top-level document URI
+   * @param {string} formOrigin
+   *        The origin of the document that the context menu was activated from.
+   *        This isn't the same as the browser's top-level document origin
    *        when subframes are involved.
    * @returns {DocumentFragment} a document fragment with all the login items.
    */
-  addLoginsToMenu(inputElementIdentifier, browser, documentURI) {
-    let foundLogins = this._findLogins(documentURI);
+  addLoginsToMenu(inputElementIdentifier, browser, formOrigin) {
+    let foundLogins = this._findLogins(formOrigin);
 
     if (!foundLogins.length) {
       return null;
@@ -50,16 +61,26 @@ this.LoginManagerContextMenu = {
           username = this._getLocalizedString("noUsername");
         }
         let meta = login.QueryInterface(Ci.nsILoginMetaInfo);
-        let time = this.dateAndTimeFormatter.format(new Date(meta.timePasswordChanged));
+        let time = this.dateAndTimeFormatter.format(
+          new Date(meta.timePasswordChanged)
+        );
         username = this._getLocalizedString("loginHostAge", [username, time]);
       }
       item.setAttribute("label", username);
       item.setAttribute("class", "context-login-item");
 
       // login is bound so we can keep the reference to each object.
-      item.addEventListener("command", function(login, event) {
-        this._fillTargetField(login, inputElementIdentifier, browser, documentURI);
-      }.bind(this, login));
+      item.addEventListener(
+        "command",
+        function(login, event) {
+          this._fillTargetField(
+            login,
+            inputElementIdentifier,
+            browser,
+            formOrigin
+          );
+        }.bind(this, login)
+      );
 
       fragment.appendChild(item);
     }
@@ -80,27 +101,57 @@ this.LoginManagerContextMenu = {
     }
   },
 
+  async fillGeneratedPassword(inputElementIdentifier, documentURI, browser) {
+    let password = LoginManagerParent.getGeneratedPassword(
+      inputElementIdentifier.browsingContextId
+    );
+    let origin = LoginHelper.getLoginOrigin(documentURI.spec);
+    log.debug("fillGeneratedPassword into:", inputElementIdentifier, origin);
+
+    let recipes = [];
+    let formHost;
+    try {
+      formHost = documentURI.hostPort;
+      let recipeManager = await LoginManagerParent.recipeParentPromise;
+      recipes = recipeManager.getRecipesForHost(formHost);
+    } catch (ex) {
+      // Some schemes e.g. chrome aren't supported by URL
+      log.debug("Couldnt get recipes for formHost:", formHost, ex);
+    }
+    browser.messageManager.sendAsyncMessage(
+      "PasswordManager:fillGeneratedPassword",
+      {
+        password,
+        origin,
+        inputElementIdentifier,
+        recipes,
+      }
+    );
+  },
+
   /**
-   * Find logins for the current URI.
+   * Find logins for the specified origin..
    *
-   * @param {nsIURI} documentURI
-   *        URI object with the origin of the logins we want to find.
+   * @param {string} formOrigin
+   *        Origin of the logins we want to find that has be sanitized by `getLoginOrigin`.
    *        This isn't the same as the browser's top-level document URI
    *        when subframes are involved.
    *
    * @returns {nsILoginInfo[]} a login list
    */
-  _findLogins(documentURI) {
+  _findLogins(formOrigin) {
     let searchParams = {
-      origin: documentURI.displayPrePath,
+      origin: formOrigin,
       schemeUpgrades: LoginHelper.schemeUpgrades,
     };
     let logins = LoginHelper.searchLoginsWithObject(searchParams);
-    let resolveBy = [
-      "scheme",
-      "timePasswordChanged",
-    ];
-    logins = LoginHelper.dedupeLogins(logins, ["username", "password"], resolveBy, documentURI.displayPrePath);
+    let resolveBy = ["scheme", "timePasswordChanged"];
+    logins = LoginHelper.dedupeLogins(
+      logins,
+      ["username", "password"],
+      resolveBy,
+      formOrigin
+    );
 
     // Sort logins in alphabetical order and by date.
     logins.sort((loginA, loginB) => {
@@ -153,16 +204,17 @@ this.LoginManagerContextMenu = {
    *        An identifier generated for the input element via ContentDOMReference.
    * @param {xul:browser} browser
    *        The target tab browser.
-   * @param {nsIURI} documentURI
-   *        URI of the document owning the form we want to fill.
+   * @param {string} formOrigin
+   *        Origin of the document we're filling after sanitization via
+   *        `getLoginOrigin`.
    *        This isn't the same as the browser's top-level
-   *        document URI when subframes are involved.
+   *        origin when subframes are involved.
    */
-  _fillTargetField(login, inputElementIdentifier, browser, documentURI) {
+  _fillTargetField(login, inputElementIdentifier, browser, formOrigin) {
     LoginManagerParent.fillForm({
       browser,
       inputElementIdentifier,
-      loginFormOrigin: documentURI.displayPrePath,
+      loginFormOrigin: formOrigin,
       login,
     }).catch(Cu.reportError);
   },
@@ -184,13 +236,22 @@ this.LoginManagerContextMenu = {
   },
 };
 
-XPCOMUtils.defineLazyGetter(LoginManagerContextMenu, "_stringBundle", function() {
-  return Services.strings.
-         createBundle("chrome://passwordmgr/locale/passwordmgr.properties");
-});
+XPCOMUtils.defineLazyGetter(
+  LoginManagerContextMenu,
+  "_stringBundle",
+  function() {
+    return Services.strings.createBundle(
+      "chrome://passwordmgr/locale/passwordmgr.properties"
+    );
+  }
+);
 
-XPCOMUtils.defineLazyGetter(LoginManagerContextMenu, "dateAndTimeFormatter", function() {
-  return new Services.intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-  });
-});
+XPCOMUtils.defineLazyGetter(
+  LoginManagerContextMenu,
+  "dateAndTimeFormatter",
+  function() {
+    return new Services.intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+    });
+  }
+);

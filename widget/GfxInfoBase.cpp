@@ -23,7 +23,7 @@
 #include "nsXULAppAPI.h"
 #include "nsIXULAppInfo.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/GPUProcessManager.h"
 #include "mozilla/gfx/Logging.h"
@@ -601,7 +601,12 @@ nsresult GfxInfoBase::Init() {
 NS_IMETHODIMP
 GfxInfoBase::GetFeatureStatus(int32_t aFeature, nsACString& aFailureId,
                               int32_t* aStatus) {
-  int32_t blocklistAll = StaticPrefs::BlocklistAll();
+  // Ignore the gfx.blocklist.all pref on release and beta.
+#if defined(RELEASE_OR_BETA)
+  int32_t blocklistAll = 0;
+#else
+  int32_t blocklistAll = StaticPrefs::gfx_blocklist_all_AtStartup();
+#endif
   if (blocklistAll > 0) {
     gfxCriticalErrorOnce(gfxCriticalError::DefaultOptions(false))
         << "Forcing blocklisting all features";
@@ -1087,7 +1092,8 @@ NS_IMETHODIMP GfxInfoBase::GetFailures(nsTArray<int32_t>& indices,
   // assuming this is not a big deal, as the size of the array should be small
   // and the strings in it should be small as well (the error messages in the
   // code.)  The second copy happens with the AppendElement() calls.
-  // Technically, we don't need the mutex lock after the StringVectorCopy() call.
+  // Technically, we don't need the mutex lock after the StringVectorCopy()
+  // call.
   LoggingRecord loggedStrings = logForwarder->LoggingRecordCopy();
   LoggingRecord::const_iterator it;
   for (it = loggedStrings.begin(); it != loggedStrings.end(); ++it) {

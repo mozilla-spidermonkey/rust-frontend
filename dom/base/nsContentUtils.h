@@ -109,6 +109,7 @@ class nsAttrValue;
 class nsITransferable;
 class nsPIWindowRoot;
 class nsIWindowProvider;
+class nsIReferrerInfo;
 
 struct JSRuntime;
 
@@ -336,41 +337,18 @@ class nsContentUtils {
   static nsINode* GetCrossDocParentNode(nsINode* aChild);
 
   /**
-   * Do not ever pass null pointers to this method.  If one of your
-   * nsIContents is null, you have to decide for yourself what
-   * "IsDescendantOf" really means.
-   *
-   * @param  aPossibleDescendant node to test for being a descendant of
-   *         aPossibleAncestor
-   * @param  aPossibleAncestor node to test for being an ancestor of
-   *         aPossibleDescendant
-   * @return true if aPossibleDescendant is a descendant of
-   *         aPossibleAncestor (or is aPossibleAncestor).  false
-   *         otherwise.
-   */
-  static bool ContentIsDescendantOf(const nsINode* aPossibleDescendant,
-                                    const nsINode* aPossibleAncestor);
-
-  /**
-   * Similar to ContentIsDescendantOf, except will treat an HTMLTemplateElement
-   * or ShadowRoot as an ancestor of things in the corresponding
-   * DocumentFragment. See the concept of "host-including inclusive ancestor" in
-   * the DOM specification.
+   * Similar to nsINode::IsInclusiveDescendantOf, except will treat an
+   * HTMLTemplateElement or ShadowRoot as an ancestor of things in the
+   * corresponding DocumentFragment. See the concept of "host-including
+   * inclusive ancestor" in the DOM specification.
    */
   static bool ContentIsHostIncludingDescendantOf(
       const nsINode* aPossibleDescendant, const nsINode* aPossibleAncestor);
 
   /**
-   * Similar to above, but does special case only ShadowRoot,
-   * not HTMLTemplateElement.
-   */
-  static bool ContentIsShadowIncludingDescendantOf(
-      const nsINode* aPossibleDescendant, const nsINode* aPossibleAncestor);
-
-  /**
-   * Similar to ContentIsDescendantOf except it crosses document boundaries,
-   * this function uses ancestor/descendant relations in the composed document
-   * (see shadow DOM spec).
+   * Similar to nsINode::IsInclusiveDescendantOf except it crosses document
+   * boundaries, this function uses ancestor/descendant relations in the
+   * composed document (see shadow DOM spec).
    */
   static bool ContentIsCrossDocDescendantOf(nsINode* aPossibleDescendant,
                                             nsINode* aPossibleAncestor);
@@ -472,7 +450,7 @@ class nsContentUtils {
                                int32_t* aNode2Index = nullptr);
 
   struct ComparePointsCache {
-    int32_t ComputeIndexOf(nsINode* aParent, nsINode* aChild) {
+    int32_t ComputeIndexOf(const nsINode* aParent, const nsINode* aChild) {
       if (aParent == mParent && aChild == mChild) {
         return mIndex;
       }
@@ -484,8 +462,8 @@ class nsContentUtils {
     }
 
    private:
-    nsINode* mParent = nullptr;
-    nsINode* mChild = nullptr;
+    const nsINode* mParent = nullptr;
+    const nsINode* mChild = nullptr;
     int32_t mIndex = 0;
   };
 
@@ -508,13 +486,15 @@ class nsContentUtils {
    *      On the other hand, nsINode can have ATTRCHILD_ARRAY_MAX_CHILD_COUN
    *      (0x3FFFFF) at most.  Therefore, they can be int32_t for now.
    */
-  static int32_t ComparePoints(nsINode* aParent1, int32_t aOffset1,
-                               nsINode* aParent2, int32_t aOffset2,
+  static int32_t ComparePoints(const nsINode* aParent1, int32_t aOffset1,
+                               const nsINode* aParent2, int32_t aOffset2,
                                bool* aDisconnected = nullptr,
                                ComparePointsCache* aParent1Cache = nullptr);
-  static int32_t ComparePoints(const mozilla::RawRangeBoundary& aFirst,
-                               const mozilla::RawRangeBoundary& aSecond,
-                               bool* aDisconnected = nullptr);
+  template <typename FPT, typename FRT, typename SPT, typename SRT>
+  static int32_t ComparePoints(
+      const mozilla::RangeBoundaryBase<FPT, FRT>& aFirstBoundary,
+      const mozilla::RangeBoundaryBase<SPT, SRT>& aSecondBoundary,
+      bool* aDisconnected = nullptr);
 
   /**
    * Brute-force search of the element subtree rooted at aContent for
@@ -599,17 +579,16 @@ class nsContentUtils {
 
   enum ParseHTMLIntegerResultFlags {
     eParseHTMLInteger_NoFlags = 0,
-    eParseHTMLInteger_IsPercent = 1 << 0,
     // eParseHTMLInteger_NonStandard is set if the string representation of the
     // integer was not the canonical one (e.g. had extra leading '+' or '0').
-    eParseHTMLInteger_NonStandard = 1 << 1,
-    eParseHTMLInteger_DidNotConsumeAllInput = 1 << 2,
+    eParseHTMLInteger_NonStandard = 1 << 0,
+    eParseHTMLInteger_DidNotConsumeAllInput = 1 << 1,
     // Set if one or more error flags were set.
-    eParseHTMLInteger_Error = 1 << 3,
-    eParseHTMLInteger_ErrorNoValue = 1 << 4,
-    eParseHTMLInteger_ErrorOverflow = 1 << 5,
+    eParseHTMLInteger_Error = 1 << 2,
+    eParseHTMLInteger_ErrorNoValue = 1 << 3,
+    eParseHTMLInteger_ErrorOverflow = 1 << 4,
     // Use this flag to detect the difference between overflow and underflow
-    eParseHTMLInteger_Negative = 1 << 6,
+    eParseHTMLInteger_Negative = 1 << 5,
   };
   static int32_t ParseHTMLInteger(const nsAString& aValue,
                                   ParseHTMLIntegerResultFlags* aResult);
@@ -722,8 +701,8 @@ class nsContentUtils {
   // with a single realm.
   static nsIPrincipal* ObjectPrincipal(JSObject* aObj);
 
-  static nsresult GenerateStateKey(nsIContent* aContent, Document* aDocument,
-                                   nsACString& aKey);
+  static void GenerateStateKey(nsIContent* aContent, Document* aDocument,
+                               nsACString& aKey);
 
   /**
    * Create a new nsIURI from aSpec, using aBaseURI as the base.  The
@@ -882,9 +861,7 @@ class nsContentUtils {
    *                 will be used.
    * @param aLoadingDocument the document we belong to
    * @param aLoadingPrincipal the principal doing the load
-   * @param aReferrer the referrer URI
-   * @param aReferrerPolicy the referrer-sending policy to use on channel
-   *         creation
+   * @param aReferrerInfo the referrerInfo use on channel creation
    * @param aObserver the observer for the image load
    * @param aLoadFlags the load flags to use.  See nsIRequest
    * @param [aContentPolicyType=nsIContentPolicy::TYPE_INTERNAL_IMAGE]
@@ -896,9 +873,9 @@ class nsContentUtils {
   static nsresult LoadImage(
       nsIURI* aURI, nsINode* aContext, Document* aLoadingDocument,
       nsIPrincipal* aLoadingPrincipal, uint64_t aRequestContextID,
-      nsIURI* aReferrer, mozilla::net::ReferrerPolicy aReferrerPolicy,
-      imgINotificationObserver* aObserver, int32_t aLoadFlags,
-      const nsAString& initiatorType, imgRequestProxy** aRequest,
+      nsIReferrerInfo* aReferrerInfo, imgINotificationObserver* aObserver,
+      int32_t aLoadFlags, const nsAString& initiatorType,
+      imgRequestProxy** aRequest,
       uint32_t aContentPolicyType = nsIContentPolicy::TYPE_INTERNAL_IMAGE,
       bool aUseUrgentStartForChannel = false);
 
@@ -1124,6 +1101,8 @@ class nsContentUtils {
     eMATHML_PROPERTIES,
     eSECURITY_PROPERTIES,
     eNECKO_PROPERTIES,
+    eFORMS_PROPERTIES_MAYBESPOOF,
+    eFORMS_PROPERTIES_en_US,
     PropertiesFile_COUNT
   };
   static nsresult ReportToConsole(
@@ -1895,7 +1874,6 @@ class nsContentUtils {
    * security check using aContent's principal.
    *
    * @param aContent the node on which a link was triggered.
-   * @param aPresContext the pres context, must be non-null.
    * @param aLinkURI the URI of the link, must be non-null.
    * @param aTargetSpec the target (like target=, may be empty).
    * @param aClick whether this was a click or not (if false, this method
@@ -1903,9 +1881,9 @@ class nsContentUtils {
    * @param aIsTrusted If false, JS Context will be pushed to stack
    *                   when the link is triggered.
    */
-  static void TriggerLink(nsIContent* aContent, nsPresContext* aPresContext,
-                          nsIURI* aLinkURI, const nsString& aTargetSpec,
-                          bool aClick, bool aIsTrusted);
+  static void TriggerLink(nsIContent* aContent, nsIURI* aLinkURI,
+                          const nsString& aTargetSpec, bool aClick,
+                          bool aIsTrusted);
 
   /**
    * Get the link location.
@@ -1974,6 +1952,13 @@ class nsContentUtils {
    * Check whether an application should be allowed to use offline APIs.
    */
   static bool OfflineAppAllowed(nsIPrincipal* aPrincipal);
+
+  /**
+   * Determine whether the principal is allowed access to the localization
+   * system. We don't want the web to ever see this but all our UI including in
+   * content pages should pass this test.
+   */
+  static bool PrincipalAllowsL10n(nsIPrincipal* aPrincipal);
 
   /**
    * If offline-apps.allow_by_default is true, we set offline-app permission
@@ -2063,15 +2048,6 @@ class nsContentUtils {
    * Returns true if we are doing StableState/MetastableState.
    */
   static bool IsInStableOrMetaStableState();
-
-  /* Process viewport META data. This gives us information for the scale
-   * and zoom of a page on mobile devices. We stick the information in
-   * the document header and use it later on after rendering.
-   *
-   * See Bug #436083
-   */
-  static nsresult ProcessViewportInfo(Document* aDocument,
-                                      const nsAString& viewportInfo);
 
   static JSContext* GetCurrentJSContext();
 
@@ -2663,6 +2639,14 @@ class nsContentUtils {
   static mozilla::TextEditor* GetActiveEditor(nsPresContext* aPresContext);
 
   /**
+   * Returns `TextEditor` which manages `aAnonymousContent` if there is.
+   * Note that this method returns `nullptr` if `TextEditor` for the
+   * `aAnonymousContent` hasn't been created yet.
+   */
+  static mozilla::TextEditor* GetTextEditorFromAnonymousNodeWithoutCreation(
+      nsIContent* aAnonymousContent);
+
+  /**
    * Returns a LogModule that dump calls from content script are logged to.
    * This can be enabled with the 'Dump' module, and is useful for synchronizing
    * content JS to other logging modules.
@@ -3252,7 +3236,6 @@ class nsContentUtils {
   static nsIInterfaceRequestor* sSameOriginChecker;
 
   static bool sIsHandlingKeyBoardEvent;
-  static bool sAllowXULXBL_for_file;
 #ifndef RELEASE_OR_BETA
   static bool sBypassCSSOMOriginCheck;
 #endif
@@ -3324,6 +3307,10 @@ nsContentUtils::InternalContentPolicyTypeToExternal(nsContentPolicyType aType) {
     case nsIContentPolicy::TYPE_INTERNAL_STYLESHEET:
     case nsIContentPolicy::TYPE_INTERNAL_STYLESHEET_PRELOAD:
       return nsIContentPolicy::TYPE_STYLESHEET;
+
+    case nsIContentPolicy::TYPE_INTERNAL_DTD:
+    case nsIContentPolicy::TYPE_INTERNAL_FORCE_ALLOWED_DTD:
+      return nsIContentPolicy::TYPE_DTD;
 
     default:
       return aType;

@@ -4,11 +4,13 @@ function run_test() {
   registerCleanupFunction(() => {
     Services.prefs.clearUserPref("security.allow_eval_with_system_principal");
   });
-  const {addDebuggerToGlobal} = ChromeUtils.import("resource://gre/modules/jsdebugger.jsm");
+  const { addDebuggerToGlobal } = ChromeUtils.import(
+    "resource://gre/modules/jsdebugger.jsm"
+  );
   addDebuggerToGlobal(this);
   const g = testGlobal("test1");
 
-  const dbg = new Debugger();
+  const dbg = makeDebugger();
   dbg.addDebuggee(g);
   dbg.onDebuggerStatement = function(frame) {
     const args = frame.arguments;
@@ -33,5 +35,5 @@ function run_test() {
     g.stopMe(doc.createEvent("MouseEvent"));
   } )()`);
 
-  dbg.enabled = false;
+  dbg.disable();
 }

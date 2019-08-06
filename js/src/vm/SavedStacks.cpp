@@ -29,7 +29,6 @@
 #include "js/SavedFrameAPI.h"
 #include "js/Vector.h"
 #include "util/StringBuffer.h"
-#include "vm/Debugger.h"
 #include "vm/GeckoProfiler.h"
 #include "vm/JSScript.h"
 #include "vm/Realm.h"
@@ -37,6 +36,7 @@
 #include "vm/Time.h"
 #include "vm/WrapperObject.h"
 
+#include "debugger/DebugAPI-inl.h"
 #include "vm/GeckoProfiler-inl.h"
 #include "vm/JSContext-inl.h"
 #include "vm/NativeObject-inl.h"
@@ -1798,6 +1798,16 @@ bool SavedStacks::getLocation(JSContext* cx, const FrameIter& iter,
 }
 
 void SavedStacks::chooseSamplingProbability(Realm* realm) {
+  {
+    JSRuntime* runtime = realm->runtimeFromMainThread();
+    if (runtime->recordAllocationCallback) {
+      // The runtime is tracking allocations across all realms, in this case
+      // ignore all of the debugger values, and use the runtime's probability.
+      this->setSamplingProbability(runtime->allocationSamplingProbability);
+      return;
+    }
+  }
+
   // Use unbarriered version to prevent triggering read barrier while
   // collecting, this is safe as long as global does not escape.
   GlobalObject* global = realm->unsafeUnbarrieredMaybeGlobal();
@@ -1805,30 +1815,15 @@ void SavedStacks::chooseSamplingProbability(Realm* realm) {
     return;
   }
 
-  GlobalObject::DebuggerVector* dbgs = global->getDebuggers();
-  if (!dbgs || dbgs->empty()) {
+  Maybe<double> probability = DebugAPI::allocationSamplingProbability(global);
+  if (probability.isNothing()) {
     return;
   }
 
-  mozilla::DebugOnly<WeakHeapPtr<Debugger*>*> begin = dbgs->begin();
-  mozilla::DebugOnly<bool> foundAnyDebuggers = false;
+  this->setSamplingProbability(*probability);
+}
 
-  double probability = 0;
-  for (auto p = dbgs->begin(); p < dbgs->end(); p++) {
-    // The set of debuggers had better not change while we're iterating,
-    // such that the vector gets reallocated.
-    MOZ_ASSERT(dbgs->begin() == begin);
-    // Use unbarrieredGet() to prevent triggering read barrier while collecting,
-    // this is safe as long as dbgp does not escape.
-    Debugger* dbgp = p->unbarrieredGet();
-
-    if (dbgp->trackingAllocationSites && dbgp->enabled) {
-      foundAnyDebuggers = true;
-      probability = std::max(dbgp->allocationSamplingProbability, probability);
-    }
-  }
-  MOZ_ASSERT(foundAnyDebuggers);
-
+void SavedStacks::setSamplingProbability(double probability) {
   if (!bernoulliSeeded) {
     mozilla::Array<uint64_t, 2> seed;
     GenerateXorShift128PlusSeed(seed);
@@ -1854,9 +1849,26 @@ JSObject* SavedStacks::MetadataBuilder::build(
     oomUnsafe.crash("SavedStacksMetadataBuilder");
   }
 
-  if (!Debugger::onLogAllocationSite(cx, obj, frame,
+  if (!DebugAPI::onLogAllocationSite(cx, obj, frame,
                                      mozilla::TimeStamp::Now())) {
     oomUnsafe.crash("SavedStacksMetadataBuilder");
+  }
+
+  auto recordAllocationCallback =
+      cx->realm()->runtimeFromMainThread()->recordAllocationCallback;
+  if (recordAllocationCallback) {
+    // The following code translates the JS-specific information, into an
+    // RecordAllocationInfo object that can be consumed outside of SpiderMonkey.
+
+    auto node = JS::ubi::Node(obj.get());
+
+    // Pass the non-SpiderMonkey specific information back to the
+    // callback to get it out of the JS engine.
+    recordAllocationCallback(JS::RecordAllocationInfo{
+        node.typeName(), node.jsObjectClassName(), node.descriptiveTypeName(),
+        JS::ubi::CoarseTypeToString(node.coarseType()),
+        node.size(cx->runtime()->debuggerMallocSizeOf),
+        gc::IsInsideNursery(obj)});
   }
 
   MOZ_ASSERT_IF(frame, !frame->is<WrapperObject>());

@@ -8,7 +8,6 @@
 #define GFX_FRAMEMETRICS_H
 
 #include <stdint.h>  // for uint8_t, uint32_t, uint64_t
-#include <map>
 #include "Units.h"                  // for CSSRect, CSSPixel, etc
 #include "mozilla/DefineEnum.h"     // for MOZ_DEFINE_ENUM
 #include "mozilla/HashFunctions.h"  // for HashGeneric
@@ -21,8 +20,9 @@
 #include "mozilla/layers/ScrollableLayerGuid.h"  // for ScrollableLayerGuid
 #include "mozilla/StaticPtr.h"                   // for StaticAutoPtr
 #include "mozilla/TimeStamp.h"                   // for TimeStamp
+#include "nsDataHashtable.h"                     // for nsDataHashtable
 #include "nsString.h"
-#include "nsStyleCoord.h"  // for nsStyleCoord
+#include "mozilla/ServoStyleConsts.h"
 #include "PLDHashTable.h"  // for PLDHashNumber
 
 struct nsStyleDisplay;
@@ -759,7 +759,7 @@ struct ScrollSnapInfo {
   Maybe<nscoord> mScrollSnapIntervalY;
 
   // The scroll frame's scroll-snap-destination, in cooked form (to avoid
-  // shipping the raw nsStyleCoord::CalcValue over IPC).
+  // shipping the raw style value over IPC).
   nsPoint mScrollSnapDestination;
 
   // The scroll-snap-coordinates of any descendant frames of the scroll frame,
@@ -987,9 +987,9 @@ struct ScrollMetadata {
     mIsAutoDirRootContentRTL = aValue;
   }
   bool IsAutoDirRootContentRTL() const { return mIsAutoDirRootContentRTL; }
-  // Implemented out of line because the implementation needs StaticPrefs.h
-  // and we don't want to include that from FrameMetrics.h.
-  void SetUsesContainerScrolling(bool aValue);
+  void SetUsesContainerScrolling(bool aValue) {
+    mUsesContainerScrolling = aValue;
+  }
   bool UsesContainerScrolling() const { return mUsesContainerScrolling; }
   void SetForceDisableApz(bool aForceDisable) {
     mForceDisableApz = aForceDisable;
@@ -1099,7 +1099,7 @@ struct ScrollMetadata {
   // Please add new fields above this comment.
 };
 
-typedef std::map<ScrollableLayerGuid::ViewID, ScrollUpdateInfo>
+typedef nsDataHashtable<ScrollableLayerGuid::ViewIDHashKey, ScrollUpdateInfo>
     ScrollUpdatesMap;
 
 }  // namespace layers

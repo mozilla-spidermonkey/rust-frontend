@@ -12,17 +12,7 @@
 const TEST_URI = "data:text/html;charset=utf-8,Web Console test for bug 817834";
 
 add_task(async function() {
-  // Run test with legacy JsTerm
-  await pushPref("devtools.webconsole.jsterm.codeMirror", false);
-  await performTests();
-  // And then run it with the CodeMirror-powered one.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", true);
-  await performTests();
-});
-
-async function performTests() {
   const hud = await openNewTabAndConsole(TEST_URI);
-  const {jsterm} = hud;
 
   ok(!getInputValue(hud), "console input is empty");
   checkInputCursorPosition(hud, 0, "Cursor is at expected position");
@@ -33,18 +23,24 @@ async function performTests() {
   EventUtils.synthesizeKey("KEY_ArrowDown");
   is(getInputValue(hud), '"first item"', "null test history down");
 
-  await jsterm.execute();
+  EventUtils.synthesizeKey("KEY_Enter");
+  await waitFor(() => findMessage(hud, "first item", ".result"));
   is(getInputValue(hud), "", "cleared input line after submit");
 
   setInputValue(hud, '"editing input 1"');
   EventUtils.synthesizeKey("KEY_ArrowUp");
   is(getInputValue(hud), '"first item"', "test history up");
   EventUtils.synthesizeKey("KEY_ArrowDown");
-  is(getInputValue(hud), '"editing input 1"',
-    "test history down restores in-progress input");
+  is(
+    getInputValue(hud),
+    '"editing input 1"',
+    "test history down restores in-progress input"
+  );
 
   setInputValue(hud, '"second item"');
-  await jsterm.execute();
+  EventUtils.synthesizeKey("KEY_Enter");
+  await waitFor(() => findMessage(hud, "second item", ".result"));
+
   setInputValue(hud, '"editing input 2"');
   EventUtils.synthesizeKey("KEY_ArrowUp");
   is(getInputValue(hud), '"second item"', "test history up");
@@ -53,18 +49,33 @@ async function performTests() {
   EventUtils.synthesizeKey("KEY_ArrowDown");
   is(getInputValue(hud), '"second item"', "test history down");
   EventUtils.synthesizeKey("KEY_ArrowDown");
-  is(getInputValue(hud), '"editing input 2"',
-     "test history down restores new in-progress input again");
+  is(
+    getInputValue(hud),
+    '"editing input 2"',
+    "test history down restores new in-progress input again"
+  );
 
   // Appending the same value again should not impact the history.
   // Let's also use some spaces around to check that the input value
   // is properly trimmed.
-  await jsterm.execute('"second item"');
-  await jsterm.execute('  "second item"    ');
+  setInputValue(hud, '"second item"');
+  EventUtils.synthesizeKey("KEY_Enter");
+  await waitFor(() => findMessage(hud, "second item", ".result"));
+
+  setInputValue(hud, '"second item"    ');
+  EventUtils.synthesizeKey("KEY_Enter");
+  await waitFor(() => findMessage(hud, "second item", ".result"));
+
   EventUtils.synthesizeKey("KEY_ArrowUp");
-  is(getInputValue(hud), '"second item"',
-    "test history up reaches duplicated entry just once");
+  is(
+    getInputValue(hud),
+    '"second item"',
+    "test history up reaches duplicated entry just once"
+  );
   EventUtils.synthesizeKey("KEY_ArrowUp");
-  is(getInputValue(hud), '"first item"',
-    "test history up reaches the previous value");
-}
+  is(
+    getInputValue(hud),
+    '"first item"',
+    "test history up reaches the previous value"
+  );
+});

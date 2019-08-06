@@ -14,7 +14,9 @@
 #include "mozAutoDocUpdate.h"
 #include "mozilla/IdleTaskRunner.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_content.h"
+#include "mozilla/StaticPrefs_security.h"
+#include "mozilla/StaticPrefs_view_source.h"
 #include "mozilla/css/Loader.h"
 #include "nsContentUtils.h"
 #include "nsDocShell.h"
@@ -314,9 +316,10 @@ void nsHtml5TreeOpExecutor::ContinueInterruptedParsingAsync() {
         &BackgroundFlushCallback,
         "nsHtml5TreeOpExecutor::BackgroundFlushCallback",
         250,  // The hard deadline: 250ms.
-        nsContentSink::sInteractiveParseTime / 1000,  // Required budget.
-        true,                                         // repeating
-        [] { return false; });                        // MayStopProcessing
+        StaticPrefs::content_sink_interactive_parse_time() /
+            1000,               // Required budget.
+        true,                   // repeating
+        [] { return false; });  // MayStopProcessing
   }
 }
 
@@ -799,7 +802,7 @@ void nsHtml5TreeOpExecutor::MaybeComplainAboutCharset(const char* aMsgId,
   // if alerted about them.
   if (!strcmp(aMsgId, "EncNoDeclaration") && mDocShell) {
     nsCOMPtr<nsIDocShellTreeItem> parent;
-    mDocShell->GetSameTypeParent(getter_AddRefs(parent));
+    mDocShell->GetInProcessSameTypeParent(getter_AddRefs(parent));
     if (parent) {
       return;
     }

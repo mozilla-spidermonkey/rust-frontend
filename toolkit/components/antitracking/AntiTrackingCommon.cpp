@@ -14,7 +14,9 @@
 #include "mozilla/Logging.h"
 #include "mozilla/MruCache.h"
 #include "mozilla/Pair.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_browser.h"
+#include "mozilla/StaticPrefs_extensions.h"
+#include "mozilla/StaticPrefs_privacy.h"
 #include "mozIThirdPartyUtil.h"
 #include "nsContentUtils.h"
 #include "nsGlobalWindowInner.h"
@@ -161,7 +163,7 @@ uint32_t CheckCookiePermissionForPrincipal(nsICookieSettings* aCookieSettings,
   MOZ_ASSERT(aPrincipal);
 
   uint32_t cookiePermission = nsICookiePermission::ACCESS_DEFAULT;
-  if (!aPrincipal->GetIsCodebasePrincipal()) {
+  if (!aPrincipal->GetIsContentPrincipal()) {
     return cookiePermission;
   }
 
@@ -218,10 +220,7 @@ int32_t CookiesBehavior(nsILoadInfo* aLoadInfo,
 
   // WebExtensions 3rd party URI always get BEHAVIOR_ACCEPT as cookieBehavior,
   // this is semantically equivalent to the principal having a AddonPolicy().
-  bool is3rdPartyMozExt = false;
-  if (NS_SUCCEEDED(
-          a3rdPartyURI->SchemeIs("moz-extension", &is3rdPartyMozExt)) &&
-      is3rdPartyMozExt) {
+  if (a3rdPartyURI->SchemeIs("moz-extension")) {
     return nsICookieService::BEHAVIOR_ACCEPT;
   }
 
@@ -345,7 +344,7 @@ bool CheckContentBlockingAllowList(nsPIDOMWindowInner* aWindow) {
     return entry.Data().mResult;
   }
 
-  nsPIDOMWindowOuter* top = aWindow->GetScriptableTop();
+  nsPIDOMWindowOuter* top = aWindow->GetInProcessScriptableTop();
   if (top) {
     nsIURI* topWinURI = top->GetDocumentURI();
     Document* doc = top->GetExtantDoc();
@@ -603,7 +602,7 @@ already_AddRefed<nsPIDOMWindowOuter> GetTopWindow(nsPIDOMWindowInner* aWindow) {
   nsCOMPtr<nsPIDOMWindowOuter> pwin;
   auto* outer = nsGlobalWindowOuter::Cast(aWindow->GetOuterWindow());
   if (outer) {
-    pwin = outer->GetScriptableTop();
+    pwin = outer->GetInProcessScriptableTop();
   }
 
   if (!pwin) {
@@ -870,7 +869,8 @@ AntiTrackingCommon::AddFirstPartyStorageAccessGrantedFor(
     }
   }
 
-  nsCOMPtr<nsPIDOMWindowOuter> topOuterWindow = outerParentWindow->GetTop();
+  nsCOMPtr<nsPIDOMWindowOuter> topOuterWindow =
+      outerParentWindow->GetInProcessTop();
   nsGlobalWindowOuter* topWindow = nsGlobalWindowOuter::Cast(topOuterWindow);
   if (NS_WARN_IF(!topWindow)) {
     LOG(("No top outer window."));
@@ -1161,7 +1161,7 @@ bool AntiTrackingCommon::IsFirstPartyStorageAccessGrantedFor(
     return false;
   }
 
-  nsCOMPtr<nsPIDOMWindowOuter> topOuterWindow = outerWindow->GetTop();
+  nsCOMPtr<nsPIDOMWindowOuter> topOuterWindow = outerWindow->GetInProcessTop();
   nsGlobalWindowOuter* topWindow = nsGlobalWindowOuter::Cast(topOuterWindow);
   if (NS_WARN_IF(!topWindow)) {
     LOG(("No top outer window"));
@@ -1625,7 +1625,7 @@ bool AntiTrackingCommon::IsFirstPartyStorageAccessGrantedFor(
   MOZ_ASSERT(aCookieSettings);
 
   uint32_t access = nsICookiePermission::ACCESS_DEFAULT;
-  if (aPrincipal->GetIsCodebasePrincipal()) {
+  if (aPrincipal->GetIsContentPrincipal()) {
     nsPermissionManager* permManager = nsPermissionManager::GetInstance();
     if (permManager) {
       Unused << NS_WARN_IF(NS_FAILED(permManager->TestPermissionFromPrincipal(

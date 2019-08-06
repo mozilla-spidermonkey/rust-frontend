@@ -104,13 +104,15 @@ class ContentChild final : public PContentChild,
     nsCString sourceURL;
   };
 
-  nsresult ProvideWindowCommon(
-      BrowserChild* aTabOpener, mozIDOMWindowProxy* aParent, bool aIframeMoz,
-      uint32_t aChromeFlags, bool aCalledFromJS, bool aPositionSpecified,
-      bool aSizeSpecified, nsIURI* aURI, const nsAString& aName,
-      const nsACString& aFeatures, bool aForceNoOpener, bool aForceNoReferrer,
-      nsDocShellLoadState* aLoadState, bool* aWindowIsNew,
-      mozIDOMWindowProxy** aReturn);
+  nsresult ProvideWindowCommon(BrowserChild* aTabOpener,
+                               mozIDOMWindowProxy* aParent, bool aIframeMoz,
+                               uint32_t aChromeFlags, bool aCalledFromJS,
+                               bool aPositionSpecified, bool aSizeSpecified,
+                               nsIURI* aURI, const nsAString& aName,
+                               const nsACString& aFeatures, bool aForceNoOpener,
+                               bool aForceNoReferrer,
+                               nsDocShellLoadState* aLoadState,
+                               bool* aWindowIsNew, BrowsingContext** aReturn);
 
   bool Init(MessageLoop* aIOLoop, base::ProcessId aParentPid,
             const char* aParentBuildID, IPC::Channel* aChannel,
@@ -306,9 +308,9 @@ class ContentChild final : public PContentChild,
   bool DeallocPSpeechSynthesisChild(PSpeechSynthesisChild* aActor);
 
   mozilla::ipc::IPCResult RecvRegisterChrome(
-      InfallibleTArray<ChromePackage>&& packages,
-      InfallibleTArray<SubstitutionMapping>&& resources,
-      InfallibleTArray<OverrideMapping>&& overrides, const nsCString& locale,
+      nsTArray<ChromePackage>&& packages,
+      nsTArray<SubstitutionMapping>&& resources,
+      nsTArray<OverrideMapping>&& overrides, const nsCString& locale,
       const bool& reset);
   mozilla::ipc::IPCResult RecvRegisterChromeItem(
       const ChromeRegistryItem& item);
@@ -362,7 +364,7 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvLoadProcessScript(const nsString& aURL);
 
   mozilla::ipc::IPCResult RecvAsyncMessage(const nsString& aMsg,
-                                           InfallibleTArray<CpowEntry>&& aCpows,
+                                           nsTArray<CpowEntry>&& aCpows,
                                            const IPC::Principal& aPrincipal,
                                            const ClonedMessageData& aData);
 
@@ -383,10 +385,10 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvGeolocationError(const uint16_t& errorCode);
 
   mozilla::ipc::IPCResult RecvUpdateDictionaryList(
-      InfallibleTArray<nsString>&& aDictionaries);
+      nsTArray<nsString>&& aDictionaries);
 
   mozilla::ipc::IPCResult RecvUpdateFontList(
-      InfallibleTArray<SystemFontListEntry>&& aFontList);
+      nsTArray<SystemFontListEntry>&& aFontList);
   mozilla::ipc::IPCResult RecvRebuildFontList();
 
   mozilla::ipc::IPCResult RecvUpdateAppLocales(
@@ -415,6 +417,8 @@ class ContentChild final : public PContentChild,
 
   mozilla::ipc::IPCResult RecvRemoteType(const nsString& aRemoteType);
 
+  // Call RemoteTypePrefix() on the result to remove URIs if you want to use
+  // this for telemetry.
   const nsAString& GetRemoteType() const;
 
   mozilla::ipc::IPCResult RecvInitServiceWorkers(
@@ -473,7 +477,7 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvPushWithData(const nsCString& aScope,
                                            const IPC::Principal& aPrincipal,
                                            const nsString& aMessageId,
-                                           InfallibleTArray<uint8_t>&& aData);
+                                           nsTArray<uint8_t>&& aData);
 
   mozilla::ipc::IPCResult RecvPushSubscriptionChange(
       const nsCString& aScope, const IPC::Principal& aPrincipal);
@@ -526,7 +530,7 @@ class ContentChild final : public PContentChild,
 
   FORWARD_SHMEM_ALLOCATOR_TO(PContentChild)
 
-  void GetAvailableDictionaries(InfallibleTArray<nsString>& aDictionaries);
+  void GetAvailableDictionaries(nsTArray<nsString>& aDictionaries);
 
   PBrowserOrId GetBrowserOrId(BrowserChild* aBrowserChild);
 
@@ -542,7 +546,7 @@ class ContentChild final : public PContentChild,
   bool DeallocPWebrtcGlobalChild(PWebrtcGlobalChild* aActor);
 
   PContentPermissionRequestChild* AllocPContentPermissionRequestChild(
-      const InfallibleTArray<PermissionRequest>& aRequests,
+      const nsTArray<PermissionRequest>& aRequests,
       const IPC::Principal& aPrincipal,
       const IPC::Principal& aTopLevelPrincipal,
       const bool& aIsHandlingUserInput, const bool& aDocumentHasUserInput,
@@ -615,7 +619,7 @@ class ContentChild final : public PContentChild,
 
   // Get a reference to the font list passed from the chrome process,
   // for use during gfx initialization.
-  InfallibleTArray<mozilla::dom::SystemFontListEntry>& SystemFontList() {
+  nsTArray<mozilla::dom::SystemFontListEntry>& SystemFontList() {
     return mFontList;
   }
 
@@ -685,6 +689,7 @@ class ContentChild final : public PContentChild,
                                             bool aMuted);
 
   void HoldBrowsingContextGroup(BrowsingContextGroup* aBCG);
+  void ReleaseBrowsingContextGroup(BrowsingContextGroup* aBCG);
 
 #ifdef NIGHTLY_BUILD
   // Fetch the current number of pending input events.
@@ -715,7 +720,8 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvAttachBrowsingContext(
       BrowsingContext::IPCInitializer&& aInit);
 
-  mozilla::ipc::IPCResult RecvDetachBrowsingContext(BrowsingContext* aContext);
+  mozilla::ipc::IPCResult RecvDetachBrowsingContext(
+      uint64_t aContextId, DetachBrowsingContextResolver&& aResolve);
 
   mozilla::ipc::IPCResult RecvCacheBrowsingContextChildren(
       BrowsingContext* aContext);
@@ -747,17 +753,17 @@ class ContentChild final : public PContentChild,
   virtual PContentChild::Result OnMessageReceived(const Message& aMsg,
                                                   Message*& aReply) override;
 
-  InfallibleTArray<nsAutoPtr<AlertObserver>> mAlertObservers;
+  nsTArray<nsAutoPtr<AlertObserver>> mAlertObservers;
   RefPtr<ConsoleListener> mConsoleListener;
 
   nsTHashtable<nsPtrHashKey<nsIObserver>> mIdleObservers;
 
-  InfallibleTArray<nsString> mAvailableDictionaries;
+  nsTArray<nsString> mAvailableDictionaries;
 
   // Temporary storage for a list of available fonts, passed from the
   // parent process and used to initialize gfx in the child. Currently used
   // only on MacOSX and Linux.
-  InfallibleTArray<mozilla::dom::SystemFontListEntry> mFontList;
+  nsTArray<mozilla::dom::SystemFontListEntry> mFontList;
   // Temporary storage for nsXPLookAndFeel flags.
   nsTArray<LookAndFeelInt> mLookAndFeelCache;
 

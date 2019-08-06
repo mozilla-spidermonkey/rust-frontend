@@ -7,8 +7,9 @@
 
 "use strict";
 
-const TEST_URI = "http://example.com/browser/devtools/client/webconsole/" +
-                 "test/mochitest/test-console-filters.html";
+const TEST_URI =
+  "http://example.com/browser/devtools/client/webconsole/" +
+  "test/mochitest/test-console-filters.html";
 
 add_task(async function() {
   let hud = await openNewTabAndConsole(TEST_URI);
@@ -31,6 +32,12 @@ add_task(async function() {
     ok(!filterIsEnabled(filterButton), "filter is disabled");
     filterButton.click();
   });
+
+  // Wait for the confirmation message about CSS warnings so we don't have a pending
+  // promise.
+  await waitFor(() =>
+    findMessage(hud, "Stylesheets without CSSOM changes reparsed")
+  );
 
   info("Close and re-open the console");
   await closeTabAndToolbox();

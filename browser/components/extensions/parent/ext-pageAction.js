@@ -1,24 +1,34 @@
 /* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* vim: set sts=2 sw=2 et tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
-ChromeUtils.defineModuleGetter(this, "ExtensionTelemetry",
-                               "resource://gre/modules/ExtensionTelemetry.jsm");
-ChromeUtils.defineModuleGetter(this, "PageActions",
-                               "resource:///modules/PageActions.jsm");
-ChromeUtils.defineModuleGetter(this, "PanelPopup",
-                               "resource:///modules/ExtensionPopups.jsm");
+ChromeUtils.defineModuleGetter(
+  this,
+  "ExtensionTelemetry",
+  "resource://gre/modules/ExtensionTelemetry.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
+  "PageActions",
+  "resource:///modules/PageActions.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
+  "PanelPopup",
+  "resource:///modules/ExtensionPopups.jsm"
+);
 
-var {ExtensionParent} = ChromeUtils.import("resource://gre/modules/ExtensionParent.jsm");
+var { ExtensionParent } = ChromeUtils.import(
+  "resource://gre/modules/ExtensionParent.jsm"
+);
 
-var {
-  IconDetails,
-  StartupCache,
-} = ExtensionParent;
+var { IconDetails, StartupCache } = ExtensionParent;
 
-var {
-  DefaultWeakMap,
-} = ExtensionUtils;
+var { DefaultWeakMap } = ExtensionUtils;
 
 // WeakMap[Extension -> PageAction]
 let pageActionMap = new WeakMap();
@@ -29,7 +39,7 @@ this.pageAction = class extends ExtensionAPI {
   }
 
   async onManifestEntry(entryName) {
-    let {extension} = this;
+    let { extension } = this;
     let options = extension.manifest.page_action;
 
     let widgetId = makeWidgetId(extension.id);
@@ -55,9 +65,9 @@ this.pageAction = class extends ExtensionAPI {
       show = false;
     } else {
       // Might show or hide depending on the URL. Enable pattern matching.
-      const {restrictSchemes} = extension;
-      showMatches = new MatchPatternSet(show_matches, {restrictSchemes});
-      hideMatches = new MatchPatternSet(hide_matches, {restrictSchemes});
+      const { restrictSchemes } = extension;
+      showMatches = new MatchPatternSet(show_matches, { restrictSchemes });
+      hideMatches = new MatchPatternSet(hide_matches, { restrictSchemes });
     }
 
     this.defaults = {
@@ -78,32 +88,38 @@ this.pageAction = class extends ExtensionAPI {
     pageActionMap.set(extension, this);
 
     this.defaults.icon = await StartupCache.get(
-      extension, ["pageAction", "default_icon"],
-      () => this.normalize({path: options.default_icon || ""}));
+      extension,
+      ["pageAction", "default_icon"],
+      () => this.normalize({ path: options.default_icon || "" })
+    );
 
     this.lastValues = new DefaultWeakMap(() => ({}));
 
     if (!this.browserPageAction) {
-      this.browserPageAction = PageActions.addAction(new PageActions.Action({
-        id: widgetId,
-        extensionID: extension.id,
-        title: this.defaults.title,
-        iconURL: this.defaults.icon,
-        pinnedToUrlbar: this.defaults.pinned,
-        disabled: !this.defaults.show,
-        onCommand: (event, buttonNode) => {
-          this.handleClick(event.target.ownerGlobal);
-        },
-        onBeforePlacedInWindow: browserWindow => {
-          if (this.extension.hasPermission("menus") ||
-              this.extension.hasPermission("contextMenus")) {
-            browserWindow.document.addEventListener("popupshowing", this);
-          }
-        },
-        onRemovedFromWindow: browserWindow => {
-          browserWindow.document.removeEventListener("popupshowing", this);
-        },
-      }));
+      this.browserPageAction = PageActions.addAction(
+        new PageActions.Action({
+          id: widgetId,
+          extensionID: extension.id,
+          title: this.defaults.title,
+          iconURL: this.defaults.icon,
+          pinnedToUrlbar: this.defaults.pinned,
+          disabled: !this.defaults.show,
+          onCommand: (event, buttonNode) => {
+            this.handleClick(event.target.ownerGlobal);
+          },
+          onBeforePlacedInWindow: browserWindow => {
+            if (
+              this.extension.hasPermission("menus") ||
+              this.extension.hasPermission("contextMenus")
+            ) {
+              browserWindow.document.addEventListener("popupshowing", this);
+            }
+          },
+          onRemovedFromWindow: browserWindow => {
+            browserWindow.document.removeEventListener("popupshowing", this);
+          },
+        })
+      );
 
       // If the page action is only enabled in some URLs, do pattern matching in
       // the active tabs and update the button if necessary.
@@ -218,7 +234,8 @@ this.pageAction = class extends ExtensionAPI {
     // Otherwise pattern matching must have been configured. Do it, caching the result.
     if (tabData.patternMatching === undefined) {
       let uri = tab.linkedBrowser.currentURI;
-      tabData.patternMatching = tabData.showMatches.matches(uri) && !tabData.hideMatches.matches(uri);
+      tabData.patternMatching =
+        tabData.showMatches.matches(uri) && !tabData.hideMatches.matches(uri);
     }
     return tabData.patternMatching;
   }
@@ -243,10 +260,12 @@ this.pageAction = class extends ExtensionAPI {
         const menu = event.target;
         const trigger = menu.triggerNode;
 
-        if (menu.id === "pageActionContextMenu" &&
-            trigger &&
-            trigger.getAttribute("actionid") === this.browserPageAction.id &&
-            !this.browserPageAction.getDisabled(trigger.ownerGlobal)) {
+        if (
+          menu.id === "pageActionContextMenu" &&
+          trigger &&
+          trigger.getAttribute("actionid") === this.browserPageAction.id &&
+          !this.browserPageAction.getDisabled(trigger.ownerGlobal)
+        ) {
           global.actionContextMenu({
             extension: this.extension,
             onPageAction: true,
@@ -263,7 +282,7 @@ this.pageAction = class extends ExtensionAPI {
   // that URL. Otherwise, a "click" event is emitted, and dispatched to
   // the any click listeners in the add-on.
   async handleClick(window) {
-    const {extension} = this;
+    const { extension } = this;
 
     ExtensionTelemetry.pageActionPopupOpen.stopwatchStart(extension, this);
     let tab = window.gBrowser.selectedTab;
@@ -279,20 +298,32 @@ this.pageAction = class extends ExtensionAPI {
       if (this.popupNode && this.popupNode.panel.state !== "closed") {
         // The panel is being toggled closed.
         ExtensionTelemetry.pageActionPopupOpen.stopwatchCancel(extension, this);
-        window.BrowserPageActions.togglePanelForAction(this.browserPageAction,
-                                                       this.popupNode.panel);
+        window.BrowserPageActions.togglePanelForAction(
+          this.browserPageAction,
+          this.popupNode.panel
+        );
         return;
       }
 
-      this.popupNode = new PanelPopup(extension, window.document, popupURL,
-                                      this.browserStyle);
+      this.popupNode = new PanelPopup(
+        extension,
+        window.document,
+        popupURL,
+        this.browserStyle
+      );
       // Remove popupNode when it is closed.
-      this.popupNode.panel.addEventListener("popuphiding", () => {
-        this.popupNode = undefined;
-      }, {once: true});
+      this.popupNode.panel.addEventListener(
+        "popuphiding",
+        () => {
+          this.popupNode = undefined;
+        },
+        { once: true }
+      );
       await this.popupNode.contentReady;
-      window.BrowserPageActions.togglePanelForAction(this.browserPageAction,
-                                                     this.popupNode.panel);
+      window.BrowserPageActions.togglePanelForAction(
+        this.browserPageAction,
+        this.popupNode.panel
+      );
       ExtensionTelemetry.pageActionPopupOpen.stopwatchFinish(extension, this);
     } else {
       ExtensionTelemetry.pageActionPopupOpen.stopwatchCancel(extension, this);
@@ -335,9 +366,9 @@ this.pageAction = class extends ExtensionAPI {
   }
 
   getAPI(context) {
-    let {extension} = context;
+    let { extension } = context;
 
-    const {tabManager} = extension;
+    const { tabManager } = extension;
     const pageAction = this;
 
     return {
@@ -349,7 +380,8 @@ this.pageAction = class extends ExtensionAPI {
           register: fire => {
             let listener = (evt, tab) => {
               context.withPendingBrowser(tab.linkedBrowser, () =>
-                fire.sync(tabManager.convert(tab)));
+                fire.sync(tabManager.convert(tab))
+              );
             };
 
             pageAction.on("click", listener);
@@ -404,7 +436,7 @@ this.pageAction = class extends ExtensionAPI {
           // calling context.
           let url = details.popup && context.uri.resolve(details.popup);
           if (url && !context.checkLoadURL(url)) {
-            return Promise.reject({message: `Access denied for URL ${url}`});
+            return Promise.reject({ message: `Access denied for URL ${url}` });
           }
           pageAction.setProperty(tab, "popup", url);
         },

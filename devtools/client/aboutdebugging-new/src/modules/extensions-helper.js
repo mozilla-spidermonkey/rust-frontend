@@ -6,40 +6,19 @@
 
 const { Cc, Ci } = require("chrome");
 const Services = require("Services");
-loader.lazyImporter(this, "AddonManager", "resource://gre/modules/AddonManager.jsm");
-loader.lazyRequireGetter(this, "FileUtils", "resource://gre/modules/FileUtils.jsm", true);
-
-const {Toolbox} = require("devtools/client/framework/toolbox");
-const {gDevTools} = require("devtools/client/framework/devtools");
+loader.lazyImporter(
+  this,
+  "AddonManager",
+  "resource://gre/modules/AddonManager.jsm"
+);
+loader.lazyRequireGetter(
+  this,
+  "FileUtils",
+  "resource://gre/modules/FileUtils.jsm",
+  true
+);
 
 const { PREFERENCES } = require("../constants");
-
-let addonToolbox = null;
-
-/**
- * Start debugging an addon.
- *
- * @param {String} id
- *        The addon id to debug.
- * @param {DebuggerClient} client
- *        Required for debugging.
- */
-exports.debugAddon = async function(id, client) {
-  const addonFront = await client.mainRoot.getAddon({ id });
-
-  const target = await addonFront.connect();
-
-  // Close previous addon debugging toolbox.
-  if (addonToolbox) {
-    addonToolbox.destroy();
-  }
-
-  const hostType = Toolbox.HostType.WINDOW;
-  addonToolbox = await gDevTools.showToolbox(target, null, hostType);
-  addonToolbox.once("destroy", () => {
-    addonToolbox = null;
-  });
-};
 
 /**
  * Uninstall the addon with the provided id.
@@ -91,8 +70,10 @@ exports.openTemporaryExtension = function(win, message) {
 
     // Try to set the last directory used as "displayDirectory".
     try {
-      const lastDirPath =
-        Services.prefs.getCharPref(PREFERENCES.TEMPORARY_EXTENSION_PATH, "");
+      const lastDirPath = Services.prefs.getCharPref(
+        PREFERENCES.TEMPORARY_EXTENSION_PATH,
+        ""
+      );
       const lastDir = new FileUtils.File(lastDirPath);
       fp.displayDirectory = lastDir;
     } catch (e) {
@@ -106,13 +87,19 @@ exports.openTemporaryExtension = function(win, message) {
       let file = fp.file;
       // AddonManager.installTemporaryAddon accepts either
       // addon directory or final xpi file.
-      if (!file.isDirectory() &&
-          !file.leafName.endsWith(".xpi") && !file.leafName.endsWith(".zip")) {
+      if (
+        !file.isDirectory() &&
+        !file.leafName.endsWith(".xpi") &&
+        !file.leafName.endsWith(".zip")
+      ) {
         file = file.parent;
       }
 
       // We are about to resolve, store the path to the file for the next call.
-      Services.prefs.setCharPref(PREFERENCES.TEMPORARY_EXTENSION_PATH, file.path);
+      Services.prefs.setCharPref(
+        PREFERENCES.TEMPORARY_EXTENSION_PATH,
+        file.path
+      );
 
       resolve(file);
     });

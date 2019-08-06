@@ -466,15 +466,18 @@ def target_tasks_pine(full_task_graph, parameters, graph_config):
     return [l for l, t in full_task_graph.tasks.iteritems() if filter(t)]
 
 
-@_target_task('nightly_geckoview')
-def target_tasks_nightly_geckoview(full_task_graph, parameters, graph_config):
+@_target_task('ship_geckoview')
+def target_tasks_ship_geckoview(full_task_graph, parameters, graph_config):
     """Select the set of tasks required to ship geckoview nightly. The
     nightly build process involves a pipeline of builds and an upload to
     maven.mozilla.org."""
     def filter(task):
         # XXX Starting 69, we don't ship Fennec Nightly anymore. We just want geckoview to be
         # uploaded
-        return task.kind == 'beetmover-geckoview'
+        return (
+            task.attributes.get('shipping_product') == 'fennec' and
+            task.kind in ('beetmover-geckoview', 'upload-symbols')
+        )
 
     return [l for l, t in full_task_graph.tasks.iteritems() if filter(t)]
 
@@ -494,6 +497,31 @@ def target_tasks_fennec_v64(full_task_graph, parameters, graph_config):
             return False
         if '-fennec64-' in attributes.get('raptor_try_name'):
             return True
+
+    return [l for l, t in full_task_graph.tasks.iteritems() if filter(t)]
+
+
+@_target_task('android_power')
+def target_tasks_android_power(full_task_graph, parameters, graph_config):
+    """
+    Select tasks required for running android power tests
+    """
+    def filter(task):
+        platform = task.attributes.get('build_platform')
+        attributes = task.attributes
+
+        if platform and 'android' not in platform:
+            return False
+        if attributes.get('unittest_suite') != 'raptor':
+            return False
+        try_name = attributes.get('raptor_try_name')
+        if 'geckoview' not in try_name:
+            return False
+        if '-power' in try_name and 'pgo' in platform:
+            if '-speedometer-' in try_name:
+                return True
+            if '-scn-power-idle' in try_name:
+                return True
 
     return [l for l, t in full_task_graph.tasks.iteritems() if filter(t)]
 
@@ -731,3 +759,26 @@ def target_tasks_codereview(full_task_graph, parameters, graph_config):
 def target_tasks_nothing(full_task_graph, parameters, graph_config):
     """Select nothing, for DONTBUILD pushes"""
     return []
+
+
+@_target_task('raptor_tp6m')
+def target_tasks_raptor_tp6m(full_task_graph, parameters, graph_config):
+    """
+    Select tasks required for running raptor cold page-load tests on fenix and refbrow
+    """
+    def filter(task):
+        platform = task.attributes.get('build_platform')
+        attributes = task.attributes
+
+        if platform and 'android' not in platform:
+            return False
+        if attributes.get('unittest_suite') != 'raptor':
+            return False
+        try_name = attributes.get('raptor_try_name')
+        if '-cold' in try_name and 'pgo' in platform:
+            if '-1-refbrow-' in try_name:
+                return True
+            if '-1-fenix-' in try_name:
+                return True
+
+    return [l for l, t in full_task_graph.tasks.iteritems() if filter(t)]

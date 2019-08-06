@@ -6,17 +6,21 @@
 
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
-const { XPCOMUtils } = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
 XPCOMUtils.defineLazyGetter(this, "DevtoolsStartup", () => {
-  return Cc["@mozilla.org/devtools/startup-clh;1"]
-            .getService(Ci.nsICommandLineHandler)
-            .wrappedJSObject;
+  return Cc["@mozilla.org/devtools/startup-clh;1"].getService(
+    Ci.nsICommandLineHandler
+  ).wrappedJSObject;
 });
 
 // We don't want to spend time initializing the full loader here so we create
 // our own lazy require.
 XPCOMUtils.defineLazyGetter(this, "Telemetry", function() {
-  const { require } = ChromeUtils.import("resource://devtools/shared/Loader.jsm");
+  const { require } = ChromeUtils.import(
+    "resource://devtools/shared/Loader.jsm"
+  );
   // eslint-disable-next-line no-shadow
   const Telemetry = require("devtools/client/shared/telemetry");
 
@@ -26,9 +30,7 @@ XPCOMUtils.defineLazyGetter(this, "Telemetry", function() {
 const DEVTOOLS_ENABLED_PREF = "devtools.enabled";
 const DEVTOOLS_POLICY_DISABLED_PREF = "devtools.policy.disabled";
 
-this.EXPORTED_SYMBOLS = [
-  "DevToolsShim",
-];
+this.EXPORTED_SYMBOLS = ["DevToolsShim"];
 
 function removeItem(array, callback) {
   const index = array.findIndex(callback);
@@ -82,6 +84,21 @@ this.DevToolsShim = {
    */
   isInitialized: function() {
     return !!this._gDevTools;
+  },
+
+  /**
+   * Returns the array of the existing toolboxes. This method is part of the compatibility
+   * layer for webextensions.
+   *
+   * @return {Array<Toolbox>}
+   *   An array of toolboxes.
+   */
+  getToolboxes: function() {
+    if (this.isInitialized()) {
+      return this._gDevTools.getToolboxes();
+    }
+
+    return [];
   },
 
   /**
@@ -163,9 +180,9 @@ this.DevToolsShim = {
       return;
     }
 
-    const {scratchpads, browserConsole, browserToolbox} = session;
-    const hasDevToolsData = browserConsole || browserToolbox ||
-                          (scratchpads && scratchpads.length);
+    const { scratchpads, browserConsole, browserToolbox } = session;
+    const hasDevToolsData =
+      browserConsole || browserToolbox || (scratchpads && scratchpads.length);
     if (!hasDevToolsData) {
       // Do not initialize DevTools unless there is DevTools specific data in the session.
       return;
@@ -266,10 +283,20 @@ this.DevToolsShim = {
       const window = Services.wm.getMostRecentWindow("navigator:browser");
 
       this.telemetry.addEventProperty(
-        window, "open", "tools", null, "shortcut", ""
+        window,
+        "open",
+        "tools",
+        null,
+        "shortcut",
+        ""
       );
       this.telemetry.addEventProperty(
-        window, "open", "tools", null, "entrypoint", reason
+        window,
+        "open",
+        "tools",
+        null,
+        "entrypoint",
+        reason
       );
     }
 
@@ -291,14 +318,16 @@ const webExtensionsMethods = [
   "getTargetForTab",
   "getTheme",
   "openBrowserConsole",
-  "getToolboxes",
 ];
 
 for (const method of webExtensionsMethods) {
   this.DevToolsShim[method] = function() {
     if (!this.isEnabled()) {
-      throw new Error("Could not call a DevToolsShim webextension method ('" + method +
-        "'): DevTools are not initialized.");
+      throw new Error(
+        "Could not call a DevToolsShim webextension method ('" +
+          method +
+          "'): DevTools are not initialized."
+      );
     }
 
     this.initDevTools();

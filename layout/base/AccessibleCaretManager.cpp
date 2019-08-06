@@ -19,7 +19,7 @@
 #include "mozilla/IMEStateManager.h"
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/PresShell.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_layout.h"
 #include "nsCaret.h"
 #include "nsContainerFrame.h"
 #include "nsContentUtils.h"
@@ -786,7 +786,7 @@ void AccessibleCaretManager::ChangeFocusToOrClearOldFocus(
     nsIContent* focusableContent = aFrame->GetContent();
     MOZ_ASSERT(focusableContent, "Focusable frame must have content!");
     RefPtr<Element> focusableElement = Element::FromNode(focusableContent);
-    fm->SetFocus(focusableElement, nsIFocusManager::FLAG_BYMOUSE);
+    fm->SetFocus(focusableElement, nsIFocusManager::FLAG_BYLONGPRESS);
   } else {
     nsPIDOMWindowOuter* win = mPresShell->GetDocument()->GetWindow();
     if (win) {

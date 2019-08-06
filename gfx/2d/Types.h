@@ -156,6 +156,12 @@ enum class ColorDepth : uint8_t {
   UNKNOWN
 };
 
+enum class ColorRange : uint8_t {
+  LIMITED,
+  FULL,
+  UNKNOWN
+};
+
 static inline SurfaceFormat SurfaceFormatForColorDepth(ColorDepth aColorDepth) {
   SurfaceFormat format = SurfaceFormat::A8;
   switch (aColorDepth) {
@@ -560,7 +566,7 @@ static inline HalfCorner operator++(HalfCorner& aHalfCorner) {
 }
 
 // The result of these conversion functions are exhaustively checked in
-// nsStyleCoord.cpp, which also serves as usage examples.
+// nsFrame.cpp, which also serves as usage examples.
 
 constexpr bool HalfCornerIsX(HalfCorner aHalfCorner) {
   return !(aHalfCorner % 2);

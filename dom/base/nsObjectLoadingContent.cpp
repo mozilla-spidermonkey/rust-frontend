@@ -1492,7 +1492,7 @@ nsObjectLoadingContent::UpdateObjectParameters() {
   ///
 
   nsAutoString codebaseStr;
-  nsCOMPtr<nsIURI> docBaseURI = thisElement->GetBaseURI();
+  nsIURI* docBaseURI = thisElement->GetBaseURI();
   thisElement->GetAttr(kNameSpaceID_None, nsGkAtoms::codebase, codebaseStr);
 
   if (!codebaseStr.IsEmpty()) {
@@ -1508,6 +1508,11 @@ nsObjectLoadingContent::UpdateObjectParameters() {
     }
   }
 
+  // If we failed to build a valid URI, use the document's base URI
+  if (!newBaseURI) {
+    newBaseURI = docBaseURI;
+  }
+
   nsAutoString rawTypeAttr;
   thisElement->GetAttr(kNameSpaceID_None, nsGkAtoms::type, rawTypeAttr);
   if (!rawTypeAttr.IsEmpty()) {
@@ -1516,11 +1521,6 @@ nsObjectLoadingContent::UpdateObjectParameters() {
     nsAutoString mime;
     nsContentUtils::SplitMimeType(rawTypeAttr, mime, params);
     CopyUTF16toUTF8(mime, newMime);
-  }
-
-  // If we failed to build a valid URI, use the document's base URI
-  if (!newBaseURI) {
-    newBaseURI = docBaseURI;
   }
 
   ///
@@ -1996,9 +1996,7 @@ nsresult nsObjectLoadingContent::LoadObject(bool aNotify, bool aForceLoad,
     while (nestedURI) {
       // view-source should always be an nsINestedURI, loop and check the
       // scheme on this and all inner URIs that are also nested URIs.
-      bool isViewSource = false;
-      rv = tempURI->SchemeIs("view-source", &isViewSource);
-      if (NS_FAILED(rv) || isViewSource) {
+      if (tempURI->SchemeIs("view-source")) {
         LOG(("OBJLC [%p]: Blocking as effective URI has view-source scheme",
              this));
         mType = eType_Null;
@@ -2290,10 +2288,8 @@ nsresult nsObjectLoadingContent::OpenChannel() {
   nsSecurityFlags securityFlags =
       nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL;
 
-  bool isData;
-  bool isURIUniqueOrigin = nsIOService::IsDataURIUniqueOpaqueOrigin() &&
-                           NS_SUCCEEDED(mURI->SchemeIs("data", &isData)) &&
-                           isData;
+  bool isURIUniqueOrigin =
+      nsIOService::IsDataURIUniqueOpaqueOrigin() && mURI->SchemeIs("data");
 
   if (inherit && !isURIUniqueOrigin) {
     securityFlags |= nsILoadInfo::SEC_FORCE_INHERIT_PRINCIPAL;
@@ -3051,7 +3047,7 @@ bool nsObjectLoadingContent::ShouldPlay(FallbackType& aReason) {
   if (!window) {
     return false;
   }
-  nsCOMPtr<nsPIDOMWindowOuter> topWindow = window->GetTop();
+  nsCOMPtr<nsPIDOMWindowOuter> topWindow = window->GetInProcessTop();
   NS_ENSURE_TRUE(topWindow, false);
   nsCOMPtr<Document> topDoc = topWindow->GetDoc();
   NS_ENSURE_TRUE(topDoc, false);

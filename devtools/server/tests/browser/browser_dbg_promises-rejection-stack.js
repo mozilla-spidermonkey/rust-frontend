@@ -16,7 +16,9 @@ const ObjectClient = require("devtools/shared/client/object-client");
 // The code in the document above leaves an uncaught rejection. This is only
 // reported to the testing framework if the code is loaded in the main process.
 if (!gMultiProcessBrowser) {
-  ChromeUtils.import("resource://testing-common/PromiseTestUtils.jsm", this);
+  const { PromiseTestUtils } = ChromeUtils.import(
+    "resource://testing-common/PromiseTestUtils.jsm"
+  );
   PromiseTestUtils.expectUncaughtRejection(/hello/);
 }
 
@@ -24,7 +26,7 @@ const TEST_DATA = [
   {
     functionDisplayName: "returnPromise/<",
     line: 21,
-    column: 47,
+    column: 53,
   },
   {
     functionDisplayName: "returnPromise",
@@ -34,7 +36,7 @@ const TEST_DATA = [
   {
     functionDisplayName: "makePromise",
     line: 16,
-    column: 17,
+    column: 30,
   },
 ];
 
@@ -58,8 +60,10 @@ async function testGetRejectionStack(tab, target) {
   const onNewPromise = new Promise(resolve => {
     front.on("new-promises", promises => {
       for (const p of promises) {
-        if (p.preview.ownProperties.name &&
-            p.preview.ownProperties.name.value === "p") {
+        if (
+          p.preview.ownProperties.name &&
+          p.preview.ownProperties.name.value === "p"
+        ) {
           resolve(p);
         }
       }
@@ -83,8 +87,11 @@ async function testGetRejectionStack(tab, target) {
     const stack = response.rejectionStack[i];
     const data = TEST_DATA[i];
     is(stack.source.url, TAB_URL, "Got correct source URL.");
-    is(stack.functionDisplayName, data.functionDisplayName,
-       "Got correct function display name.");
+    is(
+      stack.functionDisplayName,
+      data.functionDisplayName,
+      "Got correct function display name."
+    );
     is(stack.line, data.line, "Got correct stack line number.");
     is(stack.column, data.column, "Got correct stack column number.");
   }

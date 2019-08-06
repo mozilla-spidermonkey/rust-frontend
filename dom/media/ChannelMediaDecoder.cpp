@@ -11,7 +11,7 @@
 #include "MediaFormatReader.h"
 #include "BaseMediaResource.h"
 #include "MediaShutdownManager.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_media.h"
 #include "VideoUtils.h"
 
 namespace mozilla {
@@ -177,11 +177,6 @@ already_AddRefed<ChannelMediaDecoder> ChannelMediaDecoder::Create(
   if (DecoderTraits::IsSupportedType(type)) {
     decoder = new ChannelMediaDecoder(aInit);
     return decoder.forget();
-  }
-
-  if (DecoderTraits::IsHttpLiveStreamingType(type)) {
-    // We don't have an HLS decoder.
-    Telemetry::Accumulate(Telemetry::MEDIA_HLS_DECODER_SUCCESS, false);
   }
 
   return nullptr;
@@ -468,7 +463,7 @@ bool ChannelMediaDecoder::ShouldThrottleDownload(
 
   int64_t length = aStats.mTotalBytes;
   if (length > 0 &&
-      length <= int64_t(StaticPrefs::MediaMemoryCacheMaxSize()) * 1024) {
+      length <= int64_t(StaticPrefs::media_memory_cache_max_size()) * 1024) {
     // Don't throttle the download of small resources. This is to speed
     // up seeking, as seeks into unbuffered ranges would require starting
     // up a new HTTP transaction, which adds latency.

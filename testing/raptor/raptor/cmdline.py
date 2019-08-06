@@ -35,7 +35,7 @@ APPS = {
         "default_intent": "android.intent.action.MAIN"},
     FENIX: {
         "long_name": "Firefox Android Fenix Browser",
-        "default_activity": "org.mozilla.fenix.browser.BrowserPerformanceTestActivity",
+        "default_activity": "org.mozilla.fenix.IntentReceiverActivity",
         "default_intent": "android.intent.action.VIEW"}
 }
 INTEGRATED_APPS = list(APPS.keys())
@@ -128,17 +128,33 @@ def create_parser(mach_interface=False):
     add_arg('--browser-cycles', dest="browser_cycles", type=int,
             help="The number of times a cold load test is repeated (for cold load tests only, "
             "where the browser is shutdown and restarted between test iterations)")
+    add_arg('--test-url-params', dest='test_url_params',
+            help="Parameters to add to the test_url query string")
     add_arg('--print-tests', action=_PrintTests,
             help="Print all available Raptor tests")
     add_arg('--debug-mode', dest="debug_mode", action="store_true",
             help="Run Raptor in debug mode (open browser console, limited page-cycles, etc.)")
     add_arg('--disable-e10s', dest="e10s", action="store_false", default=True,
             help="Run without multiple processes (e10s).")
+    add_arg('--enable-webrender', dest="enable_webrender", action="store_true", default=False,
+            help="Enable the WebRender compositor in Gecko.")
     if not mach_interface:
         add_arg('--run-local', dest="run_local", default=False, action="store_true",
                 help="Flag which indicates if Raptor is running locally or in production")
         add_arg('--obj-path', dest="obj_path", default=None,
                 help="Browser-build obj_path (received when running in production)")
+    add_arg('--noinstall', dest="noinstall", default=False, action="store_true",
+            help="Flag which indicates if Raptor should not offer to install Android APK.")
+
+    # Arguments for invoking browsertime.
+    add_arg('--browsertime-node', dest='browsertime_node',
+            help="path to Node.js executable")
+    add_arg('--browsertime-browsertimejs', dest='browsertime_browsertimejs',
+            help="path to browsertime.js script")
+    add_arg('--browsertime-chromedriver', dest='browsertime_chromedriver',
+            help="path to chromedriver executable")
+    add_arg('--browsertime-geckodriver', dest='browsertime_geckodriver',
+            help="path to geckodriver executable")
 
     add_logging_group(parser)
     return parser
@@ -164,6 +180,12 @@ def verify_options(parser, args):
                 or args.host in ('localhost', '127.0.0.1'):
             parser.error("Power test is only supported when running Raptor on Firefox Android "
                          "browsers when host is specified!")
+
+    # if --enable-webrender specified, must be on desktop firefox or geckoview-based browser.
+    if args.enable_webrender:
+        if args.app not in ["firefox", "geckoview", "refbrow", "fenix"]:
+            parser.error("WebRender is only supported when running Raptor on Firefox Desktop "
+                         "or GeckoView-based Android browsers!")
 
     # if running on geckoview/refbrow/fenix, we need an activity and intent
     if args.app in ["geckoview", "refbrow", "fenix"]:

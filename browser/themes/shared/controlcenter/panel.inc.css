@@ -9,12 +9,16 @@
   display: none;
 }
 
-#identity-popup {
-  --identity-popup-width: 33rem;
+#identity-popup,
+#protections-popup {
+  --popup-width: 33rem;
 }
 
+#identity-popup,
 #protections-popup {
-  --protections-popup-width: 33rem;
+  /* Set default fill for icons in the identity popup.
+     Individual icons can override this. */
+  fill: currentColor;
 }
 
 /* This is used by screenshots tests to hide intermittently different
@@ -68,38 +72,37 @@
   display: none !important;
 }
 
-#identity-popup > .panel-arrowcontainer > .panel-arrowcontent,
-#protections-popup > .panel-arrowcontainer > .panel-arrowcontent {
-  padding: 0;
-  /* Set default fill for icons in the identity popup.
-     Individual icons can override this. */
-  fill: currentColor;
-  fill-opacity: .6;
-}
-
 #identity-popup-mainView {
-  min-width: var(--identity-popup-width);
-  max-width: var(--identity-popup-width);
+  min-width: var(--popup-width);
+  max-width: var(--popup-width);
 }
 
 #protections-popup-mainView {
-  min-width: var(--protections-popup-width);
-  max-width: var(--protections-popup-width);
+  min-width: var(--popup-width);
+  max-width: var(--popup-width);
 }
 
-.identity-popup-section {
+#protections-popup[toast] #protections-popup-mainView > :not(#protections-popup-mainView-panel-header),
+#protections-popup[toast] #protections-popup-main-header-label {
+  display: none;
+}
+
+#protections-popup[toast] #protections-popup-mainView-panel-header {
+  min-height: 30px;
+}
+
+.identity-popup-section,
+.protections-popup-section {
   border-top: 1px solid var(--panel-separator-color);
 }
 
 .identity-popup-security-content,
 #identity-popup-permissions-content,
-#identity-popup-content-blocking-content {
+#protections-popup-content {
   background-repeat: no-repeat;
   background-position: 1em 1em;
   background-size: 24px auto;
-  -moz-context-properties: fill, fill-opacity;
-  fill: currentColor;
-  fill-opacity: .6;
+  -moz-context-properties: fill;
   padding: 0.5em 0 1em;
   /* .identity-popup-host depends on this width */
   padding-inline-start: calc(2em + 24px);
@@ -108,7 +111,7 @@
 
 .identity-popup-security-content:-moz-locale-dir(rtl),
 #identity-popup-permissions-content:-moz-locale-dir(rtl),
-#identity-popup-content-blocking-content:-moz-locale-dir(rtl) {
+#protections-popup-content:-moz-locale-dir(rtl) {
   background-position: calc(100% - 1em) 1em;
 }
 
@@ -163,44 +166,38 @@
   display: none;
 }
 
-#tracking-protection-preferences-button > .toolbarbutton-text {
-  display: inline;
-  padding-inline-end: 25px;
-  padding-inline-start: 0px;
-}
-
 /* CONTENT */
 
-.identity-popup-content-blocking-empty-label,
-#tracking-protection-preferences-button > .toolbarbutton-text,
+.protections-popup-empty-label,
 .tracking-protection-button,
-#identity-popup-trackersView-strict-info > label,
-.identity-popup-cookiesView-list-header,
-.identity-popup-content-blocking-list-item > label,
+#protections-popup-trackersView-strict-info > label,
+.protections-popup-cookiesView-list-header,
+.protections-popup-list-item > label,
 #identity-popup-mainView-panel-header > label,
 #protections-popup-mainView-panel-header > label,
-#identity-popup-trackersView > .panel-header,
+#protections-popup-mainView-panel-header > description,
+#protections-popup-trackersView > .panel-header,
 #identity-popup-securityView > .panel-header,
 #identity-popup-breakageReportView > .panel-header,
-#identity-popup-content-blocking-report-breakage,
-.identity-popup-content-blocking-category-label,
-.identity-popup-content-blocking-category-state-label,
+#protections-popup-sendReportView > .panel-header,
+.protections-popup-category-label,
+.protections-popup-category-state-label,
 .identity-popup-permission-label,
 .identity-popup-permission-state-label,
 .identity-popup-security-content > description,
 #identity-popup-security-descriptions > description,
 #identity-popup-securityView-body > description,
 #identity-popup-permissions-content > description,
-#identity-popup-content-blocking-content > description,
-.protections-popup-settings-label,
-#protections-popup-footer > description,
-#protections-popup-footer > label {
+#protections-popup-content > description,
+.protections-popup-footer-button-label,
+#protections-popup-trackers-blocked-counter-description {
   font-size: 110%;
   margin: 0;
 }
 
 #identity-popup-mainView-panel-header,
-#protections-popup-mainView-panel-header {
+#protections-popup-mainView-panel-header,
+#protections-popup-siteNotWorkingView-footer {
   padding: 4px 1em;
   min-height: 40px;
   -moz-box-pack: center;
@@ -208,31 +205,51 @@
 }
 
 #protections-popup > .panel-arrowcontainer > .panel-arrowbox > .panel-arrow {
-  fill: rgb(100, 70, 228);
+  fill: #8758FB;
 }
 
-#protections-popup > .panel-arrowcontainer > .panel-arrowbox > .panel-arrow:-moz-locale-dir(rtl) {
-  fill: rgb(18, 90, 223);
+:root[lwt-popup-brighttext] #protections-popup > .panel-arrowcontainer > .panel-arrowbox > .panel-arrow {
+  fill: #B98CFE;
 }
 
 #protections-popup-mainView-panel-header {
   color: white;
-  background: linear-gradient(45deg, rgb(117, 67, 229), rgb(3, 96, 223));
+  background: radial-gradient(circle at top left, #9059FF, #0250BB);
+}
+
+#protections-popup-mainView-panel-header:-moz-locale-dir(rtl) {
+  background: radial-gradient(circle at top right, #9059FF, #0250BB);
+}
+
+:root[lwt-popup-brighttext] #protections-popup-mainView-panel-header {
+  background: radial-gradient(circle at top left, #C689FF, #00B3F4);
+}
+
+:root[lwt-popup-brighttext] #protections-popup-mainView-panel-header:-moz-locale-dir(rtl) {
+  background: radial-gradient(circle at top right, #C689FF, #00B3F4);
 }
 
 #identity-popup-mainView-panel-header-span,
-#protections-popup-mainView-panel-header-span {
+#protections-popup-mainView-panel-header-span,
+#protections-popup-toast-panel-tp-on-desc,
+#protections-popup-toast-panel-tp-off-desc {
   display: inline-block;
   font-weight: 600;
   text-align: center;
   overflow-wrap: break-word;
   /* This is needed for the overflow-wrap to work correctly.
    * 33em is the panel width, panel-header has 1em padding on each side. */
-  max-width: calc(var(--identity-popup-width) - 2em);
+  max-width: calc(var(--popup-width) - 2em);
+}
+
+#protections-popup-mainView-panel-header-span,
+#protections-popup-toast-panel-tp-on-desc,
+#protections-popup-toast-panel-tp-off-desc {
+  max-width: calc(var(--popup-width) - 2em);
 }
 
 #identity-popup-permissions-content > description,
-#identity-popup-content-blocking-content > description {
+#protections-popup-content > description {
   color: var(--panel-disabled-color);
 }
 
@@ -251,7 +268,7 @@
   /* This is needed for the overflow-wrap to work correctly.
    * 1em + 2em + 24px is .identity-popup-security-content padding
    * 33em is the panel width */
-  max-width: calc(var(--identity-popup-width) - 3rem - 24px);
+  max-width: calc(var(--popup-width) - 3rem - 24px);
 }
 
 .identity-popup-warning-gray {
@@ -303,19 +320,19 @@
 #identity-popup[ciphers=weak] .identity-popup-security-content,
 #identity-popup[mixedcontent~=passive-loaded][isbroken] .identity-popup-security-content {
   background-image: url(chrome://browser/skin/controlcenter/connection.svg);
-  -moz-context-properties: fill, fill-opacity;
+  -moz-context-properties: fill;
 }
 
 #identity-popup[connection=secure-cert-user-overridden] .identity-popup-security-content {
   background-image: url(chrome://browser/skin/connection-mixed-passive-loaded.svg);
   fill: unset;
-  -moz-context-properties: fill, fill-opacity;
+  -moz-context-properties: fill;
 }
 
 #identity-popup[loginforms=insecure] .identity-popup-security-content,
 #identity-popup[mixedcontent~=active-loaded][isbroken] .identity-popup-security-content {
   background-image: url(chrome://browser/skin/controlcenter/mcb-disabled.svg);
-  -moz-context-properties: fill, fill-opacity;
+  -moz-context-properties: fill;
 }
 
 #identity-popup[connection=extension] .identity-popup-security-content {
@@ -359,182 +376,206 @@ description#identity-popup-content-verifier,
 
 /* CONTENT BLOCKING / TRACKING PROTECTION */
 
-#identity-popup-breakageReportView-footer {
+#identity-popup-breakageReportView-footer,
+#protections-popup-sendReportView-footer {
   display: flex;
 }
 
-#identity-popup-breakageReportView-footer > button {
+#identity-popup-breakageReportView-footer > button,
+#protections-popup-sendReportView-footer > button {
   flex: 1;
 }
 
 #identity-popup-breakageReportView-heading,
-#identity-popup-breakageReportView-body {
+#identity-popup-breakageReportView-body,
+#protections-popup-sendReportView-heading,
+#protections-popup-sendReportView-body {
   padding: 16px;
   font-size: 110%;
 }
 
-.identity-popup-breakageReportView-collection-section {
+.identity-popup-breakageReportView-collection-section,
+.protections-popup-sendReportView-collection-section {
   margin-bottom: 16px;
 }
 
-#identity-popup-breakageReportView-body {
+#identity-popup-breakageReportView-body,
+#protections-popup-sendReportView-body {
   border-top: 1px solid var(--panel-separator-color);
 }
 
-#identity-popup-breakageReportView-collection-url {
+#identity-popup-breakageReportView-collection-url,
+#protections-popup-sendReportView-collection-url {
   font: inherit;
+  -moz-appearance: none;
+  border: none;
 }
 
-#identity-popup-breakageReportView-collection-comments {
+#identity-popup-breakageReportView-collection-comments,
+#protections-popup-sendReportView-collection-comments {
   height: 120px;
 }
 
-#identity-popup-content-blocking-content {
-  background-image: url("chrome://browser/skin/controlcenter/tracking-protection.svg");
+#protections-popup-sendReportView label {
+  margin-inline-start: 0;
 }
 
-.identity-popup-content-blocking-category {
+.protections-popup-category {
   /* Overwrite toolbarbutton styles */
   -moz-appearance: none;
   margin: 0;
   padding-inline-start: 0;
 }
 
-.identity-popup-content-blocking-category:-moz-focusring,
-.identity-popup-content-blocking-category:hover,
-#protections-popup-settings-button:hover {
+.protections-popup-category:-moz-focusring,
+.protections-popup-category:hover,
+.protections-popup-footer-button:-moz-focusring,
+.protections-popup-footer-button:hover,
+#protections-popup-show-report-stack:hover > .protections-popup-footer-button {
   border-radius: 2px;
   background-color: var(--arrowpanel-dimmed);
   outline: none;
 }
 
-.identity-popup-content-blocking-category:hover:active {
+.protections-popup-category:hover:active,
+.protections-popup-footer-button:hover:active,
+#protections-popup-show-report-stack:hover:active > .protections-popup-footer-button {
   background-color: var(--arrowpanel-dimmed-further);
 }
 
-.identity-popup-content-blocking-category::after {
+.protections-popup-category::after {
   content: url(chrome://browser/skin/back-12.svg);
-  -moz-context-properties: fill, fill-opacity;
+  -moz-context-properties: fill;
   transform: scaleX(-1) translateY(1px);
   float: right;
 }
 
-.identity-popup-content-blocking-category:-moz-locale-dir(rtl)::after {
+.protections-popup-category:-moz-locale-dir(rtl)::after {
   transform: scaleX(1) translateY(1px);
 }
 
 /* This subview could get filled with a lot of trackers, set a maximum size
  * and allow it to scroll vertically.*/
-#identity-popup-cookiesView,
-#identity-popup-trackersView {
+#protections-popup-socialblockView,
+#protections-popup-cookiesView,
+#protections-popup-trackersView {
   max-height: 600px;
 }
 
-#identity-popup-trackersView-list.empty {
+#protections-popup-trackersView-list.empty {
   -moz-box-align: center;
   -moz-box-pack: center;
 }
 
-.identity-popup-content-blocking-empty-label {
+.protections-popup-empty-label {
   margin-inline-start: 0;
   color: var(--panel-disabled-color);
 }
 
-.identity-popup-content-blocking-trackersView-empty-image {
+.protections-popup-trackersView-empty-image {
   width: 48px;
   height: 48px;
-  -moz-context-properties: fill, fill-opacity;
+  -moz-context-properties: fill;
   margin-bottom: 16px;
 }
 
-#identity-popup-cookiesView .identity-popup-content-blocking-empty-label {
+#protections-popup-cookiesView .protections-popup-empty-label {
   margin-inline-start: 24px;
   margin-top: 2px;
   margin-bottom: 4px;
 }
 
-.identity-popup-cookiesView-list-header {
+.protections-popup-cookiesView-list-header {
   color: var(--panel-disabled-color);
   margin: 5px 0;
 }
 
-.identity-popup-content-blocking-list {
+.protections-popup-list {
   padding: 5px 20px;
   -moz-box-flex: 1;
   overflow: auto;
 }
 
-.identity-popup-content-blocking-list-item {
+.protections-popup-list-item {
   margin: 5px 0;
   overflow: hidden;
   -moz-box-align: center;
 }
 
-.identity-popup-content-blocking-list-item:not(.allowed) {
+.protections-popup-list-item:not(.allowed) {
   color: var(--panel-disabled-color);
 }
 
-.identity-popup-content-blocking-list-host-label {
+.protections-popup-list-host-label {
   -moz-box-flex: 1;
   direction: ltr;
 }
 
-.identity-popup-content-blocking-list-host-label:-moz-locale-dir(rtl) {
+.protections-popup-list-host-label:-moz-locale-dir(rtl) {
   text-align: right;
 }
 
-.identity-popup-content-blocking-list-state-label {
+.protections-popup-list-state-label {
   -moz-box-flex: 1;
   text-align: end;
   margin-inline-start: 5px;
   margin-inline-end: 2px;
 }
 
-.identity-popup-fingerprintersView-icon,
-.identity-popup-cryptominersView-icon,
-.identity-popup-trackersView-icon,
-.identity-popup-cookiesView-icon {
+.protections-popup-socialblockView-icon,
+.protections-popup-fingerprintersView-icon,
+.protections-popup-cryptominersView-icon,
+.protections-popup-trackersView-icon,
+.protections-popup-cookiesView-icon {
   margin-inline-end: 10px;
-  -moz-context-properties: fill, fill-opacity;
+  -moz-context-properties: fill;
 }
 
-.identity-popup-trackersView-icon {
+.protections-popup-trackersView-icon {
   list-style-image: url(chrome://browser/skin/controlcenter/trackers-disabled.svg);
 }
 
-.identity-popup-trackersView-icon.allowed {
+.protections-popup-trackersView-icon.allowed {
   list-style-image: url(chrome://browser/skin/controlcenter/trackers.svg);
 }
 
-.identity-popup-cookiesView-icon {
+.protections-popup-socialblockView-icon {
+  list-style-image: url(chrome://browser/skin/controlcenter/socialblock-disabled.svg);
+}
+
+.protections-popup-socialblockView-icon.allowed {
+  list-style-image: url(chrome://browser/skin/controlcenter/socialblock.svg);
+}
+
+.protections-popup-cookiesView-icon {
   list-style-image: url(chrome://browser/skin/controlcenter/3rdpartycookies-disabled.svg);
 }
 
-.identity-popup-cookiesView-icon.allowed {
+.protections-popup-cookiesView-icon.allowed {
   list-style-image: url(chrome://browser/skin/controlcenter/3rdpartycookies.svg);
 }
 
-.identity-popup-fingerprintersView-icon {
+.protections-popup-fingerprintersView-icon {
   list-style-image: url(chrome://browser/skin/controlcenter/fingerprinters-disabled.svg);
 }
 
-.identity-popup-fingerprintersView-icon.allowed {
+.protections-popup-fingerprintersView-icon.allowed {
   list-style-image: url(chrome://browser/skin/controlcenter/fingerprinters.svg);
 }
 
-.identity-popup-cryptominersView-icon {
+.protections-popup-cryptominersView-icon {
   list-style-image: url(chrome://browser/skin/controlcenter/cryptominers-disabled.svg);
 }
 
-.identity-popup-cryptominersView-icon.allowed {
+.protections-popup-cryptominersView-icon.allowed {
   list-style-image: url(chrome://browser/skin/controlcenter/cryptominers.svg);
 }
 
-#identity-popup-trackersView-strict-info {
+#protections-popup-trackersView-strict-info {
   min-height: 40px;
   /* Limit to full width - margin */
-  max-width: calc(var(--identity-popup-width) - 12px);
-  min-width: calc(var(--identity-popup-width) - 12px);
+  max-width: calc(var(--popup-width) - 12px);
+  min-width: calc(var(--popup-width) - 12px);
   background-color: #45a1ff80;
   margin: 6px;
   text-align: center;
@@ -544,33 +585,31 @@ description#identity-popup-content-verifier,
   border-radius: 3px;
 }
 
-#identity-popup-trackersView-strict-info > image {
+#protections-popup-trackersView-strict-info > image {
   list-style-image: url(chrome://browser/skin/controlcenter/info.svg);
   -moz-context-properties: fill;
   fill: currentColor;
   margin-inline-end: 10px;
 }
 
-#identity-popup-trackersView-strict-info > label {
+#protections-popup-trackersView-strict-info > label {
   overflow-wrap: break-word;
   /* Limit to full width - container margin - container padding - icon width - icon margin */
-  max-width: calc(var(--identity-popup-width) - 12px - 20px - 16px - 10px);
+  max-width: calc(var(--popup-width) - 12px - 20px - 16px - 10px);
 }
 
 /* Content Blocking categories */
 
-#identity-popup-content-blocking-category-list {
+#protections-popup-category-list {
   margin-top: 10px;
-}
-
-/* Show the "detected"/"not detected" message depending on the content state. */
-#identity-popup-content-blocking-content:not([detected]) > #identity-popup-content-blocking-detected,
-#identity-popup-content-blocking-content[detected] > #identity-popup-content-blocking-not-detected {
-  display: none;
 }
 
 .tracking-protection-icon {
   list-style-image: url(chrome://browser/skin/controlcenter/trackers.svg);
+}
+
+.socialblock-icon {
+  list-style-image: url(chrome://browser/skin/controlcenter/socialblock.svg);
 }
 
 .thirdpartycookies-icon {
@@ -612,49 +651,6 @@ description#identity-popup-content-verifier,
   box-shadow: var(--focus-ring-box-shadow);
 }
 
-#tracking-action-block {
-  background-color: #0060df;
-  color: #fff !important;
-}
-
-#tracking-action-block:hover {
-  background-color: #003eaa;
-}
-
-#tracking-action-block:hover:active {
-  background-color: #002275;
-}
-
-#tracking-action-block .button-icon {
-  fill-opacity: 1;
-}
-
-#tracking-action-unblock,
-#tracking-action-unblock-private {
-  list-style-image: url(chrome://browser/skin/tracking-protection-disabled.svg);
-}
-
-#identity-popup-content-blocking-report-breakage {
-  margin-top: 6px;
-}
-
-/* Hide the "report breakage" button if we have not detected any trackers
- * (except if the user added an exception, in which case they might still
- * (especially!) want to report the breakage). */
-#identity-popup-content-blocking-content:not([blocking]):not([hasException]) #identity-popup-content-blocking-report-breakage {
-  display: none;
-}
-
-/* Show the right action buttons depending on content state */
-/* Offer to temporarily add an exception in private mode. */
-:root:not([privatebrowsingmode]) #identity-popup-content-blocking-content[blocking]:not([hasException]) > #tracking-action-unblock,
-/* Offer to permanently add an exception in normal mode. */
-:root[privatebrowsingmode] #identity-popup-content-blocking-content[blocking]:not([hasException]) > #tracking-action-unblock-private,
-/* If there's an exception just offer to remove the exception again. */
-#identity-popup-content-blocking-content[hasException] > #tracking-action-block {
-  display: -moz-box;
-}
-
 /* PERMISSIONS */
 
 #identity-popup-permissions-content {
@@ -676,7 +672,7 @@ description#identity-popup-content-verifier,
   min-height: 24px;
 }
 
-#identity-popup-content-blocking-category-list,
+#protections-popup-category-list,
 #identity-popup-permission-list {
   /* Offset the padding set on #identity-popup-permissions-content so that it
      shows up just below the section. The permission icons are 16px wide and
@@ -684,12 +680,12 @@ description#identity-popup-content-verifier,
   margin-inline-start: calc(-1em - 24px);
 }
 
-.identity-popup-content-blocking-category,
+.protections-popup-category,
 .identity-popup-permission-item {
   min-height: 24px;
 }
 
-.identity-popup-content-blocking-category {
+.protections-popup-category {
   padding-inline-end: 12px;
 }
 
@@ -701,7 +697,7 @@ description#identity-popup-content-verifier,
   margin-top: 5px;
 }
 
-.identity-popup-content-blocking-category-icon,
+.protections-popup-category-icon,
 .identity-popup-permission-icon {
   width: 16px;
   height: 16px;
@@ -718,11 +714,12 @@ description#identity-popup-content-verifier,
   50% { opacity: 0; }
 }
 
-.identity-popup-content-blocking-category-label,
-.identity-popup-content-blocking-category-state-label,
+.protections-popup-category-label,
+.protections-popup-category-state-label,
 .identity-popup-permission-label,
 .identity-popup-permission-state-label,
-.protections-popup-settings-label {
+.protections-popup-footer-button-label,
+#protections-popup-trackers-blocked-counter-description {
   /* We need to align the action buttons and permission icons with the text.
      This is tricky because the icon height is defined in pixels, while the
      font height can vary with platform and system settings, and at least on
@@ -731,23 +728,23 @@ description#identity-popup-content-verifier,
   margin-top: -0.1em;
 }
 
-.identity-popup-content-blocking-category-label {
+.protections-popup-category-label {
   max-width: 200px;
 }
 
-.identity-popup-content-blocking-category-label,
+.protections-popup-category-label,
 .identity-popup-permission-label,
-.protections-popup-settings-label {
+.protections-popup-footer-button-label {
   margin-inline-start: 1em;
 }
 
-.identity-popup-content-blocking-category-state-label,
+.protections-popup-category-state-label,
 .identity-popup-permission-state-label {
   margin-inline-end: 5px;
   text-align: end;
 }
 
-#identity-popup-content-blocking-content[hasException] .identity-popup-content-blocking-category-state-label {
+#protections-popup[hasException] .protections-popup-category-state-label {
   visibility: hidden;
 }
 
@@ -795,13 +792,17 @@ description#identity-popup-content-verifier,
   opacity: 0.8;
 }
 
-#protections-popup-tp-switch-label-box > label {
+#protections-popup[hasException] .protections-popup-tp-switch-on-header,
+#protections-popup:not([hasException]) .protections-popup-tp-switch-off-header {
   display: none;
 }
 
-#protections-popup:not([hasException]) #protections-popup-tp-switch-on-header,
-#protections-popup:not([hasException]) #protections-popup-tp-switch-breakage-link,
-#protections-popup[hasException] #protections-popup-tp-switch-off-header {
+#protections-popup-mainView-panel-header > description {
+  display: none;
+}
+
+#protections-popup:not([hasException])[toast] #protections-popup-toast-panel-tp-on-desc,
+#protections-popup[hasException][toast] #protections-popup-toast-panel-tp-off-desc {
   display: unset;
 }
 
@@ -809,19 +810,40 @@ description#identity-popup-content-verifier,
   padding: 4px;
 }
 
-#protections-popup-tp-switch-label-box,
-#protections-popup-tp-switch-box {
+#protections-popup[hasException] #protections-popup-tp-switch-section {
+  background: repeating-linear-gradient(
+    -56deg,
+    var(--arrowpanel-dimmed),
+    var(--arrowpanel-dimmed) 10px,
+    transparent 10px,
+    transparent 20px
+  );
+}
+
+#protections-popup-siteNotWorkingView-body,
+.protections-popup-tp-switch-label-box,
+.protections-popup-tp-switch-box {
   padding: 4px 1em;
   min-height: 40px;
   -moz-box-pack: center;
+  /* This is needed in order to make 'position' working for the badge alongside
+     the TP switch toggle.*/
+  position: relative;
 }
 
-#protections-popup-tp-switch-on-header,
-#protections-popup-tp-switch-off-header {
+/* This is needed in order to show a correct height if the 'Site not working?'
+   link is not displaying. */
+#protections-popup-tp-switch-section[short] > .protections-popup-tp-switch-label-box,
+#protections-popup-tp-switch-section[short] > .protections-popup-tp-switch-box {
+  min-height: 30px;
+}
+
+.protections-popup-tp-switch-on-header,
+.protections-popup-tp-switch-off-header {
   font-weight: 600;
 }
 
-#protections-popup-tp-switch {
+.protections-popup-tp-switch {
   -moz-appearance: none;
   box-sizing: border-box;
   min-width: 26px;
@@ -831,12 +853,12 @@ description#identity-popup-content-verifier,
   margin-top: 4px;
   margin-bottom: 4px;
   margin-inline-start: 1px;
-  margin-inline-end: 7px;
   padding: 2px;
+  padding-inline-end: 0;
   transition: padding .2s ease;
 }
 
-#protections-popup-tp-switch::before {
+.protections-popup-tp-switch::before {
   position: relative;
   display: block;
   content: "";
@@ -846,54 +868,100 @@ description#identity-popup-content-verifier,
   background: white;
 }
 
-#protections-popup-tp-switch[enabled] {
+.protections-popup-tp-switch[enabled] {
   background-color: #0a84ff;
   border: 1px solid #0a84ff;
   /* Push the toggle to the right. */
   padding-inline-start: 12px;
 }
 
-#protections-popup-tp-switch:hover,
-#protections-popup-tp-switch:-moz-focusring {
+.protections-popup-tp-switch:hover,
+.protections-popup-tp-switch:-moz-focusring {
   border: 1px solid var(--panel-separator-color);
 }
 
-#protections-popup-tp-switch[enabled=true]:hover,
-#protections-popup-tp-switch[enabled=true]:-moz-focusring {
+.protections-popup-tp-switch[enabled=true]:hover,
+.protections-popup-tp-switch[enabled=true]:-moz-focusring {
   background-color: #45a1ff;
 }
 
-#protections-popup-settings-section {
-  padding: 4px;
-  -moz-context-properties: fill, fill-opacity;
+#protections-popup-siteNotWorkingView-body-issue-list {
+  padding-inline-start: 1em;
 }
 
-#protections-popup-settings-button {
-  /* We need to align the setting button with the labels in the tp switch
-     section. So we add 6px to offset the margin of labels. */
-  padding-inline-start: calc(1em + 6px);
-  min-height: 37px;
+#protections-popup-siteNotWorkingView-footer {
+  border-top: 1px solid var(--panel-separator-color);
 }
 
-.protection-settings-icon {
+/* Protection popup footer categories */
+
+.protections-popup-footer-button {
+  min-height: 24px;
+  padding-inline-start: 2em;
+  margin: 0;
+}
+
+.protections-popup-footer-icon {
+  -moz-context-properties: fill;
   width: 16px;
   height: 16px;
+}
+
+.protections-popup-settings-icon {
   list-style-image: url(chrome://browser/skin/settings.svg);
 }
 
+.protections-popup-show-report-icon {
+  list-style-image: url(chrome://browser/skin/controlcenter/dashboard.svg);
+}
+
 #protections-popup-footer {
-  background-color: var(--arrowpanel-dimmed);
-  border-top: 1px solid var(--panel-separator-color);
-  min-height: 40px;
-  -moz-box-align: center;
-  /* The horizontal padding aligns the content of footer with other sections in
-     the protections panel */
-  padding: 4px calc(1em + 4px);
+  padding: 6px 0;
+}
+
+#protections-popup-trackers-blocked-counter-box {
+  margin-inline-end: calc(4px + 1em);
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 200ms linear;
+}
+
+#protections-popup-trackers-blocked-counter-box[showing] {
+  visibility: visible;
+  opacity: 1;
 }
 
 #protections-popup-trackers-blocked-counter-description {
-  font-weight: 600;
-  /* This padding is added to align the counter text with the beginning of texts
-     in other sections. */
-  padding-inline-start: 6px;
+  color: #737373;
+}
+
+:root[lwt-popup-brighttext] #protections-popup-trackers-blocked-counter-description {
+  color: #f9f9fa;
+}
+
+#protections-popup-tp-switch[showdotindicator]::after {
+  background: #00B3F4;
+  border: 1px rgba(0,144,237,0.5) solid;
+  content: " ";
+  border-radius: 6px;
+  position: absolute;
+  margin: auto;
+  top: 0;
+  bottom: 12px;
+  left: calc(1em + 20px);
+  height: 10px;
+  width: 10px;
+}
+
+#protections-popup-tp-switch[showdotindicator]:-moz-locale-dir(rtl)::after {
+  left: unset;
+  right: calc(1em + 20px);
+}
+
+#protections-popup-socialblockView-heading {
+  border-bottom: 1px solid var(--panel-separator-color);
+}
+
+#protections-popup-socialblockView-heading > description {
+  margin: 10px 24px;
 }

@@ -6,7 +6,7 @@
 
 var gDebuggee;
 var gClient;
-var gThreadClient;
+var gThreadFront;
 
 Services.prefs.setBoolPref("security.allow_eval_with_system_principal", true);
 
@@ -22,22 +22,25 @@ function run_test() {
 
   gClient = new DebuggerClient(DebuggerServer.connectPipe());
   gClient.connect().then(function() {
-    attachTestTabAndResume(gClient, "test-closures",
-                           function(response, targetFront, threadClient) {
-                             gThreadClient = threadClient;
-                             test_object_grip();
-                           });
+    attachTestTabAndResume(gClient, "test-closures", function(
+      response,
+      targetFront,
+      threadFront
+    ) {
+      gThreadFront = threadFront;
+      test_object_grip();
+    });
   });
   do_test_pending();
 }
 
 function test_object_grip() {
-  gThreadClient.once("paused", function(packet) {
+  gThreadFront.once("paused", function(packet) {
     const person = packet.frame.environment.bindings.variables.person;
 
     Assert.equal(person.value.class, "Object");
 
-    const personClient = gThreadClient.pauseGrip(person.value);
+    const personClient = gThreadFront.pauseGrip(person.value);
     personClient.getPrototypeAndProperties(response => {
       Assert.equal(response.ownProperties.getName.value.class, "Function");
 
@@ -45,9 +48,15 @@ function test_object_grip() {
 
       Assert.equal(response.ownProperties.getFoo.value.class, "Function");
 
-      const getNameClient = gThreadClient.pauseGrip(response.ownProperties.getName.value);
-      const getAgeClient = gThreadClient.pauseGrip(response.ownProperties.getAge.value);
-      const getFooClient = gThreadClient.pauseGrip(response.ownProperties.getFoo.value);
+      const getNameClient = gThreadFront.pauseGrip(
+        response.ownProperties.getName.value
+      );
+      const getAgeClient = gThreadFront.pauseGrip(
+        response.ownProperties.getAge.value
+      );
+      const getFooClient = gThreadFront.pauseGrip(
+        response.ownProperties.getFoo.value
+      );
       getNameClient.getScope(response => {
         Assert.equal(response.scope.bindings.arguments[0].name.value, "Bob");
 
@@ -57,7 +66,7 @@ function test_object_grip() {
           getFooClient.getScope(response => {
             Assert.equal(response.scope.bindings.variables.foo.value, 10);
 
-            gThreadClient.resume().then(() => finishClient(gClient));
+            gThreadFront.resume().then(() => finishClient(gClient));
           });
         });
       });

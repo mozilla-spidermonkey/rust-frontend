@@ -5,11 +5,21 @@
 "use strict";
 
 const Services = require("Services");
-const {getCSSLexer} = require("devtools/shared/css/lexer");
-const {cssColors} = require("devtools/shared/css/color-db");
+const { getCSSLexer } = require("devtools/shared/css/lexer");
+const { cssColors } = require("devtools/shared/css/color-db");
 
-loader.lazyRequireGetter(this, "CSS_ANGLEUNIT", "devtools/shared/css/constants", true);
-loader.lazyRequireGetter(this, "getAngleValueInDegrees", "devtools/shared/css/parsing-utils", true);
+loader.lazyRequireGetter(
+  this,
+  "CSS_ANGLEUNIT",
+  "devtools/shared/css/constants",
+  true
+);
+loader.lazyRequireGetter(
+  this,
+  "getAngleValueInDegrees",
+  "devtools/shared/css/parsing-utils",
+  true
+);
 
 const COLOR_UNIT_PREF = "devtools.defaultColorUnit";
 
@@ -69,12 +79,14 @@ function CssColor(colorValue, supportsCssColor4ColorFunction = false) {
 module.exports.colorUtils = {
   CssColor: CssColor,
   rgbToHsl: rgbToHsl,
+  rgbToLab: rgbToLab,
   setAlpha: setAlpha,
   classifyColor: classifyColor,
   rgbToColorName: rgbToColorName,
   colorToRGBA: colorToRGBA,
   isValidCSSColor: isValidCSSColor,
   calculateContrastRatio: calculateContrastRatio,
+  calculateDeltaE: calculateDeltaE,
   calculateLuminance: calculateLuminance,
   blendColors: blendColors,
 };
@@ -83,11 +95,11 @@ module.exports.colorUtils = {
  * Values used in COLOR_UNIT_PREF
  */
 CssColor.COLORUNIT = {
-  "authored": "authored",
-  "hex": "hex",
-  "name": "name",
-  "rgb": "rgb",
-  "hsl": "hsl",
+  authored: "authored",
+  hex: "hex",
+  name: "name",
+  rgb: "rgb",
+  hsl: "hsl",
 };
 
 CssColor.prototype = {
@@ -106,8 +118,8 @@ CssColor.prototype = {
     // Specifically exclude the case where the color is
     // case-insensitive.  This makes it so that "#000" isn't
     // considered "upper case" for the purposes of color cycling.
-    this._colorUnitUppercase = (color === color.toUpperCase()) &&
-      (color !== color.toLowerCase());
+    this._colorUnitUppercase =
+      color === color.toUpperCase() && color !== color.toLowerCase();
   },
 
   get colorUnit() {
@@ -131,8 +143,10 @@ CssColor.prototype = {
    * @param {String} color The color to use
    */
   setAuthoredUnitFromColor: function(color) {
-    if (Services.prefs.getCharPref(COLOR_UNIT_PREF) ===
-        CssColor.COLORUNIT.authored) {
+    if (
+      Services.prefs.getCharPref(COLOR_UNIT_PREF) ===
+      CssColor.COLORUNIT.authored
+    ) {
       this._colorUnit = classifyColor(color);
       this._setColorUnitUppercase(color);
     }
@@ -195,7 +209,7 @@ CssColor.prototype = {
     if (tuple.a !== 1) {
       return this.hex;
     }
-    const {r, g, b} = tuple;
+    const { r, g, b } = tuple;
     return rgbToColorName(r, g, b) || this.hex;
   },
 
@@ -209,9 +223,11 @@ CssColor.prototype = {
     }
 
     let hex = this.longHex;
-    if (hex.charAt(1) == hex.charAt(2) &&
-        hex.charAt(3) == hex.charAt(4) &&
-        hex.charAt(5) == hex.charAt(6)) {
+    if (
+      hex.charAt(1) == hex.charAt(2) &&
+      hex.charAt(3) == hex.charAt(4) &&
+      hex.charAt(5) == hex.charAt(6)
+    ) {
       hex = "#" + hex.charAt(1) + hex.charAt(3) + hex.charAt(5);
     }
     return hex;
@@ -224,12 +240,18 @@ CssColor.prototype = {
     }
 
     let alphaHex = this.longAlphaHex;
-    if (alphaHex.charAt(1) == alphaHex.charAt(2) &&
-        alphaHex.charAt(3) == alphaHex.charAt(4) &&
-        alphaHex.charAt(5) == alphaHex.charAt(6) &&
-        alphaHex.charAt(7) == alphaHex.charAt(8)) {
-      alphaHex = "#" + alphaHex.charAt(1) + alphaHex.charAt(3) +
-        alphaHex.charAt(5) + alphaHex.charAt(7);
+    if (
+      alphaHex.charAt(1) == alphaHex.charAt(2) &&
+      alphaHex.charAt(3) == alphaHex.charAt(4) &&
+      alphaHex.charAt(5) == alphaHex.charAt(6) &&
+      alphaHex.charAt(7) == alphaHex.charAt(8)
+    ) {
+      alphaHex =
+        "#" +
+        alphaHex.charAt(1) +
+        alphaHex.charAt(3) +
+        alphaHex.charAt(5) +
+        alphaHex.charAt(7);
     }
     return alphaHex;
   },
@@ -244,8 +266,12 @@ CssColor.prototype = {
     }
 
     const tuple = this.getRGBATuple();
-    return "#" + ((1 << 24) + (tuple.r << 16) + (tuple.g << 8) +
-                  (tuple.b << 0)).toString(16).substr(-6);
+    return (
+      "#" +
+      ((1 << 24) + (tuple.r << 16) + (tuple.g << 8) + (tuple.b << 0))
+        .toString(16)
+        .substr(-6)
+    );
   },
 
   get longAlphaHex() {
@@ -256,9 +282,15 @@ CssColor.prototype = {
 
     const tuple = this.highResTuple;
 
-    return "#" + ((1 << 24) + (tuple.r << 16) + (tuple.g << 8) +
-                  (tuple.b << 0)).toString(16).substr(-6) +
-                  Math.round(tuple.a).toString(16).padStart(2, "0");
+    return (
+      "#" +
+      ((1 << 24) + (tuple.r << 16) + (tuple.g << 8) + (tuple.b << 0))
+        .toString(16)
+        .substr(-6) +
+      Math.round(tuple.a)
+        .toString(16)
+        .padStart(2, "0")
+    );
   },
 
   get rgb() {
@@ -287,10 +319,17 @@ CssColor.prototype = {
       return this.authored;
     }
     const components = this.getRGBATuple();
-    return "rgba(" + components.r + ", " +
-                     components.g + ", " +
-                     components.b + ", " +
-                     components.a + ")";
+    return (
+      "rgba(" +
+      components.r +
+      ", " +
+      components.g +
+      ", " +
+      components.b +
+      ", " +
+      components.a +
+      ")"
+    );
   },
 
   get hsl() {
@@ -407,8 +446,10 @@ CssColor.prototype = {
         color = this.rgb;
     }
 
-    if (this._colorUnitUppercase &&
-        this.colorUnit != CssColor.COLORUNIT.authored) {
+    if (
+      this._colorUnitUppercase &&
+      this.colorUnit != CssColor.COLORUNIT.authored
+    ) {
       color = color.toUpperCase();
     }
 
@@ -432,7 +473,7 @@ CssColor.prototype = {
    * appropriate.
    */
   _getHSLATuple: function() {
-    const {r, g, b, a} = colorToRGBA(this.authored, this.cssColor4);
+    const { r, g, b, a } = colorToRGBA(this.authored, this.cssColor4);
 
     const [h, s, l] = rgbToHsl([r, g, b]);
 
@@ -450,7 +491,7 @@ CssColor.prototype = {
       return this.authored;
     }
 
-    const {r, g, b} = this.getRGBATuple();
+    const { r, g, b } = this.getRGBATuple();
     const [h, s, l] = rgbToHsl([r, g, b]);
     if (maybeAlpha !== undefined) {
       return "hsla(" + h + ", " + s + "%, " + l + "%, " + maybeAlpha + ")";
@@ -518,6 +559,66 @@ function rgbToHsl([r, g, b]) {
   }
 
   return [roundTo(h, 1), roundTo(s * 100, 1), roundTo(l * 100, 1)];
+}
+
+/**
+ * Convert rgb value to CIE LAB colorspace (https://en.wikipedia.org/wiki/CIELAB_color_space).
+ * Formula from http://www.easyrgb.com/en/math.php.
+ *
+ * @param {array} rgb
+ *        Array of rgb values
+ * @return {array}
+ *         Array of lab values.
+ */
+function rgbToLab([r, g, b]) {
+  // Convert rgb values to xyz coordinates.
+  r = r / 255;
+  g = g / 255;
+  b = b / 255;
+
+  r = r > 0.04045 ? Math.pow((r + 0.055) / 1.055, 2.4) : r / 12.92;
+  g = g > 0.04045 ? Math.pow((g + 0.055) / 1.055, 2.4) : g / 12.92;
+  b = b > 0.04045 ? Math.pow((b + 0.055) / 1.055, 2.4) : b / 12.92;
+
+  r = r * 100;
+  g = g * 100;
+  b = b * 100;
+
+  let [x, y, z] = [
+    r * 0.4124 + g * 0.3576 + b * 0.1805,
+    r * 0.2126 + g * 0.7152 + b * 0.0722,
+    r * 0.0193 + g * 0.1192 + b * 0.9505,
+  ];
+
+  // Convert xyz coordinates to lab values.
+  // Divisors used are X_10, Y_10, Z_10 (CIE 1964) reference values for D65
+  // illuminant (Daylight, sRGB, Adobe-RGB) taken from http://www.easyrgb.com/en/math.php
+  x = x / 94.811;
+  y = y / 100;
+  z = z / 107.304;
+
+  x = x > 0.008856 ? Math.pow(x, 1 / 3) : 7.787 * x + 16 / 116;
+  y = y > 0.008856 ? Math.pow(y, 1 / 3) : 7.787 * y + 16 / 116;
+  z = z > 0.008856 ? Math.pow(z, 1 / 3) : 7.787 * z + 16 / 116;
+
+  return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
+}
+
+/**
+ * Calculates the CIE Delta-E value for two lab values (http://www.colorwiki.com/wiki/Delta_E%3a_The_Color_Difference#Delta-E_1976).
+ * Formula from http://www.easyrgb.com/en/math.php.
+ *
+ * @param {array} lab1
+ *        Array of lab values for the first color
+ * @param {array} lab2
+ *        Array of lab values for the second color
+ * @return {Number}
+ *         DeltaE value between the two colors
+ */
+function calculateDeltaE([l1, a1, b1], [l2, a2, b2]) {
+  return Math.sqrt(
+    Math.pow(l1 - l2, 2) + Math.pow(a1 - a2, 2) + Math.pow(b1 - b2, 2)
+  );
 }
 
 function roundTo(number, digits) {
@@ -647,7 +748,10 @@ function hslToRGB([h, s, l]) {
  *         name was not a valid color
  */
 function hexToRGBA(name, highResolution) {
-  let r, g, b, a = 1;
+  let r,
+    g,
+    b,
+    a = 1;
 
   if (name.length === 3) {
     // short hex string (e.g. F0C)
@@ -685,7 +789,7 @@ function hexToRGBA(name, highResolution) {
   if (!highResolution) {
     a = Math.round(a * 10) / 10;
   }
-  return {r, g, b, a};
+  return { r, g, b, a };
 }
 
 /**
@@ -722,8 +826,10 @@ function getToken(lexer) {
 
   while (true) {
     const token = lexer.nextToken();
-    if (!token || (token.tokenType !== "comment" &&
-                   token.tokenType !== "whitespace")) {
+    if (
+      !token ||
+      (token.tokenType !== "comment" && token.tokenType !== "whitespace")
+    ) {
       lexer._currentToken = token;
       return token;
     }
@@ -767,9 +873,9 @@ function expectSymbol(lexer, symbol) {
 }
 
 const COLOR_COMPONENT_TYPE = {
-  "integer": "integer",
-  "number": "number",
-  "percentage": "percentage",
+  integer: "integer",
+  number: "number",
+  percentage: "percentage",
 };
 
 /**
@@ -935,10 +1041,16 @@ function parseHsl(lexer) {
   // version of parseColorComponent function for them. No need to check the
   // separator after 'lightness'. It will be checked in opacity value parsing.
   const separatorBeforeAlpha = hasComma ? commaSeparator : "/";
-  if (parseColorComponent(lexer, COLOR_COMPONENT_TYPE.percentage,
-                          hasComma ? commaSeparator : "", hsl) &&
-      parseColorComponent(lexer, COLOR_COMPONENT_TYPE.percentage, "", hsl) &&
-      parseColorOpacityAndCloseParen(lexer, separatorBeforeAlpha, a)) {
+  if (
+    parseColorComponent(
+      lexer,
+      COLOR_COMPONENT_TYPE.percentage,
+      hasComma ? commaSeparator : "",
+      hsl
+    ) &&
+    parseColorComponent(lexer, COLOR_COMPONENT_TYPE.percentage, "", hsl) &&
+    parseColorOpacityAndCloseParen(lexer, separatorBeforeAlpha, a)
+  ) {
     return [...hslToRGB(hsl), ...a];
   }
 
@@ -980,18 +1092,32 @@ function parseOldStyleHsl(lexer, hasAlpha) {
   // The saturation and lightness are <percentage>, so reuse the <percentage>
   // version of parseColorComponent function for them. The opacity is <number>
   if (hasAlpha) {
-    if (parseColorComponent(lexer, COLOR_COMPONENT_TYPE.percentage,
-                            commaSeparator, hsl) &&
-        parseColorComponent(lexer, COLOR_COMPONENT_TYPE.percentage,
-                            commaSeparator, hsl) &&
-        parseColorComponent(lexer, COLOR_COMPONENT_TYPE.number,
-                            closeParen, a)) {
+    if (
+      parseColorComponent(
+        lexer,
+        COLOR_COMPONENT_TYPE.percentage,
+        commaSeparator,
+        hsl
+      ) &&
+      parseColorComponent(
+        lexer,
+        COLOR_COMPONENT_TYPE.percentage,
+        commaSeparator,
+        hsl
+      ) &&
+      parseColorComponent(lexer, COLOR_COMPONENT_TYPE.number, closeParen, a)
+    ) {
       return [...hslToRGB(hsl), ...a];
     }
-  } else if (parseColorComponent(lexer, COLOR_COMPONENT_TYPE.percentage,
-                                 commaSeparator, hsl) &&
-             parseColorComponent(lexer, COLOR_COMPONENT_TYPE.percentage,
-                                 closeParen, hsl)) {
+  } else if (
+    parseColorComponent(
+      lexer,
+      COLOR_COMPONENT_TYPE.percentage,
+      commaSeparator,
+      hsl
+    ) &&
+    parseColorComponent(lexer, COLOR_COMPONENT_TYPE.percentage, closeParen, hsl)
+  ) {
     return [...hslToRGB(hsl), 1];
   }
 
@@ -1022,9 +1148,10 @@ function parseRgb(lexer) {
     return null;
   }
   unGetToken(lexer);
-  const type = (token.tokenType === "percentage") ?
-             COLOR_COMPONENT_TYPE.percentage :
-             COLOR_COMPONENT_TYPE.number;
+  const type =
+    token.tokenType === "percentage"
+      ? COLOR_COMPONENT_TYPE.percentage
+      : COLOR_COMPONENT_TYPE.number;
 
   // Parse R.
   if (!parseColorComponent(lexer, type, "", rgba)) {
@@ -1036,9 +1163,11 @@ function parseRgb(lexer) {
   // No need to check the separator after 'B'. It will be checked in 'A' values
   // parsing.
   const separatorBeforeAlpha = hasComma ? commaSeparator : "/";
-  if (parseColorComponent(lexer, type, hasComma ? commaSeparator : "", rgba) &&
-      parseColorComponent(lexer, type, "", rgba) &&
-      parseColorOpacityAndCloseParen(lexer, separatorBeforeAlpha, rgba)) {
+  if (
+    parseColorComponent(lexer, type, hasComma ? commaSeparator : "", rgba) &&
+    parseColorComponent(lexer, type, "", rgba) &&
+    parseColorOpacityAndCloseParen(lexer, separatorBeforeAlpha, rgba)
+  ) {
     if (type === COLOR_COMPONENT_TYPE.percentage) {
       rgba[0] = Math.round(255 * rgba[0]);
       rgba[1] = Math.round(255 * rgba[1]);
@@ -1070,27 +1199,33 @@ function parseOldStyleRgb(lexer, hasAlpha) {
   const rgba = [];
 
   const token = getToken(lexer);
-  if (token.tokenType !== "percentage" &&
-      (token.tokenType !== "number" || !token.isInteger)) {
+  if (
+    token.tokenType !== "percentage" &&
+    (token.tokenType !== "number" || !token.isInteger)
+  ) {
     return null;
   }
   unGetToken(lexer);
-  const type = (token.tokenType === "percentage") ?
-             COLOR_COMPONENT_TYPE.percentage :
-             COLOR_COMPONENT_TYPE.integer;
+  const type =
+    token.tokenType === "percentage"
+      ? COLOR_COMPONENT_TYPE.percentage
+      : COLOR_COMPONENT_TYPE.integer;
 
   // Parse R. G, B and A.
   if (hasAlpha) {
-    if (!parseColorComponent(lexer, type, commaSeparator, rgba) ||
-        !parseColorComponent(lexer, type, commaSeparator, rgba) ||
-        !parseColorComponent(lexer, type, commaSeparator, rgba) ||
-        !parseColorComponent(lexer, COLOR_COMPONENT_TYPE.number,
-                             closeParen, rgba)) {
+    if (
+      !parseColorComponent(lexer, type, commaSeparator, rgba) ||
+      !parseColorComponent(lexer, type, commaSeparator, rgba) ||
+      !parseColorComponent(lexer, type, commaSeparator, rgba) ||
+      !parseColorComponent(lexer, COLOR_COMPONENT_TYPE.number, closeParen, rgba)
+    ) {
       return null;
     }
-  } else if (!parseColorComponent(lexer, type, commaSeparator, rgba) ||
-             !parseColorComponent(lexer, type, commaSeparator, rgba) ||
-             !parseColorComponent(lexer, type, closeParen, rgba)) {
+  } else if (
+    !parseColorComponent(lexer, type, commaSeparator, rgba) ||
+    !parseColorComponent(lexer, type, commaSeparator, rgba) ||
+    !parseColorComponent(lexer, type, closeParen, rgba)
+  ) {
     return null;
   }
 
@@ -1120,11 +1255,11 @@ function colorToRGBA(name, useCssColor4ColorFunction = false) {
 
   if (name in cssColors) {
     const result = cssColors[name];
-    return {r: result[0], g: result[1], b: result[2], a: result[3]};
+    return { r: result[0], g: result[1], b: result[2], a: result[3] };
   } else if (name === "transparent") {
-    return {r: 0, g: 0, b: 0, a: 0};
+    return { r: 0, g: 0, b: 0, a: 0 };
   } else if (name === "currentcolor") {
-    return {r: 0, g: 0, b: 0, a: 1};
+    return { r: 0, g: 0, b: 0, a: 1 };
   }
 
   const lexer = getCSSLexer(name);
@@ -1142,8 +1277,11 @@ function colorToRGBA(name, useCssColor4ColorFunction = false) {
   }
 
   const expectedFunctions = ["rgba", "rgb", "hsla", "hsl"];
-  if (!func || func.tokenType !== "function" ||
-      !expectedFunctions.includes(func.text)) {
+  if (
+    !func ||
+    func.tokenType !== "function" ||
+    !expectedFunctions.includes(func.text)
+  ) {
     return null;
   }
 
@@ -1151,8 +1289,10 @@ function colorToRGBA(name, useCssColor4ColorFunction = false) {
 
   let vals;
   if (!useCssColor4ColorFunction) {
-    const hasAlpha = (func.text === "rgba" || func.text === "hsla");
-    vals = hsl ? parseOldStyleHsl(lexer, hasAlpha) : parseOldStyleRgb(lexer, hasAlpha);
+    const hasAlpha = func.text === "rgba" || func.text === "hsla";
+    vals = hsl
+      ? parseOldStyleHsl(lexer, hasAlpha)
+      : parseOldStyleRgb(lexer, hasAlpha);
   } else {
     vals = hsl ? parseHsl(lexer) : parseRgb(lexer);
   }
@@ -1164,7 +1304,7 @@ function colorToRGBA(name, useCssColor4ColorFunction = false) {
     return null;
   }
 
-  return {r: vals[0], g: vals[1], b: vals[2], a: vals[3]};
+  return { r: vals[0], g: vals[1], b: vals[2], a: vals[3] };
 }
 
 /**
@@ -1188,8 +1328,10 @@ function isValidCSSColor(name, useCssColor4ColorFunction = false) {
 function calculateLuminance(rgba) {
   for (let i = 0; i < 3; i++) {
     rgba[i] /= 255;
-    rgba[i] = (rgba[i] < 0.03928) ? (rgba[i] / 12.92) :
-                                    Math.pow(((rgba[i] + 0.055) / 1.055), 2.4);
+    rgba[i] =
+      rgba[i] < 0.03928
+        ? rgba[i] / 12.92
+        : Math.pow((rgba[i] + 0.055) / 1.055, 2.4);
   }
   return 0.2126 * rgba[0] + 0.7152 * rgba[1] + 0.0722 * rgba[2];
 }
@@ -1204,9 +1346,9 @@ function calculateLuminance(rgba) {
  * @return {Array}
  *         An array with combined [r,g,b,a] colors.
  */
-function blendColors(foregroundColor, backgroundColor = [ 255, 255, 255, 1 ]) {
-  const [ fgR, fgG, fgB, fgA ] = foregroundColor;
-  const [ bgR, bgG, bgB, bgA ] = backgroundColor;
+function blendColors(foregroundColor, backgroundColor = [255, 255, 255, 1]) {
+  const [fgR, fgG, fgB, fgA] = foregroundColor;
+  const [bgR, bgG, bgB, bgA] = backgroundColor;
   if (fgA === 1) {
     return foregroundColor;
   }
@@ -1241,5 +1383,5 @@ function calculateContrastRatio(backgroundColor, textColor) {
   const textLuminance = calculateLuminance(textColor);
   const ratio = (textLuminance + 0.05) / (backgroundLuminance + 0.05);
 
-  return (ratio > 1.0) ? ratio : (1 / ratio);
+  return ratio > 1.0 ? ratio : 1 / ratio;
 }

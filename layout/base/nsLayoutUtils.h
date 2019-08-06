@@ -19,7 +19,6 @@
 #include "mozilla/layers/ScrollableLayerGuid.h"
 #include "nsThreadUtils.h"
 #include "nsCSSPropertyIDSet.h"
-#include "nsStyleCoord.h"
 #include "nsStyleConsts.h"
 #include "nsGkAtoms.h"
 #include "mozilla/gfx/2D.h"
@@ -55,7 +54,6 @@ class nsBlockFrame;
 class nsContainerFrame;
 class nsView;
 class nsIFrame;
-class nsStyleCoord;
 class nsPIDOMWindowOuter;
 class imgIRequest;
 struct nsStyleFont;
@@ -121,6 +119,8 @@ struct DisplayPortMarginsPropertyData {
 struct MotionPathData {
   gfx::Point mTranslate;
   float mRotate;
+  // The delta value between transform-origin and offset-anchor.
+  gfx::Point mShift;
 };
 
 }  // namespace mozilla
@@ -134,12 +134,6 @@ enum class DrawStringFlags {
   ForceHorizontal = 0x1  // Forces the text to be drawn horizontally.
 };
 MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(DrawStringFlags)
-
-enum class ReparentingDirection {
-  Backwards,
-  Forwards,
-  Variable  // Could be either of the above; take most pessimistic action.
-};
 
 /**
  * nsLayoutUtils is a namespace class used for various helper
@@ -204,6 +198,11 @@ class nsLayoutUtils {
    * Find content for given ID.
    */
   static nsIContent* FindContentFor(ViewID aId);
+
+  /**
+   * Find the scrollable frame for a given content element.
+   */
+  static nsIScrollableFrame* FindScrollableFrameFor(nsIContent* aContent);
 
   /**
    * Find the scrollable frame for a given ID.
@@ -2158,6 +2157,8 @@ class nsLayoutUtils {
 
     /* The size of the surface */
     mozilla::gfx::IntSize mSize;
+    /* The size the surface is intended to be rendered at */
+    mozilla::gfx::IntSize mIntrinsicSize;
     /* The principal associated with the element whose surface was returned.
        If there is a surface, this will never be null. */
     nsCOMPtr<nsIPrincipal> mPrincipal;

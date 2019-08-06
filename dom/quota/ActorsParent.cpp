@@ -51,6 +51,7 @@
 #include "mozilla/Mutex.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/TextUtils.h"
 #include "mozilla/Telemetry.h"
@@ -104,14 +105,6 @@
 // The amount of time, in milliseconds, that we will wait for active storage
 // transactions on shutdown before aborting them.
 #define DEFAULT_SHUTDOWN_TIMER_MS 30000
-
-// Preference that users can set to override temporary storage smart limit
-// calculation.
-#define PREF_FIXED_LIMIT "dom.quotaManager.temporaryStorage.fixedLimit"
-#define PREF_CHUNK_SIZE "dom.quotaManager.temporaryStorage.chunkSize"
-
-// Preference that is used to enable testing features
-#define PREF_TESTING_FEATURES "dom.quotaManager.testing"
 
 // profile-before-change, when we need to shut down quota manager
 #define PROFILE_BEFORE_CHANGE_QM_OBSERVER_ID "profile-before-change-qm"
@@ -1564,14 +1557,6 @@ StaticRefPtr<QuotaManager> gInstance;
 bool gCreateFailed = false;
 mozilla::Atomic<bool> gShutdown(false);
 
-// Constants for temporary storage limit computing.
-static const int32_t kDefaultFixedLimitKB = -1;
-static const uint32_t kDefaultChunkSizeKB = 10 * 1024;
-Atomic<int32_t, Relaxed> gFixedLimitKB(kDefaultFixedLimitKB);
-Atomic<uint32_t, Relaxed> gChunkSizeKB(kDefaultChunkSizeKB);
-
-Atomic<bool> gTestingEnabled(false);
-
 class StorageOperationBase {
  protected:
   struct OriginProps;
@@ -2312,11 +2297,13 @@ nsresult GetTemporaryStorageLimit(nsIFile* aDirectory, uint64_t aCurrentUsage,
 
   uint64_t availableKB =
       static_cast<uint64_t>((bytesAvailable + aCurrentUsage) / 1024);
+  uint32_t chunkSizeKB =
+      StaticPrefs::dom_quotaManager_temporaryStorage_chunkSize();
 
-  // Grow/shrink in gChunkSizeKB units, deliberately, so that in the common case
+  // Grow/shrink in chunkSizeKB units, deliberately, so that in the common case
   // we don't shrink temporary storage and evict origin data every time we
   // initialize.
-  availableKB = (availableKB / gChunkSizeKB) * gChunkSizeKB;
+  availableKB = (availableKB / chunkSizeKB) * chunkSizeKB;
 
   // Allow temporary storage to consume up to half the available space.
   uint64_t resultKB = availableKB * .50;
@@ -2346,18 +2333,6 @@ void InitializeQuotaManager() {
 
   if (NS_FAILED(QuotaManager::Initialize())) {
     NS_WARNING("Failed to initialize quota manager!");
-  }
-
-  if (NS_FAILED(Preferences::AddAtomicIntVarCache(
-          &gFixedLimitKB, PREF_FIXED_LIMIT, kDefaultFixedLimitKB)) ||
-      NS_FAILED(Preferences::AddAtomicUintVarCache(
-          &gChunkSizeKB, PREF_CHUNK_SIZE, kDefaultChunkSizeKB))) {
-    NS_WARNING("Unable to respond to temp storage pref changes!");
-  }
-
-  if (NS_FAILED(Preferences::AddAtomicBoolVarCache(
-          &gTestingEnabled, PREF_TESTING_FEATURES, false))) {
-    NS_WARNING("Unable to respond to testing pref changes!");
   }
 
 #ifdef DEBUG
@@ -3998,7 +3973,7 @@ nsresult QuotaManager::GetDirectoryMetadata2WithRestore(
     rv = RestoreDirectoryMetadata2(aDirectory, aPersistent);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       if (aTelemetry) {
-        REPORT_TELEMETRY_INIT_ERR(kInternalError, Rep_RestoreDirMeta);
+        REPORT_TELEMETRY_INIT_ERR(kQuotaInternalError, Rep_RestoreDirMeta);
       }
       return rv;
     }
@@ -4007,7 +3982,7 @@ nsresult QuotaManager::GetDirectoryMetadata2WithRestore(
                                aGroup, aOrigin);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       if (aTelemetry) {
-        REPORT_TELEMETRY_INIT_ERR(kExternalError, Rep_GetDirMeta);
+        REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, Rep_GetDirMeta);
       }
       return rv;
     }
@@ -4083,21 +4058,21 @@ nsresult QuotaManager::InitializeRepository(PersistenceType aPersistenceType) {
   nsresult rv = NS_NewLocalFile(GetStoragePath(aPersistenceType), false,
                                 getter_AddRefs(directory));
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_INIT_ERR(kExternalError, Rep_NewLocalFile);
+    REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, Rep_NewLocalFile);
     return rv;
   }
 
   bool created;
   rv = EnsureDirectory(directory, &created);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_INIT_ERR(kExternalError, Rep_EnsureDirectory);
+    REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, Rep_EnsureDirectory);
     return rv;
   }
 
   nsCOMPtr<nsIDirectoryEnumerator> entries;
   rv = directory->GetDirectoryEntries(getter_AddRefs(entries));
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_INIT_ERR(kExternalError, Rep_GetDirEntries);
+    REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, Rep_GetDirEntries);
     return rv;
   }
 
@@ -4118,7 +4093,7 @@ nsresult QuotaManager::InitializeRepository(PersistenceType aPersistenceType) {
     bool isDirectory;
     rv = childDirectory->IsDirectory(&isDirectory);
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      REPORT_TELEMETRY_INIT_ERR(kExternalError, Rep_IsDirectory);
+      REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, Rep_IsDirectory);
       RECORD_IN_NIGHTLY(statusKeeper, rv);
       CONTINUE_IN_NIGHTLY_RETURN_IN_OTHERS(rv);
     }
@@ -4127,7 +4102,7 @@ nsresult QuotaManager::InitializeRepository(PersistenceType aPersistenceType) {
       nsString leafName;
       rv = childDirectory->GetLeafName(leafName);
       if (NS_WARN_IF(NS_FAILED(rv))) {
-        REPORT_TELEMETRY_INIT_ERR(kExternalError, Rep_GetLeafName);
+        REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, Rep_GetLeafName);
         RECORD_IN_NIGHTLY(statusKeeper, rv);
         CONTINUE_IN_NIGHTLY_RETURN_IN_OTHERS(rv);
       }
@@ -4138,7 +4113,7 @@ nsresult QuotaManager::InitializeRepository(PersistenceType aPersistenceType) {
 
       UNKNOWN_FILE_WARNING(leafName);
 
-      REPORT_TELEMETRY_INIT_ERR(kInternalError, Rep_UnexpectedFile);
+      REPORT_TELEMETRY_INIT_ERR(kQuotaInternalError, Rep_UnexpectedFile);
       RECORD_IN_NIGHTLY(statusKeeper, NS_ERROR_UNEXPECTED);
       CONTINUE_IN_NIGHTLY_RETURN_IN_OTHERS(NS_ERROR_UNEXPECTED);
     }
@@ -4167,7 +4142,7 @@ nsresult QuotaManager::InitializeRepository(PersistenceType aPersistenceType) {
     }
   }
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_INIT_ERR(kInternalError, Rep_GetNextFile);
+    REPORT_TELEMETRY_INIT_ERR(kQuotaInternalError, Rep_GetNextFile);
     RECORD_IN_NIGHTLY(statusKeeper, rv);
 #ifndef NIGHTLY_BUILD
     return rv;
@@ -4210,7 +4185,7 @@ nsresult QuotaManager::InitializeOrigin(PersistenceType aPersistenceType,
   nsCOMPtr<nsIDirectoryEnumerator> entries;
   rv = aDirectory->GetDirectoryEntries(getter_AddRefs(entries));
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_INIT_ERR(kExternalError, Ori_GetDirEntries);
+    REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, Ori_GetDirEntries);
     return rv;
   }
 
@@ -4224,7 +4199,7 @@ nsresult QuotaManager::InitializeOrigin(PersistenceType aPersistenceType,
     bool isDirectory;
     rv = file->IsDirectory(&isDirectory);
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      REPORT_TELEMETRY_INIT_ERR(kExternalError, Ori_IsDirectory);
+      REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, Ori_IsDirectory);
       RECORD_IN_NIGHTLY(statusKeeper, rv);
       CONTINUE_IN_NIGHTLY_RETURN_IN_OTHERS(rv);
     }
@@ -4232,7 +4207,7 @@ nsresult QuotaManager::InitializeOrigin(PersistenceType aPersistenceType,
     nsString leafName;
     rv = file->GetLeafName(leafName);
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      REPORT_TELEMETRY_INIT_ERR(kExternalError, Ori_GetLeafName);
+      REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, Ori_GetLeafName);
       RECORD_IN_NIGHTLY(statusKeeper, rv);
       CONTINUE_IN_NIGHTLY_RETURN_IN_OTHERS(rv);
     }
@@ -4245,7 +4220,7 @@ nsresult QuotaManager::InitializeOrigin(PersistenceType aPersistenceType,
       if (IsTempMetadata(leafName)) {
         rv = file->Remove(/* recursive */ false);
         if (NS_WARN_IF(NS_FAILED(rv))) {
-          REPORT_TELEMETRY_INIT_ERR(kExternalError, Ori_Remove);
+          REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, Ori_Remove);
           RECORD_IN_NIGHTLY(statusKeeper, rv);
           CONTINUE_IN_NIGHTLY_RETURN_IN_OTHERS(rv);
         }
@@ -4258,7 +4233,7 @@ nsresult QuotaManager::InitializeOrigin(PersistenceType aPersistenceType,
       }
 
       UNKNOWN_FILE_WARNING(leafName);
-      REPORT_TELEMETRY_INIT_ERR(kInternalError, Ori_UnexpectedFile);
+      REPORT_TELEMETRY_INIT_ERR(kQuotaInternalError, Ori_UnexpectedFile);
 
 #ifdef NIGHTLY_BUILD
       Telemetry::ScalarSetMaximum(
@@ -4274,7 +4249,7 @@ nsresult QuotaManager::InitializeOrigin(PersistenceType aPersistenceType,
     rv = Client::TypeFromText(leafName, clientType);
     if (NS_FAILED(rv)) {
       UNKNOWN_FILE_WARNING(leafName);
-      REPORT_TELEMETRY_INIT_ERR(kInternalError, Ori_UnexpectedClient);
+      REPORT_TELEMETRY_INIT_ERR(kQuotaInternalError, Ori_UnexpectedClient);
       RECORD_IN_NIGHTLY(statusKeeper, NS_ERROR_UNEXPECTED);
 
       // Our upgrade process should have attempted to delete the deprecated
@@ -4310,7 +4285,7 @@ nsresult QuotaManager::InitializeOrigin(PersistenceType aPersistenceType,
     }
   }
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_INIT_ERR(kInternalError, Ori_GetNextFile);
+    REPORT_TELEMETRY_INIT_ERR(kQuotaInternalError, Ori_GetNextFile);
     RECORD_IN_NIGHTLY(statusKeeper, rv);
 #ifndef NIGHTLY_BUILD
     return rv;
@@ -5849,8 +5824,11 @@ nsresult QuotaManager::EnsureTemporaryStorageIsInitialized() {
   Telemetry::AccumulateTimeDelta(Telemetry::QM_REPOSITORIES_INITIALIZATION_TIME,
                                  startTime, TimeStamp::Now());
 
-  if (gFixedLimitKB >= 0) {
-    mTemporaryStorageLimit = static_cast<uint64_t>(gFixedLimitKB) * 1024;
+  if (StaticPrefs::dom_quotaManager_temporaryStorage_fixedLimit() >= 0) {
+    mTemporaryStorageLimit =
+        static_cast<uint64_t>(
+            StaticPrefs::dom_quotaManager_temporaryStorage_fixedLimit()) *
+        1024;
   } else {
     nsCOMPtr<nsIFile> storageDir =
         do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
@@ -8773,7 +8751,7 @@ bool PrincipalVerifier::IsPrincipalInfoValid(
       }
 
       nsCOMPtr<nsIPrincipal> principal =
-          BasePrincipal::CreateCodebasePrincipal(uri, info.attrs());
+          BasePrincipal::CreateContentPrincipal(uri, info.attrs());
       if (NS_WARN_IF(!principal)) {
         return false;
       }

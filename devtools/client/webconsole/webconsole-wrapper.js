@@ -5,26 +5,47 @@
 "use strict";
 
 const Services = require("Services");
-const { createElement, createFactory } = require("devtools/client/shared/vendor/react");
+const {
+  createElement,
+  createFactory,
+} = require("devtools/client/shared/vendor/react");
 const ReactDOM = require("devtools/client/shared/vendor/react-dom");
 const { Provider } = require("devtools/client/shared/vendor/react-redux");
 
 const actions = require("devtools/client/webconsole/actions/index");
-const { createEditContextMenu } = require("devtools/client/framework/toolbox-context-menu");
-const { createContextMenu } = require("devtools/client/webconsole/utils/context-menu");
+const {
+  createEditContextMenu,
+} = require("devtools/client/framework/toolbox-context-menu");
+const {
+  createContextMenu,
+} = require("devtools/client/webconsole/utils/context-menu");
 const { configureStore } = require("devtools/client/webconsole/store");
 const { PREFS } = require("devtools/client/webconsole/constants");
 
-const { isPacketPrivate } = require("devtools/client/webconsole/utils/messages");
-const { getAllMessagesById, getMessage } = require("devtools/client/webconsole/selectors/messages");
+const {
+  isPacketPrivate,
+} = require("devtools/client/webconsole/utils/messages");
+const {
+  getAllMessagesById,
+  getMessage,
+} = require("devtools/client/webconsole/selectors/messages");
 const Telemetry = require("devtools/client/shared/telemetry");
 
 const EventEmitter = require("devtools/shared/event-emitter");
 const App = createFactory(require("devtools/client/webconsole/components/App"));
 const ObjectClient = require("devtools/shared/client/object-client");
 const LongStringClient = require("devtools/shared/client/long-string-client");
-loader.lazyRequireGetter(this, "Constants", "devtools/client/webconsole/constants");
-loader.lazyRequireGetter(this, "getElementText", "devtools/client/webconsole/utils/clipboard", true);
+loader.lazyRequireGetter(
+  this,
+  "Constants",
+  "devtools/client/webconsole/constants"
+);
+loader.lazyRequireGetter(
+  this,
+  "getElementText",
+  "devtools/client/webconsole/utils/clipboard",
+  true
+);
 
 let store = null;
 
@@ -58,7 +79,7 @@ class WebConsoleWrapper {
   }
 
   init() {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       const attachRefToWebConsoleUI = (id, node) => {
         this.webConsoleUI[id] = node;
       };
@@ -68,22 +89,29 @@ class WebConsoleWrapper {
       const serviceContainer = {
         attachRefToWebConsoleUI,
         emitNewMessage: (node, messageId, timeStamp) => {
-          webConsoleUI.emit("new-messages", new Set([{
-            node,
-            messageId,
-            timeStamp,
-          }]));
+          webConsoleUI.emit(
+            "new-messages",
+            new Set([
+              {
+                node,
+                messageId,
+                timeStamp,
+              },
+            ])
+          );
         },
         proxy: webConsoleUI.proxy,
         openLink: (url, e) => {
           webConsoleUI.hud.openLink(url, e);
         },
         canRewind: () => {
-          if (!(
-            webConsoleUI.hud
-            && webConsoleUI.hud.target
-            && webConsoleUI.hud.target.traits
-          )) {
+          if (
+            !(
+              webConsoleUI.hud &&
+              webConsoleUI.hud.target &&
+              webConsoleUI.hud.target.traits
+            )
+          ) {
             return false;
           }
 
@@ -92,7 +120,7 @@ class WebConsoleWrapper {
         createElement: nodename => {
           return this.document.createElement(nodename);
         },
-        getLongString: (grip) => {
+        getLongString: grip => {
           return webConsoleUI.proxy.webConsoleClient.getString(grip);
         },
         requestData(id, type) {
@@ -106,18 +134,18 @@ class WebConsoleWrapper {
         recordTelemetryEvent: (eventName, extra = {}) => {
           this.telemetry.recordEvent(eventName, "webconsole", null, {
             ...extra,
-            "session_id": this.toolbox && this.toolbox.sessionId || -1,
+            session_id: (this.toolbox && this.toolbox.sessionId) || -1,
           });
         },
-        createObjectClient: (object) => {
+        createObjectClient: object => {
           return new ObjectClient(debuggerClient, object);
         },
 
-        createLongStringClient: (object) => {
+        createLongStringClient: object => {
           return new LongStringClient(debuggerClient, object);
         },
 
-        releaseActor: (actor) => {
+        releaseActor: actor => {
           if (!actor) {
             return null;
           }
@@ -125,30 +153,23 @@ class WebConsoleWrapper {
           return debuggerClient.release(actor);
         },
 
-        getWebConsoleClient: () => {
-          return webConsoleUI.webConsoleClient;
-        },
-
         /**
          * Retrieve the FrameActor ID given a frame depth, or the selected one if no
          * frame depth given.
          *
-         * @param {Number} frame: optional frame depth.
          * @return { frameActor: String|null, client: Object }:
          *         frameActor is the FrameActor ID for the given frame depth
          *         (or the selected frame if it exists), null if no frame was found.
          *         client is the WebConsole client for the thread the frame is
          *         associated with.
          */
-        getFrameActor: (frame = null) => {
+        getFrameActor: () => {
           const state = this.hud.getDebuggerFrames();
           if (!state) {
             return { frameActor: null, client: webConsoleUI.webConsoleClient };
           }
 
-          const grip = Number.isInteger(frame)
-            ? state.frames[frame]
-            : state.frames[state.selected];
+          const grip = state.frames[state.selected];
 
           if (!grip) {
             return { frameActor: null, client: webConsoleUI.webConsoleClient };
@@ -156,31 +177,25 @@ class WebConsoleWrapper {
 
           return {
             frameActor: grip.actor,
-            client: this.hud.lookupConsoleClient(grip.thread),
+            client: state.target.activeConsole,
           };
         },
 
         inputHasSelection: () => {
-          const {editor, inputNode} = webConsoleUI.jsterm || {};
-          return editor
-            ? !!editor.getSelection()
-            : (inputNode && inputNode.selectionStart !== inputNode.selectionEnd);
+          const { editor } = webConsoleUI.jsterm || {};
+          return editor && !!editor.getSelection();
         },
 
         getInputValue: () => {
           return this.hud.getInputValue();
         },
 
-        setInputValue: (value) => {
+        setInputValue: value => {
           this.hud.setInputValue(value);
         },
 
         focusInput: () => {
           return webConsoleUI.jsterm && webConsoleUI.jsterm.focus();
-        },
-
-        evaluateInput: (expression) => {
-          return webConsoleUI.jsterm && webConsoleUI.jsterm.execute(expression);
         },
 
         requestEvaluation: (string, options) => {
@@ -200,11 +215,11 @@ class WebConsoleWrapper {
         },
 
         getJsTermTooltipAnchor: () => {
-          if (jstermCodeMirror) {
-            return webConsoleUI.jsterm.node.querySelector(".CodeMirror-cursor");
-          }
-          return webConsoleUI.jsterm.completeNode;
+          return webConsoleUI.outputNode.querySelector(".CodeMirror-cursor");
         },
+        getMappedExpression: this.hud.getMappedExpression.bind(this.hud),
+        getPanelWindow: () => webConsoleUI.window,
+        inspectObjectActor: webConsoleUI.inspectObjectActor.bind(webConsoleUI),
       };
 
       // Set `openContextMenu` this way so, `serviceContainer` variable
@@ -221,25 +236,33 @@ class WebConsoleWrapper {
 
         const messageVariable = target.closest(".objectBox");
         // Ensure that console.group and console.groupCollapsed commands are not captured
-        const variableText = (messageVariable
-          && !(messageEl.classList.contains("startGroup"))
-          && !(messageEl.classList.contains("startGroupCollapsed")))
-            ? messageVariable.textContent : null;
+        const variableText =
+          messageVariable &&
+          !messageEl.classList.contains("startGroup") &&
+          !messageEl.classList.contains("startGroupCollapsed")
+            ? messageVariable.textContent
+            : null;
 
         // Retrieve closes actor id from the DOM.
-        const actorEl = target.closest("[data-link-actor-id]") ||
-                      target.querySelector("[data-link-actor-id]");
+        const actorEl =
+          target.closest("[data-link-actor-id]") ||
+          target.querySelector("[data-link-actor-id]");
         const actor = actorEl ? actorEl.dataset.linkActorId : null;
 
         const rootObjectInspector = target.closest(".object-inspector");
-        const rootActor = rootObjectInspector ?
-                        rootObjectInspector.querySelector("[data-link-actor-id]") : null;
+        const rootActor = rootObjectInspector
+          ? rootObjectInspector.querySelector("[data-link-actor-id]")
+          : null;
         const rootActorId = rootActor ? rootActor.dataset.linkActorId : null;
 
         const sidebarTogglePref = store.getState().prefs.sidebarToggle;
-        const openSidebar = sidebarTogglePref ? (messageId) => {
-          store.dispatch(actions.showMessageObjectInSidebar(rootActorId, messageId));
-        } : null;
+        const openSidebar = sidebarTogglePref
+          ? messageId => {
+              store.dispatch(
+                actions.showMessageObjectInSidebar(rootActorId, messageId)
+              );
+            }
+          : null;
 
         const messageData = getMessage(store.getState(), message.messageId);
         const executionPoint = messageData && messageData.executionPoint;
@@ -264,7 +287,7 @@ class WebConsoleWrapper {
         return menu;
       };
 
-      serviceContainer.openEditContextMenu = (e) => {
+      serviceContainer.openEditContextMenu = e => {
         const { screenX, screenY } = e;
         const menu = createEditContextMenu(window, "webconsole-menu");
         // Emit the "menu-open" event for testing.
@@ -275,70 +298,88 @@ class WebConsoleWrapper {
       };
 
       if (this.toolbox) {
-        this.toolbox.threadClient.on("paused", this.dispatchPaused);
-        this.toolbox.threadClient.on("progress", this.dispatchProgress);
+        this.toolbox.threadFront.on("paused", this.dispatchPaused);
+        this.toolbox.threadFront.on("progress", this.dispatchProgress);
 
-        const {highlight, unhighlight} = this.toolbox.getHighlighter(true);
+        const { highlight, unhighlight } = this.toolbox.getHighlighter(true);
 
         Object.assign(serviceContainer, {
           onViewSourceInDebugger: frame => {
-            this.toolbox.viewSourceInDebugger(
-              frame.url, frame.line, frame.column, frame.sourceId
-            ).then(() => {
-              this.telemetry.recordEvent(
-                "jump_to_source", "webconsole",
-                null, { "session_id": this.toolbox.sessionId }
-              );
-              this.webConsoleUI.emit("source-in-debugger-opened");
-            });
+            this.toolbox
+              .viewSourceInDebugger(
+                frame.url,
+                frame.line,
+                frame.column,
+                frame.sourceId
+              )
+              .then(() => {
+                this.telemetry.recordEvent(
+                  "jump_to_source",
+                  "webconsole",
+                  null,
+                  { session_id: this.toolbox.sessionId }
+                );
+                this.webConsoleUI.emit("source-in-debugger-opened");
+              });
           },
-          onViewSourceInScratchpad: frame => this.toolbox.viewSourceInScratchpad(
-            frame.url,
-            frame.line
-          ).then(() => {
-            this.telemetry.recordEvent("jump_to_source", "webconsole",
-                                       null, { "session_id": this.toolbox.sessionId }
-            );
-          }),
-          onViewSourceInStyleEditor: frame => this.toolbox.viewSourceInStyleEditor(
-            frame.url,
-            frame.line,
-            frame.column
-          ).then(() => {
-            this.telemetry.recordEvent("jump_to_source", "webconsole",
-                                       null, { "session_id": this.toolbox.sessionId }
-            );
-          }),
-          openNetworkPanel: (requestId) => {
-            return this.toolbox.selectTool("netmonitor").then((panel) => {
+          onViewSourceInScratchpad: frame =>
+            this.toolbox
+              .viewSourceInScratchpad(frame.url, frame.line)
+              .then(() => {
+                this.telemetry.recordEvent(
+                  "jump_to_source",
+                  "webconsole",
+                  null,
+                  { session_id: this.toolbox.sessionId }
+                );
+              }),
+          onViewSourceInStyleEditor: frame =>
+            this.toolbox
+              .viewSourceInStyleEditor(frame.url, frame.line, frame.column)
+              .then(() => {
+                this.telemetry.recordEvent(
+                  "jump_to_source",
+                  "webconsole",
+                  null,
+                  { session_id: this.toolbox.sessionId }
+                );
+              }),
+          openNetworkPanel: requestId => {
+            return this.toolbox.selectTool("netmonitor").then(panel => {
               return panel.panelWin.Netmonitor.inspectRequest(requestId);
             });
           },
-          resendNetworkRequest: (requestId) => {
-            return this.toolbox.getNetMonitorAPI().then((api) => {
+          resendNetworkRequest: requestId => {
+            return this.toolbox.getNetMonitorAPI().then(api => {
               return api.resendRequest(requestId);
             });
           },
-          sourceMapService: this.toolbox ? this.toolbox.sourceMapURLService : null,
+          sourceMapService: this.toolbox
+            ? this.toolbox.sourceMapURLService
+            : null,
           highlightDomElement: highlight,
           unHighlightDomElement: unhighlight,
-          openNodeInInspector: async (grip) => {
+          openNodeInInspector: async grip => {
             await this.toolbox.initInspector();
-            const onSelectInspector = this.toolbox.selectTool("inspector", "inspect_dom");
+            const onSelectInspector = this.toolbox.selectTool(
+              "inspector",
+              "inspect_dom"
+            );
             const onGripNodeToFront = this.toolbox.walker.gripToNodeFront(grip);
-            const [
-              front,
-              inspector,
-            ] = await Promise.all([onGripNodeToFront, onSelectInspector]);
+            const [front, inspector] = await Promise.all([
+              onGripNodeToFront,
+              onSelectInspector,
+            ]);
 
             const onInspectorUpdated = inspector.once("inspector-updated");
-            const onNodeFrontSet = this.toolbox.selection
-              .setNodeFront(front, { reason: "console" });
+            const onNodeFrontSet = this.toolbox.selection.setNodeFront(front, {
+              reason: "console",
+            });
 
             return Promise.all([onNodeFrontSet, onInspectorUpdated]);
           },
           jumpToExecutionPoint: executionPoint =>
-            this.toolbox.threadClient.timeWarp(executionPoint),
+            this.toolbox.threadFront.timeWarp(executionPoint),
 
           onMessageHover: (type, messageId) => {
             const message = getMessage(store.getState(), messageId);
@@ -349,15 +390,14 @@ class WebConsoleWrapper {
 
       store = configureStore(this.webConsoleUI, {
         // We may not have access to the toolbox (e.g. in the browser console).
-        sessionId: this.toolbox && this.toolbox.sessionId || -1,
+        sessionId: (this.toolbox && this.toolbox.sessionId) || -1,
         telemetry: this.telemetry,
         services: serviceContainer,
       });
 
-      const {prefs} = store.getState();
-      const jstermCodeMirror = prefs.jstermCodeMirror
-        && !Services.appinfo.accessibilityEnabled;
+      const { prefs } = store.getState();
       const autocomplete = prefs.autocomplete;
+      const editorFeatureEnabled = prefs.editor;
 
       this.prefsObservers = new Map();
       this.prefsObservers.set(PREFS.UI.MESSAGE_TIMESTAMP, () => {
@@ -366,7 +406,9 @@ class WebConsoleWrapper {
       });
 
       this.prefsObservers.set(PREFS.FEATURES.GROUP_WARNINGS, () => {
-        const enabled = Services.prefs.getBoolPref(PREFS.FEATURES.GROUP_WARNINGS);
+        const enabled = Services.prefs.getBoolPref(
+          PREFS.FEATURES.GROUP_WARNINGS
+        );
         store.dispatch(actions.warningGroupsToggle(enabled));
       });
 
@@ -379,8 +421,8 @@ class WebConsoleWrapper {
         webConsoleUI,
         onFirstMeaningfulPaint: resolve,
         closeSplitConsole: this.closeSplitConsole.bind(this),
-        jstermCodeMirror,
         autocomplete,
+        editorFeatureEnabled,
         hideShowContentMessagesCheckbox: !webConsoleUI.isBrowserConsole,
       });
 
@@ -408,15 +450,18 @@ class WebConsoleWrapper {
         : packet.timestamp;
 
       promise = new Promise(resolve => {
-        this.webConsoleUI.on("new-messages", function onThisMessage(messages) {
-          for (const m of messages) {
-            if (m.timeStamp === timeStampToMatch) {
-              resolve(m.node);
-              this.webConsoleUI.off("new-messages", onThisMessage);
-              return;
+        this.webConsoleUI.on(
+          "new-messages",
+          function onThisMessage(messages) {
+            for (const m of messages) {
+              if (m.timeStamp === timeStampToMatch) {
+                resolve(m.node);
+                this.webConsoleUI.off("new-messages", onThisMessage);
+                return;
+              }
             }
-          }
-        }.bind(this));
+          }.bind(this)
+        );
       });
     } else {
       promise = Promise.resolve();
@@ -449,26 +494,32 @@ class WebConsoleWrapper {
     // For (network) message updates, we need to check both messages queue and the state
     // since we can receive updates even if the message isn't rendered yet.
     const messages = [...getAllMessagesById(store.getState()).values()];
-    this.queuedMessageUpdates = this.queuedMessageUpdates.filter(({networkInfo}) => {
-      const { actor } = networkInfo;
+    this.queuedMessageUpdates = this.queuedMessageUpdates.filter(
+      ({ networkInfo }) => {
+        const { actor } = networkInfo;
 
-      const queuedNetworkMessage = this.queuedMessageAdds.find(p => p.actor === actor);
-      if (queuedNetworkMessage && isPacketPrivate(queuedNetworkMessage)) {
-        return false;
+        const queuedNetworkMessage = this.queuedMessageAdds.find(
+          p => p.actor === actor
+        );
+        if (queuedNetworkMessage && isPacketPrivate(queuedNetworkMessage)) {
+          return false;
+        }
+
+        const requestMessage = messages.find(
+          message => actor === message.actor
+        );
+        if (requestMessage && requestMessage.private === true) {
+          return false;
+        }
+
+        return true;
       }
-
-      const requestMessage = messages.find(message => actor === message.actor);
-      if (requestMessage && requestMessage.private === true) {
-        return false;
-      }
-
-      return true;
-    });
+    );
 
     // For (network) requests updates, we can check only the state, since there must be a
     // user interaction to get an update (i.e. the network message is displayed and thus
     // in the state).
-    this.queuedRequestUpdates = this.queuedRequestUpdates.filter(({id}) => {
+    this.queuedRequestUpdates = this.queuedRequestUpdates.filter(({ id }) => {
       const requestMessage = getMessage(store.getState(), id);
       if (requestMessage && requestMessage.private === true) {
         return false;
@@ -479,7 +530,9 @@ class WebConsoleWrapper {
 
     // Finally we clear the messages queue. This needs to be done here since we use it to
     // clean the other queues.
-    this.queuedMessageAdds = this.queuedMessageAdds.filter(p => !isPacketPrivate(p));
+    this.queuedMessageAdds = this.queuedMessageAdds.filter(
+      p => !isPacketPrivate(p)
+    );
 
     store.dispatch(actions.privateMessagesClear());
   }
@@ -491,7 +544,7 @@ class WebConsoleWrapper {
   }
 
   dispatchProgress(packet) {
-    const {executionPoint, recording} = packet;
+    const { executionPoint, recording } = packet;
     const point = recording ? null : executionPoint;
     store.dispatch(actions.setPauseExecutionPoint(point));
   }
@@ -507,8 +560,10 @@ class WebConsoleWrapper {
     const NUMBER_OF_NETWORK_UPDATE = 8;
 
     let expectedLength = NUMBER_OF_NETWORK_UPDATE;
-    if (this.webConsoleUI.webConsoleClient.traits.fetchCacheDescriptor
-      && res.networkInfo.updates.includes("responseCache")) {
+    if (
+      this.webConsoleUI.webConsoleClient.traits.fetchCacheDescriptor &&
+      res.networkInfo.updates.includes("responseCache")
+    ) {
       expectedLength++;
     }
     if (res.networkInfo.updates.includes("requestPostData")) {
@@ -521,7 +576,7 @@ class WebConsoleWrapper {
   }
 
   dispatchRequestUpdate(id, data) {
-    this.batchedRequestUpdates({ id, data });
+    return this.batchedRequestUpdates({ id, data });
   }
 
   dispatchSidebarClose() {
@@ -529,8 +584,11 @@ class WebConsoleWrapper {
   }
 
   dispatchSplitConsoleCloseButtonToggle() {
-    store.dispatch(actions.splitConsoleCloseButtonToggle(
-      this.toolbox && this.toolbox.currentToolId !== "webconsole"));
+    store.dispatch(
+      actions.splitConsoleCloseButtonToggle(
+        this.toolbox && this.toolbox.currentToolId !== "webconsole"
+      )
+    );
   }
 
   dispatchTabWillNavigate(packet) {
@@ -561,7 +619,7 @@ class WebConsoleWrapper {
 
   batchedRequestUpdates(message) {
     this.queuedRequestUpdates.push(message);
-    this.setTimeoutIfNeeded();
+    return this.setTimeoutIfNeeded();
   }
 
   batchedMessageAdd(message) {
@@ -583,6 +641,14 @@ class WebConsoleWrapper {
   }
 
   /**
+   *
+   * @param {String} expression: The expression to evaluate
+   */
+  dispatchEvaluateExpression(expression) {
+    store.dispatch(actions.evaluateExpression(expression));
+  }
+
+  /**
    * Returns a Promise that resolves once any async dispatch is finally dispatched.
    */
   waitAsyncDispatches() {
@@ -594,11 +660,10 @@ class WebConsoleWrapper {
 
   setTimeoutIfNeeded() {
     if (this.throttledDispatchPromise) {
-      return;
+      return this.throttledDispatchPromise;
     }
-
     this.throttledDispatchPromise = new Promise(done => {
-      setTimeout(() => {
+      setTimeout(async () => {
         this.throttledDispatchPromise = null;
 
         if (!store) {
@@ -616,22 +681,30 @@ class WebConsoleWrapper {
         // send it when we have one.
         if (this.toolbox) {
           this.telemetry.addEventProperty(
-            this.toolbox, "enter", "webconsole", null, "message_count", length);
+            this.toolbox,
+            "enter",
+            "webconsole",
+            null,
+            "message_count",
+            length
+          );
         }
 
         this.queuedMessageAdds = [];
 
         if (this.queuedMessageUpdates.length > 0) {
-          this.queuedMessageUpdates.forEach(({ message, res }) => {
-            store.dispatch(actions.networkMessageUpdate(message, null, res));
+          for (const { message, res } of this.queuedMessageUpdates) {
+            await store.dispatch(
+              actions.networkMessageUpdate(message, null, res)
+            );
             this.webConsoleUI.emit("network-message-updated", res);
-          });
+          }
           this.queuedMessageUpdates = [];
         }
         if (this.queuedRequestUpdates.length > 0) {
-          this.queuedRequestUpdates.forEach(({ id, data}) => {
-            store.dispatch(actions.networkUpdateRequest(id, data));
-          });
+          for (const { id, data } of this.queuedRequestUpdates) {
+            await store.dispatch(actions.networkUpdateRequest(id, data));
+          }
           this.queuedRequestUpdates = [];
 
           // Fire an event indicating that all data fetched from
@@ -646,6 +719,7 @@ class WebConsoleWrapper {
         done();
       }, 50);
     });
+    return this.throttledDispatchPromise;
   }
 
   // Should be used for test purpose only.

@@ -11,11 +11,11 @@
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/PathHelpers.h"
 #include "mozilla/Likely.h"
+#include "mozilla/LookAndFeel.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/ResultExtensions.h"
-#include "mozilla/TextEditRules.h"
 
 #include "gfxUtils.h"
 #include "nsAlgorithm.h"
@@ -1913,18 +1913,18 @@ nsresult nsTreeBodyFrame::GetImage(int32_t aRowIndex, nsTreeColumn* aCol,
       styleRequest->SyncClone(imgNotificationObserver, doc,
                               getter_AddRefs(imageRequest));
     } else {
-      nsCOMPtr<nsIURI> baseURI = mContent->GetBaseURI();
-
       nsCOMPtr<nsIURI> srcURI;
-      nsContentUtils::NewURIWithDocumentCharset(getter_AddRefs(srcURI),
-                                                imageSrc, doc, baseURI);
+      nsContentUtils::NewURIWithDocumentCharset(
+          getter_AddRefs(srcURI), imageSrc, doc, mContent->GetBaseURI());
       if (!srcURI) return NS_ERROR_FAILURE;
+
+      nsCOMPtr<nsIReferrerInfo> referrerInfo = new mozilla::dom::ReferrerInfo();
+      referrerInfo->InitWithDocument(doc);
 
       // XXXbz what's the origin principal for this stuff that comes from our
       // view?  I guess we should assume that it's the node's principal...
       nsresult rv = nsContentUtils::LoadImage(
-          srcURI, mContent, doc, mContent->NodePrincipal(), 0,
-          doc->GetDocumentURIAsReferrer(), doc->GetReferrerPolicy(),
+          srcURI, mContent, doc, mContent->NodePrincipal(), 0, referrerInfo,
           imgNotificationObserver, nsIRequest::LOAD_NORMAL, EmptyString(),
           getter_AddRefs(imageRequest));
       NS_ENSURE_SUCCESS(rv, rv);
@@ -3373,6 +3373,18 @@ ImgDrawResult nsTreeBodyFrame::PaintImage(
   return result;
 }
 
+static void FillBufWithPWChars(nsAString* aOutString, int32_t aLength) {
+  MOZ_ASSERT(aOutString);
+
+  // change the output to the platform password character
+  char16_t passwordChar = LookAndFeel::GetPasswordCharacter();
+
+  aOutString->Truncate();
+  for (int32_t i = 0; i < aLength; i++) {
+    aOutString->Append(passwordChar);
+  }
+}
+
 ImgDrawResult nsTreeBodyFrame::PaintText(
     int32_t aRowIndex, nsTreeColumn* aColumn, const nsRect& aTextRect,
     nsPresContext* aPresContext, gfxContext& aRenderingContext,
@@ -3386,7 +3398,7 @@ ImgDrawResult nsTreeBodyFrame::PaintText(
   mView->GetCellText(aRowIndex, aColumn, text);
 
   if (aColumn->Type() == TreeColumn_Binding::TYPE_PASSWORD) {
-    TextEditRules::FillBufWithPWChars(&text, text.Length());
+    FillBufWithPWChars(&text, text.Length());
   }
 
   // We're going to paint this text so we need to ensure bidi is enabled if

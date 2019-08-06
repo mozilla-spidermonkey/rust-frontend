@@ -8,8 +8,9 @@
 
 "use strict";
 
-const TEST_URI = "https://example.com/browser/devtools/client/webconsole/" +
-                 "test/mochitest/test-eval-in-stackframe.html";
+const TEST_URI =
+  "https://example.com/browser/devtools/client/webconsole/" +
+  "test/mochitest/test-eval-in-stackframe.html";
 
 add_task(async function() {
   const hud = await openNewTabAndConsole(TEST_URI);
@@ -30,11 +31,12 @@ add_task(async function() {
   await gDevTools.showToolbox(target, "webconsole");
 
   info("Test logging and inspecting objects while on a breakpoint.");
-  const jsterm = hud.jsterm;
-
-  const onMessage = waitForMessage(hud, '{ testProp2: "testValue2" }');
-  jsterm.execute("fooObj");
-  const message = await onMessage;
+  const message = await executeAndWaitForMessage(
+    hud,
+    "fooObj",
+    '{ testProp2: "testValue2" }',
+    ".result"
+  );
 
   const objectInspectors = [...message.node.querySelectorAll(".tree")];
   is(objectInspectors.length, 1, "There should be one object inspector");
@@ -47,8 +49,10 @@ add_task(async function() {
   oi.querySelector(".arrow").click();
   await onOiExpanded;
 
-  ok(oi.querySelector(".arrow").classList.contains("expanded"),
-    "Object inspector expanded");
+  ok(
+    oi.querySelector(".arrow").classList.contains("expanded"),
+    "Object inspector expanded"
+  );
 
   // The object inspector now looks like:
   // {...}
@@ -62,4 +66,3 @@ add_task(async function() {
   ok(oiNodes[1].textContent.includes(`testProp2: "testValue2"`));
   ok(oiNodes[2].textContent.includes(`<prototype>: Object { \u2026 }`));
 });
-

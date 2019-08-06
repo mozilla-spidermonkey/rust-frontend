@@ -1,19 +1,30 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
-var {ExtensionParent} = ChromeUtils.import("resource://gre/modules/ExtensionParent.jsm");
-var {
-  HiddenExtensionPage,
-  promiseExtensionViewLoaded,
-} = ExtensionParent;
+var { ExtensionParent } = ChromeUtils.import(
+  "resource://gre/modules/ExtensionParent.jsm"
+);
+var { HiddenExtensionPage, promiseExtensionViewLoaded } = ExtensionParent;
 
+ChromeUtils.defineModuleGetter(
+  this,
+  "ExtensionTelemetry",
+  "resource://gre/modules/ExtensionTelemetry.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
+  "PrivateBrowsingUtils",
+  "resource://gre/modules/PrivateBrowsingUtils.jsm"
+);
 
-ChromeUtils.defineModuleGetter(this, "ExtensionTelemetry",
-                               "resource://gre/modules/ExtensionTelemetry.jsm");
-ChromeUtils.defineModuleGetter(this, "PrivateBrowsingUtils",
-                               "resource://gre/modules/PrivateBrowsingUtils.jsm");
-
-XPCOMUtils.defineLazyPreferenceGetter(this, "DELAYED_STARTUP",
-                                      "extensions.webextensions.background-delayed-startup");
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "DELAYED_STARTUP",
+  "extensions.webextensions.background-delayed-startup"
+);
 
 // Responsible for the background_page section of the manifest.
 class BackgroundPage extends HiddenExtensionPage {
@@ -26,12 +37,14 @@ class BackgroundPage extends HiddenExtensionPage {
     if (this.page) {
       this.url = this.extension.baseURI.resolve(this.page);
     } else if (this.isGenerated) {
-      this.url = this.extension.baseURI.resolve("_generated_background_page.html");
+      this.url = this.extension.baseURI.resolve(
+        "_generated_background_page.html"
+      );
     }
   }
 
   async build() {
-    const {extension} = this;
+    const { extension } = this;
 
     ExtensionTelemetry.backgroundPageLoad.stopwatchStart(extension, this);
 
@@ -39,14 +52,18 @@ class BackgroundPage extends HiddenExtensionPage {
     try {
       await this.createBrowserElement();
       if (!this.browser) {
-        throw new Error("Extension shut down before the background page was created");
+        throw new Error(
+          "Extension shut down before the background page was created"
+        );
       }
       extension._backgroundPageFrameLoader = this.browser.frameLoader;
 
       extensions.emit("extension-browser-inserted", this.browser);
 
       let contextPromise = promiseExtensionViewLoaded(this.browser);
-      this.browser.loadURI(this.url, {triggeringPrincipal: extension.principal});
+      this.browser.loadURI(this.url, {
+        triggeringPrincipal: extension.principal,
+      });
 
       context = await contextPromise;
     } catch (e) {
@@ -88,22 +105,25 @@ this.backgroundPage = class extends ExtensionAPI {
       return;
     }
 
-    let {extension} = this;
-    let {manifest} = extension;
+    let { extension } = this;
+    let { manifest } = extension;
 
     this.bgPage = new BackgroundPage(extension, manifest.background);
     return this.bgPage.build();
   }
 
   onManifestEntry(entryName) {
-    let {extension} = this;
+    let { extension } = this;
 
     this.bgPage = null;
 
     // When in PPB background pages all run in a private context.  This check
     // simply avoids an extraneous error in the console since the BaseContext
     // will throw.
-    if (PrivateBrowsingUtils.permanentPrivateBrowsing && !extension.privateBrowsingAllowed) {
+    if (
+      PrivateBrowsingUtils.permanentPrivateBrowsing &&
+      !extension.privateBrowsingAllowed
+    ) {
       return;
     }
 

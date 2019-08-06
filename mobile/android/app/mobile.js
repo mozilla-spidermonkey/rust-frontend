@@ -67,13 +67,6 @@ pref("ui.scrollbarFadeDuration", 0);
 /* turn off the caret blink after 10 cycles */
 pref("ui.caretBlinkCount", 10);
 
-/* cache prefs */
-pref("browser.cache.disk.enable", true);
-pref("browser.cache.disk.smart_size.enabled", true);
-
-pref("browser.cache.memory.enable", true);
-pref("browser.cache.memory.capacity", 1024); // kilobytes
-
 pref("browser.cache.memory_limit", 5120); // 5 MB
 
 /* image cache prefs */
@@ -86,9 +79,6 @@ pref("offline-apps.quota.warn", 1024); // kilobytes
 
 // Automatically shrink-to-fit image documents.
 pref("browser.enable_automatic_image_resizing", true);
-
-// cache compression turned off for now - see bug #715198
-pref("browser.cache.compression_level", 0);
 
 /* disable some protocol warnings */
 pref("network.protocol-handler.warn-external.tel", false);
@@ -140,7 +130,6 @@ pref("urlclassifier.downloadAllowTable", "");
 pref("urlclassifier.downloadBlockTable", "");
 
 /* these should help performance */
-pref("layout.reflow.synthMouseMove", false);
 pref("layout.css.report_errors", false);
 
 /* download manager (don't show the window or alert) */
@@ -234,7 +223,6 @@ pref("privacy.popups.showBrowserMessage", true);
 /* disable opening windows with the dialog feature */
 pref("dom.disable_window_open_dialog_feature", true);
 pref("dom.disable_window_showModalDialog", true);
-pref("dom.disable_window_print", true);
 pref("dom.disable_window_find", true);
 
 pref("keyword.enabled", true);
@@ -276,9 +264,6 @@ pref("browser.casting.enabled", true);
 pref("chrome.override_package.global", "browser");
 pref("chrome.override_package.mozapps", "browser");
 pref("chrome.override_package.passwordmgr", "browser");
-
-// enable xul error pages
-pref("browser.xul.error_pages.enabled", true);
 
 // disable color management
 pref("gfx.color_management.mode", 0);
@@ -368,9 +353,6 @@ pref("browser.ui.zoom.force-user-scalable", false);
 
 // With the typical screen sizes on mobile devices, we want to wrap page sources by default.
 pref("view_source.wrap_long_lines", true);
-
-// Ditto for plain text documents.
-pref("plain_text.wrap_long_lines", true);
 
 
 pref("ui.touch.radius.enabled", false);
@@ -590,7 +572,7 @@ pref("urlclassifier.downloadAllowTable", "");
 pref("urlclassifier.downloadBlockTable", "");
 
 // The Potentially Harmful Apps list replaces the malware one on Android.
-pref("urlclassifier.malwareTable", "goog-harmful-proto,goog-unwanted-proto,test-harmful-simple,test-malware-simple,test-unwanted-simple");
+pref("urlclassifier.malwareTable", "goog-harmful-proto,goog-unwanted-proto,moztest-harmful-simple,moztest-malware-simple,moztest-unwanted-simple");
 
 // True if you always want dump() to work
 //
@@ -784,13 +766,6 @@ pref("layout.accessiblecaret.hapticfeedback", true);
 // a smarter phone-number selection for direct-dial ActionBar action.
 pref("layout.accessiblecaret.extend_selection_for_phone_number", true);
 
-// Disable sending console to logcat on release builds.
-#ifdef RELEASE_OR_BETA
-pref("consoleservice.logcat", false);
-#else
-pref("consoleservice.logcat", true);
-#endif
-
 pref("browser.tabs.showAudioPlayingIcon", true);
 
 pref("dom.serviceWorkers.enabled", true);
@@ -843,6 +818,7 @@ pref("extensions.systemAddon.update.url", "https://aus5.mozilla.org/update/3/Sys
 pref("browser.tabs.remote.separateFileUriProcess", false);
 pref("browser.tabs.remote.allowLinkedWebInFileUriProcess", true);
 pref("browser.tabs.remote.separatePrivilegedContentProcess", false);
+pref("browser.tabs.remote.enforceRemoteTypeRestrictions", false);
 
 // Allow Web Authentication
 pref("security.webauth.webauthn_enable_android_fido2", true);

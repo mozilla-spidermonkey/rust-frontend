@@ -31,6 +31,8 @@
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/Printf.h"
 #include "mozilla/Sprintf.h"
+#include "mozilla/StaticPrefs_network.h"
+#include "mozilla/StaticPrefs_privacy.h"
 #include "nsAsyncRedirectVerifyHelper.h"
 #include "nsSocketTransportService2.h"
 #include "nsAlgorithm.h"
@@ -274,6 +276,9 @@ nsHttpHandler::nsHttpHandler()
       mTCPKeepaliveLongLivedIdleTimeS(600),
       mEnforceH1Framing(FRAMECHECK_BARELY),
       mDefaultHpackBuffer(4096),
+      mBug1563538(true),
+      mBug1563695(true),
+      mBug1556491(true),
       mMaxHttpResponseHeaderSize(393216),
       mFocusedWindowTransactionRatio(0.9f),
       mSpeculativeConnectEnabled(false),
@@ -1875,6 +1880,25 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
     rv = Preferences::GetInt(HTTP_PREF("spdy.default-hpack-buffer"), &val);
     if (NS_SUCCEEDED(rv)) {
       mDefaultHpackBuffer = val;
+    }
+  }
+
+  if (PREF_CHANGED(HTTP_PREF("spdy.bug1563538"))) {
+    rv = Preferences::GetBool(HTTP_PREF("spdy.bug1563538"), &cVar);
+    if (NS_SUCCEEDED(rv)) {
+      mBug1563538 = cVar;
+    }
+  }
+  if (PREF_CHANGED(HTTP_PREF("spdy.bug1563695"))) {
+    rv = Preferences::GetBool(HTTP_PREF("spdy.bug1563695"), &cVar);
+    if (NS_SUCCEEDED(rv)) {
+      mBug1563695 = cVar;
+    }
+  }
+  if (PREF_CHANGED(HTTP_PREF("spdy.bug1556491"))) {
+    rv = Preferences::GetBool(HTTP_PREF("spdy.bug1556491"), &cVar);
+    if (NS_SUCCEEDED(rv)) {
+      mBug1556491 = cVar;
     }
   }
 

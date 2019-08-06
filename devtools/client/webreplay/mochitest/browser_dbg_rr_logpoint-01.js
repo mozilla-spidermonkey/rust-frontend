@@ -9,21 +9,23 @@
 // Test basic logpoint functionality in web replay. When logpoints are added,
 // new messages should appear in the correct order and allow time warping.
 add_task(async function() {
-  const dbg = await attachRecordingDebugger(
-    "doc_rr_basic.html",
-    { waitForRecording: true }
-  );
+  const dbg = await attachRecordingDebugger("doc_rr_basic.html", {
+    waitForRecording: true,
+  });
 
-  const {tab, toolbox, threadClient, target} = dbg;
+  const { threadFront, target } = dbg;
   const console = await getDebuggerSplitConsole(dbg);
   const hud = console.hud;
 
-  const bp1 = await setBreakpoint(threadClient, "doc_rr_basic.html", 21,
-                                  { logValue: `"Logpoint Number " + number` });
-  const bp2 = await setBreakpoint(threadClient, "doc_rr_basic.html", 6,
-                                  { logValue: `"Logpoint Beginning"` });
-  const bp3 = await setBreakpoint(threadClient, "doc_rr_basic.html", 8,
-                                  { logValue: `"Logpoint Ending"` });
+  const bp1 = await setBreakpoint(threadFront, "doc_rr_basic.html", 21, {
+    logValue: `"Logpoint Number " + number`,
+  });
+  const bp2 = await setBreakpoint(threadFront, "doc_rr_basic.html", 6, {
+    logValue: `"Logpoint Beginning"`,
+  });
+  const bp3 = await setBreakpoint(threadFront, "doc_rr_basic.html", 8, {
+    logValue: `"Logpoint Ending"`,
+  });
 
   const messages = await waitForMessageCount(hud, "Logpoint", 12);
   ok(messages[0].textContent.includes("Beginning"));
@@ -33,14 +35,13 @@ add_task(async function() {
   ok(messages[11].textContent.includes("Ending"));
 
   await warpToMessage(hud, dbg, "Number 5");
-  await threadClient.interrupt();
+  await threadFront.interrupt();
 
   await checkEvaluateInTopFrame(target, "number", 5);
-  await reverseStepOverToLine(threadClient, 20);
+  await reverseStepOverToLine(threadFront, 20);
 
-  await threadClient.removeBreakpoint(bp1);
-  await threadClient.removeBreakpoint(bp2);
-  await threadClient.removeBreakpoint(bp3);
-  await toolbox.destroy();
-  await gBrowser.removeTab(tab);
+  await threadFront.removeBreakpoint(bp1);
+  await threadFront.removeBreakpoint(bp2);
+  await threadFront.removeBreakpoint(bp3);
+  await shutdownDebugger(dbg);
 });

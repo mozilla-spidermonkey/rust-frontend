@@ -460,7 +460,8 @@ bool BytecodeCompiler::emplaceEmitter(Maybe<BytecodeEmitter>& emitter,
                                                  ? BytecodeEmitter::SelfHosting
                                                  : BytecodeEmitter::Normal;
   emitter.emplace(/* parent = */ nullptr, parser, sharedContext, script,
-                  /* lazyScript = */ nullptr, options.lineno, emitterMode);
+                  /* lazyScript = */ nullptr, options.lineno, options.column,
+                  emitterMode);
   return emitter->init();
 }
 
@@ -483,26 +484,6 @@ bool frontend::SourceAwareCompiler<Unit>::handleParseFailure(
   MOZ_ASSERT_IF(info.directives.strict(), newDirectives.strict());
   MOZ_ASSERT_IF(info.directives.asmJS(), newDirectives.asmJS());
   info.directives = newDirectives;
-  return true;
-}
-
-bool BytecodeCompiler::deoptimizeArgumentsInEnclosingScripts(
-    JSContext* cx, HandleObject environment) {
-  RootedObject env(cx, environment);
-  while (env->is<EnvironmentObject>() || env->is<DebugEnvironmentProxy>()) {
-    if (env->is<CallObject>()) {
-      RootedFunction fun(cx, &env->as<CallObject>().callee());
-      RootedScript script(cx, JSFunction::getOrCreateScript(cx, fun));
-      if (!script) {
-        return false;
-      }
-      if (script->argumentsHasVarBinding()) {
-        JSScript::argumentsOptimizationFailed(cx, script);
-      }
-    }
-    env = env->enclosingEnvironment();
-  }
-
   return true;
 }
 
@@ -659,7 +640,7 @@ bool frontend::StandaloneFunctionCompiler<Unit>::compile(
     MutableHandleFunction fun, StandaloneFunctionInfo& info,
     FunctionNode* parsedFunction) {
   FunctionBox* funbox = parsedFunction->funbox();
-  if (funbox->function()->isInterpreted()) {
+  if (funbox->isInterpreted()) {
     MOZ_ASSERT(fun == funbox->function());
 
     if (!createFunctionScript(info, funbox->toStringStart,
@@ -766,7 +747,7 @@ JSScript* frontend::CompileGlobalBinASTScript(
 
   sourceObj->source()->setBinASTSourceMetadata(metadata);
 
-  BytecodeEmitter bce(nullptr, &parser, &globalsc, script, nullptr, 0);
+  BytecodeEmitter bce(nullptr, &parser, &globalsc, script, nullptr, 0, 0);
 
   if (!bce.init()) {
     return nullptr;
@@ -954,7 +935,7 @@ static bool CompileLazyFunctionImpl(JSContext* cx, Handle<LazyScript*> lazy,
 
   UsedNameTracker usedNames(cx);
 
-  RootedScriptSourceObject sourceObject(cx, &lazy->sourceObject());
+  RootedScriptSourceObject sourceObject(cx, lazy->sourceObject());
   Parser<FullParseHandler, Unit> parser(
       cx, cx->tempLifoAlloc(), options, units, length,
       /* foldConstants = */ true, usedNames, nullptr, lazy, sourceObject,
@@ -970,10 +951,7 @@ static bool CompileLazyFunctionImpl(JSContext* cx, Handle<LazyScript*> lazy,
     return false;
   }
 
-  Rooted<JSScript*> script(
-      cx, JSScript::Create(cx, options, sourceObject, lazy->sourceStart(),
-                           lazy->sourceEnd(), lazy->toStringStart(),
-                           lazy->toStringEnd()));
+  Rooted<JSScript*> script(cx, JSScript::CreateFromLazy(cx, lazy));
   if (!script) {
     return false;
   }
@@ -986,20 +964,22 @@ static bool CompileLazyFunctionImpl(JSContext* cx, Handle<LazyScript*> lazy,
   }
 
   FieldInitializers fieldInitializers = FieldInitializers::Invalid();
-  if (fun->kind() == JSFunction::FunctionKind::ClassConstructor) {
+  if (fun->kind() == FunctionFlags::FunctionKind::ClassConstructor) {
     fieldInitializers = lazy->getFieldInitializers();
   }
 
   BytecodeEmitter bce(/* parent = */ nullptr, &parser, pn->funbox(), script,
-                      lazy, pn->pn_pos, BytecodeEmitter::LazyFunction,
-                      fieldInitializers);
-  if (!bce.init()) {
+                      lazy, lazy->lineno(), lazy->column(),
+                      BytecodeEmitter::LazyFunction, fieldInitializers);
+  if (!bce.init(pn->pn_pos)) {
     return false;
   }
 
   if (!bce.emitFunctionScript(pn, BytecodeEmitter::TopLevelFunction::Yes)) {
     return false;
   }
+
+  MOZ_ASSERT(lazy->hasDirectEval() == script->hasDirectEval());
 
   delazificationCompletion.complete();
   assertException.reset();
@@ -1044,7 +1024,7 @@ bool frontend::CompileLazyBinASTFunction(JSContext* cx,
 
   UsedNameTracker usedNames(cx);
 
-  RootedScriptSourceObject sourceObj(cx, &lazy->sourceObject());
+  RootedScriptSourceObject sourceObj(cx, lazy->sourceObject());
   MOZ_ASSERT(sourceObj);
 
   RootedScript script(
@@ -1072,10 +1052,11 @@ bool frontend::CompileLazyBinASTFunction(JSContext* cx,
 
   FunctionNode* pn = parsed.unwrap();
 
-  BytecodeEmitter bce(nullptr, &parser, pn->funbox(), script, lazy, pn->pn_pos,
+  BytecodeEmitter bce(nullptr, &parser, pn->funbox(), script, lazy,
+                      lazy->lineno(), lazy->column(),
                       BytecodeEmitter::LazyFunction);
 
-  if (!bce.init()) {
+  if (!bce.init(pn->pn_pos)) {
     return false;
   }
 

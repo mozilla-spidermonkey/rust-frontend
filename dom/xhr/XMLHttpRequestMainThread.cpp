@@ -34,6 +34,9 @@
 #include "mozilla/LoadInfo.h"
 #include "mozilla/LoadContext.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/StaticPrefs_network.h"
+#include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/dom/ProgressEvent.h"
 #include "nsIJARChannel.h"
 #include "nsIJARURI.h"
@@ -632,7 +635,8 @@ void XMLHttpRequestMainThread::SetResponseType(
 
   if (mState == XMLHttpRequest_Binding::LOADING ||
       mState == XMLHttpRequest_Binding::DONE) {
-    aRv.Throw(NS_ERROR_DOM_INVALID_STATE_XHR_MUST_NOT_BE_LOADING_OR_DONE);
+    aRv.Throw(
+        NS_ERROR_DOM_INVALID_STATE_XHR_MUST_NOT_BE_LOADING_OR_DONE_RESPONSE_TYPE);
     return;
   }
 
@@ -1028,10 +1032,14 @@ bool XMLHttpRequestMainThread::IsSafeHeader(
     if (!NS_IsValidHTTPToken(token)) {
       return false;
     }
-    if (aHeader.Equals(token, nsCaseInsensitiveCStringComparator())) {
+
+    if (token.EqualsLiteral("*") && !mFlagACwithCredentials) {
+      isSafe = true;
+    } else if (aHeader.Equals(token, nsCaseInsensitiveCStringComparator())) {
       isSafe = true;
     }
   }
+
   return isSafe;
 }
 
@@ -1079,9 +1087,8 @@ void XMLHttpRequestMainThread::GetAllResponseHeaders(
 
   // Don't provide Content-Length for data URIs
   nsCOMPtr<nsIURI> uri;
-  bool isDataURI;
   if (NS_FAILED(mChannel->GetURI(getter_AddRefs(uri))) ||
-      NS_FAILED(uri->SchemeIs("data", &isDataURI)) || !isDataURI) {
+      !uri->SchemeIs("data")) {
     int64_t length;
     if (NS_SUCCEEDED(mChannel->GetContentLength(&length))) {
       aResponseHeaders.AppendLiteral("Content-Length: ");
@@ -1372,7 +1379,7 @@ nsresult XMLHttpRequestMainThread::Open(const nsACString& aMethod,
   }
 
   // Steps 5-6
-  nsCOMPtr<nsIURI> baseURI;
+  nsIURI* baseURI = nullptr;
   if (mBaseURI) {
     baseURI = mBaseURI;
   } else if (responsibleDocument) {
@@ -2882,7 +2889,7 @@ nsresult XMLHttpRequestMainThread::SendInternal(const BodyExtractorBase* aBody,
 
     if (GetOwner()) {
       if (nsCOMPtr<nsPIDOMWindowOuter> topWindow =
-              GetOwner()->GetOuterWindow()->GetTop()) {
+              GetOwner()->GetOuterWindow()->GetInProcessTop()) {
         if (nsCOMPtr<nsPIDOMWindowInner> topInner =
                 topWindow->GetCurrentInnerWindow()) {
           mSuspendedDoc = topWindow->GetExtantDoc();
@@ -2959,20 +2966,6 @@ bool XMLHttpRequestMainThread::IsMappedArrayBufferEnabled() {
   }
 
   return sIsMappedArrayBufferEnabled;
-}
-
-/* static */
-bool XMLHttpRequestMainThread::IsLowercaseResponseHeader() {
-  static bool sLowercaseResponseHeaderAdded = false;
-  static bool sIsLowercaseResponseHeaderEnabled;
-
-  if (!sLowercaseResponseHeaderAdded) {
-    Preferences::AddBoolVarCache(&sIsLowercaseResponseHeaderEnabled,
-                                 "dom.xhr.lowercase_header.enabled", false);
-    sLowercaseResponseHeaderAdded = true;
-  }
-
-  return sIsLowercaseResponseHeaderEnabled;
 }
 
 // http://dvcs.w3.org/hg/xhr/raw-file/tip/Overview.html#dom-xmlhttprequest-setrequestheader
@@ -3101,7 +3094,8 @@ void XMLHttpRequestMainThread::OverrideMimeType(const nsAString& aMimeType,
 
   if (mState == XMLHttpRequest_Binding::LOADING ||
       mState == XMLHttpRequest_Binding::DONE) {
-    aRv.Throw(NS_ERROR_DOM_INVALID_STATE_XHR_MUST_NOT_BE_LOADING_OR_DONE);
+    aRv.Throw(
+        NS_ERROR_DOM_INVALID_STATE_XHR_MUST_NOT_BE_LOADING_OR_DONE_OVERRIDE_MIME_TYPE);
     return;
   }
 
@@ -3563,14 +3557,6 @@ NS_IMPL_ISUPPORTS(XMLHttpRequestMainThread::nsHeaderVisitor,
 NS_IMETHODIMP XMLHttpRequestMainThread::nsHeaderVisitor::VisitHeader(
     const nsACString& header, const nsACString& value) {
   if (mXHR.IsSafeHeader(header, mHttpChannel)) {
-    if (!IsLowercaseResponseHeader()) {
-      if (!mHeaderList.InsertElementSorted(HeaderEntry(header, value),
-                                           fallible)) {
-        return NS_ERROR_OUT_OF_MEMORY;
-      }
-      return NS_OK;
-    }
-
     nsAutoCString lowerHeader(header);
     ToLowerCase(lowerHeader);
     if (!mHeaderList.InsertElementSorted(HeaderEntry(lowerHeader, value),

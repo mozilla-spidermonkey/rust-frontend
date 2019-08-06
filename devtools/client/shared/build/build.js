@@ -16,21 +16,34 @@ const defaultPlugins = [
 ];
 
 function transform(filePath) {
-// Use the extra plugins only for the debugger
+  // Use the extra plugins only for the debugger
   const plugins = filePath.includes("devtools/client/debugger")
     ? require("./build-debugger")(filePath)
     : defaultPlugins;
 
   const doc = fs.readFileSync(filePath, "utf8");
-  const out = Babel.transform(doc, { plugins });
+
+  let out;
+  try {
+    out = Babel.transform(doc, { plugins });
+  } catch (err) {
+    throw new Error(`
+========================
+NODE COMPILATION ERROR!
+
+File:   ${filePath}
+Stack:
+
+${err.stack}
+
+========================
+`);
+  }
 
   return out.code;
 }
 
-const deps = [
-  __filename,
-  _path.resolve(__dirname, "babel.js"),
-];
+const deps = [__filename, _path.resolve(__dirname, "babel.js")];
 
 for (let i = 2; i < process.argv.length; i++) {
   const srcPath = process.argv[i];

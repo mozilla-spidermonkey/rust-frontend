@@ -8,7 +8,7 @@ job-defaults:
     worker-type:
         by-platform:
             linux64.*: t-linux-xlarge
-            macosx1010-64.*: t-osx-1010
+            macosx1014-64.*: t-osx-1014
             windows10-64.*: t-win10-64
     worker:
         by-platform:
@@ -39,6 +39,22 @@ taskgraph-tests:
         files-changed:
             - 'taskcluster/**/*.py'
             - 'python/mach/**/*.py'
+
+mach:
+    description: python/mach unit tests
+    platform:
+        - linux64/opt
+        - macosx1014-64/opt
+        - windows10-64/opt
+    python-version: [2, 3]
+    treeherder:
+        symbol: mach
+    run:
+        using: python-test
+        subsuite: mach
+    when:
+        files-changed:
+            - 'python/mach/**'
 
 marionette-harness:
     description: testing/marionette/harness unit tests
@@ -75,12 +91,12 @@ mochitest-harness:
                 max-run-time: 3600
     run:
         using: run-task
+        cwd: '{checkout}'
         command: >
             source /builds/worker/scripts/xvfb.sh &&
             start_xvfb '1600x1200x24' 0 &&
             export GECKO_BINARY_PATH=$MOZ_FETCHES_DIR/firefox/firefox &&
             export TEST_HARNESS_ROOT=$MOZ_FETCHES_DIR/tests &&
-            cd /builds/worker/checkouts/gecko &&
             ./mach python-test --python 2 --subsuite mochitest
     fetches:
         build:
@@ -102,7 +118,7 @@ mozbase:
     description: testing/mozbase unit tests
     platform:
         - linux64/opt
-        - macosx1010-64/opt
+        - macosx1014-64/opt
         - windows10-64/opt
     python-version: [2, 3]
     treeherder:
@@ -121,8 +137,8 @@ mozharness:
     run:
         using: run-task
         cache-dotcache: true
+        cwd: '{checkout}/testing/mozharness'
         command: >
-            cd /builds/worker/checkouts/gecko/testing/mozharness &&
             /usr/local/bin/tox -e py27-hg4.3
     when:
         files-changed:
@@ -132,7 +148,7 @@ mozlint:
     description: python/mozlint unit tests
     platform:
         - linux64/opt
-        - macosx1010-64/opt
+        - macosx1014-64/opt
         - windows10-64/opt
     python-version: [2]
     treeherder:
@@ -216,12 +232,12 @@ reftest-harness:
                 max-run-time: 3600
     run:
         using: run-task
+        cwd: '{checkout}'
         command: >
             source /builds/worker/scripts/xvfb.sh &&
             start_xvfb '1600x1200x24' 0 &&
             export GECKO_BINARY_PATH=$MOZ_FETCHES_DIR/firefox/firefox &&
             export TEST_HARNESS_ROOT=$MOZ_FETCHES_DIR/tests &&
-            cd /builds/worker/checkouts/gecko &&
             ./mach python-test --python 2 --subsuite reftest
     fetches:
         build:

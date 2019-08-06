@@ -326,7 +326,7 @@ class MarionetteStorageProtocolPart(StorageProtocolPart):
                                 .newURI(url);
             let ssm = Components.classes["@mozilla.org/scriptsecuritymanager;1"]
                                 .getService(Ci.nsIScriptSecurityManager);
-            let principal = ssm.createCodebasePrincipal(uri, {});
+            let principal = ssm.createContentPrincipal(uri, {});
             let qms = Components.classes["@mozilla.org/dom/quota-manager-service;1"]
                                 .getService(Components.interfaces.nsIQuotaManagerService);
             qms.clearStoragesForPrincipal(principal, "default", null, true);
@@ -385,6 +385,9 @@ class MarionetteSelectorProtocolPart(SelectorProtocolPart):
 
     def elements_by_selector(self, selector):
         return self.marionette.find_elements("css selector", selector)
+
+    def elements_by_selector_and_frame(self, element_selector, frame):
+        return self.marionette.find_elements("css selector", element_selector)
 
 
 class MarionetteClickProtocolPart(ClickProtocolPart):

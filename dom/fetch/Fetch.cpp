@@ -1319,14 +1319,15 @@ void FetchBody<Derived>::GetBody(JSContext* aCx,
     return;
   }
 
-  JS::Rooted<JSObject*> body(aCx);
   BodyStream::Create(aCx, this, DerivedClass()->GetParentObject(), inputStream,
-                     &body, aRv);
+                     aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return;
   }
 
-  MOZ_ASSERT(body);
+  MOZ_ASSERT(mReadableStreamBody);
+
+  JS::Rooted<JSObject*> body(aCx, mReadableStreamBody);
 
   // If the body has been already consumed, we lock the stream.
   bool bodyUsed = GetBodyUsed(aRv);
@@ -1352,7 +1353,6 @@ void FetchBody<Derived>::GetBody(JSContext* aCx,
     }
   }
 
-  mReadableStreamBody = body;
   aBodyOut.set(mReadableStreamBody);
 }
 

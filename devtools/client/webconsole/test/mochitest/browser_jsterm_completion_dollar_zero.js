@@ -19,15 +19,6 @@ const TEST_URI = `data:text/html;charset=utf-8,
 </body>`;
 
 add_task(async function() {
-  // Run test with legacy JsTerm
-  await pushPref("devtools.webconsole.jsterm.codeMirror", false);
-  await performTests();
-  // And then run it with the CodeMirror-powered one.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", true);
-  await performTests();
-});
-
-async function performTests() {
   const toolbox = await openNewTabAndToolbox(TEST_URI, "inspector");
   await registerTestActor(toolbox.target.client);
   const testActor = await getTestActor(toolbox);
@@ -35,22 +26,28 @@ async function performTests() {
 
   info("Picker mode stopped, <h1> selected, now switching to the console");
   const hud = await openConsole();
-  const {jsterm} = hud;
+  const { jsterm } = hud;
 
   hud.ui.clearOutput();
 
-  const {autocompletePopup} = jsterm;
+  const { autocompletePopup } = jsterm;
 
   await setInputValueForAutocompletion(hud, "$0.");
-  is(getAutocompletePopupLabels(autocompletePopup).includes("attributes"), true,
-    "autocomplete popup has expected items");
+  is(
+    getAutocompletePopupLabels(autocompletePopup).includes("attributes"),
+    true,
+    "autocomplete popup has expected items"
+  );
   is(autocompletePopup.isOpen, true, "autocomplete popup is open");
 
   await setInputValueForAutocompletion(hud, "$0.attributes.");
   is(autocompletePopup.isOpen, true, "autocomplete popup is open");
-  is(getAutocompletePopupLabels(autocompletePopup).includes("getNamedItem"), true,
-    "autocomplete popup has expected items");
-}
+  is(
+    getAutocompletePopupLabels(autocompletePopup).includes("getNamedItem"),
+    true,
+    "autocomplete popup has expected items"
+  );
+});
 
 function getAutocompletePopupLabels(autocompletePopup) {
   return autocompletePopup.items.map(i => i.label);

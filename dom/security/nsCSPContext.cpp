@@ -53,6 +53,7 @@
 #include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/Element.h"
 #include "nsXULAppAPI.h"
+#include "nsJSUtils.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -211,6 +212,15 @@ bool nsCSPContext::permitsInternal(
       // decision may be wrong due to the inability to get the nonce, and will
       // incorrectly fail the unit tests.
       if (!aIsPreload && aSendViolationReports) {
+        uint32_t lineNumber = 0;
+        uint32_t columnNumber = 0;
+        nsAutoCString spec;
+        JSContext* cx = nsContentUtils::GetCurrentJSContext();
+        if (cx) {
+          nsJSUtils::GetCallingLocation(cx, spec, &lineNumber, &columnNumber);
+          // If GetCallingLocation fails linenumber & columnNumber are set to 0
+          // anyway so we can skip checking if that is the case.
+        }
         AsyncReportViolation(
             aTriggeringElement, aCSPEventListener,
             (aSendContentLocationInViolationReports ? aContentLocation
@@ -220,10 +230,10 @@ bool nsCSPContext::permitsInternal(
                                        null */
             violatedDirective, p,   /* policy index        */
             EmptyString(),          /* no observer subject */
-            EmptyString(),          /* no source file      */
-            EmptyString(),          /* no script sample    */
-            0,                      /* no line number      */
-            0);                     /* no column number    */
+            NS_ConvertUTF8toUTF16(spec), /* source file      */
+            EmptyString(),               /* no script sample    */
+            lineNumber,                  /* line number      */
+            columnNumber);               /*  column number    */
       }
     }
   }
@@ -487,6 +497,21 @@ void nsCSPContext::reportInlineViolation(
     mSelfURI->GetSpec(sourceFile);
   }
 
+  uint32_t lineNumber = aLineNumber;
+  uint32_t columnNumber = aColumnNumber;
+
+  JSContext* cx = nsContentUtils::GetCurrentJSContext();
+  if (cx) {
+    if (!nsJSUtils::GetCallingLocation(cx, sourceFile, &lineNumber,
+                                       &columnNumber)) {
+      // Get Calling Location resets line/col to 0
+      // so we reset those to the intial arguments
+      // in case it failed
+      lineNumber = aLineNumber;
+      columnNumber = aColumnNumber;
+    }
+  }
+
   AsyncReportViolation(aTriggeringElement, aCSPEventListener,
                        nullptr,                        // aBlockedURI
                        BlockedContentSource::eInline,  // aBlockedSource
@@ -496,8 +521,8 @@ void nsCSPContext::reportInlineViolation(
                        observerSubject,                // aObserverSubject
                        NS_ConvertUTF8toUTF16(sourceFile),  // aSourceFile
                        aContent,                           // aScriptSample
-                       aLineNumber,                        // aLineNum
-                       aColumnNumber);                     // aColumnNum
+                       lineNumber,                         // aLineNum
+                       columnNumber);                      // aColumnNum
 }
 
 NS_IMETHODIMP
@@ -549,12 +574,15 @@ nsCSPContext::GetAllowsInline(nsContentPolicyType aContentType,
       }
     }
 
-    if (content.IsEmpty()) {
-      content = aContentOfPseudoScript;
+    // Check if the csp-hash matches against the hash of the script or
+    // pseudoscript. If we can't get any content to check, block the script.
+    if (!content.IsEmpty() || !aContentOfPseudoScript.IsEmpty()) {
+      if (content.IsEmpty()) {
+        content = aContentOfPseudoScript;
+      }
+      allowed =
+          mPolicies[i]->allows(aContentType, CSP_HASH, content, aParserCreated);
     }
-
-    allowed =
-        mPolicies[i]->allows(aContentType, CSP_HASH, content, aParserCreated);
 
     if (!allowed) {
       // policy is violoated: deny the load unless policy is report only and
@@ -858,12 +886,8 @@ void StripURIForReporting(nsIURI* aURI, nsIURI* aSelfURI,
   // aURI has a scheme of data, blob, or filesystem), then return the
   // ASCII serialization of uri’s scheme.
   bool isHttpFtpOrWs =
-      (NS_SUCCEEDED(aURI->SchemeIs("http", &isHttpFtpOrWs)) && isHttpFtpOrWs) ||
-      (NS_SUCCEEDED(aURI->SchemeIs("https", &isHttpFtpOrWs)) &&
-       isHttpFtpOrWs) ||
-      (NS_SUCCEEDED(aURI->SchemeIs("ftp", &isHttpFtpOrWs)) && isHttpFtpOrWs) ||
-      (NS_SUCCEEDED(aURI->SchemeIs("ws", &isHttpFtpOrWs)) && isHttpFtpOrWs) ||
-      (NS_SUCCEEDED(aURI->SchemeIs("wss", &isHttpFtpOrWs)) && isHttpFtpOrWs);
+      (aURI->SchemeIs("http") || aURI->SchemeIs("https") ||
+       aURI->SchemeIs("ftp") || aURI->SchemeIs("ws") || aURI->SchemeIs("wss"));
 
   if (!isHttpFtpOrWs) {
     // not strictly spec compliant, but what we really care about is
@@ -1084,10 +1108,7 @@ nsresult nsCSPContext::SendReports(
 
     // log a warning to console if scheme is not http or https
     bool isHttpScheme =
-        (NS_SUCCEEDED(reportURI->SchemeIs("http", &isHttpScheme)) &&
-         isHttpScheme) ||
-        (NS_SUCCEEDED(reportURI->SchemeIs("https", &isHttpScheme)) &&
-         isHttpScheme);
+        reportURI->SchemeIs("http") || reportURI->SchemeIs("https");
 
     if (!isHttpScheme) {
       AutoTArray<nsString, 1> params = {reportURIs[r]};
@@ -1307,8 +1328,7 @@ class CSPReportSenderRunnable final : public Runnable {
       mBlockedURI->GetSpec(blockedContentSource);
       if (blockedContentSource.Length() >
           nsCSPContext::ScriptSampleMaxLength()) {
-        bool isData = false;
-        rv = mBlockedURI->SchemeIs("data", &isData);
+        bool isData = mBlockedURI->SchemeIs("data");
         if (NS_SUCCEEDED(rv) && isData &&
             blockedContentSource.Length() >
                 nsCSPContext::ScriptSampleMaxLength()) {
@@ -1445,7 +1465,8 @@ nsCSPContext::PermitsAncestry(nsIDocShell* aDocShell,
   nsCOMPtr<nsIURI> uriClone;
 
   // iterate through each docShell parent item
-  while (NS_SUCCEEDED(treeItem->GetParent(getter_AddRefs(parentTreeItem))) &&
+  while (NS_SUCCEEDED(
+             treeItem->GetInProcessParent(getter_AddRefs(parentTreeItem))) &&
          parentTreeItem != nullptr) {
     // stop when reaching chrome
     if (parentTreeItem->ItemType() == nsIDocShellTreeItem::typeChrome) {

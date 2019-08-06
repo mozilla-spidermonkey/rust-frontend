@@ -184,7 +184,7 @@ ParserBase::ParserBase(JSContext* cx, LifoAlloc& alloc,
                        ScriptSourceObject* sourceObject, ParseGoal parseGoal)
     : ParserSharedBase(cx, alloc, usedNames, sourceObject,
                        ParserSharedBase::Kind::Parser),
-      anyChars(cx, options, thisForCtor()),
+      anyChars(cx, options, this),
       ss(nullptr),
       foldConstants_(foldConstants),
 #ifdef DEBUG
@@ -1315,7 +1315,7 @@ Maybe<LexicalScope::Data*> ParserBase::newLexicalScopeData(
 template <>
 SyntaxParseHandler::LexicalScopeNodeType
 PerHandlerParser<SyntaxParseHandler>::finishLexicalScope(
-    ParseContext::Scope& scope, Node body) {
+    ParseContext::Scope& scope, Node body, ScopeKind kind) {
   if (!propagateFreeNamesAndMarkClosedOverBindings(scope)) {
     return null();
   }
@@ -1325,7 +1325,7 @@ PerHandlerParser<SyntaxParseHandler>::finishLexicalScope(
 
 template <>
 LexicalScopeNode* PerHandlerParser<FullParseHandler>::finishLexicalScope(
-    ParseContext::Scope& scope, ParseNode* body) {
+    ParseContext::Scope& scope, ParseNode* body, ScopeKind kind) {
   if (!propagateFreeNamesAndMarkClosedOverBindings(scope)) {
     return nullptr;
   }
@@ -1335,7 +1335,7 @@ LexicalScopeNode* PerHandlerParser<FullParseHandler>::finishLexicalScope(
     return nullptr;
   }
 
-  return handler_.newLexicalScope(*bindings, body);
+  return handler_.newLexicalScope(*bindings, body, kind);
 }
 
 template <typename Unit>
@@ -1643,6 +1643,8 @@ bool PerHandlerParser<FullParseHandler>::finishFunction(
   }
 
   FunctionBox* funbox = pc_->functionBox();
+  funbox->synchronizeArgCount();
+
   bool hasParameterExprs = funbox->hasParameterExprs;
 
   if (hasParameterExprs) {
@@ -1691,19 +1693,20 @@ bool PerHandlerParser<SyntaxParseHandler>::finishFunction(
   // LazyScript. Do a full parse.
   if (pc_->closedOverBindingsForLazy().length() >=
           LazyScript::NumClosedOverBindingsLimit ||
-      pc_->innerFunctionsForLazy.length() >=
+      pc_->innerFunctionBoxesForLazy.length() >=
           LazyScript::NumInnerFunctionsLimit) {
     MOZ_ALWAYS_FALSE(abortIfSyntaxParser());
     return false;
   }
 
   FunctionBox* funbox = pc_->functionBox();
+  funbox->synchronizeArgCount();
   RootedFunction fun(cx_, funbox->function());
   LazyScript* lazy = LazyScript::Create(
       cx_, fun, sourceObject_, pc_->closedOverBindingsForLazy(),
-      pc_->innerFunctionsForLazy, funbox->bufStart, funbox->bufEnd,
-      funbox->toStringStart, funbox->startLine, funbox->startColumn,
-      parseGoal());
+      pc_->innerFunctionBoxesForLazy, funbox->bufStart, funbox->bufEnd,
+      funbox->toStringStart, funbox->toStringEnd, funbox->startLine,
+      funbox->startColumn, parseGoal());
   if (!lazy) {
     return false;
   }
@@ -1739,6 +1742,7 @@ bool PerHandlerParser<SyntaxParseHandler>::finishFunction(
   PropagateTransitiveParseFlags(funbox, lazy);
 
   fun->initLazyScript(lazy);
+  funbox->setIsInterpretedLazy(true);
   return true;
 }
 
@@ -1962,21 +1966,15 @@ GeneralParser<ParseHandler, Unit>::functionBody(InHandling inHandling,
     }
   }
 
-  return finishLexicalScope(pc_->varScope(), body);
+  return finishLexicalScope(pc_->varScope(), body, ScopeKind::FunctionLexical);
 }
 
-JSFunction* AllocNewFunction(JSContext* cx, HandleAtom atom,
-                             FunctionSyntaxKind kind,
-                             GeneratorKind generatorKind,
-                             FunctionAsyncKind asyncKind, HandleObject proto,
-                             bool isSelfHosting /* = false */,
-                             bool inFunctionBox /* = false */) {
-  MOZ_ASSERT_IF(kind == FunctionSyntaxKind::Statement, atom != nullptr);
-
-  RootedFunction fun(cx);
-
+FunctionCreationData GenerateFunctionCreationData(
+    HandleAtom atom, FunctionSyntaxKind kind, GeneratorKind generatorKind,
+    FunctionAsyncKind asyncKind, bool isSelfHosting /* = false */,
+    bool inFunctionBox /* = false */) {
   gc::AllocKind allocKind = gc::AllocKind::FUNCTION;
-  JSFunction::Flags flags;
+  FunctionFlags flags;
   bool isExtendedUnclonedSelfHostedFunctionName =
       isSelfHosting && atom && IsExtendedUnclonedSelfHostedFunctionName(atom);
   MOZ_ASSERT_IF(isExtendedUnclonedSelfHostedFunctionName, !inFunctionBox);
@@ -1985,28 +1983,28 @@ JSFunction* AllocNewFunction(JSContext* cx, HandleAtom atom,
     case FunctionSyntaxKind::Expression:
       flags = (generatorKind == GeneratorKind::NotGenerator &&
                        asyncKind == FunctionAsyncKind::SyncFunction
-                   ? JSFunction::INTERPRETED_LAMBDA
-                   : JSFunction::INTERPRETED_LAMBDA_GENERATOR_OR_ASYNC);
+                   ? FunctionFlags::INTERPRETED_LAMBDA
+                   : FunctionFlags::INTERPRETED_LAMBDA_GENERATOR_OR_ASYNC);
       break;
     case FunctionSyntaxKind::Arrow:
-      flags = JSFunction::INTERPRETED_LAMBDA_ARROW;
+      flags = FunctionFlags::INTERPRETED_LAMBDA_ARROW;
       allocKind = gc::AllocKind::FUNCTION_EXTENDED;
       break;
     case FunctionSyntaxKind::Method:
-      flags = JSFunction::INTERPRETED_METHOD;
+      flags = FunctionFlags::INTERPRETED_METHOD;
       allocKind = gc::AllocKind::FUNCTION_EXTENDED;
       break;
     case FunctionSyntaxKind::ClassConstructor:
     case FunctionSyntaxKind::DerivedClassConstructor:
-      flags = JSFunction::INTERPRETED_CLASS_CONSTRUCTOR;
+      flags = FunctionFlags::INTERPRETED_CLASS_CONSTRUCTOR;
       allocKind = gc::AllocKind::FUNCTION_EXTENDED;
       break;
     case FunctionSyntaxKind::Getter:
-      flags = JSFunction::INTERPRETED_GETTER;
+      flags = FunctionFlags::INTERPRETED_GETTER;
       allocKind = gc::AllocKind::FUNCTION_EXTENDED;
       break;
     case FunctionSyntaxKind::Setter:
-      flags = JSFunction::INTERPRETED_SETTER;
+      flags = FunctionFlags::INTERPRETED_SETTER;
       allocKind = gc::AllocKind::FUNCTION_EXTENDED;
       break;
     default:
@@ -2016,27 +2014,53 @@ JSFunction* AllocNewFunction(JSContext* cx, HandleAtom atom,
       }
       flags = (generatorKind == GeneratorKind::NotGenerator &&
                        asyncKind == FunctionAsyncKind::SyncFunction
-                   ? JSFunction::INTERPRETED_NORMAL
-                   : JSFunction::INTERPRETED_GENERATOR_OR_ASYNC);
+                   ? FunctionFlags::INTERPRETED_NORMAL
+                   : FunctionFlags::INTERPRETED_GENERATOR_OR_ASYNC);
   }
 
-  fun = NewFunctionWithProto(cx, nullptr, 0, flags, nullptr, atom, proto,
-                             allocKind, TenuredObject);
+  return FunctionCreationData{atom,      kind,  generatorKind, asyncKind,
+                              allocKind, flags, isSelfHosting};
+}
+
+HandleAtom FunctionCreationData::getAtom(JSContext* cx) const {
+  // We can create a handle here because atoms are traced
+  // by FunctionCreationData.
+  return HandleAtom::fromMarkedLocation(&atom);
+}
+
+JSFunction* AllocNewFunction(JSContext* cx,
+                             Handle<FunctionCreationData> dataHandle) {
+  // FunctionCreationData don't move, so it is safe to grab a reference
+  // out of the handle.
+  const FunctionCreationData& data = dataHandle.get();
+
+  RootedObject proto(cx);
+  if (!GetFunctionPrototype(cx, data.generatorKind, data.asyncKind, &proto)) {
+    return nullptr;
+  }
+  RootedFunction fun(cx);
+
+
+  fun = NewFunctionWithProto(cx, nullptr, 0, data.flags, nullptr, data.getAtom(cx), proto,
+                             data.allocKind, TenuredObject);
   if (!fun) {
     return nullptr;
   }
-  if (isSelfHosting) {
+  if (data.isSelfHosting) {
     fun->setIsSelfHostedBuiltin();
+    MOZ_ASSERT(!fun->isInterpretedLazy());
   }
   return fun;
 }
 
 JSFunction* ParserBase::newFunction(HandleAtom atom, FunctionSyntaxKind kind,
                                     GeneratorKind generatorKind,
-                                    FunctionAsyncKind asyncKind,
-                                    HandleObject proto /* = nullptr */) {
-  return AllocNewFunction(cx_, atom, kind, generatorKind, asyncKind, proto,
-                          options().selfHostingMode, pc_->isFunctionBox());
+                                    FunctionAsyncKind asyncKind) {
+  Rooted<FunctionCreationData> fcd(
+      cx_, GenerateFunctionCreationData(atom, kind, generatorKind, asyncKind,
+                                        options().selfHostingMode,
+                                        pc_->isFunctionBox()));
+  return AllocNewFunction(cx_, fcd);
 }
 
 template <class ParseHandler, typename Unit>
@@ -2097,10 +2121,10 @@ bool ParserBase::leaveInnerFunction(ParseContext* outerpc) {
   // the inner function so that if the outer function is eventually parsed
   // we do not need any further parsing or processing of the inner function.
   //
-  // Append the inner function here unconditionally; the vector is only used
+  // Append the inner functionbox here unconditionally; the vector is only used
   // if the Parser using outerpc is a syntax parsing. See
   // GeneralParser<SyntaxParseHandler>::finishFunction.
-  if (!outerpc->innerFunctionsForLazy.append(pc_->functionBox()->function())) {
+  if (!outerpc->innerFunctionBoxesForLazy.append(pc_->functionBox())) {
     return false;
   }
 
@@ -2441,7 +2465,7 @@ bool GeneralParser<ParseHandler, Unit>::functionArguments(
       funbox->hasDirectEvalInParameterExpr = true;
     }
 
-    funbox->function()->setArgCount(positionalFormals.length());
+    funbox->setArgCount(positionalFormals.length());
   } else if (kind == FunctionSyntaxKind::Setter) {
     error(JSMSG_ACCESSOR_WRONG_ARGS, "setter", "one", "");
     return false;
@@ -2599,12 +2623,8 @@ GeneralParser<ParseHandler, Unit>::functionDefinition(
     return funNode;
   }
 
-  RootedObject proto(cx_);
-  if (!GetFunctionPrototype(cx_, generatorKind, asyncKind, &proto)) {
-    return null();
-  }
   RootedFunction fun(
-      cx_, newFunction(funName, kind, generatorKind, asyncKind, proto));
+      cx_, newFunction(funName, kind, generatorKind, asyncKind));
   if (!fun) {
     return null();
   }
@@ -6997,6 +7017,9 @@ bool GeneralParser<ParseHandler, Unit>::finishClassConstructor(
     }
     LexicalScopeNodeType scope =
         finishLexicalScope(dotInitializersScope, method);
+    if (!scope) {
+      return false;
+    }
     if (!handler_.addClassMemberDefinition(classMembers, scope)) {
       return false;
     }
@@ -7013,7 +7036,7 @@ bool GeneralParser<ParseHandler, Unit>::finishClassConstructor(
     }
 
     // Set the same information, but on the lazyScript.
-    if (ctorbox->function()->isInterpretedLazy()) {
+    if (ctorbox->isInterpretedLazy()) {
       ctorbox->function()->lazyScript()->setToStringEnd(classEndOffset);
 
       if (numFields > 0) {
@@ -7246,9 +7269,9 @@ GeneralParser<ParseHandler, Unit>::synthesizeConstructor(
                                        /* duplicatedParam = */ nullptr)) {
       return null();
     }
-    funbox->function()->setArgCount(1);
+    funbox->setArgCount(1);
   } else {
-    funbox->function()->setArgCount(0);
+    funbox->setArgCount(0);
   }
 
   pc_->functionScope().useAsVarScope(pc_);
@@ -7323,7 +7346,8 @@ GeneralParser<ParseHandler, Unit>::synthesizeConstructor(
     handler_.addStatementToList(stmtList, exprStatement);
   }
 
-  auto initializerBody = finishLexicalScope(pc_->varScope(), stmtList);
+  auto initializerBody =
+      finishLexicalScope(pc_->varScope(), stmtList, ScopeKind::FunctionLexical);
   if (!initializerBody) {
     return null();
   }
@@ -7441,7 +7465,7 @@ GeneralParser<ParseHandler, Unit>::fieldInitializerOpt(
     return null();
   }
   handler_.setFunctionFormalParametersAndBody(funNode, argsbody);
-  funbox->function()->setArgCount(0);
+  funbox->setArgCount(0);
 
   funbox->usesThis = true;
   NameNodeType thisName = newThisName();
@@ -7530,8 +7554,8 @@ GeneralParser<ParseHandler, Unit>::fieldInitializerOpt(
   handler_.addStatementToList(statementList, exprStatement);
 
   // Set the function's body to the field assignment.
-  LexicalScopeNodeType initializerBody =
-      finishLexicalScope(pc_->varScope(), statementList);
+  LexicalScopeNodeType initializerBody = finishLexicalScope(
+      pc_->varScope(), statementList, ScopeKind::FunctionLexical);
   if (!initializerBody) {
     return null();
   }

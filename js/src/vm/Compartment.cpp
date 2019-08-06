@@ -12,6 +12,7 @@
 
 #include "jsfriendapi.h"
 
+#include "debugger/DebugAPI.h"
 #include "gc/Policy.h"
 #include "gc/PublicIterators.h"
 #include "js/Date.h"
@@ -20,7 +21,6 @@
 #include "js/StableStringChars.h"
 #include "js/Wrapper.h"
 #include "proxy/DeadObjectProxy.h"
-#include "vm/Debugger.h"
 #include "vm/Iteration.h"
 #include "vm/JSContext.h"
 #include "vm/WrapperObject.h"
@@ -41,7 +41,8 @@ Compartment::Compartment(Zone* zone, bool invisibleToDebugger)
     : zone_(zone),
       runtime_(zone->runtimeFromAnyThread()),
       invisibleToDebugger_(invisibleToDebugger),
-      crossCompartmentWrappers(0) {}
+      crossCompartmentWrappers(zone, 0),
+      realms_(zone) {}
 
 #ifdef JSGC_HASH_TABLE_CHECKS
 
@@ -54,7 +55,6 @@ void Compartment::checkWrapperMapAfterMovingGC() {
   for (WrapperMap::Enum e(crossCompartmentWrappers); !e.empty(); e.popFront()) {
     auto checkGCThing = [](auto tp) { CheckGCThingAfterMovingGC(*tp); };
     e.front().mutableKey().applyToWrapped(checkGCThing);
-    e.front().mutableKey().applyToDebugger(checkGCThing);
 
     WrapperMap::Ptr ptr = crossCompartmentWrappers.lookup(e.front().key());
     MOZ_RELEASE_ASSERT(ptr.found() && &*ptr == &e.front());
@@ -67,6 +67,9 @@ bool Compartment::putWrapper(JSContext* cx, const CrossCompartmentKey& wrapped,
                              const js::Value& wrapper) {
   MOZ_ASSERT(wrapped.is<JSString*>() == wrapper.isString());
   MOZ_ASSERT_IF(!wrapped.is<JSString*>(), wrapper.isObject());
+  MOZ_ASSERT(!wrapper.isObject() || !js::IsProxy(&wrapper.toObject()) ||
+             js::GetProxyHandler(&wrapper.toObject())->family() !=
+                 js::GetDOMRemoteProxyHandlerFamily());
 
   if (!crossCompartmentWrappers.put(wrapped, wrapper)) {
     ReportOutOfMemory(cx);
@@ -184,7 +187,7 @@ bool Compartment::wrap(JSContext* cx, MutableHandleBigInt bi) {
 }
 
 bool Compartment::getNonWrapperObjectForCurrentCompartment(
-    JSContext* cx, MutableHandleObject obj) {
+    JSContext* cx, HandleObject origObj, MutableHandleObject obj) {
   // Ensure that we have entered a realm.
   MOZ_ASSERT(cx->global());
 
@@ -262,7 +265,7 @@ bool Compartment::getNonWrapperObjectForCurrentCompartment(
     return false;
   }
   if (preWrap) {
-    preWrap(cx, cx->global(), obj, objectPassedToWrap, obj);
+    preWrap(cx, cx->global(), origObj, obj, objectPassedToWrap, obj);
     if (!obj) {
       return false;
     }
@@ -329,7 +332,8 @@ bool Compartment::wrap(JSContext* cx, MutableHandleObject obj) {
 
   // The passed object may already be wrapped, or may fit a number of special
   // cases that we need to check for and manually correct.
-  if (!getNonWrapperObjectForCurrentCompartment(cx, obj)) {
+  if (!getNonWrapperObjectForCurrentCompartment(cx, /* origObj = */ nullptr,
+                                                obj)) {
     return false;
   }
 
@@ -367,8 +371,11 @@ bool Compartment::rewrap(JSContext* cx, MutableHandleObject obj,
   }
 
   // The passed object may already be wrapped, or may fit a number of special
-  // cases that we need to check for and manually correct.
-  if (!getNonWrapperObjectForCurrentCompartment(cx, obj)) {
+  // cases that we need to check for and manually correct. We pass in
+  // |existingArg| instead of |existing|, because the purpose is to get the
+  // address of the object we are transplanting onto, not to find a wrapper
+  // to reuse.
+  if (!getNonWrapperObjectForCurrentCompartment(cx, existingArg, obj)) {
     return false;
   }
 
@@ -439,7 +446,7 @@ void Compartment::traceIncomingCrossCompartmentEdgesForZoneGC(JSTracer* trc) {
       c->traceOutgoingCrossCompartmentWrappers(trc);
     }
   }
-  Debugger::traceIncomingCrossCompartmentEdges(trc);
+  DebugAPI::traceCrossCompartmentEdges(trc);
 }
 
 void Compartment::sweepAfterMinorGC(JSTracer* trc) {
@@ -462,13 +469,11 @@ void Compartment::sweepCrossCompartmentWrappers() {
 void CrossCompartmentKey::trace(JSTracer* trc) {
   applyToWrapped(
       [trc](auto tp) { TraceRoot(trc, tp, "CrossCompartmentKey::wrapped"); });
-  applyToDebugger(
-      [trc](auto tp) { TraceRoot(trc, tp, "CrossCompartmentKey::debugger"); });
 }
 
 bool CrossCompartmentKey::needsSweep() {
   auto needsSweep = [](auto tp) { return IsAboutToBeFinalizedUnbarriered(tp); };
-  return applyToWrapped(needsSweep) || applyToDebugger(needsSweep);
+  return applyToWrapped(needsSweep);
 }
 
 /* static */
@@ -485,11 +490,11 @@ void Compartment::fixupCrossCompartmentWrappersAfterMovingGC(JSTracer* trc) {
   }
 }
 
-void Compartment::fixupAfterMovingGC() {
+void Compartment::fixupAfterMovingGC(JSTracer* trc) {
   MOZ_ASSERT(zone()->isGCCompacting());
 
   for (RealmsInCompartmentIter r(this); !r.done(); r.next()) {
-    r->fixupAfterMovingGC();
+    r->fixupAfterMovingGC(trc);
   }
 
   // Sweep the wrapper map to update values (wrapper objects) in this

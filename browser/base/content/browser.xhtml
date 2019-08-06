@@ -68,9 +68,15 @@
         screenX="4" screenY="4"
         fullscreenbutton="true"
         sizemode="normal"
-        retargetdocumentfocus="urlbar"
+        retargetdocumentfocus="urlbar-input"
         persist="screenX screenY width height sizemode"
-        >
+        data-l10n-sync="true">
+
+<linkset>
+  <html:link rel="localization" href="branding/brand.ftl"/>
+  <html:link rel="localization" href="browser/branding/sync-brand.ftl"/>
+  <html:link rel="localization" href="browser/menubar.ftl"/>
+</linkset>
 
 # All JS files which are needed by browser.xhtml and other top level windows to
 # support MacOS specific features *must* go into the global-scripts.inc file so
@@ -81,7 +87,6 @@
   /* eslint-env mozilla/browser-window */
   Services.scriptloader.loadSubScript("chrome://global/content/contentAreaUtils.js", this);
   Services.scriptloader.loadSubScript("chrome://browser/content/browser-captivePortal.js", this);
-  Services.scriptloader.loadSubScript("chrome://browser/content/browser-contentblocking.js", this);
   if (AppConstants.MOZ_DATA_REPORTING) {
     Services.scriptloader.loadSubScript("chrome://browser/content/browser-data-submission-info-bar.js", this);
   }
@@ -90,11 +95,11 @@
   }
   Services.scriptloader.loadSubScript("chrome://browser/content/browser-media.js", this);
   Services.scriptloader.loadSubScript("chrome://browser/content/browser-pageActions.js", this);
-  Services.scriptloader.loadSubScript("chrome://browser/content/browser-plugins.js", this);
   Services.scriptloader.loadSubScript("chrome://browser/content/browser-sidebar.js", this);
   Services.scriptloader.loadSubScript("chrome://browser/content/browser-tabsintitlebar.js", this);
   Services.scriptloader.loadSubScript("chrome://browser/content/tabbrowser.js", this);
   Services.scriptloader.loadSubScript("chrome://browser/content/tabbrowser-tab.js", this);
+  Services.scriptloader.loadSubScript("chrome://browser/content/tabbrowser-tabs.js", this);
   Services.scriptloader.loadSubScript("chrome://browser/content/search/autocomplete-popup.js", this);
   Services.scriptloader.loadSubScript("chrome://browser/content/search/searchbar.js", this);
 
@@ -221,16 +226,6 @@
            noautofocus="true"
            hidden="true" />
 
-    <!-- for url bar autocomplete -->
-    <panel type="autocomplete-richlistbox"
-           id="PopupAutoCompleteRichResult"
-           role="group"
-           noautofocus="true"
-           hidden="true"
-           flip="none"
-           level="parent"
-           overflowpadding="15" />
-
     <!-- for date/time picker. consumeoutsideclicks is set to never, so that
          clicks on the anchored input box are never consumed. -->
     <panel id="DateTimePickerPanel"
@@ -264,6 +259,7 @@
     </panel>
 
     <panel id="editBookmarkPanel"
+           class="panel-no-padding"
            type="arrow"
            orient="vertical"
            ignorekeys="true"
@@ -517,12 +513,11 @@
     </panel>
 
     <panel id="pageActionPanel"
-           class="cui-widget-panel"
+           class="cui-widget-panel panel-no-padding"
            role="group"
            type="arrow"
            hidden="true"
            flip="slide"
-           photon="true"
            position="bottomcenter topright"
            tabspecific="true"
            noautofocus="true"
@@ -723,11 +718,20 @@
         <hbox flex="1" align="end" class="toolbar-items">
           <hbox id="TabsToolbar-customization-target" flex="1">
             <tabs id="tabbrowser-tabs"
+                  is="tabbrowser-tabs"
                   flex="1"
                   setfocus="false"
                   tooltip="tabbrowser-tab-tooltip"
                   stopwatchid="FX_TAB_CLICK_MS">
-              <tab is="tabbrowser-tab" class="tabbrowser-tab" selected="true" visuallyselected="true" fadein="true"/>
+              <hbox class="tab-drop-indicator-box">
+                <image class="tab-drop-indicator" hidden="true"/>
+              </hbox>
+              <arrowscrollbox orient="horizontal" flex="1" style="min-width: 1px;" clicktoscroll="true" class="tabbrowser-arrowscrollbox" scrolledtostart="true" scrolledtoend="true">
+                <tab is="tabbrowser-tab" class="tabbrowser-tab" selected="true" visuallyselected="true" fadein="true"/>
+                <toolbarbutton class="tabs-newtab-button toolbarbutton-1" command="cmd_newNavigatorTab" onclick="checkForMiddleClick(this, event);"/>
+                <spacer class="closing-tabs-spacer" style="width: 0;"/>
+              </arrowscrollbox>
+              <html:span id="tabbrowser-tab-a11y-desc" hidden="true"/>
             </tabs>
 
             <toolbarbutton id="new-tab-button"
@@ -842,13 +846,25 @@
                      removable="false"
                      class="chromeclass-location" overflows="false">
             <toolbartabstop/>
-            <textbox id="urlbar" flex="1"
-                     placeholder="&urlbar.placeholder2;"
-                     defaultPlaceholder="&urlbar.placeholder2;"
-                     focused="true"
-                     pageproxystate="invalid">
+            <hbox id="urlbar" flex="1"
+                  defaultPlaceholder="&urlbar.placeholder2;"
+                  focused="true"
+                  pageproxystate="invalid">
               <!-- Use onclick instead of normal popup= syntax since the popup
                    code fires onmousedown, and hence eats our favicon drag events. -->
+              <box id="tracking-protection-icon-container" align="center"
+                   role="button"
+                   onclick="gProtectionsHandler.handleProtectionsButtonEvent(event);"
+                   onkeypress="gProtectionsHandler.handleProtectionsButtonEvent(event);"
+                   onmouseover="gProtectionsHandler.onTrackingProtectionIconHoveredOrFocused();"
+                   onfocus="gProtectionsHandler.onTrackingProtectionIconHoveredOrFocused();">
+                <box id="tracking-protection-icon-box" animationsenabled="true">
+                  <image id="tracking-protection-icon"/>
+                  <box id="tracking-protection-icon-animatable-box" flex="1">
+                    <image id="tracking-protection-icon-animatable-image" flex="1"/>
+                  </box>
+                </box>
+              </box>
               <box id="identity-box" role="button"
                    align="center"
                    aria-label="&urlbar.viewSiteInfo.label;"
@@ -858,12 +874,9 @@
                 <image id="identity-icon"
                        consumeanchor="identity-box"
                        onclick="PageProxyClickHandler(event);"/>
-                <image id="sharing-icon" mousethrough="always"/>
-                <box id="tracking-protection-icon-box" animationsenabled="true">
-                  <image id="tracking-protection-icon"/>
-                  <box id="tracking-protection-icon-animatable-box" flex="1">
-                    <image id="tracking-protection-icon-animatable-image" flex="1"/>
-                  </box>
+                <box mousethrough="always">
+                    <image class="sharing-icon" id="webrtc-sharing-icon"/>
+                    <image class="sharing-icon geo-icon" id="geo-sharing-icon"/>
                 </box>
                 <box id="blocked-permissions-container" align="center">
                   <image data-permission-id="geo" class="blocked-permission-icon geo-icon" role="button"
@@ -938,8 +951,6 @@
                   <image id="storage-access-notification-icon" class="notification-anchor-icon storage-access-icon" role="button"
                          tooltiptext="&urlbar.storageAccessAnchor.tooltip;"/>
                 </box>
-                <image id="connection-icon"/>
-                <image id="extension-icon"/>
                 <image id="remote-control-icon"
                        tooltiptext="&urlbar.remoteControlNotificationAnchor.tooltip;"/>
                 <hbox id="identity-icon-labels">
@@ -951,6 +962,25 @@
                 <label id="switchtab" class="urlbar-display urlbar-display-switchtab" value="&urlbar.switchToTab.label;"/>
                 <label id="extension" class="urlbar-display urlbar-display-extension" value="&urlbar.extension.label;"/>
               </box>
+              <moz-input-box tooltip="aHTMLTooltip"
+                             class="urlbar-input-box"
+                             flex="1">
+                <html:input id="urlbar-scheme"
+                            required="required"/>
+                <html:input id="urlbar-input"
+                            anonid="input"
+                            role="combobox"
+                            aria-controls="urlbarView-results"
+                            aria-autocomplete="both"
+                            inputmode="mozAwesomebar"
+                            placeholder="&urlbar.placeholder2;"/>
+              </moz-input-box>
+              <image id="urlbar-go-button"
+                     class="urlbar-icon"
+                     onclick="gURLBar.handleCommand(event);"
+                     tooltiptext="&goEndCap.tooltip;"/>
+              <image class="urlbar-history-dropmarker urlbar-icon chromeclass-toolbar-additional"
+                     tooltiptext="&urlbar.openHistoryPopup.tooltip;"/>
               <hbox id="page-action-buttons" context="pageActionContextMenu">
                 <toolbartabstop/>
                 <hbox id="contextual-feature-recommendation" role="button" hidden="true">
@@ -1009,7 +1039,7 @@
                   </hbox>
                 </hbox>
               </hbox>
-            </textbox>
+            </hbox>
             <toolbartabstop/>
         </toolbaritem>
 
@@ -1058,8 +1088,8 @@
 
         <toolbarbutton id="fxa-toolbar-menu-button" class="toolbarbutton-1 chromeclass-toolbar-additional subviewbutton-nav"
                        badged="true"
-                       onmousedown="gSync.toggleAccountPanel('PanelUI-fxa', event)"
-                       onkeypress="gSync.toggleAccountPanel('PanelUI-fxa', event)"
+                       onmousedown="gSync.toggleAccountPanel('PanelUI-fxa', this, event)"
+                       onkeypress="gSync.toggleAccountPanel('PanelUI-fxa', this, event)"
                        consumeanchor="fxa-toolbar-menu-button"
                        closemenu="none"
                        label="&fxa.menu.firefoxAccount;"
@@ -1083,6 +1113,13 @@
 
       <toolbaritem id="PanelUI-button"
                    removable="false">
+       <toolbarbutton id="whats-new-menu-button"
+                      class="toolbarbutton-1"
+                      hidden="true"
+                      badged="true"
+                      consumeanchor="PanelUI-button"
+                      onmousedown="PanelUI.showSubView('PanelUI-whatsNew', this, event);"
+                      onkeypress="PanelUI.showSubView('PanelUI-whatsNew', this, event);"/>
         <toolbarbutton id="PanelUI-menu-button"
                        class="toolbarbutton-1"
                        badged="true"
@@ -1338,35 +1375,10 @@
 #include ../../components/customizableui/content/customizeMode.inc.xul
   ]]></box>
 
-  <html:div id="fullscreen-warning" class="pointerlockfswarning" hidden="true" renderroot="content">
-    <html:div class="pointerlockfswarning-domain-text">
-      &fullscreenWarning.beforeDomain.label;
-      <html:span class="pointerlockfswarning-domain"/>
-      &fullscreenWarning.afterDomain.label;
-    </html:div>
-    <html:div class="pointerlockfswarning-generic-text">
-      &fullscreenWarning.generic.label;
-    </html:div>
-    <html:button id="fullscreen-exit-button"
-                 onclick="FullScreen.exitDomFullScreen();">
-#ifdef XP_MACOSX
-            &exitDOMFullscreenMac.button;
-#else
-            &exitDOMFullscreen.button;
-#endif
-    </html:button>
-  </html:div>
-
-  <html:div id="pointerlock-warning" class="pointerlockfswarning" hidden="true" renderroot="content">
-    <html:div class="pointerlockfswarning-domain-text">
-      &pointerlockWarning.beforeDomain.label;
-      <html:span class="pointerlockfswarning-domain"/>
-      &pointerlockWarning.afterDomain.label;
-    </html:div>
-    <html:div class="pointerlockfswarning-generic-text">
-      &pointerlockWarning.generic.label;
-    </html:div>
-  </html:div>
+# Everything that needs to straddle the line between chrome and content, without being
+# its own widget-level window, needs to go in here, and set the renderroot="popover"
+# attribute, or it will fail to render properly in WebRender.
+#include popovers.inc
 
   <vbox id="browser-bottombox" layer="true" renderroot="content">
     <!-- gNotificationBox will be added here lazily. -->

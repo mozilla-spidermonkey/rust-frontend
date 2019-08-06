@@ -26,7 +26,6 @@
 #include "jit/Snapshots.h"
 #include "jit/VMFunctions.h"
 #include "vm/ArgumentsObject.h"
-#include "vm/Debugger.h"
 #include "vm/GeckoProfiler.h"
 #include "vm/Interpreter.h"
 #include "vm/JSFunction.h"
@@ -37,9 +36,9 @@
 #include "wasm/WasmBuiltins.h"
 #include "wasm/WasmInstance.h"
 
+#include "debugger/DebugAPI-inl.h"
 #include "gc/Nursery-inl.h"
 #include "jit/JSJitFrameIter-inl.h"
-#include "vm/Debugger-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/Probes-inl.h"
 #include "vm/TypeInference-inl.h"
@@ -160,8 +159,7 @@ static void HandleExceptionIon(JSContext* cx, const InlineFrameIterator& frame,
     // We need to bail when there is a catchable exception, and we are the
     // debuggee of a Debugger with a live onExceptionUnwind hook, or if a
     // Debugger has observed this frame (e.g., for onPop).
-    bool shouldBail =
-        Debugger::hasLiveHook(cx->global(), Debugger::OnExceptionUnwind);
+    bool shouldBail = DebugAPI::hasExceptionUnwindHook(cx->global());
     RematerializedFrame* rematFrame = nullptr;
     if (!shouldBail) {
       JitActivation* act = cx->activation()->asJit();
@@ -195,9 +193,6 @@ static void HandleExceptionIon(JSContext* cx, const InlineFrameIterator& frame,
   }
 
   RootedScript script(cx, frame.script());
-  if (!script->hasTrynotes()) {
-    return;
-  }
 
   for (TryNoteIterIon tni(cx, frame); !tni.done(); ++tni) {
     const JSTryNote* tn = *tni;
@@ -380,7 +375,7 @@ static bool ProcessTryNotesBaseline(JSContext* cx, const JSJitFrameIter& frame,
         if (frame.baselineFrame()->runningInInterpreter()) {
           const BaselineInterpreter& interp =
               cx->runtime()->jitRuntime()->baselineInterpreter();
-          frame.baselineFrame()->setInterpreterPC(*pc);
+          frame.baselineFrame()->setInterpreterFields(*pc);
           rfe->target = interp.interpretOpAddr().value;
         } else {
           PCMappingSlotInfo slotInfo;
@@ -397,7 +392,7 @@ static bool ProcessTryNotesBaseline(JSContext* cx, const JSJitFrameIter& frame,
         if (frame.baselineFrame()->runningInInterpreter()) {
           const BaselineInterpreter& interp =
               cx->runtime()->jitRuntime()->baselineInterpreter();
-          frame.baselineFrame()->setInterpreterPC(*pc);
+          frame.baselineFrame()->setInterpreterFields(*pc);
           rfe->target = interp.interpretOpAddr().value;
         } else {
           PCMappingSlotInfo slotInfo;
@@ -479,10 +474,12 @@ static void HandleExceptionBaseline(JSContext* cx, const JSJitFrameIter& frame,
     return;
   }
 
+  bool hasTryNotes = !script->trynotes().empty();
+
 again:
   if (cx->isExceptionPending()) {
     if (!cx->isClosingGenerator()) {
-      switch (Debugger::onExceptionUnwind(cx, frame.baselineFrame())) {
+      switch (DebugAPI::onExceptionUnwind(cx, frame.baselineFrame())) {
         case ResumeMode::Terminate:
           // Uncatchable exception.
           MOZ_ASSERT(!cx->isExceptionPending());
@@ -494,7 +491,7 @@ again:
           break;
 
         case ResumeMode::Return:
-          if (script->hasTrynotes()) {
+          if (hasTryNotes) {
             CloseLiveIteratorsBaselineForUncatchableException(cx, frame, pc);
           }
           ForcedReturn(cx, frame, pc, rfe);
@@ -505,7 +502,7 @@ again:
       }
     }
 
-    if (script->hasTrynotes()) {
+    if (hasTryNotes) {
       EnvironmentIter ei(cx, frame.baselineFrame(), pc);
       if (!ProcessTryNotesBaseline(cx, frame, ei, rfe, &pc)) {
         goto again;
@@ -519,8 +516,8 @@ again:
     }
 
     frameOk = HandleClosingGeneratorReturn(cx, frame.baselineFrame(), frameOk);
-    frameOk = Debugger::onLeaveFrame(cx, frame.baselineFrame(), pc, frameOk);
-  } else if (script->hasTrynotes()) {
+    frameOk = DebugAPI::onLeaveFrame(cx, frame.baselineFrame(), pc, frameOk);
+  } else if (hasTryNotes) {
     CloseLiveIteratorsBaselineForUncatchableException(cx, frame, pc);
   }
 
@@ -701,13 +698,6 @@ void HandleException(ResumeFromException* rfe) {
                                                       pc);
 
       HandleExceptionBaseline(cx, frame, rfe, pc);
-
-      // If we are propagating an exception through a frame with
-      // on-stack recompile info, we should free the allocated
-      // RecompileInfo struct before we leave this block, as we will not
-      // be returning to the recompile handler.
-      auto deleteDebugModeOSRInfo = mozilla::MakeScopeExit(
-          [=] { frame.baselineFrame()->deleteDebugModeOSRInfo(); });
 
       if (rfe->kind != ResumeFromException::RESUME_ENTRY_FRAME &&
           rfe->kind != ResumeFromException::RESUME_FORCED_RETURN) {
@@ -2045,7 +2035,7 @@ void InlineFrameIterator::findNextFrame() {
 
   size_t i = 1;
   for (; i <= remaining && si_.moreFrames(); i++) {
-    MOZ_ASSERT(IsIonInlinablePC(pc_));
+    MOZ_ASSERT(IsIonInlinableOp(JSOp(*pc_)));
 
     // Recover the number of actual arguments from the script.
     if (JSOp(*pc_) != JSOP_FUNAPPLY) {
@@ -2228,14 +2218,15 @@ bool InlineFrameIterator::isConstructing() const {
     ++parent;
 
     // Inlined Getters and Setters are never constructing.
-    if (IsIonInlinableGetterOrSetterPC(parent.pc())) {
+    JSOp parentOp = JSOp(*parent.pc());
+    if (IsIonInlinableGetterOrSetterOp(parentOp)) {
       return false;
     }
 
     // In the case of a JS frame, look up the pc from the snapshot.
-    MOZ_ASSERT(IsCallPC(parent.pc()) && !IsSpreadCallPC(parent.pc()));
+    MOZ_ASSERT(IsCallOp(parentOp) && !IsSpreadCallOp(parentOp));
 
-    return IsConstructorCallPC(parent.pc());
+    return IsConstructorCallOp(parentOp);
   }
 
   return frame_->isConstructing();

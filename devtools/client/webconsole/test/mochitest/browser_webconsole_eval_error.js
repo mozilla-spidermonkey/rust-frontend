@@ -8,29 +8,38 @@
 
 "use strict";
 
-const TEST_URI = "http://example.com/browser/devtools/client/webconsole/" +
-                 "test/mochitest/test-eval-error.html";
+const TEST_URI =
+  "http://example.com/browser/devtools/client/webconsole/" +
+  "test/mochitest/test-eval-error.html";
 
 add_task(async function() {
   const hud = await openNewTabAndConsole(TEST_URI);
 
-  hud.jsterm.execute("throwErrorObject()");
+  execute(hud, "throwErrorObject()");
   await checkMessageStack(hud, "ThrowErrorObject", [6, 1]);
 
-  hud.jsterm.execute("throwValue(40 + 2)");
+  execute(hud, "throwValue(40 + 2)");
   await checkMessageStack(hud, "42", [14, 10, 1]);
 
-  hud.jsterm.execute(`
+  execute(
+    hud,
+    `
     a = () => {throw "bloop"};
     b =  () => a();
     c =  () => b();
     d =  () => c();
     d();
-  `);
+  `
+  );
   await checkMessageStack(hud, "Error: bloop", [2, 3, 4, 5, 6]);
 
-  hud.jsterm.execute(`1 + @`);
-  const messageNode = await waitFor(() => findMessage(hud, "illegal character"));
-  is(messageNode.querySelector(".frames"), null,
-    "There's no stacktrace for a SyntaxError evaluation");
+  execute(hud, `1 + @`);
+  const messageNode = await waitFor(() =>
+    findMessage(hud, "illegal character")
+  );
+  is(
+    messageNode.querySelector(".frames"),
+    null,
+    "There's no stacktrace for a SyntaxError evaluation"
+  );
 });

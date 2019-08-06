@@ -5,23 +5,15 @@
 
 "use strict";
 
-const TEST_URI = "http://example.com/browser/devtools/client/webconsole/" +
-                 "test/mochitest/test_jsterm_screenshot_command.html";
+const TEST_URI =
+  "http://example.com/browser/devtools/client/webconsole/" +
+  "test/mochitest/test_jsterm_screenshot_command.html";
 
 // on some machines, such as macOS, dpr is set to 2. This is expected behavior, however
 // to keep tests consistant across OSs we are setting the dpr to 1
 const dpr = "--dpr 1";
 
 add_task(async function() {
-  // Run test with legacy JsTerm
-  await pushPref("devtools.webconsole.jsterm.codeMirror", false);
-  await performTests();
-  // And then run it with the CodeMirror-powered one.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", true);
-  await performTests();
-});
-
-async function performTests() {
   const hud = await openNewTabAndConsole(TEST_URI);
   ok(hud, "web console opened");
 
@@ -32,76 +24,104 @@ async function performTests() {
   // overflow
   await createScrollbarOverflow();
   await testFullpageClipboardScrollbar(hud);
-}
+});
 
 async function testClipboard(hud) {
   const command = `:screenshot --clipboard ${dpr}`;
-  const onMessage = waitForMessage(hud, "Screenshot copied to clipboard.");
-  hud.jsterm.execute(command);
-  await onMessage;
+  await executeScreenshotClipboardCommand(hud, command);
   const contentSize = await getContentSize();
   const imgSize = await getImageSizeFromClipboard();
 
-  is(imgSize.width, contentSize.innerWidth,
-     "Clipboard: Image width matches window size");
-  is(imgSize.height, contentSize.innerHeight,
-     "Clipboard: Image height matches window size");
+  is(
+    imgSize.width,
+    contentSize.innerWidth,
+    "Clipboard: Image width matches window size"
+  );
+  is(
+    imgSize.height,
+    contentSize.innerHeight,
+    "Clipboard: Image height matches window size"
+  );
 }
 
 async function testFullpageClipboard(hud) {
   const command = `:screenshot --fullpage --clipboard ${dpr}`;
-  const onMessage = waitForMessage(hud, "Screenshot copied to clipboard.");
-  hud.jsterm.execute(command);
-  await onMessage;
+  await executeScreenshotClipboardCommand(hud, command);
   const contentSize = await getContentSize();
   const imgSize = await getImageSizeFromClipboard();
 
-  is(imgSize.width,
-    (contentSize.innerWidth + contentSize.scrollMaxX -
-     contentSize.scrollMinX),
-    "Fullpage Clipboard: Image width matches page size");
-  is(imgSize.height,
-    (contentSize.innerHeight + contentSize.scrollMaxY -
-     contentSize.scrollMinY),
-    "Fullpage Clipboard: Image height matches page size");
+  is(
+    imgSize.width,
+    contentSize.innerWidth + contentSize.scrollMaxX - contentSize.scrollMinX,
+    "Fullpage Clipboard: Image width matches page size"
+  );
+  is(
+    imgSize.height,
+    contentSize.innerHeight + contentSize.scrollMaxY - contentSize.scrollMinY,
+    "Fullpage Clipboard: Image height matches page size"
+  );
 }
 
 async function testSelectorClipboard(hud) {
   const command = `:screenshot --selector "img#testImage" --clipboard ${dpr}`;
-  const messageReceived = waitForMessage(hud, "Screenshot copied to clipboard.");
-  hud.jsterm.execute(command);
-  await messageReceived;
+  await executeScreenshotClipboardCommand(hud, command);
+
   const imgSize1 = await getImageSizeFromClipboard();
-  await ContentTask.spawn(
-    gBrowser.selectedBrowser,
-    imgSize1,
-    function(imgSize) {
-      const img = content.document.querySelector("#testImage");
-      is(imgSize.width, img.clientWidth,
-         "Selector Clipboard: Image width matches element size");
-      is(imgSize.height, img.clientHeight,
-         "Selector Clipboard: Image height matches element size");
-    }
-  );
+  await ContentTask.spawn(gBrowser.selectedBrowser, imgSize1, function(
+    imgSize
+  ) {
+    const img = content.document.querySelector("#testImage");
+    is(
+      imgSize.width,
+      img.clientWidth,
+      "Selector Clipboard: Image width matches element size"
+    );
+    is(
+      imgSize.height,
+      img.clientHeight,
+      "Selector Clipboard: Image height matches element size"
+    );
+  });
 }
 
 async function testFullpageClipboardScrollbar(hud) {
   const command = `:screenshot --fullpage --clipboard ${dpr}`;
-  const onMessage = waitForMessage(hud, "Screenshot copied to clipboard.");
-  hud.jsterm.execute(command);
-  await onMessage;
+  await executeScreenshotClipboardCommand(hud, command);
   const contentSize = await getContentSize();
   const scrollbarSize = await getScrollbarSize();
   const imgSize = await getImageSizeFromClipboard();
 
-  is(imgSize.width,
-    (contentSize.innerWidth + contentSize.scrollMaxX -
-     contentSize.scrollMinX) - scrollbarSize.width,
-    "Scroll Fullpage Clipboard: Image width matches page size minus scrollbar size");
-  is(imgSize.height,
-    (contentSize.innerHeight + contentSize.scrollMaxY -
-     contentSize.scrollMinY) - scrollbarSize.height,
-    "Scroll Fullpage Clipboard: Image height matches page size minus scrollbar size");
+  is(
+    imgSize.width,
+    contentSize.innerWidth +
+      contentSize.scrollMaxX -
+      contentSize.scrollMinX -
+      scrollbarSize.width,
+    "Scroll Fullpage Clipboard: Image width matches page size minus scrollbar size"
+  );
+  is(
+    imgSize.height,
+    contentSize.innerHeight +
+      contentSize.scrollMaxY -
+      contentSize.scrollMinY -
+      scrollbarSize.height,
+    "Scroll Fullpage Clipboard: Image height matches page size minus scrollbar size"
+  );
+}
+
+/**
+ * Executes the command string and returns a Promise that resolves when the message
+ * saying that the screenshot was copied to clipboard is rendered in the console.
+ *
+ * @param {WebConsole} hud
+ * @param {String} command
+ */
+function executeScreenshotClipboardCommand(hud, command) {
+  return executeAndWaitForMessage(
+    hud,
+    command,
+    "Screenshot copied to clipboard."
+  );
 }
 
 async function createScrollbarOverflow() {
@@ -157,8 +177,9 @@ async function getContentSize() {
 async function getImageSizeFromClipboard() {
   const clipid = Ci.nsIClipboard;
   const clip = Cc["@mozilla.org/widget/clipboard;1"].getService(clipid);
-  const trans = Cc["@mozilla.org/widget/transferable;1"]
-                .createInstance(Ci.nsITransferable);
+  const trans = Cc["@mozilla.org/widget/transferable;1"].createInstance(
+    Ci.nsITransferable
+  );
   const flavor = "image/png";
   trans.init(null);
   trans.addDataFlavor(flavor);
@@ -178,27 +199,31 @@ async function getImageSizeFromClipboard() {
 
   if (image instanceof Ci.imgIContainer) {
     image = Cc["@mozilla.org/image/tools;1"]
-              .getService(Ci.imgITools)
-              .encodeImage(image, flavor);
+      .getService(Ci.imgITools)
+      .encodeImage(image, flavor);
   }
 
   let url;
   if (image instanceof Ci.nsIInputStream) {
-    const binaryStream = Cc["@mozilla.org/binaryinputstream;1"]
-                         .createInstance(Ci.nsIBinaryInputStream);
+    const binaryStream = Cc["@mozilla.org/binaryinputstream;1"].createInstance(
+      Ci.nsIBinaryInputStream
+    );
     binaryStream.setInputStream(image);
     const available = binaryStream.available();
     const buffer = new ArrayBuffer(available);
-    is(binaryStream.readArrayBuffer(available, buffer), available,
-       "Read expected amount of data");
-    url = URL.createObjectURL(new Blob([buffer], {type: flavor}));
+    is(
+      binaryStream.readArrayBuffer(available, buffer),
+      available,
+      "Read expected amount of data"
+    );
+    url = URL.createObjectURL(new Blob([buffer], { type: flavor }));
   } else {
     throw new Error("Unable to read image data");
   }
 
   const img = document.createElementNS("http://www.w3.org/1999/xhtml", "img");
 
-  const loaded =  once(img, "load");
+  const loaded = once(img, "load");
 
   img.src = url;
   document.documentElement.appendChild(img);

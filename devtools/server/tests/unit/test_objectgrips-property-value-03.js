@@ -9,15 +9,19 @@ registerCleanupFunction(() => {
   Services.prefs.clearUserPref("security.allow_eval_with_system_principal");
 });
 
-add_task(threadClientTest(async ({ threadClient, debuggee, client }) => {
-  debuggee.eval(function stopMe() {
-    debugger;
-  }.toString());
+add_task(
+  threadFrontTest(async ({ threadFront, debuggee, client }) => {
+    debuggee.eval(
+      function stopMe() {
+        debugger;
+      }.toString()
+    );
 
-  await test_object_grip(debuggee, threadClient);
-}));
+    await test_object_grip(debuggee, threadFront);
+  })
+);
 
-async function test_object_grip(debuggee, threadClient) {
+async function test_object_grip(debuggee, threadFront) {
   const script = `
     var obj = {
       get getter() {
@@ -28,12 +32,19 @@ async function test_object_grip(debuggee, threadClient) {
     stopMe(...objects);
   `;
   return new Promise(resolve => {
-    threadClient.once("paused", async function(packet) {
+    threadFront.once("paused", async function(packet) {
       const { frame } = packet;
       try {
         const grips = frame.arguments;
-        const objClient = threadClient.pauseGrip(grips[0]);
-        const classes = ["Object", "Object", "Array", "Boolean", "Number", "String"];
+        const objClient = threadFront.pauseGrip(grips[0]);
+        const classes = [
+          "Object",
+          "Object",
+          "Array",
+          "Boolean",
+          "Number",
+          "String",
+        ];
         for (const [i, grip] of grips.entries()) {
           Assert.equal(grip.class, classes[i]);
           await check_getter(objClient, grip.actor, i);
@@ -41,7 +52,7 @@ async function test_object_grip(debuggee, threadClient) {
         await check_getter(objClient, null, 0);
         await check_getter(objClient, "invalid receiver actorId", 0);
       } finally {
-        await threadClient.resume();
+        await threadFront.resume();
         resolve();
       }
     });
@@ -50,6 +61,6 @@ async function test_object_grip(debuggee, threadClient) {
 }
 
 async function check_getter(objClient, receiverId, expected) {
-  const {value} = await objClient.getPropertyValue("getter", receiverId);
+  const { value } = await objClient.getPropertyValue("getter", receiverId);
   Assert.equal(value.return, expected);
 }

@@ -2843,26 +2843,6 @@ class LStringConvertCase : public LCallInstructionHelper<1, 1, 0> {
   const LAllocation* string() { return this->getOperand(0); }
 };
 
-// Calculates sincos(x) and returns two values (sin/cos).
-class LSinCos : public LCallInstructionHelper<2, 1, 2> {
- public:
-  LIR_HEADER(SinCos)
-
-  LSinCos(const LAllocation& input, const LDefinition& temp,
-          const LDefinition& temp2)
-      : LCallInstructionHelper(classOpcode) {
-    setOperand(0, input);
-    setTemp(0, temp);
-    setTemp(1, temp2);
-  }
-  const LAllocation* input() { return getOperand(0); }
-  const LDefinition* outputSin() { return getDef(0); }
-  const LDefinition* outputCos() { return getDef(1); }
-  const LDefinition* temp() { return getTemp(0); }
-  const LDefinition* temp2() { return getTemp(1); }
-  const MSinCos* mir() const { return mir_->toSinCos(); }
-};
-
 class LStringSplit : public LCallInstructionHelper<1, 2, 0> {
  public:
   LIR_HEADER(StringSplit)
@@ -3845,37 +3825,6 @@ class LTypedArrayElementShift : public LInstructionHelper<1, 1, 0> {
   }
 
   const LAllocation* object() { return getOperand(0); }
-};
-
-// Assign
-//
-//   target[targetOffset..targetOffset + source.length] =
-//   source[0..source.length]
-//
-// where the source element range doesn't overlap the target element range in
-// memory.
-class LSetDisjointTypedElements : public LCallInstructionHelper<0, 3, 1> {
- public:
-  LIR_HEADER(SetDisjointTypedElements)
-
-  explicit LSetDisjointTypedElements(const LAllocation& target,
-                                     const LAllocation& targetOffset,
-                                     const LAllocation& source,
-                                     const LDefinition& temp)
-      : LCallInstructionHelper(classOpcode) {
-    setOperand(0, target);
-    setOperand(1, targetOffset);
-    setOperand(2, source);
-    setTemp(0, temp);
-  }
-
-  const LAllocation* target() { return getOperand(0); }
-
-  const LAllocation* targetOffset() { return getOperand(1); }
-
-  const LAllocation* source() { return getOperand(2); }
-
-  const LDefinition* temp() { return getTemp(0); }
 };
 
 // Load a typed object's descriptor.
@@ -6454,6 +6403,12 @@ class LWasmCompareExchangeHeap : public LInstructionHelper<1, 4, 4> {
   MWasmCompareExchangeHeap* mir() const {
     return mir_->toWasmCompareExchangeHeap();
   }
+};
+
+class LWasmFence : public LInstructionHelper<0, 0, 0> {
+ public:
+  LIR_HEADER(WasmFence);
+  explicit LWasmFence() : LInstructionHelper(classOpcode) {}
 };
 
 class LWasmAtomicExchangeHeap : public LInstructionHelper<1, 3, 4> {

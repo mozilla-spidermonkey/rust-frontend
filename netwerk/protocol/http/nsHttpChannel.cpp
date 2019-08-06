@@ -17,6 +17,7 @@
 #include "nsHttpChannel.h"
 #include "nsHttpChannelAuthProvider.h"
 #include "nsHttpHandler.h"
+#include "nsString.h"
 #include "nsIApplicationCacheService.h"
 #include "nsIApplicationCacheContainer.h"
 #include "nsICacheStorageService.h"
@@ -61,6 +62,10 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
+#include "mozilla/StaticPrefs_browser.h"
+#include "mozilla/StaticPrefs_network.h"
+#include "mozilla/StaticPrefs_privacy.h"
+#include "mozilla/StaticPrefs_security.h"
 #include "nsISSLSocketControl.h"
 #include "sslt.h"
 #include "nsContentUtils.h"
@@ -109,7 +114,7 @@
 #include "nsMixedContentBlocker.h"
 #include "CacheStorageService.h"
 #include "HttpChannelParent.h"
-#include "HttpChannelParentListener.h"
+#include "ParentChannelListener.h"
 #include "InterceptedHttpChannel.h"
 #include "nsIBufferedStreams.h"
 #include "nsIFileStreams.h"
@@ -1445,6 +1450,16 @@ nsresult ProcessXCTO(nsHttpChannel* aChannel, nsIURI* aURI,
                            Report::Error);
     return NS_ERROR_CORRUPTED_CONTENT;
   }
+  auto policyType = aLoadInfo->GetExternalContentPolicyType();
+  if (policyType == nsIContentPolicy::TYPE_DOCUMENT ||
+      policyType == nsIContentPolicy::TYPE_SUBDOCUMENT) {
+    // If the header XCTO nosniff is set for any browsing context, then
+    // we set the skipContentSniffing flag on the Loadinfo. Within
+    // NS_SniffContent we then bail early and do not do any sniffing.
+    aLoadInfo->SetSkipContentSniffing(true);
+    return NS_OK;
+  }
+
   return NS_OK;
 }
 
@@ -1569,19 +1584,8 @@ nsresult EnsureMIMEOfScript(nsHttpChannel* aChannel, nsIURI* aURI,
   }
 
   if (block) {
-    // Instead of consulting Preferences::GetBool() all the time we
-    // can cache the result to speed things up.
-    static bool sCachedBlockScriptWithWrongMime = false;
-    static bool sIsInited = false;
-    if (!sIsInited) {
-      sIsInited = true;
-      Preferences::AddBoolVarCache(&sCachedBlockScriptWithWrongMime,
-                                   "security.block_script_with_wrong_mime",
-                                   true);
-    }
-
     // Do not block the load if the feature is not enabled.
-    if (!sCachedBlockScriptWithWrongMime) {
+    if (!StaticPrefs::security_block_script_with_wrong_mime()) {
       return NS_OK;
     }
 
@@ -1634,24 +1638,25 @@ nsresult EnsureMIMEOfScript(nsHttpChannel* aChannel, nsIURI* aURI,
   // We restrict importScripts() in worker code to JavaScript MIME types.
   nsContentPolicyType internalType = aLoadInfo->InternalContentPolicyType();
   if (internalType == nsIContentPolicy::TYPE_INTERNAL_WORKER_IMPORT_SCRIPTS) {
-    // Instead of consulting Preferences::GetBool() all the time we
-    // can cache the result to speed things up.
-    static bool sCachedBlockImportScriptsWithWrongMime = false;
-    static bool sIsInited = false;
-    if (!sIsInited) {
-      sIsInited = true;
-      Preferences::AddBoolVarCache(
-          &sCachedBlockImportScriptsWithWrongMime,
-          "security.block_importScripts_with_wrong_mime", true);
-    }
-
     // Do not block the load if the feature is not enabled.
-    if (!sCachedBlockImportScriptsWithWrongMime) {
+    if (!StaticPrefs::security_block_importScripts_with_wrong_mime()) {
       return NS_OK;
     }
 
     ReportMimeTypeMismatch(aChannel, "BlockImportScriptsWithWrongMimeType",
                            aURI, contentType, Report::Error);
+    return NS_ERROR_CORRUPTED_CONTENT;
+  }
+
+  if (internalType == nsIContentPolicy::TYPE_INTERNAL_WORKER ||
+      internalType == nsIContentPolicy::TYPE_INTERNAL_SHARED_WORKER) {
+    // Do not block the load if the feature is not enabled.
+    if (!StaticPrefs::security_block_Worker_with_wrong_mime()) {
+      return NS_OK;
+    }
+
+    ReportMimeTypeMismatch(aChannel, "BlockWorkerWithWrongMimeType", aURI,
+                           contentType, Report::Error);
     return NS_ERROR_CORRUPTED_CONTENT;
   }
 
@@ -1959,6 +1964,9 @@ nsresult nsHttpChannel::ProcessFailedProxyConnect(uint32_t httpStatus) {
       break;
     case 407:  // ProcessAuthentication() failed (e.g. no header)
       rv = NS_ERROR_PROXY_AUTHENTICATION_FAILED;
+      break;
+    case 429:
+      rv = NS_ERROR_TOO_MANY_REQUESTS;
       break;
       // Squid sends 404 if DNS fails (regular 404 from target is tunneled)
     case 404:  // HTTP/1.1: "Not Found"
@@ -2786,7 +2794,8 @@ nsresult nsHttpChannel::ContinueProcessResponse3(nsresult rv) {
       break;
 
     case 425:
-      // Do not cache 425.
+    case 429:
+      // Do not cache 425 and 429.
       CloseCacheEntry(false);
       MOZ_FALLTHROUGH;  // process normally
     default:
@@ -7339,26 +7348,18 @@ nsresult nsHttpChannel::StartCrossProcessRedirect() {
   rv = CheckRedirectLimit(nsIChannelEventSink::REDIRECT_INTERNAL);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // We can't do QueryObject mCallbacks into HttpChannelParentListener, because
-  // the notification callbacks can be replaced with another object.
-  // Rather we do GetInterface for HttpChannelParent, which should always be
-  // there if the new callbacks properly forward to the original channel's
-  // callbacks, and get the listener from there using QueryObject.
   nsCOMPtr<nsIParentChannel> parentChannel;
   NS_QueryNotificationCallbacks(this, parentChannel);
   RefPtr<HttpChannelParent> httpParent = do_QueryObject(parentChannel);
   MOZ_ASSERT(httpParent);
   NS_ENSURE_TRUE(httpParent, NS_ERROR_UNEXPECTED);
 
-  RefPtr<HttpChannelParentListener> listener = httpParent->GetParentListener();
-  MOZ_ASSERT(listener);
-  NS_ENSURE_TRUE(listener, NS_ERROR_UNEXPECTED);
-
   nsCOMPtr<nsILoadInfo> redirectLoadInfo =
       CloneLoadInfoForRedirect(mURI, nsIChannelEventSink::REDIRECT_INTERNAL);
+  redirectLoadInfo->SetResultPrincipalURI(mURI);
 
-  listener->TriggerCrossProcessRedirect(this, redirectLoadInfo,
-                                        mCrossProcessRedirectIdentifier);
+  httpParent->TriggerCrossProcessRedirect(this, redirectLoadInfo,
+                                          mCrossProcessRedirectIdentifier);
 
   // This will suspend the channel
   rv = WaitForRedirectCallback();
@@ -9755,10 +9756,12 @@ void nsHttpChannel::SetOriginHeader() {
   nsCOMPtr<nsIURI> referrer;
   mLoadInfo->TriggeringPrincipal()->GetURI(getter_AddRefs(referrer));
 
-  nsAutoCString origin("null");
-  if (referrer && dom::ReferrerInfo::IsReferrerSchemeAllowed(referrer)) {
-    nsContentUtils::GetASCIIOrigin(referrer, origin);
+  if (!referrer || !dom::ReferrerInfo::IsReferrerSchemeAllowed(referrer)) {
+    return;
   }
+
+  nsAutoCString origin("null");
+  nsContentUtils::GetASCIIOrigin(referrer, origin);
 
   // Restrict Origin to same-origin loads if requested by user or leaving from
   // .onion
@@ -9782,7 +9785,7 @@ void nsHttpChannel::SetOriginHeader() {
     }
   }
 
-  if (referrer && ReferrerInfo::ShouldSetNullOriginHeader(this, referrer)) {
+  if (ReferrerInfo::ShouldSetNullOriginHeader(this, referrer)) {
     origin.AssignLiteral("null");
   }
 

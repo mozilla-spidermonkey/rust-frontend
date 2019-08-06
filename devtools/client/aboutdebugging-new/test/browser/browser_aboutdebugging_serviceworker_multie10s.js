@@ -6,7 +6,10 @@
 "use strict";
 
 /* import-globals-from helper-serviceworker.js */
-Services.scriptloader.loadSubScript(CHROME_URL_ROOT + "helper-serviceworker.js", this);
+Services.scriptloader.loadSubScript(
+  CHROME_URL_ROOT + "helper-serviceworker.js",
+  this
+);
 
 const SERVICE_WORKER = URL_ROOT + "resources/service-workers/push-sw.js";
 const TAB_URL = URL_ROOT + "resources/service-workers/push-sw.html";
@@ -35,8 +38,9 @@ async function testDebuggingSW(enableMultiE10sFn, disableMultiE10sFn) {
   // enable service workers
   await pushPref("dom.serviceWorkers.testing.enabled", true);
 
-  const { document, tab, window } =
-    await openAboutDebugging({ enableWorkerUpdates: true });
+  const { document, tab, window } = await openAboutDebugging({
+    enableWorkerUpdates: true,
+  });
 
   // If the test starts too quickly, the test will timeout on some platforms.
   // See Bug 1533111.
@@ -54,7 +58,9 @@ async function testDebuggingSW(enableMultiE10sFn, disableMultiE10sFn) {
   info("Forward service worker messages to the test");
   await forwardServiceWorkerMessage(swTab);
 
-  info("Wait for the service worker to claim the test window before proceeding.");
+  info(
+    "Wait for the service worker to claim the test window before proceeding."
+  );
   await onTabMessage(swTab, "sw-claimed");
 
   info("Wait until the service worker appears and is running");
@@ -67,8 +73,16 @@ async function testDebuggingSW(enableMultiE10sFn, disableMultiE10sFn) {
   let targetElement = findDebugTargetByText(SERVICE_WORKER, document);
   let pushButton = targetElement.querySelector(".qa-push-button");
   ok(!pushButton.disabled, "Push button is not disabled");
-  let inspectButton = targetElement.querySelector(".qa-debug-target-inspect-button");
+  ok(!pushButton.hasAttribute("title"), "Push button has no title attribute");
+
+  let inspectButton = targetElement.querySelector(
+    ".qa-debug-target-inspect-button"
+  );
   ok(!inspectButton.disabled, "Inspect button is not disabled");
+  ok(
+    !inspectButton.hasAttribute("title"),
+    "Inspect button has no title attribute"
+  );
 
   // enable multi e10s
   info("Enabling multi e10s");
@@ -82,8 +96,17 @@ async function testDebuggingSW(enableMultiE10sFn, disableMultiE10sFn) {
   });
 
   ok(pushButton.disabled, "Push button is disabled");
-  inspectButton = targetElement.querySelector(".qa-debug-target-inspect-button");
+  inspectButton = targetElement.querySelector(
+    ".qa-debug-target-inspect-button"
+  );
   ok(inspectButton.disabled, "Inspect button is disabled");
+  ok(inspectButton.hasAttribute("title"), "Button has a title attribute");
+
+  checkButtonTitle(
+    inspectButton,
+    "Service Worker inspection is currently disabled"
+  );
+  checkButtonTitle(pushButton, "Service Worker push is currently disabled");
 
   info("Unregister the service worker");
   await unregisterServiceWorker(swTab, "pushServiceWorkerRegistration");
@@ -94,4 +117,9 @@ async function testDebuggingSW(enableMultiE10sFn, disableMultiE10sFn) {
   info("Remove browser tabs");
   await removeTab(swTab);
   await removeTab(tab);
+}
+
+function checkButtonTitle(button, expectedTitle) {
+  const title = button.getAttribute("title");
+  ok(title.includes(expectedTitle), "Button has the expected title");
 }

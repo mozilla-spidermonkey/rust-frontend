@@ -42,7 +42,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/layers/StackingContextHelper.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_layout.h"
 #include "nsWindow.h"
 
 #ifdef MOZ_X11
@@ -802,6 +802,9 @@ class SystemCairoClipper : public ClipExporter {
   void BeginClip(const Matrix& aTransform) override {
     cairo_matrix_t mat;
     GfxMatrixToCairoMatrix(aTransform, mat);
+    // We also need to remove the scale factor effect from the matrix
+    mat.y0 = mat.y0 / mScaleFactor;
+    mat.x0 = mat.x0 / mScaleFactor;
     cairo_set_matrix(mContext, &mat);
 
     cairo_new_path(mContext);

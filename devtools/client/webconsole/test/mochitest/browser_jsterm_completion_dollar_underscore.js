@@ -10,47 +10,53 @@
 const TEST_URI = `data:text/html;charset=utf8,<p>test code completion on $_`;
 
 add_task(async function() {
-  // Run test with legacy JsTerm
-  await pushPref("devtools.webconsole.jsterm.codeMirror", false);
-  await performTests();
-  // And then run it with the CodeMirror-powered one.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", true);
-  await performTests();
-});
-
-async function performTests() {
   const hud = await openNewTabAndConsole(TEST_URI);
-  const {jsterm} = hud;
-  const {autocompletePopup} = jsterm;
+  const { jsterm } = hud;
+  const { autocompletePopup } = jsterm;
 
-  info("Test that there's no issue when trying to do an autocompletion without last " +
-    "evaluation result");
+  info(
+    "Test that there's no issue when trying to do an autocompletion without last " +
+      "evaluation result"
+  );
   await setInputValueForAutocompletion(hud, "$_.");
   is(autocompletePopup.items.length, 0, "autocomplete popup has no items");
   is(autocompletePopup.isOpen, false, "autocomplete popup is not open");
 
   info("Populate $_ by executing a command");
-  await jsterm.execute(`Object.create(null, Object.getOwnPropertyDescriptors({
+  await executeAndWaitForMessage(
+    hud,
+    `Object.create(null, Object.getOwnPropertyDescriptors({
     x: 1,
     y: "hello"
-  }))`);
+  }))`,
+    `Object { x: 1, y: "hello" }`
+  );
 
   await setInputValueForAutocompletion(hud, "$_.");
-  checkInputCompletionValue(hud, "   x", "'$_.' completion (completeNode)");
-  is(getAutocompletePopupLabels(autocompletePopup).join("|"), "x|y",
-    "autocomplete popup has expected items");
+  checkInputCompletionValue(hud, "x", "'$_.' completion (completeNode)");
+  is(
+    getAutocompletePopupLabels(autocompletePopup).join("|"),
+    "x|y",
+    "autocomplete popup has expected items"
+  );
   is(autocompletePopup.isOpen, true, "autocomplete popup is open");
 
   await setInputValueForAutocompletion(hud, "$_.x.");
   is(autocompletePopup.isOpen, true, "autocomplete popup is open");
-  is(getAutocompletePopupLabels(autocompletePopup).includes("toExponential"), true,
-    "autocomplete popup has expected items");
+  is(
+    getAutocompletePopupLabels(autocompletePopup).includes("toExponential"),
+    true,
+    "autocomplete popup has expected items"
+  );
 
   await setInputValueForAutocompletion(hud, "$_.y.");
   is(autocompletePopup.isOpen, true, "autocomplete popup is open");
-  is(getAutocompletePopupLabels(autocompletePopup).includes("trim"), true,
-    "autocomplete popup has expected items");
-}
+  is(
+    getAutocompletePopupLabels(autocompletePopup).includes("trim"),
+    true,
+    "autocomplete popup has expected items"
+  );
+});
 
 function getAutocompletePopupLabels(autocompletePopup) {
   return autocompletePopup.items.map(i => i.label);

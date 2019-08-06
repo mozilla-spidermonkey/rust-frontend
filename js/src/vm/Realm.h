@@ -255,7 +255,7 @@ class ObjectRealm {
 
   using IteratorCache =
       js::HashSet<js::PropertyIteratorObject*, js::IteratorHashPolicy,
-                  js::SystemAllocPolicy>;
+                  js::ZoneAllocPolicy>;
   IteratorCache iteratorCache;
 
   static inline ObjectRealm& get(const JSObject* obj);
@@ -330,7 +330,7 @@ class JS::Realm : public JS::shadow::Realm {
   // Names are only removed from this list by a |delete IdentifierReference|
   // that successfully removes that global property.
   using VarNamesSet =
-      JS::GCHashSet<JSAtom*, js::DefaultHasher<JSAtom*>, js::SystemAllocPolicy>;
+      JS::GCHashSet<JSAtom*, js::DefaultHasher<JSAtom*>, js::ZoneAllocPolicy>;
   VarNamesSet varNames_;
 
   friend class js::AutoSetNewObjectMetadata;
@@ -562,8 +562,8 @@ class JS::Realm : public JS::shadow::Realm {
 
   void purge();
 
-  void fixupAfterMovingGC();
-  void fixupScriptMapsAfterMovingGC();
+  void fixupAfterMovingGC(JSTracer* trc);
+  void fixupScriptMapsAfterMovingGC(JSTracer* trc);
 
 #ifdef JSGC_HASH_TABLE_CHECKS
   void checkObjectGroupTablesAfterMovingGC() {
@@ -605,6 +605,7 @@ class JS::Realm : public JS::shadow::Realm {
   const void* addressOfMetadataBuilder() const {
     return &allocationMetadataBuilder_;
   }
+  bool isRecordingAllocations();
   void setAllocationMetadataBuilder(
       const js::AllocationMetadataBuilder* builder);
   void forgetAllocationMetadataBuilder();
@@ -767,9 +768,6 @@ class JS::Realm : public JS::shadow::Realm {
   // scripts.
   bool ensureDelazifyScriptsForDebugger(JSContext* cx);
 
-  void clearBreakpointsIn(js::FreeOp* fop, js::Debugger* dbg,
-                          JS::HandleObject handler);
-
   // Initializes randomNumberGenerator if needed.
   mozilla::non_crypto::XorShift128PlusRNG& getOrCreateRandomNumberGenerator();
 
@@ -797,8 +795,9 @@ class JS::Realm : public JS::shadow::Realm {
 
   // Recompute the probability with which this realm should record
   // profiling data (stack traces, allocations log, etc.) about each
-  // allocation. We consult the probabilities requested by the Debugger
-  // instances observing us, if any.
+  // allocation. We first consult the JS runtime to see if it is recording
+  // allocations, and if not then check the probabilities requested by the
+  // Debugger instances observing us, if any.
   void chooseAllocationSamplingProbability() {
     savedStacks_.chooseSamplingProbability(this);
   }

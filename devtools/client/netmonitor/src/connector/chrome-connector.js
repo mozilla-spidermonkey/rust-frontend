@@ -7,6 +7,12 @@
 const { ACTIVITY_TYPE } = require("../constants");
 const { CDPConnector } = require("./chrome/events");
 
+/**
+ * DO NOT DELETE THIS FILE
+ *
+ * The ChromeConnector is currently not used, but is kept in tree to illustrate
+ * the Connector abstraction.
+ */
 class ChromeConnector {
   constructor() {
     // Internal properties
@@ -31,7 +37,7 @@ class ChromeConnector {
     this.connector.willNavigate(this.willNavigate);
   }
 
-  async disconnect() {
+  disconnect() {
     this.connector.disconnect();
   }
 
@@ -67,12 +73,10 @@ class ChromeConnector {
     switch (type) {
       case ACTIVITY_TYPE.RELOAD.WITH_CACHE_ENABLED:
       case ACTIVITY_TYPE.RELOAD.WITH_CACHE_DEFAULT:
-        return this.connector.reset().then(
-          () => this.connector.Page.reload().then(
-            () => {
-              this.currentActivity = ACTIVITY_TYPE.NONE;
-            }
-          )
+        return this.connector.reset().then(() =>
+          this.connector.Page.reload().then(() => {
+            this.currentActivity = ACTIVITY_TYPE.NONE;
+          })
         );
     }
     this.currentActivity = ACTIVITY_TYPE.NONE;

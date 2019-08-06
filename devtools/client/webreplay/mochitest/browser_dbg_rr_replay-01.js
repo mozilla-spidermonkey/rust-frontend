@@ -9,8 +9,9 @@
 // Basic test for saving a recording and then replaying it in a new tab.
 add_task(async function() {
   const recordingFile = newRecordingFile();
-  const recordingTab = BrowserTestUtils.addTab(gBrowser, null,
-                                               { recordExecution: "*" });
+  const recordingTab = BrowserTestUtils.addTab(gBrowser, null, {
+    recordExecution: "*",
+  });
   gBrowser.selectedTab = recordingTab;
   openTrustedLinkIn(EXAMPLE_URL + "doc_rr_basic.html", "current");
   await once(Services.ppmm, "RecordingFinished");
@@ -20,24 +21,25 @@ add_task(async function() {
   ok(remoteTab.saveRecording(recordingFile), "Saved recording");
   await once(Services.ppmm, "SaveRecordingFinished");
 
-  const replayingTab = BrowserTestUtils.addTab(gBrowser, null,
-                                               { replayExecution: recordingFile });
+  const replayingTab = BrowserTestUtils.addTab(gBrowser, null, {
+    replayExecution: recordingFile,
+  });
   gBrowser.selectedTab = replayingTab;
   await once(Services.ppmm, "HitRecordingEndpoint");
 
-  const { target, toolbox } = await attachDebugger(replayingTab);
-  const client = toolbox.threadClient;
-  await client.interrupt();
-  const bp = await setBreakpoint(client, "doc_rr_basic.html", 21);
-  await rewindToLine(client, 21);
+  const dbg = await attachDebugger(replayingTab);
+  const { threadFront } = dbg.toolbox;
+  const { target } = dbg;
+  await threadFront.interrupt();
+  const bp = await setBreakpoint(threadFront, "doc_rr_basic.html", 21);
+  await rewindToLine(threadFront, 21);
   await checkEvaluateInTopFrame(target, "number", 10);
-  await rewindToLine(client, 21);
+  await rewindToLine(threadFront, 21);
   await checkEvaluateInTopFrame(target, "number", 9);
-  await resumeToLine(client, 21);
+  await resumeToLine(threadFront, 21);
   await checkEvaluateInTopFrame(target, "number", 10);
 
-  await client.removeBreakpoint(bp);
-  await toolbox.destroy();
+  await threadFront.removeBreakpoint(bp);
   await gBrowser.removeTab(recordingTab);
-  await gBrowser.removeTab(replayingTab);
+  await shutdownDebugger(dbg);
 });

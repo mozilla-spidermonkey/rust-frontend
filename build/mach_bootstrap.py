@@ -39,7 +39,6 @@ MACH_MODULES = [
     'build/valgrind/mach_commands.py',
     'devtools/shared/css/generated/mach_commands.py',
     'dom/bindings/mach_commands.py',
-    'gfx/thebes/mach_commands.py',
     'layout/tools/reftest/mach_commands.py',
     'python/mach_commands.py',
     'python/safety/mach_commands.py',
@@ -47,7 +46,10 @@ MACH_MODULES = [
     'python/mach/mach/commands/settings.py',
     'python/mozboot/mozboot/mach_commands.py',
     'python/mozbuild/mozbuild/mach_commands.py',
+    'python/mozbuild/mozbuild/artifact_commands.py',
+    'python/mozbuild/mozbuild/build_commands.py',
     'python/mozbuild/mozbuild/backend/mach_commands.py',
+    'python/mozbuild/mozbuild/code-analysis/mach_commands.py',
     'python/mozbuild/mozbuild/compilation/codecomplete.py',
     'python/mozbuild/mozbuild/frontend/mach_commands.py',
     'python/mozrelease/mozrelease/mach_commands.py',
@@ -72,6 +74,7 @@ MACH_MODULES = [
     'tools/mach_commands.py',
     'tools/power/mach_commands.py',
     'tools/tryselect/mach_commands.py',
+    'tools/vcs/mach_commands.py',
     'mobile/android/mach_commands.py',
 ]
 
@@ -192,6 +195,7 @@ def bootstrap(topsrcdir, mozilla_dir=None):
                                              'build/virtualenv_packages.txt')]
     import mach.base
     import mach.main
+    from mach.util import setenv
     from mozboot.util import get_state_dir
 
     from mozbuild.util import patch_main
@@ -344,7 +348,7 @@ def bootstrap(topsrcdir, mozilla_dir=None):
     # Note which process is top-level so that recursive mach invocations can avoid writing
     # telemetry data.
     if 'MACH_MAIN_PID' not in os.environ:
-        os.environ[b'MACH_MAIN_PID'] = str(os.getpid()).encode('ascii')
+        setenv('MACH_MAIN_PID', str(os.getpid()))
 
     driver = mach.main.Mach(os.getcwd())
     driver.populate_context_handler = populate_context

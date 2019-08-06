@@ -3085,6 +3085,7 @@ exports.CSS_PROPERTIES = {
       "offset-path",
       "offset-distance",
       "offset-rotate",
+      "offset-anchor",
       "scroll-behavior",
       "scroll-snap-align",
       "scroll-snap-type",
@@ -3126,6 +3127,7 @@ exports.CSS_PROPERTIES = {
       "box-shadow",
       "clip",
       "filter",
+      "backdrop-filter",
       "mix-blend-mode",
       "font-family",
       "font-style",
@@ -3152,6 +3154,28 @@ exports.CSS_PROPERTIES = {
       "color-adjust",
       "image-rendering",
       "image-orientation",
+      "dominant-baseline",
+      "text-anchor",
+      "color-interpolation",
+      "color-interpolation-filters",
+      "fill",
+      "fill-opacity",
+      "fill-rule",
+      "shape-rendering",
+      "stroke",
+      "stroke-width",
+      "stroke-linecap",
+      "stroke-linejoin",
+      "stroke-miterlimit",
+      "stroke-opacity",
+      "stroke-dasharray",
+      "stroke-dashoffset",
+      "clip-rule",
+      "marker-start",
+      "marker-mid",
+      "marker-end",
+      "paint-order",
+      "-moz-context-properties",
       "border-collapse",
       "empty-cells",
       "caption-side",
@@ -3185,6 +3209,7 @@ exports.CSS_PROPERTIES = {
       "text-rendering",
       "-moz-control-character-visibility",
       "text-underline-offset",
+      "text-decoration-skip-ink",
       "cursor",
       "pointer-events",
       "-moz-user-input",
@@ -3192,27 +3217,6 @@ exports.CSS_PROPERTIES = {
       "-moz-user-focus",
       "caret-color",
       "scrollbar-color",
-      "text-anchor",
-      "color-interpolation",
-      "color-interpolation-filters",
-      "fill",
-      "fill-opacity",
-      "fill-rule",
-      "shape-rendering",
-      "stroke",
-      "stroke-width",
-      "stroke-linecap",
-      "stroke-linejoin",
-      "stroke-miterlimit",
-      "stroke-opacity",
-      "stroke-dasharray",
-      "stroke-dashoffset",
-      "clip-rule",
-      "marker-start",
-      "marker-mid",
-      "marker-end",
-      "paint-order",
-      "-moz-context-properties",
       "list-style-position",
       "list-style-type",
       "list-style-image",
@@ -3280,19 +3284,6 @@ exports.CSS_PROPERTIES = {
       "grid-template-areas",
       "column-gap",
       "row-gap",
-      "table-layout",
-      "text-overflow",
-      "text-decoration-line",
-      "text-decoration-style",
-      "text-decoration-color",
-      "initial-letter",
-      "text-decoration-width",
-      "ime-mode",
-      "scrollbar-width",
-      "user-select",
-      "-moz-window-dragging",
-      "-moz-force-broken-image-icon",
-      "dominant-baseline",
       "vector-effect",
       "stop-color",
       "stop-opacity",
@@ -3317,6 +3308,18 @@ exports.CSS_PROPERTIES = {
       "rx",
       "ry",
       "r",
+      "table-layout",
+      "text-overflow",
+      "text-decoration-line",
+      "text-decoration-style",
+      "text-decoration-color",
+      "initial-letter",
+      "text-decoration-thickness",
+      "ime-mode",
+      "scrollbar-width",
+      "user-select",
+      "-moz-window-dragging",
+      "-moz-force-broken-image-icon",
       "-moz-box-align",
       "-moz-box-direction",
       "-moz-box-flex",
@@ -5930,7 +5933,7 @@ exports.CSS_PROPERTIES = {
     ]
   },
   "dominant-baseline": {
-    "isInherited": false,
+    "isInherited": true,
     "subproperties": [
       "dominant-baseline"
     ],
@@ -5945,13 +5948,10 @@ exports.CSS_PROPERTIES = {
       "initial",
       "mathematical",
       "middle",
-      "no-change",
-      "reset-size",
       "revert",
       "text-after-edge",
       "text-before-edge",
-      "unset",
-      "use-script"
+      "unset"
     ]
   },
   "empty-cells": {
@@ -8278,6 +8278,25 @@ exports.CSS_PROPERTIES = {
       "unset"
     ]
   },
+  "offset-anchor": {
+    "isInherited": false,
+    "subproperties": [
+      "offset-anchor"
+    ],
+    "supports": [],
+    "values": [
+      "auto",
+      "bottom",
+      "center",
+      "inherit",
+      "initial",
+      "left",
+      "revert",
+      "right",
+      "top",
+      "unset"
+    ]
+  },
   "offset-distance": {
     "isInherited": false,
     "subproperties": [
@@ -9018,6 +9037,7 @@ exports.CSS_PROPERTIES = {
     ],
     "supports": [],
     "values": [
+      "auto",
       "inherit",
       "initial",
       "none",
@@ -10721,6 +10741,10 @@ exports.PREFERENCES = [
     "layout.css.scrollbar-width.enabled"
   ],
   [
+    "text-decoration-skip-ink",
+    "layout.css.text-decoration-skip-ink.enabled"
+  ],
+  [
     "text-justify",
     "layout.css.text-justify.enabled"
   ],
@@ -10761,8 +10785,16 @@ exports.PREFERENCES = [
     "layout.css.overflow-logical.enabled"
   ],
   [
+    "backdrop-filter",
+    "layout.css.backdrop-filter.enabled"
+  ],
+  [
     "font-variation-settings",
     "layout.css.font-variations.enabled"
+  ],
+  [
+    "offset-anchor",
+    "layout.css.motion-path.enabled"
   ],
   [
     "offset-path",
@@ -10785,8 +10817,8 @@ exports.PREFERENCES = [
     "layout.css.individual-transform.enabled"
   ],
   [
-    "text-decoration-width",
-    "layout.css.text-decoration-width.enabled"
+    "text-decoration-thickness",
+    "layout.css.text-decoration-thickness.enabled"
   ],
   [
     "text-underline-offset",

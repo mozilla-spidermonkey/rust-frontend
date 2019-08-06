@@ -10,7 +10,7 @@
 #include "mozilla/layers/ShadowLayers.h"
 #include "mozilla/layers/TextureClient.h"
 #include "mozilla/gfx/Logging.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_layers.h"
 #include "pratom.h"
 #include "gfxPlatform.h"
 
@@ -107,7 +107,7 @@ PersistentBufferProviderShared::Create(gfx::IntSize aSize,
     return nullptr;
   }
 
-  if (!StaticPrefs::PersistentBufferProviderSharedEnabled()) {
+  if (!StaticPrefs::layers_shared_buffer_provider_enabled()) {
     return nullptr;
   }
 

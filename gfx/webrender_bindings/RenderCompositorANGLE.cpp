@@ -38,11 +38,8 @@ UniquePtr<RenderCompositor> RenderCompositorANGLE::Create(
     return nullptr;
   }
 
-  const auto& gle = gl::GLContextEGL::Cast(gl);
-  const auto& egl = gle->mEgl;
-
   UniquePtr<RenderCompositorANGLE> compositor =
-      MakeUnique<RenderCompositorANGLE>(std::move(aWidget), egl);
+      MakeUnique<RenderCompositorANGLE>(std::move(aWidget));
   if (!compositor->Initialize()) {
     return nullptr;
   }
@@ -50,14 +47,11 @@ UniquePtr<RenderCompositor> RenderCompositorANGLE::Create(
 }
 
 RenderCompositorANGLE::RenderCompositorANGLE(
-    RefPtr<widget::CompositorWidget>&& aWidget, gl::GLLibraryEGL* const egl)
+    RefPtr<widget::CompositorWidget>&& aWidget)
     : RenderCompositor(std::move(aWidget)),
-      mEgl(egl),
       mEGLConfig(nullptr),
       mEGLSurface(nullptr),
-      mUseTripleBuffering(false) {
-  MOZ_ASSERT(mEgl);
-}
+      mUseTripleBuffering(false) {}
 
 RenderCompositorANGLE::~RenderCompositorANGLE() {
   DestroyEGLSurface();
@@ -65,20 +59,20 @@ RenderCompositorANGLE::~RenderCompositorANGLE() {
 }
 
 ID3D11Device* RenderCompositorANGLE::GetDeviceOfEGLDisplay() {
-  MOZ_ASSERT(mEgl);
-  if (!mEgl ||
-      !mEgl->IsExtensionSupported(gl::GLLibraryEGL::EXT_device_query)) {
+  auto* egl = gl::GLLibraryEGL::Get();
+  MOZ_ASSERT(egl);
+  if (!egl || !egl->IsExtensionSupported(gl::GLLibraryEGL::EXT_device_query)) {
     return nullptr;
   }
 
   // Fetch the D3D11 device.
   EGLDeviceEXT eglDevice = nullptr;
-  mEgl->fQueryDisplayAttribEXT(mEgl->Display(), LOCAL_EGL_DEVICE_EXT,
-                               (EGLAttrib*)&eglDevice);
+  egl->fQueryDisplayAttribEXT(egl->Display(), LOCAL_EGL_DEVICE_EXT,
+                              (EGLAttrib*)&eglDevice);
   MOZ_ASSERT(eglDevice);
   ID3D11Device* device = nullptr;
-  mEgl->fQueryDeviceAttribEXT(eglDevice, LOCAL_EGL_D3D11_DEVICE_ANGLE,
-                              (EGLAttrib*)&device);
+  egl->fQueryDeviceAttribEXT(eglDevice, LOCAL_EGL_D3D11_DEVICE_ANGLE,
+                             (EGLAttrib*)&device);
   if (!device) {
     gfxCriticalNote << "Failed to get D3D11Device from EGLDisplay";
     return nullptr;
@@ -87,7 +81,8 @@ ID3D11Device* RenderCompositorANGLE::GetDeviceOfEGLDisplay() {
 }
 
 bool RenderCompositorANGLE::SutdownEGLLibraryIfNecessary() {
-  if (!mEgl) {
+  const RefPtr<gl::GLLibraryEGL> egl = gl::GLLibraryEGL::Get();
+  if (!egl) {
     // egl is not initialized yet;
     return true;
   }
@@ -105,7 +100,7 @@ bool RenderCompositorANGLE::SutdownEGLLibraryIfNecessary() {
       RenderThread::Get()->RendererCount() == 0) {
     // Shutdown GLLibraryEGL for updating EGLDisplay.
     RenderThread::Get()->ClearSharedGL();
-    mEgl->Shutdown();
+    egl->Shutdown();
   }
   return true;
 }
@@ -120,7 +115,8 @@ bool RenderCompositorANGLE::Initialize() {
   if (!SutdownEGLLibraryIfNecessary()) {
     return false;
   }
-  if (!RenderThread::Get()->SharedGL()) {
+  const auto gl = RenderThread::Get()->SharedGL();
+  if (!gl) {
     gfxCriticalNote << "[WR] failed to get shared GL context.";
     return false;
   }
@@ -163,6 +159,7 @@ bool RenderCompositorANGLE::Initialize() {
 
   if (!mSwapChain && dxgiFactory2 && IsWin8OrLater()) {
     RefPtr<IDXGISwapChain1> swapChain1;
+    bool useTripleBuffering = false;
 
     DXGI_SWAP_CHAIN_DESC1 desc{};
     desc.Width = 0;
@@ -174,12 +171,19 @@ bool RenderCompositorANGLE::Initialize() {
     // framebuffer to texture on intel gpu.
     desc.BufferUsage =
         DXGI_USAGE_RENDER_TARGET_OUTPUT | DXGI_USAGE_SHADER_INPUT;
-    // Do not use DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, since it makes HWND
-    // unreusable.
-    // desc.BufferCount = 2;
-    // desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
-    desc.BufferCount = 1;
-    desc.SwapEffect = DXGI_SWAP_EFFECT_SEQUENTIAL;
+
+    if (gfx::gfxVars::UseWebRenderFlipSequentialWin()) {
+      useTripleBuffering = gfx::gfxVars::UseWebRenderTripleBufferingWin();
+      if (useTripleBuffering) {
+        desc.BufferCount = 3;
+      } else {
+        desc.BufferCount = 2;
+      }
+      desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+    } else {
+      desc.BufferCount = 1;
+      desc.SwapEffect = DXGI_SWAP_EFFECT_SEQUENTIAL;
+    }
     desc.Scaling = DXGI_SCALING_NONE;
     desc.Flags = 0;
 
@@ -189,6 +193,7 @@ bool RenderCompositorANGLE::Initialize() {
       DXGI_RGBA color = {1.0f, 1.0f, 1.0f, 1.0f};
       swapChain1->SetBackgroundColor(&color);
       mSwapChain = swapChain1;
+      mUseTripleBuffering = useTripleBuffering;
     }
   }
 
@@ -231,7 +236,9 @@ bool RenderCompositorANGLE::Initialize() {
 
   // Force enable alpha channel to make sure ANGLE use correct framebuffer
   // formart
-  if (!gl::CreateConfig(mEgl, &mEGLConfig, /* bpp */ 32,
+  const auto& gle = gl::GLContextEGL::Cast(gl);
+  const auto& egl = gle->mEgl;
+  if (!gl::CreateConfig(egl, &mEGLConfig, /* bpp */ 32,
                         /* enableDepthBuffer */ true)) {
     gfxCriticalNote << "Failed to create EGLConfig for WebRender";
   }
@@ -289,7 +296,7 @@ void RenderCompositorANGLE::CreateSwapChainForDCompIfPossible(
   }
 
   RefPtr<IDXGISwapChain1> swapChain1;
-  bool useTripleBuffering = gfx::gfxVars::UseWebRenderDCompWinTripleBuffering();
+  bool useTripleBuffering = gfx::gfxVars::UseWebRenderTripleBufferingWin();
 
   DXGI_SWAP_CHAIN_DESC1 desc{};
   // DXGI does not like 0x0 swapchains. Swap chain creation failed when 0x0 was
@@ -327,11 +334,6 @@ void RenderCompositorANGLE::CreateSwapChainForDCompIfPossible(
 }
 
 bool RenderCompositorANGLE::BeginFrame() {
-  if (mDevice->GetDeviceRemovedReason() != S_OK) {
-    RenderThread::Get()->HandleDeviceReset("BeginFrame", /* aNotify */ true);
-    return false;
-  }
-
   mWidget->AsWindows()->UpdateCompositorWndSizeIfNecessary();
 
   if (!ResizeBufferIfNeeded()) {
@@ -363,7 +365,7 @@ void RenderCompositorANGLE::EndFrame() {
   }
 }
 
-void RenderCompositorANGLE::WaitForGPU() {
+bool RenderCompositorANGLE::WaitForGPU() {
   // Note: this waits on the query we inserted in the previous frame,
   // not the one we just inserted now. Example:
   //   Insert query #1
@@ -377,7 +379,7 @@ void RenderCompositorANGLE::WaitForGPU() {
   //   Wait for query #2.
   //
   // This ensures we're done reading textures before swapping buffers.
-  WaitForPreviousPresentQuery();
+  return WaitForPreviousPresentQuery();
 }
 
 bool RenderCompositorANGLE::ResizeBufferIfNeeded() {
@@ -442,11 +444,14 @@ bool RenderCompositorANGLE::ResizeBufferIfNeeded() {
 
   const auto buffer = reinterpret_cast<EGLClientBuffer>(backBuf.get());
 
-  const EGLSurface surface = mEgl->fCreatePbufferFromClientBuffer(
-      mEgl->Display(), LOCAL_EGL_D3D_TEXTURE_ANGLE, buffer, mEGLConfig,
+  const auto gl = RenderThread::Get()->SharedGL();
+  const auto& gle = gl::GLContextEGL::Cast(gl);
+  const auto& egl = gle->mEgl;
+  const EGLSurface surface = egl->fCreatePbufferFromClientBuffer(
+      egl->Display(), LOCAL_EGL_D3D_TEXTURE_ANGLE, buffer, mEGLConfig,
       pbuffer_attribs);
 
-  EGLint err = mEgl->fGetError();
+  EGLint err = egl->fGetError();
   if (err != LOCAL_EGL_SUCCESS) {
     gfxCriticalError() << "Failed to create Pbuffer of back buffer error: "
                        << gfx::hexa(err) << " Size : " << size;
@@ -462,8 +467,10 @@ bool RenderCompositorANGLE::ResizeBufferIfNeeded() {
 void RenderCompositorANGLE::DestroyEGLSurface() {
   // Release EGLSurface of back buffer before calling ResizeBuffers().
   if (mEGLSurface) {
-    gl::GLContextEGL::Cast(gl())->SetEGLSurfaceOverride(EGL_NO_SURFACE);
-    mEgl->fDestroySurface(mEgl->Display(), mEGLSurface);
+    const auto& gle = gl::GLContextEGL::Cast(gl());
+    const auto& egl = gle->mEgl;
+    gle->SetEGLSurfaceOverride(EGL_NO_SURFACE);
+    egl->fDestroySurface(egl->Display(), mEGLSurface);
     mEGLSurface = nullptr;
   }
 }
@@ -513,18 +520,31 @@ void RenderCompositorANGLE::InsertPresentWaitQuery() {
   mWaitForPresentQueries.emplace(query);
 }
 
-void RenderCompositorANGLE::WaitForPreviousPresentQuery() {
+bool RenderCompositorANGLE::WaitForPreviousPresentQuery() {
   size_t waitLatency = mUseTripleBuffering ? 3 : 2;
 
   while (mWaitForPresentQueries.size() >= waitLatency) {
     RefPtr<ID3D11Query>& query = mWaitForPresentQueries.front();
     BOOL result;
-    layers::WaitForFrameGPUQuery(mDevice, mCtx, query, &result);
+    bool ret = layers::WaitForFrameGPUQuery(mDevice, mCtx, query, &result);
 
     // Recycle query for later use.
     mRecycledQuery = query;
     mWaitForPresentQueries.pop();
+    if (!ret) {
+      return false;
+    }
   }
+  return true;
+}
+
+bool RenderCompositorANGLE::IsContextLost() {
+  // XXX glGetGraphicsResetStatus sometimes did not work for detecting TDR.
+  // Then this function just uses GetDeviceRemovedReason().
+  if (mDevice->GetDeviceRemovedReason() != S_OK) {
+    return true;
+  }
+  return false;
 }
 
 }  // namespace wr

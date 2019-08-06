@@ -20,7 +20,6 @@ use crate::capture::CaptureConfig;
 use crate::device::TextureFilter;
 use euclid::{point2, size2};
 use crate::glyph_cache::GlyphCache;
-#[cfg(not(feature = "pathfinder"))]
 use crate::glyph_cache::GlyphCacheEntry;
 use crate::glyph_rasterizer::{BaseFontInstance, FontInstance, GlyphFormat, GlyphKey, GlyphRasterizer};
 use crate::gpu_cache::{GpuCache, GpuCacheAddress, GpuCacheHandle};
@@ -33,7 +32,7 @@ use crate::render_task::{RenderTaskCache, RenderTaskCacheKey, RenderTaskId};
 use crate::render_task::{RenderTaskCacheEntry, RenderTaskCacheEntryHandle, RenderTaskGraph};
 use smallvec::SmallVec;
 use std::collections::hash_map::Entry::{self, Occupied, Vacant};
-use std::collections::hash_map::IterMut;
+use std::collections::hash_map::{Iter, IterMut};
 use std::collections::VecDeque;
 use std::{cmp, mem};
 use std::fmt::Debug;
@@ -171,7 +170,6 @@ struct ImageResource {
     data: CachedImageData,
     descriptor: ImageDescriptor,
     tiling: Option<TileSize>,
-    viewport_tiles: Option<TileRange>,
 }
 
 #[derive(Clone, Debug)]
@@ -274,8 +272,16 @@ where
         self.resources.entry(key)
     }
 
+    pub fn iter(&self) -> Iter<K, V> {
+        self.resources.iter()
+    }
+
     pub fn iter_mut(&mut self) -> IterMut<K, V> {
         self.resources.iter_mut()
+    }
+
+    pub fn is_empty(&mut self) -> bool {
+        self.resources.is_empty()
     }
 
     pub fn clear(&mut self) {
@@ -484,16 +490,19 @@ pub struct ResourceCache {
     /// updates to the texture cache. Images in this category trigger
     /// invalidations for picture caching tiles.
     dirty_image_keys: FastHashSet<ImageKey>,
+    /// A set of the image keys that are used for render.
+    active_image_keys: FastHashSet<ImageKey>,
 }
 
 impl ResourceCache {
     pub fn new(
         texture_cache: TextureCache,
         glyph_rasterizer: GlyphRasterizer,
+        cached_glyphs: GlyphCache,
         blob_image_handler: Option<Box<dyn BlobImageHandler>>,
     ) -> Self {
         ResourceCache {
-            cached_glyphs: GlyphCache::new(),
+            cached_glyphs,
             cached_images: ResourceClassCache::new(),
             cached_render_tasks: RenderTaskCache::new(),
             resources: Resources::default(),
@@ -513,6 +522,7 @@ impl ResourceCache {
             // We want to keep three frames worth of delete blob keys
             deleted_blob_keys: vec![Vec::new(), Vec::new(), Vec::new()].into(),
             dirty_image_keys: FastHashSet::default(),
+            active_image_keys: FastHashSet::default(),
         }
     }
 
@@ -545,7 +555,10 @@ impl ResourceCache {
         user_data: Option<[f32; 3]>,
         is_opaque: bool,
         f: F,
-    ) -> RenderTaskCacheEntryHandle where F: FnOnce(&mut RenderTaskGraph) -> RenderTaskId {
+    ) -> RenderTaskCacheEntryHandle
+    where
+        F: FnOnce(&mut RenderTaskGraph) -> RenderTaskId,
+    {
         self.cached_render_tasks.request_render_task(
             key,
             &mut self.texture_cache,
@@ -553,7 +566,7 @@ impl ResourceCache {
             render_tasks,
             user_data,
             is_opaque,
-            |render_task_tree| Ok(f(render_task_tree))
+            |render_graph| Ok(f(render_graph))
         ).expect("Failed to request a render task from the resource cache!")
     }
 
@@ -594,6 +607,7 @@ impl ResourceCache {
                             &img.dirty_rect
                         ),
                     );
+                    self.discard_tiles_outside_visible_area(img.key, &img.visible_rect);
                 }
                 ResourceUpdate::DeleteImage(img) => {
                     self.delete_image_template(img);
@@ -628,6 +642,7 @@ impl ResourceCache {
                         &img.descriptor,
                         img.tiling,
                         Arc::clone(&img.data),
+                        &img.visible_rect,
                     );
                 }
                 ResourceUpdate::UpdateBlobImage(ref img) => {
@@ -636,6 +651,7 @@ impl ResourceCache {
                         &img.descriptor,
                         &img.dirty_rect,
                         Arc::clone(&img.data),
+                        &img.visible_rect,
                     );
                 }
                 ResourceUpdate::SetBlobImageVisibleArea(ref key, ref area) => {
@@ -705,16 +721,16 @@ impl ResourceCache {
             };
 
             tiles.retain(|tile, _| {
-                !req.original_tile_range.contains(tile) ||
-                req.actual_tile_range.contains(tile)
+                !req.original_tile_range.contains(*tile) ||
+                req.actual_tile_range.contains(*tile)
             });
 
             let texture_cache = &mut self.texture_cache;
             match self.cached_images.try_get_mut(&req.key.as_image()) {
                 Some(&mut ImageResult::Multi(ref mut entries)) => {
                     entries.retain(|key, entry| {
-                        if !req.original_tile_range.contains(&key.tile.unwrap()) ||
-                           req.actual_tile_range.contains(&key.tile.unwrap()) {
+                        if !req.original_tile_range.contains(key.tile.unwrap()) ||
+                           req.actual_tile_range.contains(key.tile.unwrap()) {
                             return true;
                         }
                         entry.mark_unused(texture_cache);
@@ -776,7 +792,7 @@ impl ResourceCache {
         self.glyph_rasterizer.delete_font(font_key);
         self.resources.font_templates.remove(&font_key);
         self.cached_glyphs
-            .clear_fonts(|font| font.font_key == font_key);
+            .clear_fonts(&mut self.texture_cache, |font| font.font_key == font_key);
         if let Some(ref mut r) = self.blob_image_handler {
             r.delete_font(font_key);
         }
@@ -851,7 +867,6 @@ impl ResourceCache {
             descriptor,
             data,
             tiling,
-            viewport_tiles: None,
         };
 
         self.resources.image_templates.insert(image_key, resource);
@@ -893,7 +908,13 @@ impl ResourceCache {
                                 ) * tile_size as i32;
                                 rect.origin -= tile_offset.to_vector();
 
-                                rect
+                                let tile_rect = compute_tile_size(
+                                    &descriptor.size.into(),
+                                    tile_size,
+                                    tile,
+                                ).into();
+
+                                rect.intersection(&tile_rect).unwrap_or(DeviceIntRect::zero())
                             })
                         }
                         (None, Some(..)) => DirtyRect::All,
@@ -905,11 +926,14 @@ impl ResourceCache {
             _ => {}
         }
 
+        if image.descriptor.format != descriptor.format {
+            // could be a stronger warning/error?
+            trace!("Format change {:?} -> {:?}", image.descriptor.format, descriptor.format);
+        }
         *image = ImageResource {
             descriptor,
             data,
             tiling,
-            viewport_tiles: image.viewport_tiles,
         };
     }
 
@@ -920,11 +944,14 @@ impl ResourceCache {
         descriptor: &ImageDescriptor,
         mut tiling: Option<TileSize>,
         data: Arc<BlobImageData>,
+        visible_rect: &DeviceIntRect,
     ) {
         let max_texture_size = self.max_texture_size();
         tiling = get_blob_tiling(tiling, descriptor, max_texture_size);
 
-        self.blob_image_handler.as_mut().unwrap().add(key, data, tiling);
+        let viewport_tiles = tiling.map(|tile_size| compute_tile_range(&visible_rect, tile_size));
+
+        self.blob_image_handler.as_mut().unwrap().add(key, data, visible_rect, tiling);
 
         self.blob_image_templates.insert(
             key,
@@ -932,7 +959,7 @@ impl ResourceCache {
                 descriptor: *descriptor,
                 tiling,
                 dirty_rect: DirtyRect::All,
-                viewport_tiles: None,
+                viewport_tiles,
             },
         );
     }
@@ -944,8 +971,9 @@ impl ResourceCache {
         descriptor: &ImageDescriptor,
         dirty_rect: &BlobDirtyRect,
         data: Arc<BlobImageData>,
+        visible_rect: &DeviceIntRect,
     ) {
-        self.blob_image_handler.as_mut().unwrap().update(key, data, dirty_rect);
+        self.blob_image_handler.as_mut().unwrap().update(key, data, visible_rect, dirty_rect);
 
         let max_texture_size = self.max_texture_size();
 
@@ -955,11 +983,13 @@ impl ResourceCache {
 
         let tiling = get_blob_tiling(image.tiling, descriptor, max_texture_size);
 
+        let viewport_tiles = image.tiling.map(|tile_size| compute_tile_range(&visible_rect, tile_size));
+
         *image = BlobImageTemplate {
             descriptor: *descriptor,
             tiling,
             dirty_rect: dirty_rect.union(&image.dirty_rect),
-            viewport_tiles: image.viewport_tiles,
+            viewport_tiles,
         };
     }
 
@@ -993,6 +1023,20 @@ impl ResourceCache {
         image_key: ImageKey,
     ) -> bool {
         self.dirty_image_keys.contains(&image_key)
+    }
+
+    pub fn is_image_active(
+        &self,
+        image_key: ImageKey,
+    ) -> bool {
+        self.active_image_keys.contains(&image_key)
+    }
+
+    pub fn set_image_active(
+        &mut self,
+        image_key: ImageKey,
+    ) {
+        self.active_image_keys.insert(image_key);
     }
 
     pub fn request_image(
@@ -1207,8 +1251,9 @@ impl ResourceCache {
                     && (tiles.size.width > MAX_TILES_PER_REQUEST
                         || tiles.size.height > MAX_TILES_PER_REQUEST
                         || tiles.size.width * tiles.size.height > MAX_TILES_PER_REQUEST) {
-                    let w = tiles.size.width;
-                    let h = tiles.size.height;
+                    let limit = 46340; // sqrt(i32::MAX) rounded down to avoid overflow.
+                    let w = tiles.size.width.min(limit);
+                    let h = tiles.size.height.min(limit);
                     let diff = w * h - MAX_TILES_PER_REQUEST;
                     // Remove tiles in the largest dimension.
                     if tiles.size.width > tiles.size.height {
@@ -1245,6 +1290,7 @@ impl ResourceCache {
                         format: template.descriptor.format,
                     };
 
+                    assert!(descriptor.rect.size.width > 0 && descriptor.rect.size.height > 0);
                     // TODO: We only track dirty rects for non-tiled blobs but we
                     // should also do it with tiled ones unless we settle for a small
                     // tile size.
@@ -1293,6 +1339,7 @@ impl ResourceCache {
                     template.dirty_rect
                 };
 
+                assert!(template.descriptor.size.width > 0 && template.descriptor.size.height > 0);
                 blob_request_params.push(
                     BlobImageParams {
                         request: BlobImageRequest {
@@ -1346,13 +1393,13 @@ impl ResourceCache {
             tile_size,
         );
 
-        tiles.retain(|tile, _| { tile_range.contains(tile) });
+        tiles.retain(|tile, _| { tile_range.contains(*tile) });
 
         let texture_cache = &mut self.texture_cache;
         match self.cached_images.try_get_mut(&key.as_image()) {
             Some(&mut ImageResult::Multi(ref mut entries)) => {
                 entries.retain(|key, entry| {
-                    if key.tile.is_none() || tile_range.contains(&key.tile.unwrap()) {
+                    if key.tile.is_none() || tile_range.contains(key.tile.unwrap()) {
                         return true;
                     }
                     entry.mark_unused(texture_cache);
@@ -1388,57 +1435,6 @@ impl ResourceCache {
         self.texture_cache.pending_updates()
     }
 
-    #[cfg(feature = "pathfinder")]
-    pub fn fetch_glyphs<F>(
-        &self,
-        mut font: FontInstance,
-        glyph_keys: &[GlyphKey],
-        fetch_buffer: &mut Vec<GlyphFetchResult>,
-        gpu_cache: &mut GpuCache,
-        mut f: F,
-    ) where
-        F: FnMut(TextureSource, GlyphFormat, &[GlyphFetchResult]),
-    {
-        debug_assert_eq!(self.state, State::QueryResources);
-
-        self.glyph_rasterizer.prepare_font(&mut font);
-
-        let mut current_texture_id = TextureSource::Invalid;
-        let mut current_glyph_format = GlyphFormat::Subpixel;
-        debug_assert!(fetch_buffer.is_empty());
-
-        for (loop_index, key) in glyph_keys.iter().enumerate() {
-           let (cache_item, glyph_format) =
-                match self.glyph_rasterizer.get_cache_item_for_glyph(key,
-                                                                     &font,
-                                                                     &self.cached_glyphs,
-                                                                     &self.texture_cache,
-                                                                     &self.cached_render_tasks) {
-                    None => continue,
-                    Some(result) => result,
-                };
-            if current_texture_id != cache_item.texture_id ||
-                current_glyph_format != glyph_format {
-                if !fetch_buffer.is_empty() {
-                    f(current_texture_id, current_glyph_format, fetch_buffer);
-                    fetch_buffer.clear();
-                }
-                current_texture_id = cache_item.texture_id;
-                current_glyph_format = glyph_format;
-            }
-            fetch_buffer.push(GlyphFetchResult {
-                index_in_text_run: loop_index as i32,
-                uv_rect_address: gpu_cache.get_address(&cache_item.uv_rect_handle),
-            });
-        }
-
-        if !fetch_buffer.is_empty() {
-            f(current_texture_id, current_glyph_format, fetch_buffer);
-            fetch_buffer.clear();
-        }
-    }
-
-    #[cfg(not(feature = "pathfinder"))]
     pub fn fetch_glyphs<F>(
         &self,
         mut font: FontInstance,
@@ -1572,9 +1568,15 @@ impl ResourceCache {
         debug_assert_eq!(self.state, State::Idle);
         self.state = State::AddResources;
         self.texture_cache.begin_frame(stamp);
-        self.cached_glyphs.begin_frame(&self.texture_cache, &self.cached_render_tasks, &mut self.glyph_rasterizer);
+        self.cached_glyphs.begin_frame(
+            stamp,
+            &mut self.texture_cache,
+            &self.cached_render_tasks,
+            &mut self.glyph_rasterizer,
+        );
         self.cached_render_tasks.begin_frame(&mut self.texture_cache);
         self.current_frame_id = stamp.frame_id();
+        self.active_image_keys.clear();
 
         // pop the old frame and push a new one
         self.deleted_blob_keys.pop_front();
@@ -1809,7 +1811,7 @@ impl ResourceCache {
             .font_templates
             .retain(|key, _| key.0 != namespace);
         self.cached_glyphs
-            .clear_fonts(|font| font.font_key.0 == namespace);
+            .clear_fonts(&mut self.texture_cache, |font| font.font_key.0 == namespace);
 
         if let Some(ref mut r) = self.blob_image_handler {
             r.clear_namespace(namespace);
@@ -1901,12 +1903,9 @@ pub fn get_blob_tiling(
 #[cfg(any(feature = "capture", feature = "replay"))]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
-enum PlainFontTemplate {
-    Raw {
-        data: String,
-        index: u32,
-    },
-    Native,
+struct PlainFontTemplate {
+    data: String,
+    index: u32,
 }
 
 #[cfg(any(feature = "capture", feature = "replay"))]
@@ -2117,13 +2116,24 @@ impl ResourceCache {
                 .map(|(key, template)| {
                     (*key, match *template {
                         FontTemplate::Raw(ref arc, index) => {
-                            PlainFontTemplate::Raw {
+                            PlainFontTemplate {
                                 data: font_paths[&arc.as_ptr()].clone(),
                                 index,
                             }
                         }
-                        FontTemplate::Native(_) => {
-                            PlainFontTemplate::Native
+                        #[cfg(not(target_os = "macos"))]
+                        FontTemplate::Native(ref native) => {
+                            PlainFontTemplate {
+                                data: native.path.to_string_lossy().to_string(),
+                                index: native.index,
+                            }
+                        }
+                        #[cfg(target_os = "macos")]
+                        FontTemplate::Native(ref native) => {
+                            PlainFontTemplate {
+                                data: native.0.postscript_name().to_string(),
+                                index: 0,
+                            }
                         }
                     })
                 })
@@ -2166,8 +2176,7 @@ impl ResourceCache {
         caches: Option<PlainCacheOwn>,
         root: &PathBuf,
     ) -> Vec<PlainExternalImage> {
-        use std::fs::File;
-        use std::io::Read;
+        use std::{fs, path::Path};
 
         info!("loading resource cache");
         //TODO: instead of filling the local path to Arc<data> map as we process
@@ -2194,6 +2203,8 @@ impl ResourceCache {
                     self.texture_cache.max_texture_layers(),
                     &self.texture_cache.picture_tile_sizes(),
                     DeviceIntSize::zero(),
+                    self.texture_cache.color_formats(),
+                    self.texture_cache.bgra_swizzle(),
                 );
             }
         }
@@ -2207,29 +2218,28 @@ impl ResourceCache {
         info!("\tfont templates...");
         let native_font_replacement = Arc::new(NATIVE_FONT.to_vec());
         for (key, plain_template) in resources.font_templates {
-            let template = match plain_template {
-                PlainFontTemplate::Raw { data, index } => {
-                    let arc = match raw_map.entry(data) {
-                        Entry::Occupied(e) => {
-                            e.get().clone()
-                        }
-                        Entry::Vacant(e) => {
-                            let mut buffer = Vec::new();
-                            File::open(root.join(e.key()))
-                                .expect(&format!("Unable to open {}", e.key()))
-                                .read_to_end(&mut buffer)
-                                .unwrap();
-                            e.insert(Arc::new(buffer))
-                                .clone()
+            let arc = match raw_map.entry(plain_template.data) {
+                Entry::Occupied(e) => {
+                    e.get().clone()
+                }
+                Entry::Vacant(e) => {
+                    let file_path = if Path::new(e.key()).is_absolute() {
+                        PathBuf::from(e.key())
+                    } else {
+                        root.join(e.key())
+                    };
+                    let arc = match fs::read(file_path) {
+                        Ok(buffer) => Arc::new(buffer),
+                        Err(err) => {
+                            error!("Unable to open font template {:?}: {:?}", e.key(), err);
+                            Arc::clone(&native_font_replacement)
                         }
                     };
-                    FontTemplate::Raw(arc, index)
-                }
-                PlainFontTemplate::Native => {
-                    FontTemplate::Raw(native_font_replacement.clone(), 0)
+                    e.insert(arc).clone()
                 }
             };
 
+            let template = FontTemplate::Raw(arc, plain_template.index);
             self.glyph_rasterizer.add_font(key, template.clone());
             res.font_templates.insert(key, template);
         }
@@ -2249,11 +2259,8 @@ impl ResourceCache {
                             e.get().clone()
                         }
                         Entry::Vacant(e) => {
-                            let mut buffer = Vec::new();
-                            File::open(root.join(e.key()))
-                                .expect(&format!("Unable to open {}", e.key()))
-                                .read_to_end(&mut buffer)
-                                .unwrap();
+                            let buffer = fs::read(root.join(e.key()))
+                                .expect(&format!("Unable to open {}", e.key()));
                             e.insert(Arc::new(buffer))
                                 .clone()
                         }
@@ -2266,7 +2273,6 @@ impl ResourceCache {
                 data,
                 descriptor: template.descriptor,
                 tiling: template.tiling,
-                viewport_tiles: None,
             });
         }
 

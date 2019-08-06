@@ -1,19 +1,30 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
-  UrlbarProvidersManager: "resource:///modules/UrlbarProvidersManager.jsm",
+  UrlbarProviderExtension: "resource:///modules/UrlbarProviderExtension.jsm",
 });
 
-var {ExtensionPreferencesManager} = ChromeUtils.import("resource://gre/modules/ExtensionPreferencesManager.jsm");
-var {getSettingsAPI} = ExtensionPreferencesManager;
+var { ExtensionPreferencesManager } = ChromeUtils.import(
+  "resource://gre/modules/ExtensionPreferencesManager.jsm"
+);
+var { getSettingsAPI } = ExtensionPreferencesManager;
 
 ExtensionPreferencesManager.addSetting("openViewOnFocus", {
-  prefNames: [
-    "browser.urlbar.openViewOnFocus",
-  ],
+  prefNames: ["browser.urlbar.openViewOnFocus"],
   setCallback(value) {
-    return {[this.prefNames[0]]: value};
+    return { [this.prefNames[0]]: value };
+  },
+});
+
+ExtensionPreferencesManager.addSetting("engagementTelemetry", {
+  prefNames: ["browser.urlbar.eventTelemetry.enabled"],
+  setCallback(value) {
+    return { [this.prefNames[0]]: value };
   },
 });
 
@@ -21,27 +32,74 @@ this.urlbar = class extends ExtensionAPI {
   getAPI(context) {
     return {
       urlbar: {
-        /**
-         * Event fired before a search starts, to get the provider behavior.
-         */
-        onQueryReady: new EventManager(context, "urlbar.onQueryReady", (fire, name) => {
-          UrlbarProvidersManager.addExtensionListener(
-            name, "queryready", queryContext => {
-              if (queryContext.isPrivate && !context.privateBrowsingAllowed) {
-                return Promise.resolve("inactive");
+        onBehaviorRequested: new EventManager({
+          context,
+          name: "urlbar.onBehaviorRequested",
+          register: (fire, providerName) => {
+            let provider = UrlbarProviderExtension.getOrCreate(providerName);
+            provider.setEventListener(
+              "behaviorRequested",
+              async queryContext => {
+                if (queryContext.isPrivate && !context.privateBrowsingAllowed) {
+                  return "inactive";
+                }
+                return fire.async(queryContext).catch(error => {
+                  throw context.normalizeError(error);
+                });
               }
-              return fire.async(queryContext);
+            );
+            return () => provider.setEventListener("behaviorRequested", null);
+          },
+        }).api(),
+
+        onQueryCanceled: new EventManager({
+          context,
+          name: "urlbar.onQueryCanceled",
+          register: (fire, providerName) => {
+            let provider = UrlbarProviderExtension.getOrCreate(providerName);
+            provider.setEventListener("queryCanceled", async queryContext => {
+              if (queryContext.isPrivate && !context.privateBrowsingAllowed) {
+                return;
+              }
+              await fire.async(queryContext).catch(error => {
+                throw context.normalizeError(error);
+              });
             });
-          return () => {
-            UrlbarProvidersManager.removeExtensionListener(name, "queryready");
-          };
+            return () => provider.setEventListener("queryCanceled", null);
+          },
+        }).api(),
+
+        onResultsRequested: new EventManager({
+          context,
+          name: "urlbar.onResultsRequested",
+          register: (fire, providerName) => {
+            let provider = UrlbarProviderExtension.getOrCreate(providerName);
+            provider.setEventListener(
+              "resultsRequested",
+              async queryContext => {
+                if (queryContext.isPrivate && !context.privateBrowsingAllowed) {
+                  return [];
+                }
+                return fire.async(queryContext).catch(error => {
+                  throw context.normalizeError(error);
+                });
+              }
+            );
+            return () => provider.setEventListener("resultsRequested", null);
+          },
         }).api(),
 
         openViewOnFocus: getSettingsAPI(
-          context.extension.id, "openViewOnFocus",
-          () => {
-            return UrlbarPrefs.get("openViewOnFocus");
-          }),
+          context.extension.id,
+          "openViewOnFocus",
+          () => UrlbarPrefs.get("openViewOnFocus")
+        ),
+
+        engagementTelemetry: getSettingsAPI(
+          context.extension.id,
+          "engagementTelemetry",
+          () => UrlbarPrefs.get("eventTelemetry.enabled")
+        ),
       },
     };
   }

@@ -1,11 +1,17 @@
 /* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* vim: set sts=2 sw=2 et tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 /* eslint-env mozilla/chrome-worker */
 
 "use strict";
 
-importScripts("resource://gre/modules/osfile.jsm",
-              "resource://gre/modules/profiler_get_symbols.js");
+importScripts(
+  "resource://gre/modules/osfile.jsm",
+  "resource://gre/modules/profiler_get_symbols.js"
+);
 
 // This worker uses the wasm module that was generated from https://github.com/mstange/profiler-get-symbols.
 // See ProfilerGetSymbols.jsm for more information.
@@ -25,7 +31,7 @@ function readFileInto(file, dataBuf) {
   const chunkSize = 4 * 1024 * 1024;
   let pos = 0;
   while (pos < dataBufLen) {
-    const chunkData = file.read({bytes: chunkSize});
+    const chunkData = file.read({ bytes: chunkSize });
     const chunkBytes = chunkData.byteLength;
     if (chunkBytes === 0) {
       break;
@@ -38,7 +44,7 @@ function readFileInto(file, dataBuf) {
 
 onmessage = async e => {
   try {
-    const {binaryPath, debugPath, breakpadId, module} = e.data;
+    const { binaryPath, debugPath, breakpadId, module } = e.data;
 
     if (!(module instanceof WebAssembly.Module)) {
       throw new Error("invalid WebAssembly module");
@@ -47,14 +53,18 @@ onmessage = async e => {
     // Instantiate the WASM module.
     await wasm_bindgen(module);
 
-    const {CompactSymbolTable, wasm} = wasm_bindgen;
+    const { CompactSymbolTable, wasm } = wasm_bindgen;
 
-    const binaryFile = OS.File.open(binaryPath, {read: true});
+    const binaryFile = OS.File.open(binaryPath, { read: true });
     const binaryDataBufLen = binaryFile.stat().size;
 
     // Read the binary file into WASM memory.
     const binaryDataBufPtr = wasm.__wbindgen_malloc(binaryDataBufLen);
-    const binaryDataBuf = new Uint8Array(wasm.memory.buffer, binaryDataBufPtr, binaryDataBufLen);
+    const binaryDataBuf = new Uint8Array(
+      wasm.memory.buffer,
+      binaryDataBufPtr,
+      binaryDataBufLen
+    );
     readFileInto(binaryFile, binaryDataBuf);
     binaryFile.close();
 
@@ -63,10 +73,14 @@ onmessage = async e => {
     let debugDataBufLen = binaryDataBufLen;
     let debugDataBufPtr = binaryDataBufPtr;
     if (debugPath && debugPath !== binaryPath) {
-      const debugFile = OS.File.open(debugPath, {read: true});
+      const debugFile = OS.File.open(debugPath, { read: true });
       debugDataBufLen = debugFile.stat().size;
       debugDataBufPtr = wasm.__wbindgen_malloc(debugDataBufLen);
-      const debugDataBuf = new Uint8Array(wasm.memory.buffer, debugDataBufPtr, debugDataBufLen);
+      const debugDataBuf = new Uint8Array(
+        wasm.memory.buffer,
+        debugDataBufPtr,
+        debugDataBufLen
+      );
       readFileInto(debugFile, debugDataBuf);
       debugFile.close();
     }
@@ -98,10 +112,15 @@ onmessage = async e => {
     let succeeded;
     try {
       succeeded =
-        wasm.get_compact_symbol_table(binaryDataBufPtr, binaryDataBufLen,
-                                      debugDataBufPtr, debugDataBufLen,
-                                      breakpadIdPtr, breakpadIdLen,
-                                      output.ptr) !== 0;
+        wasm.get_compact_symbol_table(
+          binaryDataBufPtr,
+          binaryDataBufLen,
+          debugDataBufPtr,
+          debugDataBufLen,
+          breakpadIdPtr,
+          breakpadIdLen,
+          output.ptr
+        ) !== 0;
     } catch (e) {
       succeeded = false;
     }
@@ -117,12 +136,16 @@ onmessage = async e => {
       throw new Error("get_compact_symbol_table returned false");
     }
 
-    const result = [output.take_addr(), output.take_index(), output.take_buffer()];
+    const result = [
+      output.take_addr(),
+      output.take_index(),
+      output.take_buffer(),
+    ];
     output.free();
 
-    postMessage({result}, result.map(r => r.buffer));
+    postMessage({ result }, result.map(r => r.buffer));
   } catch (error) {
-    postMessage({error: error.toString()});
+    postMessage({ error: error.toString() });
   }
   close();
 };

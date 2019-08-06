@@ -1,3 +1,9 @@
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "L10nMutations.h"
 #include "mozilla/dom/DocumentInlines.h"
 
@@ -34,8 +40,7 @@ void L10nMutations::AttributeChanged(Element* aElement, int32_t aNameSpaceID,
   if (!mObserving) {
     return;
   }
-  Document* uncomposedDoc = aElement->GetUncomposedDoc();
-  if (uncomposedDoc) {
+  if (aElement->IsInComposedDoc()) {
     if (aNameSpaceID == kNameSpaceID_None &&
         (aAttribute == nsGkAtoms::datal10nid ||
          aAttribute == nsGkAtoms::datal10nargs)) {
@@ -56,8 +61,7 @@ void L10nMutations::ContentAppended(nsIContent* aChild) {
     if (node->IsElement()) {
       Element* elem = node->AsElement();
 
-      Document* uncomposedDoc = elem->GetUncomposedDoc();
-      if (uncomposedDoc) {
+      if (elem->IsInComposedDoc()) {
         DOMLocalization::GetTranslatables(*node, elements, rv);
       }
     }
@@ -82,8 +86,7 @@ void L10nMutations::ContentInserted(nsIContent* aChild) {
   }
   Element* elem = aChild->AsElement();
 
-  Document* uncomposedDoc = elem->GetUncomposedDoc();
-  if (!uncomposedDoc) {
+  if (!elem->IsInComposedDoc()) {
     return;
   }
   DOMLocalization::GetTranslatables(*aChild, elements, rv);

@@ -18,6 +18,11 @@ const kESModuleList = new Set([
   /browser\/res\/payments\/PaymentsStore\.js$/,
   /browser\/aboutlogins\/components\/.*\.js$/,
   /browser\/aboutlogins\/.*\.js$/,
+  /browser\/protections.js$/,
+  /browser\/lockwise-card.js$/,
+  /browser\/monitor-card.js$/,
+  /toolkit\/content\/global\/certviewer\/components\/.*\.js$/,
+  /toolkit\/content\/global\/certviewer\/.*\.js$/,
 ]);
 
 // Normally we would use reflect.jsm to get Reflect.parse. However, if
@@ -84,7 +89,7 @@ function parsePromise(uri, parseTarget) {
         }
       }
     };
-    xhr.onerror = (error) => {
+    xhr.onerror = error => {
       ok(false, "XHR error reading " + uri + ": " + error);
       resolve(false);
     };
@@ -106,9 +111,12 @@ add_task(async function checkAllTheJS() {
   let parseValue = parseRequested && Services.prefs.getCharPref("parse");
   if (SpecialPowers.isDebugBuild) {
     if (!parseRequested) {
-      ok(true, "Test disabled on debug build. To run, execute: ./mach" +
-               " mochitest-browser --setpref parse=<case_sensitive_filter>" +
-               " browser/base/content/test/general/browser_parsable_script.js");
+      ok(
+        true,
+        "Test disabled on debug build. To run, execute: ./mach" +
+          " mochitest-browser --setpref parse=<case_sensitive_filter>" +
+          " browser/base/content/test/general/browser_parsable_script.js"
+      );
       return;
     }
     // Request a 15 minutes timeout (30 seconds * 30) for debug builds.

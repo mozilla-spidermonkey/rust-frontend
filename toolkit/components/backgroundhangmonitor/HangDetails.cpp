@@ -1,8 +1,15 @@
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "HangDetails.h"
 #include "nsIHangDetails.h"
 #include "nsPrintfCString.h"
 #include "mozilla/gfx/GPUParent.h"
 #include "mozilla/dom/ContentChild.h"
+#include "mozilla/dom/ContentParent.h"  // For RemoteTypePrefix
 #include "mozilla/Unused.h"
 #include "mozilla/GfxMessageUtils.h"  // For ParamTraits<GeckoProcessType>
 
@@ -255,7 +262,10 @@ void nsHangDetails::Submit() {
           case GeckoProcessType_Content: {
             auto cc = dom::ContentChild::GetSingleton();
             if (cc) {
-              hangDetails->mDetails.remoteType().Assign(cc->GetRemoteType());
+              // Use the prefix so we don't get URIs from Fission isolated
+              // processes.
+              hangDetails->mDetails.remoteType().Assign(
+                  dom::RemoteTypePrefix(cc->GetRemoteType()));
               Unused << cc->SendBHRThreadHang(hangDetails->mDetails);
             }
             break;

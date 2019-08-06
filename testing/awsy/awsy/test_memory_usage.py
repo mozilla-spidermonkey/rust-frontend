@@ -2,6 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
 import os
 import sys
 import yaml
@@ -187,7 +189,7 @@ class TestMemoryUsage(AwsyTestCase):
         try:
             result = self.marionette.execute_script(script,
                                                     script_timeout=180000)
-        except JavascriptException, e:
+        except JavascriptException as e:
             self.logger.error("removePreloadedBrowser() JavaScript error: %s" % e)
         except ScriptTimeoutException:
             self.logger.error("removePreloadedBrowser() timed out")

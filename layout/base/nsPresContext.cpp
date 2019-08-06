@@ -144,14 +144,11 @@ nsPresContext::nsPresContext(dom::Document* aDocument, nsPresContextType aType)
       mPresShell(nullptr),
       mDocument(aDocument),
       mMedium(aType == eContext_Galley ? nsGkAtoms::screen : nsGkAtoms::print),
-      mMediaEmulated(mMedium),
-      mLinkHandler(nullptr),
       mInflationDisabledForShrinkWrap(false),
       mSystemFontScale(1.0),
       mTextZoom(1.0),
       mEffectiveTextZoom(1.0),
       mFullZoom(1.0),
-      mOverrideDPPX(0.0),
       mLastFontInflationScreenSize(gfxSize(-1.0, -1.0)),
       mCurAppUnitsPerDevPixel(0),
       mAutoQualityMinFontSizePixelsPref(0),
@@ -187,7 +184,6 @@ nsPresContext::nsPresContext(dom::Document* aDocument, nsPresContextType aType)
       mPendingUIResolutionChanged(false),
       mPrefChangePendingNeedsReflow(false),
       mPostedPrefChangedRunnable(false),
-      mIsEmulatingMedia(false),
       mIsGlyph(false),
       mUsesRootEMUnits(false),
       mUsesExChUnits(false),
@@ -449,7 +445,11 @@ void nsPresContext::PreferenceChanged(const char* aPrefName) {
   if (prefName.EqualsLiteral("layout.css.dpi") ||
       prefName.EqualsLiteral("layout.css.devPixelsPerPx")) {
     int32_t oldAppUnitsPerDevPixel = mDeviceContext->AppUnitsPerDevPixel();
-    if (mDeviceContext->CheckDPIChange() && mPresShell) {
+    // We need to assume the DPI changes, since `mDeviceContext` is shared with
+    // other documents, and we'd need to save the return value of the first call
+    // for all of them.
+    Unused << mDeviceContext->CheckDPIChange();
+    if (mPresShell) {
       OwningNonNull<mozilla::PresShell> presShell(*mPresShell);
       // Re-fetch the view manager's window dimensions in case there's a
       // deferred resize which hasn't affected our mVisibleArea yet
@@ -609,7 +609,7 @@ nsresult nsPresContext::Init(nsDeviceContext* aDeviceContext) {
     mRefreshDriver =
         mDocument->GetDisplayDocument()->GetPresContext()->RefreshDriver();
   } else {
-    dom::Document* parent = mDocument->GetParentDocument();
+    dom::Document* parent = mDocument->GetInProcessParentDocument();
     // Unfortunately, sometimes |parent| here has no presshell because
     // printing screws up things.  Assert that in other cases it does,
     // but whenever the shell is null just fall back on using our own
@@ -622,7 +622,7 @@ nsresult nsPresContext::Init(nsDeviceContext* aDeviceContext) {
       nsCOMPtr<nsIDocShellTreeItem> ourItem = mDocument->GetDocShell();
       if (ourItem) {
         nsCOMPtr<nsIDocShellTreeItem> parentItem;
-        ourItem->GetSameTypeParent(getter_AddRefs(parentItem));
+        ourItem->GetInProcessSameTypeParent(getter_AddRefs(parentItem));
         if (parentItem) {
           Element* containingElement =
               parent->FindContentForSubDocument(mDocument);
@@ -979,12 +979,23 @@ void nsPresContext::SetOverrideDPPX(float aDPPX) {
   // SetOverrideDPPX is called during navigations, including history
   // traversals.  In that case, it's typically called with our current value,
   // and we don't need to actually do anything.
-  if (aDPPX == mOverrideDPPX) {
+  if (aDPPX == GetOverrideDPPX()) {
     return;
   }
 
-  mOverrideDPPX = aDPPX;
+  mMediaEmulationData.mDPPX = aDPPX;
   MediaFeatureValuesChanged({MediaFeatureChangeReason::ResolutionChange});
+}
+
+void nsPresContext::SetOverridePrefersColorScheme(
+    const Maybe<StylePrefersColorScheme>& aOverride) {
+  if (GetOverridePrefersColorScheme() == aOverride) {
+    return;
+  }
+  mMediaEmulationData.mPrefersColorScheme = aOverride;
+  // This is a bit of a lie, but it's the code-path that gets taken for regular
+  // system metrics changes via ThemeChanged().
+  MediaFeatureValuesChanged({MediaFeatureChangeReason::SystemMetricsChange});
 }
 
 gfxSize nsPresContext::ScreenSizeInchesForFontInflation(bool* aChanged) {
@@ -1015,7 +1026,6 @@ static bool CheckOverflow(ComputedStyle* aComputedStyle,
                           ScrollStyles* aStyles) {
   const nsStyleDisplay* display = aComputedStyle->StyleDisplay();
   if (display->mOverflowX == StyleOverflow::Visible &&
-      display->mScrollBehavior == NS_STYLE_SCROLL_BEHAVIOR_AUTO &&
       display->mOverscrollBehaviorX == StyleOverscrollBehavior::Auto &&
       display->mOverscrollBehaviorY == StyleOverscrollBehavior::Auto &&
       display->mScrollSnapType.strictness == StyleScrollSnapStrictness::None) {
@@ -1132,9 +1142,6 @@ nsISupports* nsPresContext::GetContainerWeak() const { return GetDocShell(); }
 nsIDocShell* nsPresContext::GetDocShell() const {
   return mDocument->GetDocShell();
 }
-
-/* virtual */
-void nsPresContext::Detach() { SetLinkHandler(nullptr); }
 
 bool nsPresContext::BidiEnabled() const { return Document()->GetBidiEnabled(); }
 
@@ -1292,6 +1299,7 @@ void nsPresContext::ThemeChangedInternal() {
   }
 
   RefreshSystemMetrics();
+  PreferenceSheet::Refresh();
 
   // Recursively notify all remote leaf descendants that the
   // system theme has changed.
@@ -1423,23 +1431,12 @@ void nsPresContext::UIResolutionChangedInternalScale(double aScale) {
                                    &aScale);
 }
 
-void nsPresContext::EmulateMedium(const nsAString& aMediaType) {
-  nsAtom* previousMedium = Medium();
-  mIsEmulatingMedia = true;
+void nsPresContext::EmulateMedium(nsAtom* aMediaType) {
+  MOZ_ASSERT(!aMediaType || aMediaType->IsAsciiLowercase());
+  RefPtr<const nsAtom> oldMedium = Medium();
+  mMediaEmulationData.mMedium = aMediaType;
 
-  nsAutoString mediaType;
-  nsContentUtils::ASCIIToLower(aMediaType, mediaType);
-
-  mMediaEmulated = NS_Atomize(mediaType);
-  if (mMediaEmulated != previousMedium && mPresShell) {
-    MediaFeatureValuesChanged({MediaFeatureChangeReason::MediumChange});
-  }
-}
-
-void nsPresContext::StopEmulatingMedium() {
-  nsAtom* previousMedium = Medium();
-  mIsEmulatingMedia = false;
-  if (Medium() != previousMedium) {
+  if (Medium() != oldMedium) {
     MediaFeatureValuesChanged({MediaFeatureChangeReason::MediumChange});
   }
 }
@@ -2471,12 +2468,6 @@ nsRootPresContext::~nsRootPresContext() {
   CancelApplyPluginGeometryTimer();
 }
 
-/* virtual */
-void nsRootPresContext::Detach() {
-  // XXXmats maybe also CancelApplyPluginGeometryTimer(); ?
-  nsPresContext::Detach();
-}
-
 void nsRootPresContext::RegisterPluginForGeometryUpdates(nsIContent* aPlugin) {
   mRegisteredPlugins.PutEntry(aPlugin);
 }
@@ -2709,6 +2700,27 @@ void nsRootPresContext::CollectPluginGeometryUpdates(
 #endif  // #ifndef XP_MACOSX
 }
 
+void nsRootPresContext::AddWillPaintObserver(nsIRunnable* aRunnable) {
+  if (!mWillPaintFallbackEvent.IsPending()) {
+    mWillPaintFallbackEvent = new RunWillPaintObservers(this);
+    Document()->Dispatch(TaskCategory::Other,
+                         do_AddRef(mWillPaintFallbackEvent));
+  }
+  mWillPaintObservers.AppendElement(aRunnable);
+}
+
+/**
+ * Run all runnables that need to get called before the next paint.
+ */
+void nsRootPresContext::FlushWillPaintObservers() {
+  mWillPaintFallbackEvent = nullptr;
+  nsTArray<nsCOMPtr<nsIRunnable>> observers;
+  observers.SwapElements(mWillPaintObservers);
+  for (uint32_t i = 0; i < observers.Length(); ++i) {
+    observers[i]->Run();
+  }
+}
+
 size_t nsRootPresContext::SizeOfExcludingThis(
     MallocSizeOf aMallocSizeOf) const {
   return nsPresContext::SizeOfExcludingThis(aMallocSizeOf);
@@ -2716,4 +2728,6 @@ size_t nsRootPresContext::SizeOfExcludingThis(
   // Measurement of the following members may be added later if DMD finds it is
   // worthwhile:
   // - mRegisteredPlugins
+  // - mWillPaintObservers
+  // - mWillPaintFallbackEvent
 }

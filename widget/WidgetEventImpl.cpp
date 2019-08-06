@@ -10,7 +10,7 @@
 #include "mozilla/MiscEvents.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_mousewheel.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
 #include "mozilla/dom/KeyboardEventBinding.h"
@@ -662,12 +662,16 @@ bool WidgetMouseEvent::IsMiddleClickPasteEnabled() {
 /* static */
 double WidgetWheelEvent::ComputeOverriddenDelta(double aDelta,
                                                 bool aIsForVertical) {
-  if (!StaticPrefs::MouseWheelHasRootScrollDeltaOverride()) {
+  if (!StaticPrefs::
+          mousewheel_system_scroll_override_on_root_content_enabled()) {
     return aDelta;
   }
-  int32_t intFactor = aIsForVertical
-                          ? StaticPrefs::MouseWheelRootScrollVerticalFactor()
-                          : StaticPrefs::MouseWheelRootScrollHorizontalFactor();
+  int32_t intFactor =
+      aIsForVertical
+          ? StaticPrefs::
+                mousewheel_system_scroll_override_on_root_content_vertical_factor()
+          : StaticPrefs::
+                mousewheel_system_scroll_override_on_root_content_horizontal_factor();
   // Making the scroll speed slower doesn't make sense. So, ignore odd factor
   // which is less than 1.0.
   if (intFactor <= 100) {
@@ -1037,10 +1041,8 @@ int32_t WidgetKeyboardEvent::GenericAccessModifierKeyPref() {
   static bool sInitialized = false;
   static int32_t sValue = -1;
   if (!sInitialized) {
-    nsresult rv =
-        Preferences::AddIntVarCache(&sValue, "ui.key.generalAccessKey", sValue);
-    sInitialized = NS_SUCCEEDED(rv);
-    MOZ_ASSERT(sInitialized);
+    Preferences::AddIntVarCache(&sValue, "ui.key.generalAccessKey", sValue);
+    sInitialized = true;
   }
   return sValue;
 }
@@ -1050,10 +1052,8 @@ int32_t WidgetKeyboardEvent::ChromeAccessModifierMaskPref() {
   static bool sInitialized = false;
   static int32_t sValue = 0;
   if (!sInitialized) {
-    nsresult rv =
-        Preferences::AddIntVarCache(&sValue, "ui.key.chromeAccess", sValue);
-    sInitialized = NS_SUCCEEDED(rv);
-    MOZ_ASSERT(sInitialized);
+    Preferences::AddIntVarCache(&sValue, "ui.key.chromeAccess", sValue);
+    sInitialized = true;
   }
   return sValue;
 }
@@ -1063,10 +1063,8 @@ int32_t WidgetKeyboardEvent::ContentAccessModifierMaskPref() {
   static bool sInitialized = false;
   static int32_t sValue = 0;
   if (!sInitialized) {
-    nsresult rv =
-        Preferences::AddIntVarCache(&sValue, "ui.key.contentAccess", sValue);
-    sInitialized = NS_SUCCEEDED(rv);
-    MOZ_ASSERT(sInitialized);
+    Preferences::AddIntVarCache(&sValue, "ui.key.contentAccess", sValue);
+    sInitialized = true;
   }
   return sValue;
 }

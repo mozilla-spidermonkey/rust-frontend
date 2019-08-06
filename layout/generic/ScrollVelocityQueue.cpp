@@ -6,7 +6,8 @@
 
 #include "ScrollVelocityQueue.h"
 
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_apz.h"
+#include "mozilla/StaticPrefs_layout.h"
 #include "nsPresContext.h"
 #include "nsRefreshDriver.h"
 
@@ -14,8 +15,10 @@ namespace mozilla {
 namespace layout {
 
 void ScrollVelocityQueue::Sample(const nsPoint& aScrollPosition) {
-  float flingSensitivity = StaticPrefs::ScrollSnapPredictionSensitivity();
-  int maxVelocity = StaticPrefs::ScrollSnapPredictionMaxVelocity();
+  float flingSensitivity =
+      StaticPrefs::layout_css_scroll_snap_prediction_sensitivity();
+  int maxVelocity =
+      StaticPrefs::layout_css_scroll_snap_prediction_max_velocity();
   maxVelocity = nsPresContext::CSSPixelsToAppUnits(maxVelocity);
   int maxOffset = maxVelocity * flingSensitivity;
   TimeStamp currentRefreshTime =

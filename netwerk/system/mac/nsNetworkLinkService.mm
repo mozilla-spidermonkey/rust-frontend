@@ -10,11 +10,11 @@
 #include <net/if_dl.h>
 #include <net/if_types.h>
 #include <net/route.h>
-
 #include <netinet/in.h>
 #include <netinet/if_ether.h>
-
 #include <arpa/inet.h>
+#include <ifaddrs.h>
+
 #include "nsCOMPtr.h"
 #include "nsIObserverService.h"
 #include "nsServiceManagerUtils.h"
@@ -26,6 +26,8 @@
 #include "mozilla/Base64.h"
 #include "mozilla/Telemetry.h"
 #include "nsNetworkLinkService.h"
+#include "MainThreadUtils.h"
+#include "../../base/IPv6Utils.h"
 
 #import <Cocoa/Cocoa.h>
 #import <netinet/in.h>
@@ -73,7 +75,8 @@ nsNetworkLinkService::nsNetworkLinkService()
       mReachability(nullptr),
       mCFRunLoop(nullptr),
       mRunLoopSource(nullptr),
-      mStoreRef(nullptr) {}
+      mStoreRef(nullptr),
+      mMutex("nsNetworkLinkService::mMutex") {}
 
 nsNetworkLinkService::~nsNetworkLinkService() = default;
 
@@ -98,6 +101,13 @@ nsNetworkLinkService::GetLinkType(uint32_t* aLinkType) {
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsNetworkLinkService::GetNetworkID(nsACString& aNetworkID) {
+  MutexAutoLock lock(mMutex);
+  aNetworkID = mNetworkId;
+  return NS_OK;
+}
+
 #ifndef SA_SIZE
 #  define SA_SIZE(sa)                                 \
     ((!(sa) || ((struct sockaddr*)(sa))->sa_len == 0) \
@@ -105,19 +115,18 @@ nsNetworkLinkService::GetLinkType(uint32_t* aLinkType) {
          : 1 + ((((struct sockaddr*)(sa))->sa_len - 1) | (sizeof(uint32_t) - 1)))
 #endif
 
-static char* getMac(struct sockaddr_dl* sdl, char* buf, size_t bufsize) {
-  char* cp;
-  int n, p = 0;
+static bool getMac(struct sockaddr_dl* sdl, char* buf, size_t bufsize) {
+  unsigned char* mac;
+  mac = (unsigned char*)LLADDR(sdl);
 
-  buf[0] = 0;
-  cp = (char*)LLADDR(sdl);
-  n = sdl->sdl_alen;
-  if (n > 0) {
-    while (--n >= 0) {
-      p += snprintf(&buf[p], bufsize - p, "%02x%s", *cp++ & 0xff, n > 0 ? ":" : "");
-    }
+  if (sdl->sdl_alen != 6) {
+    LOG(("networkid: unexpected MAC size %u", sdl->sdl_alen));
+    return false;
   }
-  return buf;
+
+  snprintf(buf, bufsize, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4],
+           mac[5]);
+  return true;
 }
 
 /* If the IP matches, get the MAC and return true */
@@ -125,8 +134,9 @@ static bool matchIp(struct sockaddr_dl* sdl, struct sockaddr_inarp* addr, char* 
                     size_t bufsize) {
   if (sdl->sdl_alen) {
     if (!strcmp(inet_ntoa(addr->sin_addr), ip)) {
-      getMac(sdl, buf, bufsize);
-      return true; /* done! */
+      if (getMac(sdl, buf, bufsize)) {
+        return true; /* done! */
+      }
     }
   }
   return false; /* continue */
@@ -223,47 +233,135 @@ static int routingTable(char* gw, size_t aGwLen) {
 }
 
 //
-// Figure out the current "network identification" string.
+// Figure out the current IPv4 "network identification" string.
 //
 // It detects the IP of the default gateway in the routing table, then the MAC
 // address of that IP in the ARP table before it hashes that string (to avoid
 // information leakage).
 //
-void nsNetworkLinkService::calculateNetworkId(void) {
-  bool found = false;
-  char hw[MAXHOSTNAMELEN];
-  if (!routingTable(hw, sizeof(hw))) {
-    char mac[256];  // big enough for a printable MAC address
-    if (scanArp(hw, mac, sizeof(mac))) {
-      LOG(("networkid: MAC %s\n", hw));
-      nsAutoCString mac(hw);
-      // This 'addition' could potentially be a
-      // fixed number from the profile or something.
-      nsAutoCString addition("local-rubbish");
-      nsAutoCString output;
-      SHA1Sum sha1;
-      nsCString combined(mac + addition);
-      sha1.update(combined.get(), combined.Length());
-      uint8_t digest[SHA1Sum::kHashSize];
-      sha1.finish(digest);
-      nsCString newString(reinterpret_cast<char*>(digest), SHA1Sum::kHashSize);
-      nsresult rv = Base64Encode(newString, output);
-      MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
-      LOG(("networkid: id %s\n", output.get()));
-      if (mNetworkId != output) {
-        // new id
-        Telemetry::Accumulate(Telemetry::NETWORK_ID, 1);
-        mNetworkId = output;
-      } else {
-        // same id
-        Telemetry::Accumulate(Telemetry::NETWORK_ID, 2);
-      }
-      found = true;
+static bool ipv4NetworkId(SHA1Sum* sha1) {
+  char gw[INET_ADDRSTRLEN];
+  if (!routingTable(gw, sizeof(gw))) {
+    char mac[18];  // big enough for a printable MAC address
+    if (scanArp(gw, mac, sizeof(mac))) {
+      LOG(("networkid: MAC %s\n", mac));
+      sha1->update(mac, strlen(mac));
+      return true;
     }
   }
-  if (!found) {
+  return false;
+}
+
+static bool ipv6NetworkId(SHA1Sum* sha1) {
+  const int kMaxPrefixes = 8;
+  struct ifaddrs* ifap;
+  struct in6_addr prefixStore[kMaxPrefixes];
+  struct in6_addr netmaskStore[kMaxPrefixes];
+  int prefixCount = 0;
+
+  memset(prefixStore, 0, sizeof(prefixStore));
+  memset(netmaskStore, 0, sizeof(netmaskStore));
+  if (!getifaddrs(&ifap)) {
+    struct ifaddrs* ifa;
+    for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
+      if (ifa->ifa_addr == NULL) {
+        continue;
+      }
+      if ((AF_INET6 == ifa->ifa_addr->sa_family) &&
+          !(ifa->ifa_flags & (IFF_POINTOPOINT | IFF_LOOPBACK))) {
+        // only IPv6 interfaces that aren't pointtopoint or loopback
+        struct sockaddr_in6* sin_netmask = (struct sockaddr_in6*)ifa->ifa_netmask;
+        if (sin_netmask) {
+          struct sockaddr_in6* sin_addr = (struct sockaddr_in6*)ifa->ifa_addr;
+          int scope = net::utils::ipv6_scope(sin_addr->sin6_addr.s6_addr);
+          if (scope == IPV6_SCOPE_GLOBAL) {
+            struct in6_addr prefix;
+            memset(&prefix, 0, sizeof(prefix));
+            // Get the prefix by combining the address and netmask.
+            for (size_t i = 0; i < sizeof(prefix); ++i) {
+              prefix.s6_addr[i] =
+                  sin_addr->sin6_addr.s6_addr[i] & sin_netmask->sin6_addr.s6_addr[i];
+            }
+
+            int match = 0;
+            // check if prefix was already found
+            for (int i = 0; i < prefixCount; i++) {
+              if (!memcmp(&prefixStore[i], &prefix, sizeof(prefix)) &&
+                  !memcmp(&netmaskStore[i], &sin_netmask->sin6_addr,
+                          sizeof(sin_netmask->sin6_addr))) {
+                // a match
+                match = 1;
+                break;
+              }
+            }
+            if (match) {
+              // prefix already found
+              continue;
+            }
+            memcpy(&prefixStore[prefixCount], &prefix, sizeof(prefix));
+            memcpy(&netmaskStore[prefixCount], &sin_netmask->sin6_addr,
+                   sizeof(sin_netmask->sin6_addr));
+            prefixCount++;
+            if (prefixCount == kMaxPrefixes) {
+              // reach maximum number of prefixes
+              break;
+            }
+          }
+        }
+      }
+    }
+    freeifaddrs(ifap);
+  }
+  if (!prefixCount) {
+    return false;
+  }
+  for (int i = 0; i < prefixCount; i++) {
+    sha1->update(&prefixStore[i], sizeof(prefixStore[i]));
+    sha1->update(&netmaskStore[i], sizeof(netmaskStore[i]));
+  }
+  return true;
+}
+
+void nsNetworkLinkService::calculateNetworkId(void) {
+  MOZ_ASSERT(!NS_IsMainThread(), "Should not be called on the main thread");
+  SHA1Sum sha1;
+  bool found4 = ipv4NetworkId(&sha1);
+  bool found6 = ipv6NetworkId(&sha1);
+
+  if (found4 || found6) {
+    // This 'addition' could potentially be a fixed number from the
+    // profile or something.
+    nsAutoCString addition("local-rubbish");
+    nsAutoCString output;
+    sha1.update(addition.get(), addition.Length());
+    uint8_t digest[SHA1Sum::kHashSize];
+    sha1.finish(digest);
+    nsAutoCString newString(reinterpret_cast<char*>(digest), SHA1Sum::kHashSize);
+    nsresult rv = Base64Encode(newString, output);
+    MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
+    LOG(("networkid: id %s\n", output.get()));
+    MutexAutoLock lock(mMutex);
+    if (mNetworkId != output) {
+      // new id
+      if (found4 && !found6) {
+        Telemetry::Accumulate(Telemetry::NETWORK_ID2, 1);  // IPv4 only
+      } else if (!found4 && found6) {
+        Telemetry::Accumulate(Telemetry::NETWORK_ID2, 3);  // IPv6 only
+      } else {
+        Telemetry::Accumulate(Telemetry::NETWORK_ID2, 4);  // Both!
+      }
+      mNetworkId = output;
+    } else {
+      // same id
+      LOG(("Same network id"));
+      Telemetry::Accumulate(Telemetry::NETWORK_ID2, 2);
+    }
+  } else {
     // no id
-    Telemetry::Accumulate(Telemetry::NETWORK_ID, 0);
+    LOG(("No network id"));
+    MutexAutoLock lock(mMutex);
+    mNetworkId.Truncate();
+    Telemetry::Accumulate(Telemetry::NETWORK_ID2, 0);
   }
 }
 

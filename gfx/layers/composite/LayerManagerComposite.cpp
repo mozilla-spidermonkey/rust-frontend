@@ -29,10 +29,12 @@
 #ifdef XP_MACOSX
 #  include "gfxPlatformMac.h"
 #endif
-#include "gfxRect.h"                    // for gfxRect
-#include "gfxUtils.h"                   // for frame color util
-#include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
-#include "mozilla/RefPtr.h"             // for RefPtr, already_AddRefed
+#include "gfxRect.h"             // for gfxRect
+#include "gfxUtils.h"            // for frame color util
+#include "mozilla/Assertions.h"  // for MOZ_ASSERT, etc
+#include "mozilla/RefPtr.h"      // for RefPtr, already_AddRefed
+#include "mozilla/StaticPrefs_gfx.h"
+#include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/gfx/2D.h"             // for DrawTarget
 #include "mozilla/gfx/Matrix.h"         // for Matrix4x4
 #include "mozilla/gfx/Point.h"          // for IntSize, Point
@@ -126,6 +128,13 @@ void HostLayerManager::RecordPaintTimes(const PaintTiming& aTiming) {
 
 void HostLayerManager::RecordUpdateTime(float aValue) {
   mDiagnostics->RecordUpdateTime(aValue);
+}
+
+void HostLayerManager::WriteCollectedFrames() {
+  if (mCompositionRecorder) {
+    mCompositionRecorder->WriteCollectedFrames();
+    mCompositionRecorder = nullptr;
+  }
 }
 
 /**
@@ -622,8 +631,8 @@ LayerComposite* LayerManagerComposite::RootLayer() const {
 
 void LayerManagerComposite::InvalidateDebugOverlay(nsIntRegion& aInvalidRegion,
                                                    const IntRect& aBounds) {
-  bool drawFps = StaticPrefs::LayersDrawFPS();
-  bool drawFrameColorBars = StaticPrefs::CompositorDrawColorBars();
+  bool drawFps = StaticPrefs::layers_acceleration_draw_fps();
+  bool drawFrameColorBars = StaticPrefs::gfx_draw_color_bars();
 
   if (drawFps) {
     aInvalidRegion.Or(aInvalidRegion, nsIntRect(0, 0, 650, 400));
@@ -633,7 +642,7 @@ void LayerManagerComposite::InvalidateDebugOverlay(nsIntRegion& aInvalidRegion,
   }
 
 #ifdef USE_SKIA
-  bool drawPaintTimes = StaticPrefs::AlwaysPaint();
+  bool drawPaintTimes = StaticPrefs::gfx_content_always_paint();
   if (drawPaintTimes) {
     aInvalidRegion.Or(aInvalidRegion, nsIntRect(PaintCounter::GetPaintRect()));
   }
@@ -653,8 +662,8 @@ void LayerManagerComposite::DrawPaintTimes(Compositor* aCompositor) {
 
 static uint16_t sFrameCount = 0;
 void LayerManagerComposite::RenderDebugOverlay(const IntRect& aBounds) {
-  bool drawFps = StaticPrefs::LayersDrawFPS();
-  bool drawFrameColorBars = StaticPrefs::CompositorDrawColorBars();
+  bool drawFps = StaticPrefs::layers_acceleration_draw_fps();
+  bool drawFrameColorBars = StaticPrefs::gfx_draw_color_bars();
 
   // Don't draw diagnostic overlays if we want to snapshot the output.
   if (mTarget) {
@@ -764,7 +773,7 @@ void LayerManagerComposite::RenderDebugOverlay(const IntRect& aBounds) {
   }
 
 #ifdef USE_SKIA
-  bool drawPaintTimes = StaticPrefs::AlwaysPaint();
+  bool drawPaintTimes = StaticPrefs::gfx_content_always_paint();
   if (drawPaintTimes) {
     DrawPaintTimes(mCompositor);
   }
@@ -775,9 +784,9 @@ RefPtr<CompositingRenderTarget>
 LayerManagerComposite::PushGroupForLayerEffects() {
   // This is currently true, so just making sure that any new use of this
   // method is flagged for investigation
-  MOZ_ASSERT(StaticPrefs::LayersEffectInvert() ||
-             StaticPrefs::LayersEffectGrayscale() ||
-             StaticPrefs::LayersEffectContrast() != 0.0);
+  MOZ_ASSERT(StaticPrefs::layers_effect_invert() ||
+             StaticPrefs::layers_effect_grayscale() ||
+             StaticPrefs::layers_effect_contrast() != 0.0);
 
   RefPtr<CompositingRenderTarget> previousTarget =
       mCompositor->GetCurrentRenderTarget();
@@ -905,9 +914,9 @@ void LayerManagerComposite::Render(const nsIntRegion& aInvalidRegion,
   // permutations. However, may as well just get the values onces and
   // then use them, just in case the consistency becomes important in
   // the future.
-  bool invertVal = StaticPrefs::LayersEffectInvert();
-  bool grayscaleVal = StaticPrefs::LayersEffectGrayscale();
-  float contrastVal = StaticPrefs::LayersEffectContrast();
+  bool invertVal = StaticPrefs::layers_effect_invert();
+  bool grayscaleVal = StaticPrefs::layers_effect_grayscale();
+  float contrastVal = StaticPrefs::layers_effect_contrast();
   bool haveLayerEffects = (invertVal || grayscaleVal || contrastVal != 0.0);
 
   // Set LayerScope begin/end frame
@@ -1078,6 +1087,8 @@ void LayerManagerComposite::Render(const nsIntRegion& aInvalidRegion,
 
   // Our payload has now been presented.
   mPayload.Clear();
+
+  mCompositor->WaitForGPU();
 }
 
 #if defined(MOZ_WIDGET_ANDROID)
@@ -1423,7 +1434,7 @@ bool LayerManagerComposite::CanUseCanvasLayerForSize(const IntSize& aSize) {
 }
 
 void LayerManagerComposite::NotifyShadowTreeTransaction() {
-  if (StaticPrefs::LayersDrawFPS()) {
+  if (StaticPrefs::layers_acceleration_draw_fps()) {
     mDiagnostics->AddTxnFrame();
   }
 }

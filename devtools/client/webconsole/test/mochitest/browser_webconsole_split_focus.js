@@ -5,20 +5,13 @@
 
 "use strict";
 
-const TEST_URI = "data:text/html;charset=utf-8,<p>Web Console test for splitting</p>";
+const TEST_URI =
+  "data:text/html;charset=utf-8,<p>Web Console test for splitting</p>";
 
 add_task(async function() {
-  // Run in legacy JsTerm.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", false);
-  await testHistory();
-
-  // And then in codeMirror JsTerm.
-  await pushPref("devtools.webconsole.jsterm.codeMirror", true);
-  await testHistory();
-});
-
-async function testHistory() {
-  info("Test that the split console input is focused and restores the focus properly.");
+  info(
+    "Test that the split console input is focused and restores the focus properly."
+  );
 
   const toolbox = await openNewTabAndToolbox(TEST_URI, "inspector");
   ok(!toolbox.splitConsole, "Split console is hidden by default");
@@ -34,15 +27,17 @@ async function testHistory() {
 
   ok(toolbox.splitConsole, "Split console is now visible");
 
-  const {hud} = toolbox.getPanel("webconsole");
+  const { hud } = toolbox.getPanel("webconsole");
   ok(isInputFocused(hud), "Split console input is focused by default");
 
   await toolbox.closeSplitConsole();
 
-  info("Making sure that the search box is refocused after closing the split console");
+  info(
+    "Making sure that the search box is refocused after closing the split console"
+  );
   activeElement = getActiveElement(inspector.panelDoc);
   is(activeElement, inspector.searchBox, "Search box is focused");
-}
+});
 
 function getActiveElement(doc) {
   let activeElement = doc.activeElement;

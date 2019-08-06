@@ -1,17 +1,22 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
 /* global windowTracker, EventManager, EventEmitter */
 
 /* eslint-disable complexity */
 
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+var { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
-ChromeUtils.defineModuleGetter(this, "LightweightThemeManager",
-                               "resource://gre/modules/LightweightThemeManager.jsm");
+ChromeUtils.defineModuleGetter(
+  this,
+  "LightweightThemeManager",
+  "resource://gre/modules/LightweightThemeManager.jsm"
+);
 
-var {
-  getWinUtils,
-} = ExtensionUtils;
+var { getWinUtils } = ExtensionUtils;
 
 const onUpdatedEmitter = new EventEmitter();
 
@@ -19,7 +24,6 @@ const onUpdatedEmitter = new EventEmitter();
 const emptyTheme = {
   details: {},
 };
-
 
 let defaultTheme = emptyTheme;
 // Map[windowId -> Theme instance]
@@ -36,7 +40,14 @@ class Theme {
    * @param {string} extension Extension that created the theme.
    * @param {Integer} windowId The windowId where the theme is applied.
    */
-  constructor({extension, details, darkDetails, windowId, experiment, startupData}) {
+  constructor({
+    extension,
+    details,
+    darkDetails,
+    windowId,
+    experiment,
+    startupData,
+  }) {
     this.extension = extension;
     this.details = details;
     this.darkDetails = darkDetails;
@@ -59,13 +70,13 @@ class Theme {
             images: {},
             properties: {},
           };
-          const {baseURI} = this.extension;
+          const { baseURI } = this.extension;
           if (experiment.stylesheet) {
             experiment.stylesheet = baseURI.resolve(experiment.stylesheet);
           }
           this.experiment = experiment;
         } else {
-          const {logger} = this.extension;
+          const { logger } = this.extension;
           logger.warn("This extension is not allowed to run theme experiments");
           return;
         }
@@ -107,8 +118,9 @@ class Theme {
     }
 
     if (this.windowId) {
-      this.lwtData.window =
-        getWinUtils(windowTracker.getWindow(this.windowId)).outerWindowID;
+      this.lwtData.window = getWinUtils(
+        windowTracker.getWindow(this.windowId)
+      ).outerWindowID;
       windowOverrides.set(this.windowId, this);
     } else {
       windowOverrides.clear();
@@ -117,8 +129,10 @@ class Theme {
     }
     onUpdatedEmitter.emit("theme-updated", this.details, this.windowId);
 
-    Services.obs.notifyObservers(this.lwtData,
-                                 "lightweight-theme-styling-update");
+    Services.obs.notifyObservers(
+      this.lwtData,
+      "lightweight-theme-styling-update"
+    );
   }
 
   /**
@@ -157,18 +171,17 @@ class Theme {
 
       let cssColor = val;
       if (Array.isArray(val)) {
-        cssColor = "rgb" + (val.length > 3 ? "a" : "") + "(" + val.join(",") + ")";
+        cssColor =
+          "rgb" + (val.length > 3 ? "a" : "") + "(" + val.join(",") + ")";
       }
 
       switch (color) {
-        case "accentcolor":
         case "frame":
           styles.accentcolor = cssColor;
           break;
         case "frame_inactive":
           styles.accentcolorInactive = cssColor;
           break;
-        case "textcolor":
         case "tab_background_text":
           styles.textcolor = cssColor;
           break;
@@ -219,10 +232,14 @@ class Theme {
           styles[color] = cssColor;
           break;
         default:
-          if (this.experiment && this.experiment.colors && color in this.experiment.colors) {
+          if (
+            this.experiment &&
+            this.experiment.colors &&
+            color in this.experiment.colors
+          ) {
             styles.experimental.colors[color] = cssColor;
           } else {
-            const {logger} = this.extension;
+            const { logger } = this.extension;
             logger.warn(`Unrecognized theme property found: colors.${color}`);
           }
           break;
@@ -237,7 +254,7 @@ class Theme {
    * @param {Object} styles Styles object in which to store the colors.
    */
   loadImages(images, styles) {
-    const {baseURI, logger} = this.extension;
+    const { baseURI, logger } = this.extension;
 
     for (let image of Object.keys(images)) {
       let val = images[image];
@@ -252,14 +269,17 @@ class Theme {
           styles.additionalBackgrounds = backgroundImages;
           break;
         }
-        case "headerURL":
         case "theme_frame": {
           let resolvedURL = baseURI.resolve(val);
           styles.headerURL = resolvedURL;
           break;
         }
         default: {
-          if (this.experiment && this.experiment.images && image in this.experiment.images) {
+          if (
+            this.experiment &&
+            this.experiment.images &&
+            image in this.experiment.images
+          ) {
             styles.experimental.images[image] = baseURI.resolve(val);
           } else {
             logger.warn(`Unrecognized theme property found: images.${image}`);
@@ -279,19 +299,24 @@ class Theme {
    * @param {Object} styles Styles object in which to store the colors.
    */
   loadProperties(properties, styles) {
-    let additionalBackgroundsCount = (styles.additionalBackgrounds &&
-      styles.additionalBackgrounds.length) || 0;
+    let additionalBackgroundsCount =
+      (styles.additionalBackgrounds && styles.additionalBackgrounds.length) ||
+      0;
     const assertValidAdditionalBackgrounds = (property, valueCount) => {
-      const {logger} = this.extension;
+      const { logger } = this.extension;
       if (!additionalBackgroundsCount) {
-        logger.warn(`The '${property}' property takes effect only when one ` +
-          `or more additional background images are specified using the 'additional_backgrounds' property.`);
+        logger.warn(
+          `The '${property}' property takes effect only when one ` +
+            `or more additional background images are specified using the 'additional_backgrounds' property.`
+        );
         return false;
       }
       if (additionalBackgroundsCount !== valueCount) {
-        logger.warn(`The amount of values specified for '${property}' ` +
-          `(${valueCount}) is not equal to the amount of additional background ` +
-          `images (${additionalBackgroundsCount}), which may lead to unexpected results.`);
+        logger.warn(
+          `The amount of values specified for '${property}' ` +
+            `(${valueCount}) is not equal to the amount of additional background ` +
+            `images (${additionalBackgroundsCount}), which may lead to unexpected results.`
+        );
       }
       return true;
     };
@@ -325,11 +350,17 @@ class Theme {
           break;
         }
         default: {
-          if (this.experiment && this.experiment.properties && property in this.experiment.properties) {
+          if (
+            this.experiment &&
+            this.experiment.properties &&
+            property in this.experiment.properties
+          ) {
             styles.experimental.properties[property] = val;
           } else {
-            const {logger} = this.extension;
-            logger.warn(`Unrecognized theme property found: properties.${property}`);
+            const { logger } = this.extension;
+            logger.warn(
+              `Unrecognized theme property found: properties.${property}`
+            );
           }
           break;
         }
@@ -355,7 +386,9 @@ class Theme {
     };
 
     if (windowId) {
-      lwtData.window = getWinUtils(windowTracker.getWindow(windowId)).outerWindowID;
+      lwtData.window = getWinUtils(
+        windowTracker.getWindow(windowId)
+      ).outerWindowID;
       windowOverrides.set(windowId, emptyTheme);
     } else {
       windowOverrides.clear();
@@ -364,15 +397,14 @@ class Theme {
     }
     onUpdatedEmitter.emit("theme-updated", {}, windowId);
 
-    Services.obs.notifyObservers(lwtData,
-                                 "lightweight-theme-styling-update");
+    Services.obs.notifyObservers(lwtData, "lightweight-theme-styling-update");
   }
 }
 
 this.theme = class extends ExtensionAPI {
   onManifestEntry(entryName) {
-    let {extension} = this;
-    let {manifest} = extension;
+    let { extension } = this;
+    let { manifest } = extension;
 
     defaultTheme = new Theme({
       extension,
@@ -388,7 +420,7 @@ this.theme = class extends ExtensionAPI {
       return;
     }
 
-    let {extension} = this;
+    let { extension } = this;
     for (let [windowId, theme] of windowOverrides) {
       if (theme.extension === extension) {
         Theme.unload(windowId);
@@ -401,11 +433,11 @@ this.theme = class extends ExtensionAPI {
   }
 
   getAPI(context) {
-    let {extension} = context;
+    let { extension } = context;
 
     return {
       theme: {
-        getCurrent: (windowId) => {
+        getCurrent: windowId => {
           // Take last focused window when no ID is supplied.
           if (!windowId) {
             windowId = windowTracker.getId(windowTracker.topWindow);
@@ -435,7 +467,7 @@ this.theme = class extends ExtensionAPI {
             experiment: this.extension.manifest.theme_experiment,
           });
         },
-        reset: (windowId) => {
+        reset: windowId => {
           if (windowId) {
             const browserWindow = windowTracker.getWindow(windowId, context);
             if (!browserWindow) {
@@ -458,10 +490,10 @@ this.theme = class extends ExtensionAPI {
               if (windowId) {
                 // Force access validation for incognito mode by getting the window.
                 if (windowTracker.getWindow(windowId, context, false)) {
-                  fire.async({theme, windowId});
+                  fire.async({ theme, windowId });
                 }
               } else {
-                fire.async({theme});
+                fire.async({ theme });
               }
             };
 

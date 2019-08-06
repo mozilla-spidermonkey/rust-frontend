@@ -49,6 +49,7 @@ linux64-shippable/opt:
     test-sets:
         - common-tests
         - web-platform-tests
+        - web-platform-tests-wdspec-headless
         - opt-only-tests
         - desktop-screenshot-capture
         - talos
@@ -152,6 +153,7 @@ windows7-32-shippable/opt:
         - windows-talos
         - windows-tests
         - web-platform-tests
+        - web-platform-tests-wdspec-headless
         - raptor-chromium
         - raptor-firefox
 
@@ -197,7 +199,7 @@ windows10-64/opt:
         - marionette-media-tests
 
 windows10-aarch64/opt:
-    build-platform: win64-aarch64/opt
+    build-platform: win64-aarch64-shippable/opt
     test-sets:
         - awsy
         - marionette-gpu-tests
@@ -205,11 +207,11 @@ windows10-aarch64/opt:
         - windows-aarch64-tests
         - windows-talos
 
-windows10-64-ux/opt:
+windows10-64-ref-hw-2017/opt:
     build-platform: win64-shippable/opt
     test-sets:
         - raptor-firefox
-        - talos-ux
+        - talos-ref-hw
 
 windows10-64-shippable/opt:
     build-platform: win64-shippable/opt
@@ -221,6 +223,7 @@ windows10-64-shippable/opt:
         - marionette-gpu-tests
         - windows-tests
         - web-platform-tests
+        - web-platform-tests-wdspec-headless
         - raptor-firefox
         - raptor-chromium
         - raptor-profiling
@@ -271,18 +274,19 @@ macosx1014-64-shippable/opt:
     test-sets:
         - macosx1014-64-tests
         - macosx64-talos
-        # - desktop-screenshot-capture
+        - desktop-screenshot-capture
         - awsy
         - raptor-chromium
         - raptor-firefox
         - raptor-profiling
         - marionette-media-tests
+        - web-platform-tests-wdspec-headless
 
 macosx1014-64/debug:
-    build-platform: macosx64-shippable/opt
+    build-platform: macosx64/debug
     test-sets:
         - macosx1014-64-tests
-        # - marionette-media-tests
+        - marionette-media-tests
 
 macosx1014-64-devedition/opt:
     build-platform: macosx64-devedition-nightly/opt
@@ -304,28 +308,6 @@ macosx1014-64-ccov/debug:
     test-sets:
         - macosx1014-64-tests
 
-macosx1010-64/debug:
-    build-platform: macosx64/debug
-    test-sets:
-        - macosx64-tests
-        - marionette-media-tests
-
-macosx1010-64-shippable/opt:
-    build-platform: macosx64-shippable/opt
-    test-sets:
-        - macosx64-tests
-        - desktop-screenshot-capture
-
-macosx1010-64-devedition/opt:
-    build-platform: macosx64-devedition-nightly/opt
-    test-sets:
-        - macosx64-tests
-
-macosx1010-64-ccov/debug:
-    build-platform: macosx64-ccov/debug
-    test-sets:
-        - macosx64-tests
-
 ##
 # Android platforms (matching /android-em.*/)
 #
@@ -335,6 +317,7 @@ android-em-4.3-arm7-api-16/debug:
     build-platform: android-api-16/debug
     test-sets:
         - android-common-tests
+        - android-debug-tests
 
 # Disable ccov testing on Android due to issues with
 # Java 8 features. Bug 1498721.
@@ -406,6 +389,16 @@ android-hw-p2-8-0-arm7-api-16/debug:
     build-platform: android-api-16/debug
     test-sets:
         - android-hw-arm7-debug-unittests
+
+android-hw-p2-8-0-arm7-api-16-qr/opt:
+    build-platform: android-api-16/opt
+    test-sets:
+        - android-hw-arm7-qr
+
+android-hw-p2-8-0-arm7-api-16-qr/debug:
+    build-platform: android-api-16/debug
+    test-sets:
+        - android-hw-arm7-qr
 
 android-hw-p2-8-0-android-aarch64/opt:
     build-platform: android-aarch64/opt

@@ -36,18 +36,38 @@
  *   Date when the study was ended.
  */
 
-const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
-ChromeUtils.defineModuleGetter(this, "IndexedDB", "resource://gre/modules/IndexedDB.jsm");
-ChromeUtils.defineModuleGetter(this, "AddonManager", "resource://gre/modules/AddonManager.jsm");
 ChromeUtils.defineModuleGetter(
-  this, "CleanupManager", "resource://normandy/lib/CleanupManager.jsm"
+  this,
+  "IndexedDB",
+  "resource://gre/modules/IndexedDB.jsm"
 );
-ChromeUtils.defineModuleGetter(this, "LogManager", "resource://normandy/lib/LogManager.jsm");
 ChromeUtils.defineModuleGetter(
-  this, "TelemetryEnvironment", "resource://gre/modules/TelemetryEnvironment.jsm"
+  this,
+  "AddonManager",
+  "resource://gre/modules/AddonManager.jsm"
 );
-ChromeUtils.defineModuleGetter(this, "TelemetryEvents", "resource://normandy/lib/TelemetryEvents.jsm");
+ChromeUtils.defineModuleGetter(
+  this,
+  "CleanupManager",
+  "resource://normandy/lib/CleanupManager.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
+  "LogManager",
+  "resource://normandy/lib/LogManager.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
+  "TelemetryEnvironment",
+  "resource://gre/modules/TelemetryEnvironment.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
+  "TelemetryEvents",
+  "resource://normandy/lib/TelemetryEvents.jsm"
+);
 
 var EXPORTED_SYMBOLS = ["AddonStudies"];
 
@@ -161,7 +181,9 @@ var AddonStudies = {
 
   async migrations() {
     const db = await getDatabase();
-    const oldVersion = await db.objectStore(VERSION_STORE_NAME, "readonly").get("version") || 0;
+    const oldVersion =
+      (await db.objectStore(VERSION_STORE_NAME, "readonly").get("version")) ||
+      0;
 
     if (oldVersion < 2) {
       log.debug(`Running data migrations from ${oldVersion} to 2`);
@@ -207,7 +229,9 @@ var AddonStudies = {
    */
   async onUninstalled(addon) {
     const activeStudies = (await this.getAll()).filter(study => study.active);
-    const matchingStudy = activeStudies.find(study => study.addonId === addon.id);
+    const matchingStudy = activeStudies.find(
+      study => study.addonId === addon.id
+    );
     if (matchingStudy) {
       await this.markAsEnded(matchingStudy, "uninstalled");
     }
@@ -255,9 +279,13 @@ var AddonStudies = {
     let results = await getStore(db, "readonly").getAll();
 
     if (branched == AddonStudies.FILTER_BRANCHED_ONLY) {
-      results = results.filter(study => study.branch != AddonStudies.NO_BRANCHES_MARKER);
+      results = results.filter(
+        study => study.branch != AddonStudies.NO_BRANCHES_MARKER
+      );
     } else if (branched == AddonStudies.FILTER_NOT_BRANCHED) {
-      results = results.filter(study => study.branch == AddonStudies.NO_BRANCHES_MARKER);
+      results = results.filter(
+        study => study.branch == AddonStudies.NO_BRANCHES_MARKER
+      );
     }
     return results;
   },
@@ -323,7 +351,7 @@ var AddonStudies = {
     });
     TelemetryEnvironment.setExperimentInactive(study.slug);
 
-    await this.onUnenroll(study.addonId, reason);
+    await this.callUnenrollListeners(study.addonId, reason);
   },
 
   // Maps extension id -> Set(callbacks)
@@ -345,22 +373,46 @@ var AddonStudies = {
   },
 
   /**
+   * Unregister a callback to be invoked when a given study ends.
+   *
+   * @param {string} id         The extension id
+   * @param {function} listener The callback
+   */
+  removeUnenrollListener(id, listener) {
+    let listeners = this._unenrollListeners.get(id);
+    if (listeners) {
+      listeners.delete(listener);
+    }
+  },
+
+  /**
    * Invoke the unenroll callback (if any) for the given extension
    *
    * @param {string} id The extension id
+   * @param {string} reason Why the study is ending
    *
    * @returns {Promise} A Promise resolved after the unenroll listener
    *                    (if any) has finished its unenroll tasks.
    */
-  onUnenroll(id, reason) {
-    let callbacks = this._unenrollListeners.get(id);
-    let promises = [];
-    if (callbacks) {
-      for (let callback of callbacks) {
-        promises.push(callback(reason));
+  async callUnenrollListeners(id, reason) {
+    let callbacks = this._unenrollListeners.get(id) || [];
+
+    async function callCallback(cb, reason) {
+      try {
+        await cb(reason);
+      } catch (err) {
+        Cu.reportError(err);
       }
     }
-    return Promise.all(promises);
+
+    let promises = [];
+    for (let callback of callbacks) {
+      promises.push(callCallback(callback, reason));
+    }
+
+    // Wait for all the promises to be settled. This won't throw even if some of
+    // the listeners fail.
+    await Promise.all(promises);
   },
 };
 

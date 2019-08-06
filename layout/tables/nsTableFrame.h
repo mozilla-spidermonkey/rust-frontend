@@ -10,7 +10,6 @@
 #include "imgIContainer.h"
 #include "nscore.h"
 #include "nsContainerFrame.h"
-#include "nsStyleCoord.h"
 #include "nsStyleConsts.h"
 #include "nsCellMap.h"
 #include "nsGkAtoms.h"
@@ -220,6 +219,7 @@ class nsTableFrame : public nsContainerFrame {
   virtual void AppendFrames(ChildListID aListID,
                             nsFrameList& aFrameList) override;
   virtual void InsertFrames(ChildListID aListID, nsIFrame* aPrevFrame,
+                            const nsLineList::iterator* aPrevFrameLine,
                             nsFrameList& aFrameList) override;
   virtual void RemoveFrame(ChildListID aListID, nsIFrame* aOldFrame) override;
 

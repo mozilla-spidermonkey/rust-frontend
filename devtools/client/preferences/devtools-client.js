@@ -2,8 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// Enable DevTools WebIDE by default
-pref("devtools.webide.enabled", true);
+// Disable WebIDE and ConnectPage by default (Bug 1539451)
+pref("devtools.webide.enabled", false);
+pref("devtools.connectpage.enabled", false);
 
 // Toolbox preferences
 pref("devtools.toolbox.footer.height", 250);
@@ -16,6 +17,11 @@ pref("devtools.toolbox.zoomValue", "1");
 pref("devtools.toolbox.splitconsoleEnabled", false);
 pref("devtools.toolbox.splitconsoleHeight", 100);
 pref("devtools.toolbox.tabsOrder", "");
+
+// The fission pref is enabling the "Omniscient Browser Toolbox", which will make it
+// possible to debug anything in Firefox (See Bug 1570639 for more information).
+// ⚠ This is a work in progress. Expect weirdness when the pref is flipped on ⚠
+pref("devtools.browsertoolbox.fission", false);
 
 // Toolbox Button preferences
 pref("devtools.command-button-pick.enabled", true);
@@ -81,12 +87,12 @@ pref("devtools.eyedropper.zoom", 6);
 
 // Enable to collapse attributes that are too long.
 pref("devtools.markup.collapseAttributes", true);
-
 // Length to collapse attributes
 pref("devtools.markup.collapseAttributeLength", 120);
-
 // Whether to auto-beautify the HTML on copy.
 pref("devtools.markup.beautifyOnCopy", false);
+// Whether or not the DOM mutation breakpoints context menu are enabled in the markup view
+pref("devtools.markup.mutationBreakpoints.enabled", false);
 
 // DevTools default color unit
 pref("devtools.defaultColorUnit", "authored");
@@ -169,9 +175,7 @@ pref("devtools.netmonitor.visibleColumns",
 );
 pref("devtools.netmonitor.columnsData",
   '[{"name":"status","minWidth":30,"width":5}, {"name":"method","minWidth":30,"width":5}, {"name":"domain","minWidth":30,"width":10}, {"name":"file","minWidth":30,"width":25}, {"name":"url","minWidth":30,"width":25}, {"name":"cause","minWidth":30,"width":10},{"name":"type","minWidth":30,"width":5},{"name":"transferred","minWidth":30,"width":10},{"name":"contentSize","minWidth":30,"width":5},{"name":"waterfall","minWidth":150,"width":25}]');
-
-// Support for columns resizing pref is now enabled (after merge date 03/18/19).
-pref("devtools.netmonitor.features.resizeColumns", true);
+pref("devtools.netmonitor.ws.payload-preview-height", 128);
 
 pref("devtools.netmonitor.response.ui.limit", 10240);
 
@@ -189,8 +193,12 @@ pref("devtools.netmonitor.har.forceExport", false);
 pref("devtools.netmonitor.har.pageLoadedTimeout", 1500);
 pref("devtools.netmonitor.har.enableAutoExportToFile", false);
 
-// Support for WebSocket monitoring pref (pending complete implementation)
+// Enable WebSocket monitoring in Nightly builds.
+#if defined(NIGHTLY_BUILD)
+pref("devtools.netmonitor.features.webSockets", true);
+#else
 pref("devtools.netmonitor.features.webSockets", false);
+#endif
 
 // Scratchpad settings
 // - recentFileMax: The maximum number of recently-opened files
@@ -277,17 +285,25 @@ pref("devtools.webconsole.sidebarToggle", true);
 pref("devtools.webconsole.sidebarToggle", false);
 #endif
 
-// Enable CodeMirror in the JsTerm
-pref("devtools.webconsole.jsterm.codeMirror", true);
+// Enable editor mode in the console in Nightly builds.
+#if defined(NIGHTLY_BUILD)
+pref("devtools.webconsole.features.editor", true);
+#else
+pref("devtools.webconsole.features.editor", false);
+#endif
 
-// Enable editor mode in the console.
+// Saved editor mode state in the console.
 pref("devtools.webconsole.input.editor", false);
+
+// Editor width for webconsole and browserconsole
+pref("devtools.webconsole.input.editorWidth", 0);
+pref("devtools.browserconsole.input.editorWidth", 0);
 
 // Disable the new performance recording panel by default
 pref("devtools.performance.new-panel-enabled", false);
 
-// Enable message grouping in the console, false by default
-pref("devtools.webconsole.groupWarningMessages", false);
+// Enable message grouping in the console, true by default
+pref("devtools.webconsole.groupWarningMessages", true);
 
 // Saved state of the Display content messages checkbox in the browser console.
 pref("devtools.browserconsole.contentMessages", false);
@@ -349,9 +365,6 @@ pref("devtools.responsive.showUserAgentInput", true);
 #else
 pref("devtools.responsive.showUserAgentInput", false);
 #endif
-
-// Enable new about:debugging.
-pref("devtools.aboutdebugging.new-enabled", true);
 
 // Show tab debug targets for This Firefox (on by default for local builds).
 #ifdef MOZILLA_OFFICIAL

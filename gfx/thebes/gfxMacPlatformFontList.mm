@@ -910,7 +910,7 @@ void gfxMacPlatformFontList::AddFamily(CFStringRef aFamily) {
   AddFamily(NS_ConvertUTF16toUTF8(familyName), isHiddenSystemFont);
 }
 
-void gfxMacPlatformFontList::ReadSystemFontList(InfallibleTArray<SystemFontListEntry>* aList) {
+void gfxMacPlatformFontList::ReadSystemFontList(nsTArray<SystemFontListEntry>* aList) {
   // Note: We rely on the records for mSystemTextFontFamilyName and
   // mSystemDisplayFontFamilyName (if present) being *before* the main
   // font list, so that those names are known in the content process
@@ -1010,7 +1010,72 @@ void gfxMacPlatformFontList::InitSharedFontListForPlatform() {
     ApplyWhitelist(families);
     families.Sort();
     SharedFontList()->SetFamilyNames(families);
+    InitAliasesForSingleFaceList();
     GetPrefsAndStartLoader();
+  }
+}
+
+void gfxMacPlatformFontList::InitAliasesForSingleFaceList() {
+  AutoTArray<nsCString, 10> singleFaceFonts;
+  gfxFontUtils::GetPrefsFontList("font.single-face-list", singleFaceFonts);
+
+  for (auto& familyName : singleFaceFonts) {
+    LOG_FONTLIST(("(fontlist-singleface) face name: %s\n", familyName.get()));
+    // Each entry in the "single face families" list is expected to be a
+    // colon-separated pair of FaceName:Family,
+    // where FaceName is the individual face name (psname) of a font
+    // that should be exposed as a separate family name,
+    // and Family is the standard family to which that face belongs.
+    // The only such face listed by default is
+    //    Osaka-Mono:Osaka
+    auto colon = familyName.FindChar(':');
+    if (colon == kNotFound) {
+      continue;
+    }
+
+    // Look for the parent family in the main font family list,
+    // and ensure we have loaded its list of available faces.
+    nsAutoCString key;
+    GenerateFontListKey(Substring(familyName, colon + 1), key);
+    fontlist::Family* family = SharedFontList()->FindFamily(key);
+    if (!family) {
+      // The parent family is not present, so just ignore this entry.
+      continue;
+    }
+    if (!family->IsInitialized()) {
+      if (!gfxPlatformFontList::InitializeFamily(family)) {
+        // This shouldn't ever fail, but if it does, we can safely ignore it.
+        MOZ_ASSERT(false, "failed to initialize font family");
+        continue;
+      }
+    }
+
+    // Truncate the entry from prefs at the colon, so now it is just the
+    // desired single-face-family name.
+    familyName.Truncate(colon);
+
+    // Look through the family's faces to see if this one is present.
+    fontlist::FontList* list = SharedFontList();
+    const fontlist::Pointer* facePtrs = family->Faces(list);
+    for (size_t i = 0; i < family->NumFaces(); i++) {
+      if (facePtrs[i].IsNull()) {
+        continue;
+      }
+      auto face = static_cast<const fontlist::Face*>(facePtrs[i].ToPtr(list));
+      if (face->mDescriptor.AsString(list).Equals(familyName)) {
+        // Found it! Create an entry in the Alias table.
+        GenerateFontListKey(familyName, key);
+        if (SharedFontList()->FindFamily(key) || mAliasTable.Get(familyName)) {
+          // If the family name is already known, something's misconfigured;
+          // just ignore it.
+          MOZ_ASSERT(false, "single-face family already known");
+          break;
+        }
+        auto af = mAliasTable.LookupOrAdd(familyName);
+        af->AppendElement(facePtrs[i]);
+        break;
+      }
+    }
   }
 }
 
@@ -1311,22 +1376,20 @@ gfxFontEntry* gfxMacPlatformFontList::LookupLocalFont(const nsACString& aFontNam
     return nullptr;
   }
 
-  newFontEntry = new MacOSFontEntry(aFontName, fontRef, aWeightForEntry,
-                                    aStretchForEntry, aStyleForEntry, false,
-                                    true);
+  newFontEntry = new MacOSFontEntry(aFontName, fontRef, aWeightForEntry, aStretchForEntry,
+                                    aStyleForEntry, false, true);
   ::CFRelease(fontRef);
 
   return newFontEntry;
 }
 
-static void ReleaseData(void* info, const void* data, size_t size) {
-  free((void*)data);
-}
+static void ReleaseData(void* info, const void* data, size_t size) { free((void*)data); }
 
-gfxFontEntry* gfxMacPlatformFontList::MakePlatformFont(
-    const nsACString& aFontName, WeightRange aWeightForEntry,
-    StretchRange aStretchForEntry, SlantStyleRange aStyleForEntry,
-    const uint8_t* aFontData, uint32_t aLength) {
+gfxFontEntry* gfxMacPlatformFontList::MakePlatformFont(const nsACString& aFontName,
+                                                       WeightRange aWeightForEntry,
+                                                       StretchRange aStretchForEntry,
+                                                       SlantStyleRange aStyleForEntry,
+                                                       const uint8_t* aFontData, uint32_t aLength) {
   NS_ASSERTION(aFontData, "MakePlatformFont called with null data");
 
   // create the font entry
@@ -1347,9 +1410,8 @@ gfxFontEntry* gfxMacPlatformFontList::MakePlatformFont(
   }
 
   auto newFontEntry =
-      MakeUnique<MacOSFontEntry>(NS_ConvertUTF16toUTF8(uniqueName), fontRef,
-                                 aWeightForEntry, aStretchForEntry,
-                                 aStyleForEntry, true, false);
+      MakeUnique<MacOSFontEntry>(NS_ConvertUTF16toUTF8(uniqueName), fontRef, aWeightForEntry,
+                                 aStretchForEntry, aStyleForEntry, true, false);
   ::CFRelease(fontRef);
   return newFontEntry.release();
 }

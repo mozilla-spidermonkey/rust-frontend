@@ -25,10 +25,10 @@
 #include "builtin/TypedObject.h"
 #include "builtin/WeakMapObject.h"
 #include "builtin/WeakSetObject.h"
+#include "debugger/DebugAPI.h"
 #include "gc/FreeOp.h"
 #include "js/ProtoKey.h"
 #include "vm/DateObject.h"
-#include "vm/Debugger.h"
 #include "vm/EnvironmentObject.h"
 #include "vm/HelperThreads.h"
 #include "vm/JSContext.h"
@@ -36,6 +36,7 @@
 #include "vm/RegExpStatics.h"
 #include "vm/RegExpStaticsObject.h"
 
+#include "gc/FreeOp-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/NativeObject-inl.h"
@@ -840,31 +841,12 @@ bool js::DefineToStringTag(JSContext* cx, HandleObject obj, JSAtom* tag) {
   return DefineDataProperty(cx, obj, toStringTagId, tagString, JSPROP_READONLY);
 }
 
-static void GlobalDebuggees_finalize(FreeOp* fop, JSObject* obj) {
-  MOZ_ASSERT(fop->maybeOnHelperThread());
-  fop->delete_(
-      (GlobalObject::DebuggerVector*)obj->as<NativeObject>().getPrivate());
-}
-
-static const ClassOps GlobalDebuggees_classOps = {nullptr,
-                                                  nullptr,
-                                                  nullptr,
-                                                  nullptr,
-                                                  nullptr,
-                                                  nullptr,
-                                                  GlobalDebuggees_finalize};
-
-static const Class GlobalDebuggees_class = {
-    "GlobalDebuggee", JSCLASS_HAS_PRIVATE | JSCLASS_BACKGROUND_FINALIZE,
-    &GlobalDebuggees_classOps};
-
 GlobalObject::DebuggerVector* GlobalObject::getDebuggers() const {
   Value debuggers = getReservedSlot(DEBUGGERS);
   if (debuggers.isUndefined()) {
     return nullptr;
   }
-  MOZ_ASSERT(debuggers.toObject().getClass() == &GlobalDebuggees_class);
-  return (DebuggerVector*)debuggers.toObject().as<NativeObject>().getPrivate();
+  return DebugAPI::getGlobalDebuggers(&debuggers.toObject());
 }
 
 /* static */ GlobalObject::DebuggerVector* GlobalObject::getOrCreateDebuggers(
@@ -875,18 +857,13 @@ GlobalObject::DebuggerVector* GlobalObject::getDebuggers() const {
     return debuggers;
   }
 
-  NativeObject* obj =
-      NewNativeObjectWithGivenProto(cx, &GlobalDebuggees_class, nullptr);
+  JSObject* obj = DebugAPI::newGlobalDebuggersHolder(cx);
   if (!obj) {
     return nullptr;
   }
-  debuggers = cx->new_<DebuggerVector>();
-  if (!debuggers) {
-    return nullptr;
-  }
-  obj->setPrivate(debuggers);
+
   global->setReservedSlot(DEBUGGERS, ObjectValue(*obj));
-  return debuggers;
+  return global->getDebuggers();
 }
 
 /* static */

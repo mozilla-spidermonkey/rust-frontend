@@ -47,17 +47,16 @@
 #include "js/Printf.h"
 #include "js/UniquePtr.h"
 #include "util/Windows.h"
-#include "vm/Debugger.h"
 #include "vm/HelperThreads.h"
 #include "vm/Realm.h"
 #include "vm/TraceLogging.h"
 #include "vtune/VTuneWrapper.h"
 
+#include "debugger/DebugAPI-inl.h"
 #include "gc/PrivateIterators-inl.h"
 #include "jit/JitFrames-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "jit/shared/Lowering-shared-inl.h"
-#include "vm/Debugger-inl.h"
 #include "vm/EnvironmentObject-inl.h"
 #include "vm/GeckoProfiler-inl.h"
 #include "vm/JSObject-inl.h"
@@ -129,7 +128,7 @@ JitContext::JitContext() : JitContext(nullptr, nullptr, nullptr) {}
 
 JitContext::~JitContext() { SetJitContext(prev_); }
 
-bool jit::InitializeIon() {
+bool jit::InitializeJit() {
   if (!TlsJitContext.init()) {
     return false;
   }
@@ -146,6 +145,12 @@ bool jit::InitializeIon() {
 #if defined(JS_CODEGEN_ARM)
   InitARMFlags();
 #endif
+
+  // Note: these flags need to be initialized after the InitARMFlags call above.
+  JitOptions.supportsFloatingPoint = MacroAssembler::SupportsFloatingPoint();
+  JitOptions.supportsUnalignedAccesses =
+      MacroAssembler::SupportsUnalignedAccesses();
+
   CheckPerf();
   return true;
 }
@@ -165,7 +170,6 @@ JitRuntime::JitRuntime()
       interpreterStubOffset_(0),
       doubleToInt32ValueStubOffset_(0),
       debugTrapHandlers_(),
-      baselineDebugModeOSRHandler_(nullptr),
       baselineInterpreter_(),
       trampolineCode_(nullptr),
       jitcodeGlobalTable_(nullptr),
@@ -218,6 +222,11 @@ bool JitRuntime::initialize(JSContext* cx) {
     return false;
   }
 
+  // Initialize the jitCodeRaw of the Runtime's canonical SelfHostedLazyScript
+  // to point to the interpreter trampoline.
+  cx->runtime()->selfHostedLazyScript.ref().jitCodeRaw_ =
+      interpreterStub().value;
+
   return true;
 }
 
@@ -228,7 +237,7 @@ bool JitRuntime::generateTrampolines(JSContext* cx) {
   JitSpew(JitSpew_Codegen, "# Emitting bailout tail stub");
   generateBailoutTailStub(masm, &bailoutTail);
 
-  if (cx->runtime()->jitSupportsFloatingPoint) {
+  if (JitOptions.supportsFloatingPoint) {
     JitSpew(JitSpew_Codegen, "# Emitting bailout tables");
 
     // Initialize some Ion-only stubs that require floating-point support.
@@ -638,16 +647,20 @@ void JitCodeHeader::init(JitCode* jitCode) {
 }
 
 template <AllowGC allowGC>
-JitCode* JitCode::New(JSContext* cx, uint8_t* code, uint32_t bufferSize,
+JitCode* JitCode::New(JSContext* cx, uint8_t* code, uint32_t totalSize,
                       uint32_t headerSize, ExecutablePool* pool,
                       CodeKind kind) {
   JitCode* codeObj = Allocate<JitCode, allowGC>(cx);
   if (!codeObj) {
-    pool->release(headerSize + bufferSize, kind);
+    pool->release(totalSize, kind);
     return nullptr;
   }
 
+  uint32_t bufferSize = totalSize - headerSize;
   new (codeObj) JitCode(code, bufferSize, headerSize, pool, kind);
+
+  cx->zone()->incJitMemory(totalSize);
+
   return codeObj;
 }
 
@@ -733,6 +746,8 @@ void JitCode::finalize(FreeOp* fop) {
   if (!PerfEnabled()) {
     pool_->release(headerSize_ + bufferSize_, CodeKind(kind_));
   }
+
+  zone()->decJitMemory(headerSize_ + bufferSize_);
 
   pool_ = nullptr;
 }
@@ -1029,7 +1044,8 @@ void IonScript::Trace(JSTracer* trc, IonScript* script) {
 }
 
 void IonScript::Destroy(FreeOp* fop, IonScript* script) {
-  fop->delete_(script);
+  // This allocation is tracked by JSScript::setIonScript / clearIonScript.
+  fop->deleteUntracked(script);
 }
 
 void JS::DeletePolicy<js::jit::IonScript>::operator()(
@@ -1045,122 +1061,6 @@ void IonScript::purgeICs(Zone* zone) {
 
 namespace js {
 namespace jit {
-
-static void OptimizeSinCos(MIRGraph& graph) {
-  // Now, we are looking for:
-  // var y = sin(x);
-  // var z = cos(x);
-  // Graph before:
-  // - 1 op
-  // - 6 mathfunction op1 Sin
-  // - 7 mathfunction op1 Cos
-  // Graph will look like:
-  // - 1 op
-  // - 5 sincos op1
-  // - 6 mathfunction sincos5 Sin
-  // - 7 mathfunction sincos5 Cos
-  for (MBasicBlockIterator block(graph.begin()); block != graph.end();
-       block++) {
-    for (MInstructionIterator iter(block->begin()), end(block->end());
-         iter != end;) {
-      MInstruction* ins = *iter++;
-      if (!ins->isMathFunction() || ins->isRecoveredOnBailout()) {
-        continue;
-      }
-
-      MMathFunction* insFunc = ins->toMathFunction();
-      if (insFunc->function() != MMathFunction::Sin &&
-          insFunc->function() != MMathFunction::Cos) {
-        continue;
-      }
-
-      // Check if sin/cos is already optimized.
-      if (insFunc->getOperand(0)->type() == MIRType::SinCosDouble) {
-        continue;
-      }
-
-      // insFunc is either a |sin(x)| or |cos(x)| instruction. The
-      // following loop iterates over the uses of |x| to check if both
-      // |sin(x)| and |cos(x)| instructions exist.
-      bool hasSin = false;
-      bool hasCos = false;
-      for (MUseDefIterator uses(insFunc->input()); uses; uses++) {
-        if (!uses.def()->isInstruction()) {
-          continue;
-        }
-
-        // We should replacing the argument of the sin/cos just when it
-        // is dominated by the |block|.
-        if (!block->dominates(uses.def()->block())) {
-          continue;
-        }
-
-        MInstruction* insUse = uses.def()->toInstruction();
-        if (!insUse->isMathFunction() || insUse->isRecoveredOnBailout()) {
-          continue;
-        }
-
-        MMathFunction* mathIns = insUse->toMathFunction();
-        if (!hasSin && mathIns->function() == MMathFunction::Sin) {
-          hasSin = true;
-          JitSpew(JitSpew_Sincos, "Found sin in block %d.",
-                  mathIns->block()->id());
-        } else if (!hasCos && mathIns->function() == MMathFunction::Cos) {
-          hasCos = true;
-          JitSpew(JitSpew_Sincos, "Found cos in block %d.",
-                  mathIns->block()->id());
-        }
-
-        if (hasCos && hasSin) {
-          break;
-        }
-      }
-
-      if (!hasCos || !hasSin) {
-        JitSpew(JitSpew_Sincos, "No sin/cos pair found.");
-        continue;
-      }
-
-      JitSpew(JitSpew_Sincos,
-              "Found, at least, a pair sin/cos. Adding sincos in block %d",
-              block->id());
-      // Adding the MSinCos and replacing the parameters of the
-      // sin(x)/cos(x) to sin(sincos(x))/cos(sincos(x)).
-      MSinCos* insSinCos = MSinCos::New(graph.alloc(), insFunc->input());
-      insSinCos->setImplicitlyUsedUnchecked();
-      block->insertBefore(insFunc, insSinCos);
-      for (MUseDefIterator uses(insFunc->input()); uses;) {
-        MDefinition* def = uses.def();
-        uses++;
-        if (!def->isInstruction()) {
-          continue;
-        }
-
-        // We should replacing the argument of the sin/cos just when it
-        // is dominated by the |block|.
-        if (!block->dominates(def->block())) {
-          continue;
-        }
-
-        MInstruction* insUse = def->toInstruction();
-        if (!insUse->isMathFunction() || insUse->isRecoveredOnBailout()) {
-          continue;
-        }
-
-        MMathFunction* mathIns = insUse->toMathFunction();
-        if (mathIns->function() != MMathFunction::Sin &&
-            mathIns->function() != MMathFunction::Cos) {
-          continue;
-        }
-
-        mathIns->replaceOperand(0, insSinCos);
-        JitSpew(JitSpew_Sincos, "Replacing %s by sincos in block %d",
-                mathIns->function() == MMathFunction::Sin ? "sin" : "cos",
-                mathIns->block()->id());
-      }
-    }
-  }
-}
 
 bool OptimizeMIR(MIRGenerator* mir) {
   MIRGraph& graph = mir->graph();
@@ -1518,17 +1418,6 @@ bool OptimizeMIR(MIRGenerator* mir) {
     AssertExtendedGraphCoherency(graph);
 
     if (mir->shouldCancel("Effective Address Analysis")) {
-      return false;
-    }
-  }
-
-  if (mir->optimizationInfo().sincosEnabled()) {
-    AutoTraceLog log(logger, TraceLogger_Sincos);
-    OptimizeSinCos(graph);
-    gs.spewPass("Sincos optimization");
-    AssertExtendedGraphCoherency(graph);
-
-    if (mir->shouldCancel("Sincos optimization")) {
       return false;
     }
   }
@@ -2228,8 +2117,8 @@ static OptimizationLevel GetOptimizationLevel(HandleScript script,
 static MethodStatus Compile(JSContext* cx, HandleScript script,
                             BaselineFrame* osrFrame, jsbytecode* osrPc,
                             bool forceRecompile = false) {
-  MOZ_ASSERT(jit::IsIonEnabled(cx));
-  MOZ_ASSERT(jit::IsBaselineEnabled(cx));
+  MOZ_ASSERT(jit::IsIonEnabled());
+  MOZ_ASSERT(jit::IsBaselineJitEnabled());
   MOZ_ASSERT_IF(osrPc != nullptr, LoopEntryCanIonOsr(osrPc));
   AutoGeckoProfilerEntry pseudoFrame(
       cx, "Ion script compilation",
@@ -2328,7 +2217,7 @@ bool jit::OffThreadCompilationAvailable(JSContext* cx) {
 }
 
 MethodStatus jit::CanEnterIon(JSContext* cx, RunState& state) {
-  MOZ_ASSERT(jit::IsIonEnabled(cx));
+  MOZ_ASSERT(jit::IsIonEnabled());
 
   HandleScript script = state.script();
 
@@ -2401,7 +2290,7 @@ MethodStatus jit::CanEnterIon(JSContext* cx, RunState& state) {
 
 static MethodStatus BaselineCanEnterAtEntry(JSContext* cx, HandleScript script,
                                             BaselineFrame* frame) {
-  MOZ_ASSERT(jit::IsIonEnabled(cx));
+  MOZ_ASSERT(jit::IsIonEnabled());
   MOZ_ASSERT(frame->callee()->nonLazyScript()->canIonCompile());
   MOZ_ASSERT(!frame->callee()->nonLazyScript()->isIonCompilingOffThread());
   MOZ_ASSERT(!frame->callee()->nonLazyScript()->hasIonScript());
@@ -2430,7 +2319,7 @@ static MethodStatus BaselineCanEnterAtEntry(JSContext* cx, HandleScript script,
 static MethodStatus BaselineCanEnterAtBranch(JSContext* cx, HandleScript script,
                                              BaselineFrame* osrFrame,
                                              jsbytecode* pc) {
-  MOZ_ASSERT(jit::IsIonEnabled(cx));
+  MOZ_ASSERT(jit::IsIonEnabled());
   MOZ_ASSERT((JSOp)*pc == JSOP_LOOPENTRY);
   MOZ_ASSERT(LoopEntryCanIonOsr(pc));
 
@@ -2505,7 +2394,7 @@ static MethodStatus BaselineCanEnterAtBranch(JSContext* cx, HandleScript script,
 bool jit::IonCompileScriptForBaseline(JSContext* cx, BaselineFrame* frame,
                                       jsbytecode* pc) {
   // A TI OOM will disable TI and Ion.
-  if (!jit::IsIonEnabled(cx)) {
+  if (!jit::IsIonEnabled()) {
     return true;
   }
 
@@ -2944,7 +2833,7 @@ void jit::FinishInvalidation(FreeOp* fop, JSScript* script) {
 
   // In all cases, null out script->ion to avoid re-entry.
   IonScript* ion = script->ionScript();
-  script->setIonScript(fop->runtime(), nullptr);
+  script->setIonScript(fop, nullptr);
 
   // If this script has Ion code on the stack, invalidated() will return
   // true. In this case we have to wait until destroying it.
@@ -3134,18 +3023,18 @@ size_t jit::SizeOfIonData(JSScript* script,
 void jit::DestroyJitScripts(FreeOp* fop, JSScript* script) {
   if (script->hasIonScript()) {
     IonScript* ion = script->ionScript();
-    script->clearIonScript();
+    script->clearIonScript(fop);
     jit::IonScript::Destroy(fop, ion);
   }
 
   if (script->hasBaselineScript()) {
     BaselineScript* baseline = script->baselineScript();
-    script->clearBaselineScript();
+    script->clearBaselineScript(fop);
     jit::BaselineScript::Destroy(fop, baseline);
   }
 
   if (script->hasJitScript()) {
-    script->releaseJitScript();
+    script->releaseJitScript(fop);
   }
 }
 
@@ -3161,14 +3050,6 @@ void jit::TraceJitScripts(JSTracer* trc, JSScript* script) {
   if (script->hasJitScript()) {
     script->jitScript()->trace(trc);
   }
-}
-
-bool jit::JitSupportsFloatingPoint() {
-  return js::jit::MacroAssembler::SupportsFloatingPoint();
-}
-
-bool jit::JitSupportsUnalignedAccesses() {
-  return js::jit::MacroAssembler::SupportsUnalignedAccesses();
 }
 
 bool jit::JitSupportsSimd() { return js::jit::MacroAssembler::SupportsSimd(); }

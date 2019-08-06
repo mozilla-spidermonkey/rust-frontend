@@ -11,7 +11,8 @@
  * retrieved by perfherder via logs.
  */
 
-const TEST_URL = "data:text/html;charset=UTF-8,<div>Debugger modules load test</div>";
+const TEST_URL =
+  "data:text/html;charset=UTF-8,<div>Debugger modules load test</div>";
 
 add_task(async function() {
   const toolbox = await openNewTabAndToolbox(TEST_URL, "jsdebugger");
@@ -19,7 +20,7 @@ add_task(async function() {
 
   // Retrieve the browser loader dedicated to the Debugger.
   const debuggerLoader = panel.panelWin.getBrowserLoaderForWindow();
-  const loaders = [loader.provider.loader, debuggerLoader.loader];
+  const loaders = [loader.loader, debuggerLoader.loader];
 
   runMetricsTest({
     filterString: "devtools/client/debugger",

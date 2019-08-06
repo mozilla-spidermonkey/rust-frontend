@@ -348,7 +348,8 @@ void nsTableRowGroupFrame::ReflowChildren(
 
   bool haveRow = false;
   bool reflowAllKids = aReflowInput.reflowInput.ShouldReflowAllKids() ||
-                       tableFrame->IsGeometryDirty();
+                       tableFrame->IsGeometryDirty() ||
+                       tableFrame->NeedToCollapse();
 
   // in vertical-rl mode, we always need the row bsizes in order to
   // get the necessary containerSize for placing our kids
@@ -1502,9 +1503,9 @@ void nsTableRowGroupFrame::AppendFrames(ChildListID aListID,
   }
 }
 
-void nsTableRowGroupFrame::InsertFrames(ChildListID aListID,
-                                        nsIFrame* aPrevFrame,
-                                        nsFrameList& aFrameList) {
+void nsTableRowGroupFrame::InsertFrames(
+    ChildListID aListID, nsIFrame* aPrevFrame,
+    const nsLineList::iterator* aPrevFrameLine, nsFrameList& aFrameList) {
   NS_ASSERTION(aListID == kPrincipalList, "unexpected child list");
   NS_ASSERTION(!aPrevFrame || aPrevFrame->GetParent() == this,
                "inserting after sibling frame with different parent");

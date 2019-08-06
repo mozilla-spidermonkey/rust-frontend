@@ -380,9 +380,7 @@ class OSXBootstrapper(BaseBootstrapper):
 
     def suggest_homebrew_mobile_android_mozconfig(self, artifact_mode=False):
         from mozboot import android
-        # Path to java from the homebrew/cask-versions/adoptopenjdk8 cask.
-        android.suggest_mozconfig('macosx', artifact_mode=artifact_mode,
-                                  java_bin_path=JAVA_PATH)
+        android.suggest_mozconfig('macosx', artifact_mode=artifact_mode)
 
     def _ensure_macports_packages(self, packages):
         self.port = self.which('port')
@@ -514,6 +512,12 @@ class OSXBootstrapper(BaseBootstrapper):
         from mozboot import sccache
 
         self.install_toolchain_artifact(state_dir, checkout_root, sccache.MACOS_SCCACHE)
+        self.install_toolchain_artifact(state_dir, checkout_root,
+                                        sccache.RUSTC_DIST_TOOLCHAIN,
+                                        no_unpack=True)
+        self.install_toolchain_artifact(state_dir, checkout_root,
+                                        sccache.CLANG_DIST_TOOLCHAIN,
+                                        no_unpack=True)
 
     def ensure_stylo_packages(self, state_dir, checkout_root):
         from mozboot import stylo

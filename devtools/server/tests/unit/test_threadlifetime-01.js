@@ -10,7 +10,7 @@
 
 var gDebuggee;
 var gClient;
-var gThreadClient;
+var gThreadFront;
 
 function run_test() {
   Services.prefs.setBoolPref("security.allow_eval_with_system_principal", true);
@@ -21,44 +21,57 @@ function run_test() {
   gDebuggee = addTestGlobal("test-grips");
   gClient = new DebuggerClient(DebuggerServer.connectPipe());
   gClient.connect().then(function() {
-    attachTestTabAndResume(gClient, "test-grips",
-                           function(response, targetFront, threadClient) {
-                             gThreadClient = threadClient;
-                             test_thread_lifetime();
-                           });
+    attachTestTabAndResume(gClient, "test-grips", function(
+      response,
+      targetFront,
+      threadFront
+    ) {
+      gThreadFront = threadFront;
+      test_thread_lifetime();
+    });
   });
   do_test_pending();
 }
 
 function test_thread_lifetime() {
-  gThreadClient.once("paused", function(packet) {
+  gThreadFront.once("paused", async function(packet) {
     const pauseGrip = packet.frame.arguments[0];
 
     // Create a thread-lifetime actor for this object.
-    gClient.request({ to: pauseGrip.actor, type: "threadGrip" }, function(response) {
-      // Successful promotion won't return an error.
-      Assert.equal(response.error, undefined);
-      gThreadClient.once("paused", function(packet) {
-        // Verify that the promoted actor is returned again.
-        Assert.equal(pauseGrip.actor, packet.frame.arguments[0].actor);
-        // Now that we've resumed, should get unrecognizePacketType for the
-        // promoted grip.
-        gClient.request({to: pauseGrip.actor, type: "bogusRequest"}, function(response) {
-          Assert.equal(response.error, "unrecognizedPacketType");
-          gThreadClient.resume().then(function() {
-            finishClient(gClient);
-          });
-        });
-      });
-      gThreadClient.resume();
+    const response = await gClient.request({
+      to: pauseGrip.actor,
+      type: "threadGrip",
     });
+    // Successful promotion won't return an error.
+    Assert.equal(response.error, undefined);
+    gThreadFront.once("paused", async function(packet) {
+      // Verify that the promoted actor is returned again.
+      Assert.equal(pauseGrip.actor, packet.frame.arguments[0].actor);
+      // Now that we've resumed, should get unrecognizePacketType for the
+      // promoted grip.
+      try {
+        await gClient.request({ to: pauseGrip.actor, type: "bogusRequest" });
+        ok(false, "bogusRequest should throw");
+      } catch (e) {
+        Assert.equal(e.error, "unrecognizedPacketType");
+        ok(true, "bogusRequest thrown");
+      }
+      gThreadFront.resume().then(function() {
+        finishClient(gClient);
+      });
+    });
+    gThreadFront.resume();
   });
 
-  gDebuggee.eval("(" + function() {
-    function stopMe(arg1) {
-      debugger;
-      debugger;
-    }
-    stopMe({obj: true});
-  } + ")()");
+  gDebuggee.eval(
+    "(" +
+      function() {
+        function stopMe(arg1) {
+          debugger;
+          debugger;
+        }
+        stopMe({ obj: true });
+      } +
+      ")()"
+  );
 }

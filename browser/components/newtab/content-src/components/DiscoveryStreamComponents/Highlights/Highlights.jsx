@@ -1,6 +1,10 @@
-import {connect} from "react-redux";
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+import { connect } from "react-redux";
 import React from "react";
-import {SectionIntl} from "content-src/components/Sections/Sections";
+import { SectionIntl } from "content-src/components/Sections/Sections";
 
 export class _Highlights extends React.PureComponent {
   render() {
@@ -17,4 +21,6 @@ export class _Highlights extends React.PureComponent {
   }
 }
 
-export const Highlights = connect(state => ({Sections: state.Sections}))(_Highlights);
+export const Highlights = connect(state => ({ Sections: state.Sections }))(
+  _Highlights
+);

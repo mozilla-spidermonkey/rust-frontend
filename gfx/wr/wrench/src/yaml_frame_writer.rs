@@ -4,7 +4,7 @@
 
 extern crate yaml_rust;
 
-use euclid::{TypedPoint2D, TypedRect, TypedSize2D, TypedTransform3D, TypedVector2D};
+use euclid::{Point2D, Rect, Size2D, Transform3D, Vector2D};
 use image::{save_buffer, ColorType};
 use crate::premultiply::unpremultiply;
 use crate::scene::{Scene, SceneProperties};
@@ -72,23 +72,31 @@ fn color_to_string(value: ColorF) -> String {
     }
 }
 
+fn filter_input_to_string(input: FilterPrimitiveInput) -> String {
+    match input {
+        FilterPrimitiveInput::Original => "original".into(),
+        FilterPrimitiveInput::Previous => "previous".into(),
+        FilterPrimitiveInput::OutputOfPrimitiveIndex(index) => index.to_string(),
+    }
+}
+
 fn color_node(parent: &mut Table, key: &str, value: ColorF) {
     yaml_node(parent, key, Yaml::String(color_to_string(value)));
 }
 
-fn point_node<U>(parent: &mut Table, key: &str, value: &TypedPoint2D<f32, U>) {
+fn point_node<U>(parent: &mut Table, key: &str, value: &Point2D<f32, U>) {
     f32_vec_node(parent, key, &[value.x, value.y]);
 }
 
-fn vector_node<U>(parent: &mut Table, key: &str, value: &TypedVector2D<f32, U>) {
+fn vector_node<U>(parent: &mut Table, key: &str, value: &Vector2D<f32, U>) {
     f32_vec_node(parent, key, &[value.x, value.y]);
 }
 
-fn size_node<U>(parent: &mut Table, key: &str, value: &TypedSize2D<f32, U>) {
+fn size_node<U>(parent: &mut Table, key: &str, value: &Size2D<f32, U>) {
     f32_vec_node(parent, key, &[value.width, value.height]);
 }
 
-fn rect_yaml<U>(value: &TypedRect<f32, U>) -> Yaml {
+fn rect_yaml<U>(value: &Rect<f32, U>) -> Yaml {
     f32_vec_yaml(
         &[
             value.origin.x,
@@ -100,11 +108,11 @@ fn rect_yaml<U>(value: &TypedRect<f32, U>) -> Yaml {
     )
 }
 
-fn rect_node<U>(parent: &mut Table, key: &str, value: &TypedRect<f32, U>) {
+fn rect_node<U>(parent: &mut Table, key: &str, value: &Rect<f32, U>) {
     yaml_node(parent, key, rect_yaml(value));
 }
 
-fn matrix4d_node<U1, U2>(parent: &mut Table, key: &str, value: &TypedTransform3D<f32, U1, U2>) {
+fn matrix4d_node<U1, U2>(parent: &mut Table, key: &str, value: &Transform3D<f32, U1, U2>) {
     f32_vec_node(parent, key, &value.to_row_major_array());
 }
 
@@ -130,6 +138,10 @@ fn bool_node(parent: &mut Table, key: &str, value: bool) {
 
 fn table_node(parent: &mut Table, key: &str, value: Table) {
     yaml_node(parent, key, Yaml::Hash(value));
+}
+
+fn filter_input_node(parent: &mut Table, key: &str, value: FilterPrimitiveInput) {
+    yaml_node(parent, key, Yaml::String(filter_input_to_string(value)));
 }
 
 fn string_vec_yaml(value: &[String], check_unique: bool) -> Yaml {
@@ -253,6 +265,7 @@ fn write_stacking_context(
     properties: &SceneProperties,
     filter_iter: impl IntoIterator<Item = FilterOp>,
     filter_data_iter: &[TempFilterData],
+    filter_primitive_iter: impl IntoIterator<Item = FilterPrimitive>,
 ) {
     enum_node(parent, "transform-style", sc.transform_style);
 
@@ -349,6 +362,58 @@ fn write_stacking_context(
     }
 
     yaml_node(parent, "filter-datas", Yaml::Array(filter_datas));
+
+    // filter primitives
+    let mut filter_primitives = vec![];
+    for filter_primitive in filter_primitive_iter {
+        let mut table = new_table();
+        match filter_primitive.kind {
+            FilterPrimitiveKind::Identity(identity_primitive) => {
+                yaml_node(&mut table, "type", Yaml::String("identity".into()));
+                filter_input_node(&mut table, "in", identity_primitive.input);
+            }
+            FilterPrimitiveKind::Blend(blend_primitive) => {
+                yaml_node(&mut table, "type", Yaml::String("blend".into()));
+                filter_input_node(&mut table, "in1", blend_primitive.input1);
+                filter_input_node(&mut table, "in2", blend_primitive.input2);
+                enum_node(&mut table, "mode", blend_primitive.mode);
+            }
+            FilterPrimitiveKind::Flood(flood_primitive) => {
+                yaml_node(&mut table, "type", Yaml::String("flood".into()));
+                color_node(&mut table, "color", flood_primitive.color);
+            }
+            FilterPrimitiveKind::Blur(blur_primitive) => {
+                yaml_node(&mut table, "type", Yaml::String("blur".into()));
+                filter_input_node(&mut table, "in", blur_primitive.input);
+                f32_node(&mut table, "radius", blur_primitive.radius);
+            }
+            FilterPrimitiveKind::Opacity(opacity_primitive) => {
+                yaml_node(&mut table, "type", Yaml::String("opacity".into()));
+                filter_input_node(&mut table, "in", opacity_primitive.input);
+                f32_node(&mut table, "opacity", opacity_primitive.opacity);
+            }
+            FilterPrimitiveKind::ColorMatrix(color_matrix_primitive) => {
+                yaml_node(&mut table, "type", Yaml::String("color-matrix".into()));
+                filter_input_node(&mut table, "in", color_matrix_primitive.input);
+                f32_vec_node(&mut table, "matrix", &color_matrix_primitive.matrix);
+            }
+            FilterPrimitiveKind::DropShadow(drop_shadow_primitive) => {
+                yaml_node(&mut table, "type", Yaml::String("drop-shadow".into()));
+                filter_input_node(&mut table, "in", drop_shadow_primitive.input);
+                vector_node(&mut table, "offset", &drop_shadow_primitive.shadow.offset);
+                color_node(&mut table, "color", drop_shadow_primitive.shadow.color);
+                f32_node(&mut table, "radius", drop_shadow_primitive.shadow.blur_radius);
+            }
+            FilterPrimitiveKind::ComponentTransfer(component_transfer_primitive) => {
+                yaml_node(&mut table, "type", Yaml::String("component-transfer".into()));
+                filter_input_node(&mut table, "in", component_transfer_primitive.input);
+            }
+        }
+        enum_node(&mut table, "color-space", filter_primitive.color_space);
+        filter_primitives.push(Yaml::Hash(table));
+    }
+
+    yaml_node(parent, "filter-primitives", Yaml::Array(filter_primitives));
 }
 
 #[cfg(target_os = "macos")]
@@ -1165,6 +1230,7 @@ impl YamlFrameWriter {
                         &scene.properties,
                         base.filters(),
                         base.filter_datas(),
+                        base.filter_primitives(),
                     );
 
                     let mut sub_iter = base.sub_iter();
@@ -1277,9 +1343,11 @@ impl YamlFrameWriter {
                 DisplayItem::PopReferenceFrame |
                 DisplayItem::PopStackingContext => return,
 
-                DisplayItem::SetGradientStops => panic!("dummy item yielded?"),
-                DisplayItem::SetFilterOps => panic!("dummy item yielded?"),
-                DisplayItem::SetFilterData => panic!("dummy item yielded?"),
+                DisplayItem::SetGradientStops |
+                DisplayItem::SetFilterOps |
+                DisplayItem::SetFilterData |
+                DisplayItem::SetFilterPrimitives => panic!("dummy item yielded?"),
+
                 DisplayItem::PushShadow(item) => {
                     str_node(&mut v, "type", "shadow");
                     vector_node(&mut v, "offset", &item.shadow.offset);

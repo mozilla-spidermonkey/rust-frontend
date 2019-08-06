@@ -6,11 +6,13 @@
 
 // Test getDisplayString.
 
-ChromeUtils.import("resource://testing-common/PromiseTestUtils.jsm", this);
+const { PromiseTestUtils } = ChromeUtils.import(
+  "resource://testing-common/PromiseTestUtils.jsm"
+);
 
 var gDebuggee;
 var gClient;
-var gThreadClient;
+var gThreadFront;
 
 Services.prefs.setBoolPref("security.allow_eval_with_system_principal", true);
 
@@ -21,17 +23,22 @@ registerCleanupFunction(() => {
 function run_test() {
   initTestDebuggerServer();
   gDebuggee = addTestGlobal("test-grips");
-  gDebuggee.eval(function stopMe(arg1) {
-    debugger;
-  }.toString());
+  gDebuggee.eval(
+    function stopMe(arg1) {
+      debugger;
+    }.toString()
+  );
 
   gClient = new DebuggerClient(DebuggerServer.connectPipe());
   gClient.connect().then(function() {
-    attachTestTabAndResume(gClient, "test-grips",
-                           function(response, targetFront, threadClient) {
-                             gThreadClient = threadClient;
-                             test_display_string();
-                           });
+    attachTestTabAndResume(gClient, "test-grips", function(
+      response,
+      targetFront,
+      threadFront
+    ) {
+      gThreadFront = threadFront;
+      test_display_string();
+    });
   });
   do_test_pending();
 }
@@ -71,11 +78,14 @@ function test_display_string() {
       output: "[object Object],[object Object]",
     },
     {
-      input: "(" + function() {
-        const arr = [1];
-        arr.push(arr);
-        return arr;
-      } + ")()",
+      input:
+        "(" +
+        function() {
+          const arr = [1];
+          arr.push(arr);
+          return arr;
+        } +
+        ")()",
       output: "1,",
     },
     {
@@ -99,11 +109,14 @@ function test_display_string() {
       output: "ReferenceError",
     },
     {
-      input: "(" + function() {
-        const err = new Error("bar");
-        err.name = "foo";
-        return err;
-      } + ")()",
+      input:
+        "(" +
+        function() {
+          const err = new Error("bar");
+          err.name = "foo";
+          return err;
+        } +
+        ")()",
       output: "foo: bar",
     },
     {
@@ -147,17 +160,17 @@ function test_display_string() {
 
   PromiseTestUtils.expectUncaughtRejection(/Error/);
 
-  gThreadClient.once("paused", function(packet) {
+  gThreadFront.once("paused", function(packet) {
     const args = packet.frame.arguments;
 
     (function loop() {
-      const objClient = gThreadClient.pauseGrip(args.pop());
+      const objClient = gThreadFront.pauseGrip(args.pop());
       objClient.getDisplayString(function({ displayString }) {
         Assert.equal(displayString, testCases.pop().output);
         if (args.length) {
           loop();
         } else {
-          gThreadClient.resume().then(function() {
+          gThreadFront.resume().then(function() {
             finishClient(gClient);
           });
         }

@@ -20,6 +20,9 @@
 #include "GfxInfoX11.h"
 
 #include <gdk/gdkx.h>
+#ifdef MOZ_WAYLAND
+#  include "mozilla/widget/nsWaylandDisplay.h"
+#endif
 
 #ifdef DEBUG
 bool fire_glxtest_process();
@@ -43,6 +46,7 @@ nsresult GfxInfo::Init() {
   mIsMesa = false;
   mIsAccelerated = true;
   mIsWayland = false;
+  mIsWaylandDRM = false;
   return GfxInfoBase::Init();
 }
 
@@ -57,6 +61,8 @@ void GfxInfo::AddCrashReportAnnotations() {
       CrashReporter::Annotation::AdapterDriverVersion, mDriverVersion);
   CrashReporter::AnnotateCrashReport(CrashReporter::Annotation::IsWayland,
                                      mIsWayland);
+  CrashReporter::AnnotateCrashReport(CrashReporter::Annotation::IsWaylandDRM,
+                                     mIsWaylandDRM);
 }
 
 void GfxInfo::GetData() {
@@ -293,8 +299,12 @@ void GfxInfo::GetData() {
   }
 
   mAdapterDescription.Assign(glRenderer);
+#ifdef MOZ_WAYLAND
   mIsWayland = !GDK_IS_X11_DISPLAY(gdk_display_get_default());
-
+  if (mIsWayland) {
+    mIsWaylandDRM = nsWaylandDisplay::IsDMABufEnabled();
+  }
+#endif
   AddCrashReportAnnotations();
 }
 
@@ -314,7 +324,7 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
     APPEND_TO_DRIVER_BLOCKLIST(
         OperatingSystem::Linux,
         (nsAString&)GfxDriverInfo::GetDeviceVendor(VendorNVIDIA),
-        (nsAString&)GfxDriverInfo::GetDriverVendor(DriverVendorAll),
+        (nsAString&)GfxDriverInfo::GetDriverVendor(DriverNonMesaAll),
         GfxDriverInfo::allDevices, GfxDriverInfo::allFeatures,
         nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_LESS_THAN,
         V(257, 21, 0, 0), "FEATURE_FAILURE_OLD_NVIDIA", "NVIDIA 257.21");
@@ -340,11 +350,20 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_LESS_THAN,
         V(18, 0, 0, 0), "FEATURE_FAILURE_WEBRENDER_OLD_MESA", "Mesa 18.0.0.0");
 
-    // Disable on all NVIDIA devices for now.
+    // Nvidia Mesa baseline, see bug 1563859.
     APPEND_TO_DRIVER_BLOCKLIST(
         OperatingSystem::Linux,
         (nsAString&)GfxDriverInfo::GetDeviceVendor(VendorNVIDIA),
-        (nsAString&)GfxDriverInfo::GetDriverVendor(DriverVendorAll),
+        (nsAString&)GfxDriverInfo::GetDriverVendor(DriverMesaAll),
+        GfxDriverInfo::allDevices, nsIGfxInfo::FEATURE_WEBRENDER,
+        nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_LESS_THAN,
+        V(18, 2, 0, 0), "FEATURE_FAILURE_WEBRENDER_OLD_MESA", "Mesa 18.2.0.0");
+
+    // Disable on all Nvidia devices not using Mesa for now.
+    APPEND_TO_DRIVER_BLOCKLIST(
+        OperatingSystem::Linux,
+        (nsAString&)GfxDriverInfo::GetDeviceVendor(VendorNVIDIA),
+        (nsAString&)GfxDriverInfo::GetDriverVendor(DriverNonMesaAll),
         GfxDriverInfo::allDevices, nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_COMPARISON_IGNORED,
         V(0, 0, 0, 0), "FEATURE_FAILURE_WEBRENDER_NO_LINUX_NVIDIA", "");
@@ -451,7 +470,11 @@ GfxInfo::GetCleartypeParameters(nsAString& aCleartypeParams) {
 NS_IMETHODIMP
 GfxInfo::GetWindowProtocol(nsAString& aWindowProtocol) {
   if (mIsWayland) {
-    aWindowProtocol.AssignLiteral("wayland");
+    if (mIsWaylandDRM) {
+      aWindowProtocol.AssignLiteral("wayland (drm)");
+    } else {
+      aWindowProtocol.AssignLiteral("wayland");
+    }
     return NS_OK;
   }
 

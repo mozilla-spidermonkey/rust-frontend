@@ -151,7 +151,6 @@ interface CanvasState {
 [NoInterfaceObject]
 interface CanvasTransform {
   // transformations (default transform is the identity matrix)
-// NOT IMPLEMENTED           attribute SVGMatrix currentTransform;
   [Throws, LenientFloat]
   void scale(double x, double y);
   [Throws, LenientFloat]
@@ -160,8 +159,12 @@ interface CanvasTransform {
   void translate(double x, double y);
   [Throws, LenientFloat]
   void transform(double a, double b, double c, double d, double e, double f);
+
+  [NewObject, Throws] DOMMatrix getTransform();
   [Throws, LenientFloat]
   void setTransform(double a, double b, double c, double d, double e, double f);
+  [Throws]
+  void setTransform(optional DOMMatrix2DInit transform = {});
   [Throws]
   void resetTransform();
 };
@@ -340,7 +343,7 @@ interface CanvasPathMethods {
 [NoInterfaceObject]
 interface CanvasHitRegions {
   // hit regions
-  [Pref="canvas.hitregions.enabled", Throws] void addHitRegion(optional HitRegionOptions options);
+  [Pref="canvas.hitregions.enabled", Throws] void addHitRegion(optional HitRegionOptions options = {});
   [Pref="canvas.hitregions.enabled"] void removeHitRegion(DOMString id);
   [Pref="canvas.hitregions.enabled"] void clearHitRegions();
 };
@@ -392,6 +395,6 @@ interface TextMetrics {
  Constructor(DOMString pathString)]
 interface Path2D
 {
-  void addPath(Path2D path, optional SVGMatrix transformation);
+  [Throws] void addPath(Path2D path, optional DOMMatrix2DInit transform = {});
 };
 Path2D implements CanvasPathMethods;

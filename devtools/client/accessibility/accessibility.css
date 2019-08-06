@@ -20,14 +20,7 @@
   --accessibility-link-color: var(--blue-60);
   --accessibility-link-color-active: var(--blue-70);
   --accessibility-body-background-a90: rgba(255, 255, 255, 0.9);
-  --badge-active-background-color: var(--blue-50);
-  --badge-active-border-color: #FFFFFFB3;
-  --badge-interactive-background-color: var(--grey-20);
-  --accessible-label-background-color: white;
-  --accessible-label-border-color: #CACAD1;
-  --accessible-label-color: var(--grey-60);
-  /* Similarly to webconsole, add more padding before the toolbar group. */
-  --separator-inline-margin: 5px;
+  --accessibility-code-background: var(--grey-20);
 }
 
 :root.theme-dark {
@@ -36,12 +29,7 @@
   --accessibility-link-color: var(--theme-highlight-blue);
   --accessibility-link-color-active: var(--blue-40);
   --accessibility-body-background-a90: rgba(42, 42, 46, 0.9);
-  --badge-active-background-color: var(--blue-60);
-  --badge-active-border-color: #FFF6;
-  --badge-interactive-background-color: var(--grey-70);
-  --accessible-label-background-color: var(--grey-80);
-  --accessible-label-border-color: var(--grey-50);
-  --accessible-label-color: var(--grey-40);
+  --accessibility-code-background: var(--grey-70);
 }
 
 /* General */
@@ -85,6 +73,7 @@ body {
 .devtools-button,
 .toggle-button {
   cursor: pointer;
+  border: 1px solid transparent;
 }
 
 .mainFrame .devtools-button.devtools-throbber::before,
@@ -117,7 +106,6 @@ body {
 .devtools-button:focus,
 .devtools-button > .btn-content:focus,
 .devtools-button::-moz-focus-inner {
-  border: 1px solid transparent;
   outline: none;
 }
 
@@ -136,9 +124,13 @@ body {
   font-size: var(--accessibility-font-size);
 }
 
+/* Similarly to webconsole, add more padding before the toolbar group. */
+.devtools-toolbar .devtools-separator {
+  margin-inline: 5px;
+}
+
 .devtools-toolbar .help {
   cursor: pointer;
-  width: 18px;
   margin-inline-start: auto;
   margin-inline-end: 3px;
   background: transparent;
@@ -230,7 +222,7 @@ body {
 }
 
 .description img {
-  margin-right: 12px;
+  margin-inline-end: 12px;
   flex-basis: 42px;
   flex-shrink: 0;
   -moz-context-properties: fill;
@@ -376,13 +368,13 @@ body {
   display: inline-block;
   font: message-box;
   font-size: var(--theme-body-font-size);
-  line-height: calc(14 / 11);
   border-radius: 3px;
   padding: 0px 3px;
   margin-inline-start: 5px;
-  color: var(--accessible-label-color);
-  background-color: var(--accessible-label-background-color);
-  border: 1px solid var(--accessible-label-border-color);
+  color: var(--badge-color);
+  background-color: var(--badge-background-color);
+  border: 1px solid var(--badge-border-color);
+  -moz-user-select: none;
 }
 
 .badge.audit-badge::before {
@@ -425,7 +417,7 @@ body {
 }
 
 .treeTable:not(:focus):not(:focus-within) .treeRow.selected .badges .badge {
-  color: var(--accessible-label-color);
+  color: var(--badge-color);
 }
 
 .badge.toggle-button.checked {
@@ -578,12 +570,13 @@ body {
 }
 
 .accessible .tree .objectBox-accessible .accessible-role {
-  background-color: var(--accessible-label-background-color);
-  color: var(--accessible-label-color);
-  border: 1px solid var(--accessible-label-border-color);
+  background-color: var(--badge-background-color);
+  color: var(--badge-color);
+  border: 1px solid var(--badge-border-color);
   border-radius: 3px;
   padding: 0px 2px;
   margin-inline-start: 5px;
+  -moz-user-select: none;
 }
 
 .accessible .tree:focus .node.focused .objectBox-accessible .accessible-role,
@@ -660,8 +653,31 @@ body {
   white-space: initial;
 }
 
-/* Color Contrast */
-.accessibility-color-contrast-check,
+/* Checks */
+.accessibility-check code {
+  background-color: var(--accessibility-code-background);
+  border-radius: 2px;
+  box-decoration-break: clone;
+  padding: 0 4px;
+}
+
+.accessibility-text-label-check .icon {
+  display: inline;
+  -moz-context-properties: fill;
+  vertical-align: top;
+  margin-block-start: 2px;
+  margin-inline-end: 4px;
+}
+
+.accessibility-text-label-check .icon.fail {
+  fill: var(--theme-icon-error-color);
+}
+
+.accessibility-text-label-check .icon.WARNING {
+  fill: var(--theme-icon-warning-color);
+}
+
+.accessibility-check,
 .accessibility-color-contrast {
   position: relative;
   display: flex;
@@ -669,30 +685,27 @@ body {
   height: inherit;
 }
 
-.accessibility-color-contrast-check {
+.accessibility-check {
   flex-direction: column;
   padding: 4px var(--accessibility-horizontal-indent);
   line-height: 20px;
 }
 
-.accessibility-color-contrast {
-  align-items: baseline;
-}
-
-.accessibility-color-contrast-header {
+.accessibility-check-header {
   margin: 0;
   font-weight: bold;
   font-size: var(--accessibility-font-size);
   line-height: var(--accessibility-toolbar-height);
 }
 
-.accessibility-color-contrast-annotation {
+.accessibility-check-annotation {
+  display: inline;
   margin: 0;
   white-space: normal;
-  color: var(--accessible-label-color);
+  color: var(--badge-color);
 }
 
-.accessibility-color-contrast-annotation .link {
+.accessibility-check-annotation .link {
   color: var(--accessibility-link-color);
   cursor: pointer;
   outline: 0;
@@ -700,28 +713,18 @@ body {
   font-style: normal;
 }
 
-.accessibility-color-contrast-annotation .link:hover:not(:focus) {
+.accessibility-check-annotation .link:hover:not(:focus) {
   text-decoration: underline;
 }
 
-.accessibility-color-contrast-annotation .link:focus:not(:active) {
+.accessibility-check-annotation .link:focus:not(:active) {
   box-shadow: 0 0 0 2px var(--accessibility-toolbar-focus), 0 0 0 4px var(--accessibility-toolbar-focus-alpha30);
   border-radius: 2px;
 }
 
-.accessibility-color-contrast-annotation .link:active {
+.accessibility-check-annotation .link:active {
   color: var(--accessibility-link-color-active);
   text-decoration: underline;
-}
-
-.accessibility-color-contrast-large-text {
-  background-color: var(--accessible-label-background-color);
-  color: var(--accessible-label-color);
-  outline: 1px solid var(--accessible-label-border-color);
-  -moz-outline-radius: 3px;
-  padding: 0px 2px;
-  margin-inline-start: 6px;
-  line-height: initial;
 }
 
 .accessibility-color-contrast .accessibility-contrast-value:not(:empty) {
@@ -744,28 +747,6 @@ body {
 
 .accessibility-color-contrast .accessibility-contrast-value:not(:first-child):not(:empty):before {
   margin-inline-start: 4px;
-}
-
-.accessibility-color-contrast .accessibility-contrast-value:not(:empty):after {
-  margin-inline-start: 4px;
-}
-
-.accessibility-color-contrast .accessibility-contrast-value:not(:empty).AA:after,
-.accessibility-color-contrast .accessibility-contrast-value:not(:empty).AAA:after {
-  color: var(--theme-highlight-green);
-}
-
-.accessibility-color-contrast .accessibility-contrast-value:not(:empty).fail:after {
-  color: #E57180;
-  content: "⚠️";
-}
-
-.accessibility-color-contrast .accessibility-contrast-value:not(:empty).AA:after {
-  content: "AA\2713";
-}
-
-.accessibility-color-contrast .accessibility-contrast-value:not(:empty).AAA:after {
-  content: "AAA\2713";
 }
 
 .accessibility-color-contrast .accessibility-color-contrast-label:after {

@@ -21,7 +21,7 @@ function loginList() {
 }
 
 function openPopup(popup, browser) {
-  return new Promise(async (resolve) => {
+  return new Promise(async resolve => {
     let promiseShown = BrowserTestUtils.waitForEvent(popup, "popupshown");
 
     await SimpleTest.promiseFocus(browser);
@@ -54,76 +54,89 @@ add_task(async function test_initialize() {
 
 add_task(async function test_autocomplete_footer_onclick() {
   let url = TEST_ORIGIN + BASIC_FORM_PAGE_PATH;
-  await BrowserTestUtils.withNewTab({
-    gBrowser,
-    url,
-  }, async function footer_onclick(browser) {
-    let popup = document.getElementById("PopupAutoComplete");
-    ok(popup, "Got popup");
+  await BrowserTestUtils.withNewTab(
+    {
+      gBrowser,
+      url,
+    },
+    async function footer_onclick(browser) {
+      let popup = document.getElementById("PopupAutoComplete");
+      ok(popup, "Got popup");
 
-    await openPopup(popup, browser);
+      await openPopup(popup, browser);
 
-    let footer = popup.querySelector(`[originaltype="loginsFooter"]`);
-    ok(footer, "Got footer richlistitem");
+      let footer = popup.querySelector(`[originaltype="loginsFooter"]`);
+      ok(footer, "Got footer richlistitem");
 
-    await TestUtils.waitForCondition(() => {
-      return !EventUtils.isHidden(footer);
-    }, "Waiting for footer to become visible");
+      await TestUtils.waitForCondition(() => {
+        return !EventUtils.isHidden(footer);
+      }, "Waiting for footer to become visible");
 
-    EventUtils.synthesizeMouseAtCenter(footer, {});
-    let window = await waitForPasswordManagerDialog();
-    info("Login dialog was opened");
+      let openingFunc = () => EventUtils.synthesizeMouseAtCenter(footer, {});
+      let passwordManager = await openPasswordManager(openingFunc, true);
 
-    await TestUtils.waitForCondition(() => {
-      return window.document.getElementById("filter").value == "example.com";
-    }, "Waiting for the search string to filter logins");
+      info("Password Manager was opened");
 
-    // Check event telemetry recorded when opening management UI
-    TelemetryTestUtils.assertEvents(
-      [["pwmgr", "open_management", "autocomplete"]],
-      {category: "pwmgr", method: "open_management"});
+      is(
+        passwordManager.filterValue,
+        "example.com",
+        "Search string should be set to filter logins"
+      );
 
-    window.close();
-    popup.hidePopup();
-  });
+      // Check event telemetry recorded when opening management UI
+      TelemetryTestUtils.assertEvents(
+        [["pwmgr", "open_management", "autocomplete"]],
+        { category: "pwmgr", method: "open_management" }
+      );
+
+      await passwordManager.close();
+      popup.hidePopup();
+    }
+  );
 });
 
 add_task(async function test_autocomplete_footer_keydown() {
   let url = TEST_ORIGIN + BASIC_FORM_PAGE_PATH;
-  await BrowserTestUtils.withNewTab({
-    gBrowser,
-    url,
-  }, async function footer_enter_keydown(browser) {
-    let popup = document.getElementById("PopupAutoComplete");
-    ok(popup, "Got popup");
+  await BrowserTestUtils.withNewTab(
+    {
+      gBrowser,
+      url,
+    },
+    async function footer_enter_keydown(browser) {
+      let popup = document.getElementById("PopupAutoComplete");
+      ok(popup, "Got popup");
 
-    await openPopup(popup, browser);
+      await openPopup(popup, browser);
 
-    let footer = popup.querySelector(`[originaltype="loginsFooter"]`);
-    ok(footer, "Got footer richlistitem");
+      let footer = popup.querySelector(`[originaltype="loginsFooter"]`);
+      ok(footer, "Got footer richlistitem");
 
-    await TestUtils.waitForCondition(() => {
-      return !EventUtils.isHidden(footer);
-    }, "Waiting for footer to become visible");
+      await TestUtils.waitForCondition(() => {
+        return !EventUtils.isHidden(footer);
+      }, "Waiting for footer to become visible");
 
-    await EventUtils.synthesizeKey("KEY_ArrowDown");
-    await EventUtils.synthesizeKey("KEY_ArrowDown");
-    await EventUtils.synthesizeKey("KEY_ArrowDown");
-    await EventUtils.synthesizeKey("KEY_Enter");
+      await EventUtils.synthesizeKey("KEY_ArrowDown");
+      await EventUtils.synthesizeKey("KEY_ArrowDown");
+      await EventUtils.synthesizeKey("KEY_ArrowDown");
+      let openingFunc = () => EventUtils.synthesizeKey("KEY_Enter");
 
-    let window = await waitForPasswordManagerDialog();
-    info("Login dialog was opened");
+      let passwordManager = await openPasswordManager(openingFunc, true);
+      info("Login dialog was opened");
 
-    await TestUtils.waitForCondition(() => {
-      return window.document.getElementById("filter").value == "example.com";
-    }, "Waiting for the search string to filter logins");
+      is(
+        passwordManager.filterValue,
+        "example.com",
+        "Search string should be set to filter logins"
+      );
 
-    // Check event telemetry recorded when opening management UI
-    TelemetryTestUtils.assertEvents(
-      [["pwmgr", "open_management", "autocomplete"]],
-      {category: "pwmgr", method: "open_management"});
+      // Check event telemetry recorded when opening management UI
+      TelemetryTestUtils.assertEvents(
+        [["pwmgr", "open_management", "autocomplete"]],
+        { category: "pwmgr", method: "open_management" }
+      );
 
-    window.close();
-    popup.hidePopup();
-  });
+      await passwordManager.close();
+      popup.hidePopup();
+    }
+  );
 });

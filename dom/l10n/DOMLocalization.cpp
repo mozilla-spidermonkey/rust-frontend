@@ -1,78 +1,40 @@
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "js/ForOfIterator.h"  // JS::ForOfIterator
 #include "js/JSON.h"           // JS_ParseJSON
-#include "nsImportModule.h"
 #include "nsIScriptError.h"
 #include "DOMLocalization.h"
 #include "mozilla/intl/LocaleService.h"
-#include "mozilla/dom/PromiseNativeHandler.h"
 #include "mozilla/dom/L10nOverlays.h"
-
-#define INTL_APP_LOCALES_CHANGED "intl:app-locales-changed"
-
-#define L10N_PSEUDO_PREF "intl.l10n.pseudo"
-
-#define INTL_UI_DIRECTION_PREF "intl.uidirection"
-
-static const char* kObservedPrefs[] = {L10N_PSEUDO_PREF, INTL_UI_DIRECTION_PREF,
-                                       nullptr};
 
 using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::intl;
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(DOMLocalization)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(DOMLocalization)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(DOMLocalization, Localization)
   tmp->DisconnectMutations();
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mMutations)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mLocalization)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mRoots)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mGlobal)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(DOMLocalization)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(DOMLocalization, Localization)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mMutations)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLocalization)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRoots)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mGlobal)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(DOMLocalization)
 
-NS_IMPL_CYCLE_COLLECTING_ADDREF(DOMLocalization)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(DOMLocalization)
+NS_IMPL_ADDREF_INHERITED(DOMLocalization, Localization)
+NS_IMPL_RELEASE_INHERITED(DOMLocalization, Localization)
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(DOMLocalization)
-  NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIObserver)
-  NS_INTERFACE_MAP_ENTRY(nsIObserver)
-  NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
-NS_INTERFACE_MAP_END
+NS_INTERFACE_MAP_END_INHERITING(Localization)
 
-DOMLocalization::DOMLocalization(nsIGlobalObject* aGlobal) : mGlobal(aGlobal) {
+DOMLocalization::DOMLocalization(nsIGlobalObject* aGlobal)
+    : Localization(aGlobal) {
   mMutations = new L10nMutations(this);
-}
-
-void DOMLocalization::Init(nsTArray<nsString>& aResourceIds, ErrorResult& aRv) {
-  nsCOMPtr<mozILocalizationJSM> jsm =
-      do_ImportModule("resource://gre/modules/Localization.jsm");
-  MOZ_RELEASE_ASSERT(jsm);
-
-  Unused << jsm->GetLocalization(aResourceIds, getter_AddRefs(mLocalization));
-  MOZ_RELEASE_ASSERT(mLocalization);
-
-  RegisterObservers();
-}
-
-void DOMLocalization::Init(nsTArray<nsString>& aResourceIds,
-                           JS::Handle<JS::Value> aGenerateMessages,
-                           ErrorResult& aRv) {
-  nsCOMPtr<mozILocalizationJSM> jsm =
-      do_ImportModule("resource://gre/modules/Localization.jsm");
-  MOZ_RELEASE_ASSERT(jsm);
-
-  Unused << jsm->GetLocalizationWithCustomGenerateMessages(
-      aResourceIds, aGenerateMessages, getter_AddRefs(mLocalization));
-  MOZ_RELEASE_ASSERT(mLocalization);
-
-  RegisterObservers();
 }
 
 already_AddRefed<DOMLocalization> DOMLocalization::Constructor(
@@ -86,7 +48,7 @@ already_AddRefed<DOMLocalization> DOMLocalization::Constructor(
     return nullptr;
   }
 
-  RefPtr<DOMLocalization> loc = new DOMLocalization(global);
+  RefPtr<DOMLocalization> domLoc = new DOMLocalization(global);
   nsTArray<nsString> resourceIds;
 
   if (aResourceIds.WasPassed()) {
@@ -97,129 +59,30 @@ already_AddRefed<DOMLocalization> DOMLocalization::Constructor(
     GenerateMessages& generateMessages = aGenerateMessages.Value();
     JS::Rooted<JS::Value> generateMessagesJS(
         aGlobal.Context(), JS::ObjectValue(*generateMessages.CallbackOrNull()));
-    loc->Init(resourceIds, generateMessagesJS, aRv);
+    domLoc->Init(resourceIds, generateMessagesJS, aRv);
   } else {
-    loc->Init(resourceIds, aRv);
+    domLoc->Init(resourceIds, aRv);
   }
 
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
   }
 
-  return loc.forget();
+  return domLoc.forget();
 }
-
-nsIGlobalObject* DOMLocalization::GetParentObject() const { return mGlobal; }
 
 JSObject* DOMLocalization::WrapObject(JSContext* aCx,
                                       JS::Handle<JSObject*> aGivenProto) {
   return DOMLocalization_Binding::Wrap(aCx, this, aGivenProto);
 }
 
-DOMLocalization::~DOMLocalization() {
-  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
-  if (obs) {
-    obs->RemoveObserver(this, INTL_APP_LOCALES_CHANGED);
-  }
-
-  Preferences::RemoveObservers(this, kObservedPrefs);
-
-  DisconnectMutations();
-}
-
-/**
- * Localization API
- */
-
-uint32_t DOMLocalization::AddResourceIds(const nsTArray<nsString>& aResourceIds,
-                                         bool aEager) {
-  uint32_t ret = 0;
-  mLocalization->AddResourceIds(aResourceIds, aEager, &ret);
-  return ret;
-}
-
-uint32_t DOMLocalization::RemoveResourceIds(
-    const nsTArray<nsString>& aResourceIds) {
-  // We need to guard against a scenario where the
-  // mLocalization has been unlinked, but the elements
-  // are only now removed from DOM.
-  if (!mLocalization) {
-    return 0;
-  }
-  uint32_t ret = 0;
-  mLocalization->RemoveResourceIds(aResourceIds, &ret);
-  return ret;
-}
-
-already_AddRefed<Promise> DOMLocalization::FormatValue(
-    JSContext* aCx, const nsAString& aId,
-    const Optional<JS::Handle<JSObject*>>& aArgs, ErrorResult& aRv) {
-  JS::Rooted<JS::Value> args(aCx);
-
-  if (aArgs.WasPassed()) {
-    args = JS::ObjectValue(*aArgs.Value());
-  } else {
-    args = JS::UndefinedValue();
-  }
-
-  RefPtr<Promise> promise;
-  nsresult rv = mLocalization->FormatValue(aId, args, getter_AddRefs(promise));
-  if (NS_FAILED(rv)) {
-    aRv.Throw(rv);
-    return nullptr;
-  }
-  return MaybeWrapPromise(promise);
-}
-
-already_AddRefed<Promise> DOMLocalization::FormatValues(
-    JSContext* aCx, const Sequence<L10nKey>& aKeys, ErrorResult& aRv) {
-  nsTArray<JS::Value> jsKeys;
-  SequenceRooter<JS::Value> rooter(aCx, &jsKeys);
-  for (auto& key : aKeys) {
-    JS::RootedValue jsKey(aCx);
-    if (!ToJSValue(aCx, key, &jsKey)) {
-      aRv.NoteJSContextException(aCx);
-      return nullptr;
-    }
-    jsKeys.AppendElement(jsKey);
-  }
-
-  RefPtr<Promise> promise;
-  aRv = mLocalization->FormatValues(jsKeys, getter_AddRefs(promise));
-  if (aRv.Failed()) {
-    return nullptr;
-  }
-
-  return MaybeWrapPromise(promise);
-}
-
-already_AddRefed<Promise> DOMLocalization::FormatMessages(
-    JSContext* aCx, const Sequence<L10nKey>& aKeys, ErrorResult& aRv) {
-  nsTArray<JS::Value> jsKeys;
-  SequenceRooter<JS::Value> rooter(aCx, &jsKeys);
-  for (auto& key : aKeys) {
-    JS::RootedValue jsKey(aCx);
-    if (!ToJSValue(aCx, key, &jsKey)) {
-      aRv.NoteJSContextException(aCx);
-      return nullptr;
-    }
-    jsKeys.AppendElement(jsKey);
-  }
-
-  RefPtr<Promise> promise;
-  aRv = mLocalization->FormatMessages(jsKeys, getter_AddRefs(promise));
-  if (aRv.Failed()) {
-    return nullptr;
-  }
-
-  return MaybeWrapPromise(promise);
-}
+DOMLocalization::~DOMLocalization() { DisconnectMutations(); }
 
 /**
  * DOMLocalization API
  */
 
-void DOMLocalization::ConnectRoot(Element& aNode, ErrorResult& aRv) {
+void DOMLocalization::ConnectRoot(nsINode& aNode, ErrorResult& aRv) {
   nsCOMPtr<nsIGlobalObject> global = aNode.GetOwnerGlobal();
   if (!global) {
     return;
@@ -229,7 +92,7 @@ void DOMLocalization::ConnectRoot(Element& aNode, ErrorResult& aRv) {
 
 #ifdef DEBUG
   for (auto iter = mRoots.ConstIter(); !iter.Done(); iter.Next()) {
-    Element* root = iter.Get()->GetKey();
+    nsINode* root = iter.Get()->GetKey();
 
     MOZ_ASSERT(
         root != &aNode && !root->Contains(&aNode) && !aNode.Contains(root),
@@ -242,7 +105,7 @@ void DOMLocalization::ConnectRoot(Element& aNode, ErrorResult& aRv) {
   aNode.AddMutationObserverUnlessExists(mMutations);
 }
 
-void DOMLocalization::DisconnectRoot(Element& aNode, ErrorResult& aRv) {
+void DOMLocalization::DisconnectRoot(nsINode& aNode, ErrorResult& aRv) {
   if (mRoots.Contains(&aNode)) {
     aNode.RemoveMutationObserver(mMutations);
     mRoots.RemoveEntry(&aNode);
@@ -291,16 +154,7 @@ void DOMLocalization::GetAttributes(JSContext* aCx, Element& aElement,
   }
 
   if (aElement.GetAttr(kNameSpaceID_None, nsGkAtoms::datal10nargs, l10nArgs)) {
-    JS::Rooted<JS::Value> json(aCx);
-    if (!JS_ParseJSON(aCx, l10nArgs.get(), l10nArgs.Length(), &json)) {
-      aRv.NoteJSContextException(aCx);
-      return;
-    }
-    if (!json.isObject()) {
-      aRv.Throw(NS_ERROR_DOM_SYNTAX_ERR);
-      return;
-    }
-    aResult.mArgs = &json.toObject();
+    ConvertStringToL10nArgs(aCx, l10nArgs, aResult.mArgs.SetValue(), aRv);
   }
 }
 
@@ -320,9 +174,9 @@ already_AddRefed<Promise> DOMLocalization::TranslateFragment(nsINode& aNode,
  */
 class ElementTranslationHandler : public PromiseNativeHandler {
  public:
-  explicit ElementTranslationHandler(DOMLocalization* aDOMLocalization) {
-    mDOMLocalization = aDOMLocalization;
-  };
+  explicit ElementTranslationHandler(DOMLocalization* aDOMLocalization,
+                                     nsXULPrototypeDocument* aProto)
+      : mDOMLocalization(aDOMLocalization), mProto(aProto){};
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_CLASS(ElementTranslationHandler)
@@ -337,7 +191,7 @@ class ElementTranslationHandler : public PromiseNativeHandler {
                                 JS::Handle<JS::Value> aValue) override {
     ErrorResult rv;
 
-    nsTArray<L10nValue> l10nData;
+    nsTArray<L10nMessage> l10nData;
     if (aValue.isObject()) {
       JS::ForOfIterator iter(aCx);
       if (!iter.init(aValue, JS::ForOfIterator::AllowNonIterable)) {
@@ -361,7 +215,7 @@ class ElementTranslationHandler : public PromiseNativeHandler {
           break;
         }
 
-        L10nValue* slotPtr = l10nData.AppendElement(mozilla::fallible);
+        L10nMessage* slotPtr = l10nData.AppendElement(mozilla::fallible);
         if (!slotPtr) {
           mReturnValuePromise->MaybeRejectWithUndefined();
           return;
@@ -374,7 +228,7 @@ class ElementTranslationHandler : public PromiseNativeHandler {
       }
     }
 
-    mDOMLocalization->ApplyTranslations(mElements, l10nData, rv);
+    mDOMLocalization->ApplyTranslations(mElements, l10nData, mProto, rv);
     if (NS_WARN_IF(rv.Failed())) {
       mReturnValuePromise->MaybeRejectWithUndefined();
       return;
@@ -394,6 +248,7 @@ class ElementTranslationHandler : public PromiseNativeHandler {
   nsTArray<nsCOMPtr<Element>> mElements;
   RefPtr<DOMLocalization> mDOMLocalization;
   RefPtr<Promise> mReturnValuePromise;
+  RefPtr<nsXULPrototypeDocument> mProto;
 };
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(ElementTranslationHandler)
@@ -409,21 +264,29 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(ElementTranslationHandler)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mElements)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDOMLocalization)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mReturnValuePromise)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mProto)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(ElementTranslationHandler)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mElements)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDOMLocalization)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mReturnValuePromise)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mProto)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 already_AddRefed<Promise> DOMLocalization::TranslateElements(
     const Sequence<OwningNonNull<Element>>& aElements, ErrorResult& aRv) {
+  return TranslateElements(aElements, nullptr, aRv);
+}
+
+already_AddRefed<Promise> DOMLocalization::TranslateElements(
+    const Sequence<OwningNonNull<Element>>& aElements,
+    nsXULPrototypeDocument* aProto, ErrorResult& aRv) {
   JS::RootingContext* rcx = RootingCx();
   Sequence<L10nKey> l10nKeys;
   SequenceRooter<L10nKey> rooter(rcx, &l10nKeys);
   RefPtr<ElementTranslationHandler> nativeHandler =
-      new ElementTranslationHandler(this);
+      new ElementTranslationHandler(this, aProto);
   nsTArray<nsCOMPtr<Element>>& domElements = nativeHandler->Elements();
   domElements.SetCapacity(aElements.Length());
 
@@ -431,7 +294,7 @@ already_AddRefed<Promise> DOMLocalization::TranslateElements(
     return nullptr;
   }
 
-  AutoEntryScript aes(mGlobal, "DOMLocalization GetAttributes");
+  AutoEntryScript aes(mGlobal, "DOMLocalization TranslateElements");
   JSContext* cx = aes.cx();
 
   for (auto& domElement : aElements) {
@@ -446,8 +309,7 @@ already_AddRefed<Promise> DOMLocalization::TranslateElements(
     }
 
     GetAttributes(cx, *domElement, *key, aRv);
-    if (aRv.Failed()) {
-      aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
+    if (NS_WARN_IF(aRv.Failed())) {
       return nullptr;
     }
 
@@ -462,13 +324,54 @@ already_AddRefed<Promise> DOMLocalization::TranslateElements(
     return nullptr;
   }
 
-  RefPtr<Promise> callbackResult = FormatMessages(cx, l10nKeys, aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
-    return nullptr;
-  }
+  if (mIsSync) {
+    nsTArray<JS::Value> jsKeys;
+    SequenceRooter<JS::Value> keysRooter(cx, &jsKeys);
+    for (auto& key : l10nKeys) {
+      JS::RootedValue jsKey(cx);
+      if (!ToJSValue(cx, key, &jsKey)) {
+        aRv.NoteJSContextException(cx);
+        return nullptr;
+      }
+      jsKeys.AppendElement(jsKey);
+    }
 
-  nativeHandler->SetReturnValuePromise(promise);
-  callbackResult->AppendNativeHandler(nativeHandler);
+    nsTArray<JS::Value> messages;
+    SequenceRooter<JS::Value> messagesRooter(cx, &messages);
+    mLocalization->FormatMessagesSync(jsKeys, messages);
+    nsTArray<L10nMessage> l10nData;
+    SequenceRooter<L10nMessage> l10nDataRooter(cx, &l10nData);
+
+    for (auto& msg : messages) {
+      JS::Rooted<JS::Value> rootedMsg(cx);
+      rootedMsg.set(msg);
+      L10nMessage* slotPtr = l10nData.AppendElement(mozilla::fallible);
+      if (!slotPtr) {
+        promise->MaybeRejectWithUndefined();
+        return MaybeWrapPromise(promise);
+      }
+
+      if (!slotPtr->Init(cx, rootedMsg)) {
+        promise->MaybeRejectWithUndefined();
+        return MaybeWrapPromise(promise);
+      }
+    }
+
+    ApplyTranslations(domElements, l10nData, aProto, aRv);
+    if (NS_WARN_IF(aRv.Failed())) {
+      promise->MaybeRejectWithUndefined();
+      return MaybeWrapPromise(promise);
+    }
+
+    promise->MaybeResolveWithUndefined();
+  } else {
+    RefPtr<Promise> callbackResult = FormatMessages(cx, l10nKeys, aRv);
+    if (NS_WARN_IF(aRv.Failed())) {
+      return nullptr;
+    }
+    nativeHandler->SetReturnValuePromise(promise);
+    callbackResult->AppendNativeHandler(nativeHandler);
+  }
 
   return MaybeWrapPromise(promise);
 }
@@ -510,12 +413,19 @@ already_AddRefed<Promise> DOMLocalization::TranslateRoots(ErrorResult& aRv) {
   nsTArray<RefPtr<Promise>> promises;
 
   for (auto iter = mRoots.ConstIter(); !iter.Done(); iter.Next()) {
-    Element* root = iter.Get()->GetKey();
+    nsINode* root = iter.Get()->GetKey();
 
     RefPtr<Promise> promise = TranslateFragment(*root, aRv);
-    RefPtr<L10nRootTranslationHandler> nativeHandler =
-        new L10nRootTranslationHandler(root);
-    promise->AppendNativeHandler(nativeHandler);
+
+    // If the root is an element, we'll add a native handler
+    // to set root info (language, direction etc.) on it
+    // once the localization finishes.
+    if (root->IsElement()) {
+      RefPtr<L10nRootTranslationHandler> nativeHandler =
+          new L10nRootTranslationHandler(root->AsElement());
+      promise->AppendNativeHandler(nativeHandler);
+    }
+
     promises.AppendElement(promise);
   }
   AutoEntryScript aes(mGlobal, "DOMLocalization TranslateRoots");
@@ -572,7 +482,8 @@ void DOMLocalization::SetRootInfo(Element* aElement) {
 }
 
 void DOMLocalization::ApplyTranslations(nsTArray<nsCOMPtr<Element>>& aElements,
-                                        nsTArray<L10nValue>& aTranslations,
+                                        nsTArray<L10nMessage>& aTranslations,
+                                        nsXULPrototypeDocument* aProto,
                                         ErrorResult& aRv) {
   if (aElements.Length() != aTranslations.Length()) {
     aRv.Throw(NS_ERROR_FAILURE);
@@ -593,6 +504,11 @@ void DOMLocalization::ApplyTranslations(nsTArray<nsCOMPtr<Element>>& aElements,
       aRv.Throw(NS_ERROR_FAILURE);
       return;
     }
+    if (aProto) {
+      // We only need to rebuild deep if the translation has a value.
+      // Otherwise we'll only rebuild the attributes.
+      aProto->RebuildL10nPrototype(elem, !aTranslations[i].mValue.IsVoid());
+    }
   }
 
   ResumeObserving(aRv);
@@ -606,37 +522,10 @@ void DOMLocalization::ApplyTranslations(nsTArray<nsCOMPtr<Element>>& aElements,
 
 /* Protected */
 
-void DOMLocalization::RegisterObservers() {
-  DebugOnly<nsresult> rv = Preferences::AddWeakObservers(this, kObservedPrefs);
-  MOZ_ASSERT(NS_SUCCEEDED(rv), "Adding observers failed.");
-
-  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
-  if (obs) {
-    obs->AddObserver(this, INTL_APP_LOCALES_CHANGED, true);
-  }
-}
-
-NS_IMETHODIMP
-DOMLocalization::Observe(nsISupports* aSubject, const char* aTopic,
-                         const char16_t* aData) {
-  if (!strcmp(aTopic, INTL_APP_LOCALES_CHANGED)) {
-    OnChange();
-  } else {
-    MOZ_ASSERT(!strcmp("nsPref:changed", aTopic));
-    nsDependentString pref(aData);
-    if (pref.EqualsLiteral(L10N_PSEUDO_PREF) ||
-        pref.EqualsLiteral(INTL_UI_DIRECTION_PREF)) {
-      OnChange();
-    }
-  }
-
-  return NS_OK;
-}
-
 void DOMLocalization::OnChange() {
+  Localization::OnChange();
   if (mLocalization) {
     ErrorResult rv;
-    mLocalization->OnChange();
     RefPtr<Promise> promise = TranslateRoots(rv);
   }
 }
@@ -650,80 +539,11 @@ void DOMLocalization::DisconnectMutations() {
 
 void DOMLocalization::DisconnectRoots() {
   for (auto iter = mRoots.ConstIter(); !iter.Done(); iter.Next()) {
-    Element* elem = iter.Get()->GetKey();
+    nsINode* node = iter.Get()->GetKey();
 
-    elem->RemoveMutationObserver(mMutations);
+    node->RemoveMutationObserver(mMutations);
   }
   mRoots.Clear();
-}
-
-/**
- * PromiseResolver is a PromiseNativeHandler used
- * by MaybeWrapPromise method.
- */
-class PromiseResolver final : public PromiseNativeHandler {
- public:
-  NS_DECL_ISUPPORTS
-
-  explicit PromiseResolver(Promise* aPromise);
-  void ResolvedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue) override;
-  void RejectedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue) override;
-
- protected:
-  virtual ~PromiseResolver();
-
-  RefPtr<Promise> mPromise;
-};
-
-NS_INTERFACE_MAP_BEGIN(PromiseResolver)
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-NS_INTERFACE_MAP_END
-
-NS_IMPL_ADDREF(PromiseResolver)
-NS_IMPL_RELEASE(PromiseResolver)
-
-PromiseResolver::PromiseResolver(Promise* aPromise) { mPromise = aPromise; }
-
-void PromiseResolver::ResolvedCallback(JSContext* aCx,
-                                       JS::Handle<JS::Value> aValue) {
-  mPromise->MaybeResolveWithClone(aCx, aValue);
-}
-
-void PromiseResolver::RejectedCallback(JSContext* aCx,
-                                       JS::Handle<JS::Value> aValue) {
-  mPromise->MaybeRejectWithClone(aCx, aValue);
-}
-
-PromiseResolver::~PromiseResolver() { mPromise = nullptr; }
-
-/**
- * MaybeWrapPromise is a helper method used by Localization
- * API methods to clone the value returned by a promise
- * into a new context.
- *
- * This allows for a promise from a privileged context
- * to be returned into an unprivileged document.
- *
- * This method is only used for promises that carry values.
- */
-already_AddRefed<Promise> DOMLocalization::MaybeWrapPromise(
-    Promise* aInnerPromise) {
-  // For system principal we don't need to wrap the
-  // result promise at all.
-  nsIPrincipal* principal = mGlobal->PrincipalOrNull();
-  if (principal && nsContentUtils::IsSystemPrincipal(principal)) {
-    return RefPtr<Promise>(aInnerPromise).forget();
-  }
-
-  ErrorResult result;
-  RefPtr<Promise> docPromise = Promise::Create(mGlobal, result);
-  if (NS_WARN_IF(result.Failed())) {
-    return nullptr;
-  }
-
-  RefPtr<PromiseResolver> resolver = new PromiseResolver(docPromise);
-  aInnerPromise->AppendNativeHandler(resolver);
-  return docPromise.forget();
 }
 
 void DOMLocalization::ReportL10nOverlaysErrors(
@@ -771,5 +591,31 @@ void DOMLocalization::ReportL10nOverlaysErrors(
         NS_WARNING("Failed to report l10n DOM Overlay errors to console.");
       }
     }
+  }
+}
+
+void DOMLocalization::ConvertStringToL10nArgs(JSContext* aCx,
+                                              const nsString& aInput,
+                                              intl::L10nArgs& aRetVal,
+                                              ErrorResult& aRv) {
+  // This method uses a temporary dictionary to automate
+  // converting a JSON string into an IDL Record via a dictionary.
+  //
+  // Once we get Record::Init(const nsAString& aJSON), we'll switch to
+  // that.
+  L10nArgsHelperDict helperDict;
+  if (!helperDict.Init(NS_LITERAL_STRING("{\"args\": ") + aInput +
+                       NS_LITERAL_STRING("}"))) {
+    aRv.Throw(NS_ERROR_UNEXPECTED);
+    return;
+  }
+  for (auto& entry : helperDict.mArgs.Entries()) {
+    L10nArgs::EntryType* newEntry = aRetVal.Entries().AppendElement(fallible);
+    if (!newEntry) {
+      aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
+      return;
+    }
+    newEntry->mKey = entry.mKey;
+    newEntry->mValue = entry.mValue;
   }
 }

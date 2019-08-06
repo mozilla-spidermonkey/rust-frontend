@@ -238,6 +238,7 @@ void nsTableCellFrame::AppendFrames(ChildListID aListID,
 }
 
 void nsTableCellFrame::InsertFrames(ChildListID aListID, nsIFrame* aPrevFrame,
+                                    const nsLineList::iterator* aPrevFrameLine,
                                     nsFrameList& aFrameList) {
   MOZ_CRASH("unsupported operation");
 }
@@ -676,8 +677,10 @@ nscoord nsTableCellFrame::GetCellBaseline() const {
   nsIFrame* inner = mFrames.FirstChild();
   nscoord borderPadding = GetUsedBorderAndPadding().top;
   nscoord result;
-  if (nsLayoutUtils::GetFirstLineBaseline(GetWritingMode(), inner, &result))
+  if (!StyleDisplay()->IsContainLayout() &&
+      nsLayoutUtils::GetFirstLineBaseline(GetWritingMode(), inner, &result)) {
     return result + borderPadding;
+  }
   return inner->GetContentRectRelativeToSelf().YMost() + borderPadding;
 }
 

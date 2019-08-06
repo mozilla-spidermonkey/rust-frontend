@@ -3268,15 +3268,10 @@ void InitializeLocalStorage() {
     NS_WARNING("Failed to initialize quota client!");
   }
 
-  if (NS_FAILED(Preferences::AddAtomicBoolVarCache(&gNextGen, kNextGenPref,
-                                                   kDefaultNextGen))) {
-    NS_WARNING("Unable to respond to next gen pref changes!");
-  }
+  Preferences::AddAtomicBoolVarCache(&gNextGen, kNextGenPref, kDefaultNextGen);
 
-  if (NS_FAILED(Preferences::AddAtomicUintVarCache(
-          &gOriginLimitKB, kDefaultQuotaPref, kDefaultOriginLimitKB))) {
-    NS_WARNING("Unable to respond to default quota pref changes!");
-  }
+  Preferences::AddAtomicUintVarCache(&gOriginLimitKB, kDefaultQuotaPref,
+                                     kDefaultOriginLimitKB);
 
   Preferences::RegisterCallbackAndCall(ShadowWritesPrefChangedCallback,
                                        kShadowWritesPref);
@@ -4387,8 +4382,8 @@ nsresult Connection::BeginWriteTransaction() {
   MOZ_ASSERT(mStorageConnection);
 
   CachedStatement stmt;
-  nsresult rv = GetCachedStatement(NS_LITERAL_CSTRING("BEGIN IMMEDIATE;"),
-                                       &stmt);
+  nsresult rv =
+      GetCachedStatement(NS_LITERAL_CSTRING("BEGIN IMMEDIATE;"), &stmt);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -8545,7 +8540,7 @@ nsresult QuotaClient::InitOrigin(PersistenceType aPersistenceType,
   nsresult rv = quotaManager->GetDirectoryForOrigin(aPersistenceType, aOrigin,
                                                     getter_AddRefs(directory));
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_GetDirForOrigin);
+    REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_GetDirForOrigin);
     return rv;
   }
 
@@ -8553,7 +8548,7 @@ nsresult QuotaClient::InitOrigin(PersistenceType aPersistenceType,
 
   rv = directory->Append(NS_LITERAL_STRING(LS_DIRECTORY_NAME));
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_Append);
+    REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_Append);
     return rv;
   }
 
@@ -8561,7 +8556,7 @@ nsresult QuotaClient::InitOrigin(PersistenceType aPersistenceType,
   bool exists;
   rv = directory->Exists(&exists);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_Exists);
+    REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_Exists);
     return rv;
   }
 
@@ -8571,14 +8566,14 @@ nsresult QuotaClient::InitOrigin(PersistenceType aPersistenceType,
   nsString directoryPath;
   rv = directory->GetPath(directoryPath);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_GetPath);
+    REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_GetPath);
     return rv;
   }
 
   nsCOMPtr<nsIFile> usageFile;
   rv = GetUsageFile(directoryPath, getter_AddRefs(usageFile));
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_GetUsageFile);
+    REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_GetUsageFile);
     return rv;
   }
 
@@ -8589,12 +8584,12 @@ nsresult QuotaClient::InitOrigin(PersistenceType aPersistenceType,
   if (rv != NS_ERROR_FILE_NOT_FOUND &&
       rv != NS_ERROR_FILE_TARGET_DOES_NOT_EXIST) {
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_IsDirectory);
+      REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_IsDirectory);
       return rv;
     }
 
     if (NS_WARN_IF(isDirectory)) {
-      REPORT_TELEMETRY_INIT_ERR(kInternalError, LS_UnexpectedDir);
+      REPORT_TELEMETRY_INIT_ERR(kQuotaInternalError, LS_UnexpectedDir);
       return NS_ERROR_FAILURE;
     }
 
@@ -8606,7 +8601,7 @@ nsresult QuotaClient::InitOrigin(PersistenceType aPersistenceType,
   nsCOMPtr<nsIFile> usageJournalFile;
   rv = GetUsageJournalFile(directoryPath, getter_AddRefs(usageJournalFile));
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_GetUsageForJFile);
+    REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_GetUsageForJFile);
     return rv;
   }
 
@@ -8614,19 +8609,19 @@ nsresult QuotaClient::InitOrigin(PersistenceType aPersistenceType,
   if (rv != NS_ERROR_FILE_NOT_FOUND &&
       rv != NS_ERROR_FILE_TARGET_DOES_NOT_EXIST) {
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_IsDirectory2);
+      REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_IsDirectory2);
       return rv;
     }
 
     if (NS_WARN_IF(isDirectory)) {
-      REPORT_TELEMETRY_INIT_ERR(kInternalError, LS_UnexpectedDir2);
+      REPORT_TELEMETRY_INIT_ERR(kQuotaInternalError, LS_UnexpectedDir2);
       return NS_ERROR_FAILURE;
     }
 
     if (usageFileExists) {
       rv = usageFile->Remove(false);
       if (NS_WARN_IF(NS_FAILED(rv))) {
-        REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_Remove);
+        REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_Remove);
         return rv;
       }
 
@@ -8635,7 +8630,7 @@ nsresult QuotaClient::InitOrigin(PersistenceType aPersistenceType,
 
     rv = usageJournalFile->Remove(false);
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_Remove2);
+      REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_Remove2);
       return rv;
     }
   }
@@ -8643,13 +8638,13 @@ nsresult QuotaClient::InitOrigin(PersistenceType aPersistenceType,
   nsCOMPtr<nsIFile> file;
   rv = directory->Clone(getter_AddRefs(file));
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_Clone);
+    REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_Clone);
     return rv;
   }
 
   rv = file->Append(NS_LITERAL_STRING(DATA_FILE_NAME));
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_Append2);
+    REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_Append2);
     return rv;
   }
 
@@ -8657,12 +8652,12 @@ nsresult QuotaClient::InitOrigin(PersistenceType aPersistenceType,
   if (rv != NS_ERROR_FILE_NOT_FOUND &&
       rv != NS_ERROR_FILE_TARGET_DOES_NOT_EXIST) {
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_IsDirectory3);
+      REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_IsDirectory3);
       return rv;
     }
 
     if (NS_WARN_IF(isDirectory)) {
-      REPORT_TELEMETRY_INIT_ERR(kInternalError, LS_UnexpectedDir3);
+      REPORT_TELEMETRY_INIT_ERR(kQuotaInternalError, LS_UnexpectedDir3);
       return NS_ERROR_FAILURE;
     }
 
@@ -8674,25 +8669,25 @@ nsresult QuotaClient::InitOrigin(PersistenceType aPersistenceType,
       rv = CreateStorageConnection(file, usageFile, aOrigin,
                                    getter_AddRefs(connection), &dummy);
       if (NS_WARN_IF(NS_FAILED(rv))) {
-        REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_CreateConnection);
+        REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_CreateConnection);
         return rv;
       }
 
       rv = GetUsage(connection, /* aArchivedOriginScope */ nullptr, &usage);
       if (NS_WARN_IF(NS_FAILED(rv))) {
-        REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_GetUsage);
+        REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_GetUsage);
         return rv;
       }
 
       rv = UpdateUsageFile(usageFile, usageJournalFile, usage);
       if (NS_WARN_IF(NS_FAILED(rv))) {
-        REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_UpdateUsageFile);
+        REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_UpdateUsageFile);
         return rv;
       }
 
       rv = usageJournalFile->Remove(false);
       if (NS_WARN_IF(NS_FAILED(rv))) {
-        REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_Remove3);
+        REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_Remove3);
         return rv;
       }
     }
@@ -8707,7 +8702,7 @@ nsresult QuotaClient::InitOrigin(PersistenceType aPersistenceType,
   } else if (usageFileExists) {
     rv = usageFile->Remove(false);
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_Remove4);
+      REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_Remove4);
       return rv;
     }
   }
@@ -8718,7 +8713,7 @@ nsresult QuotaClient::InitOrigin(PersistenceType aPersistenceType,
   nsCOMPtr<nsIDirectoryEnumerator> directoryEntries;
   rv = directory->GetDirectoryEntries(getter_AddRefs(directoryEntries));
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_GetDirEntries);
+    REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_GetDirEntries);
     return rv;
   }
 
@@ -8734,7 +8729,7 @@ nsresult QuotaClient::InitOrigin(PersistenceType aPersistenceType,
     nsCOMPtr<nsIFile> file;
     rv = directoryEntries->GetNextFile(getter_AddRefs(file));
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_GetNextFile);
+      REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_GetNextFile);
       return rv;
     }
 
@@ -8745,7 +8740,7 @@ nsresult QuotaClient::InitOrigin(PersistenceType aPersistenceType,
     nsString leafName;
     rv = file->GetLeafName(leafName);
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_GetLeafName);
+      REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_GetLeafName);
       return rv;
     }
 
@@ -8761,7 +8756,7 @@ nsresult QuotaClient::InitOrigin(PersistenceType aPersistenceType,
       bool isDirectory;
       rv = file->IsDirectory(&isDirectory);
       if (NS_WARN_IF(NS_FAILED(rv))) {
-        REPORT_TELEMETRY_INIT_ERR(kExternalError, LS_IsDirectory4);
+        REPORT_TELEMETRY_INIT_ERR(kQuotaExternalError, LS_IsDirectory4);
         return rv;
       }
 
@@ -9425,9 +9420,7 @@ QuotaClient::MatchFunction::OnFunctionCall(
  ******************************************************************************/
 
 AutoWriteTransaction::AutoWriteTransaction(bool aShadowWrites)
-    : mConnection(nullptr)
-    , mShadowWrites(aShadowWrites)
-{
+    : mConnection(nullptr), mShadowWrites(aShadowWrites) {
   AssertIsOnConnectionThread();
 
   MOZ_COUNT_CTOR(mozilla::dom::AutoWriteTransaction);
@@ -9494,7 +9487,8 @@ nsresult AutoWriteTransaction::Commit() {
   return NS_OK;
 }
 
-nsresult AutoWriteTransaction::LockAndAttachShadowDatabase(Connection* aConnection) {
+nsresult AutoWriteTransaction::LockAndAttachShadowDatabase(
+    Connection* aConnection) {
   AssertIsOnConnectionThread();
   MOZ_ASSERT(aConnection);
   MOZ_ASSERT(!mConnection);
@@ -9511,7 +9505,8 @@ nsresult AutoWriteTransaction::LockAndAttachShadowDatabase(Connection* aConnecti
   mShadowDatabaseLock.emplace(
       aConnection->GetQuotaClient()->ShadowDatabaseMutex());
 
-  nsresult rv = AttachShadowDatabase(quotaManager->GetBasePath(), storageConnection);
+  nsresult rv =
+      AttachShadowDatabase(quotaManager->GetBasePath(), storageConnection);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }

@@ -12,10 +12,10 @@ add_task(async function testCategoryLogs() {
   const storage = consoleStorage.getService(Ci.nsIConsoleAPIStorage);
   storage.clearEvents();
 
-  const {console} = ChromeUtils.import("resource://gre/modules/Console.jsm");
+  const { console } = ChromeUtils.import("resource://gre/modules/Console.jsm");
   console.log("bug861338-log-cached");
 
-  const hud = await HUDService.toggleBrowserConsole();
+  const hud = await BrowserConsoleManager.toggleBrowserConsole();
 
   await checkMessageExists(hud, "bug861338-log-cached");
 
@@ -49,7 +49,7 @@ add_task(async function testCategoryLogs() {
   await checkMessageExists(hud, "foobarTimer");
 
   hud.ui.clearOutput(true);
-  await HUDService.toggleBrowserConsole();
+  await BrowserConsoleManager.toggleBrowserConsole();
 });
 
 add_task(async function testFilter() {
@@ -57,9 +57,11 @@ add_task(async function testFilter() {
   const storage = consoleStorage.getService(Ci.nsIConsoleAPIStorage);
   storage.clearEvents();
 
-  const {ConsoleAPI} = ChromeUtils.import("resource://gre/modules/Console.jsm");
+  const { ConsoleAPI } = ChromeUtils.import(
+    "resource://gre/modules/Console.jsm"
+  );
   const console2 = new ConsoleAPI();
-  const hud = await HUDService.toggleBrowserConsole();
+  const hud = await BrowserConsoleManager.toggleBrowserConsole();
 
   // Enable the error category and disable the log category.
   await setFilterState(hud, {
@@ -80,7 +82,7 @@ add_task(async function testFilter() {
 
   await resetFilters(hud);
   hud.ui.clearOutput(true);
-  await HUDService.toggleBrowserConsole();
+  await BrowserConsoleManager.toggleBrowserConsole();
 });
 
 // Test that console.profile / profileEnd trigger the right events
@@ -116,7 +118,11 @@ add_task(async function testProfile() {
   is(profilerEvents.length, 2, "Got two profiler events");
   is(profilerEvents[0].action, "profile", "First event has the right action");
   is(profilerEvents[0].name, "test", "First event has the right name");
-  is(profilerEvents[1].action, "profileEnd", "Second event has the right action");
+  is(
+    profilerEvents[1].action,
+    "profileEnd",
+    "Second event has the right action"
+  );
   is(profilerEvents[1].name, "test", "Second event has the right name");
 });
 

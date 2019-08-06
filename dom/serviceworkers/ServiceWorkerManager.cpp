@@ -203,7 +203,7 @@ nsresult PopulateRegistrationData(
   MOZ_ASSERT(aPrincipal);
   MOZ_ASSERT(aRegistration);
 
-  if (NS_WARN_IF(!BasePrincipal::Cast(aPrincipal)->IsCodebasePrincipal())) {
+  if (NS_WARN_IF(!BasePrincipal::Cast(aPrincipal)->IsContentPrincipal())) {
     return NS_ERROR_FAILURE;
   }
 
@@ -741,15 +741,14 @@ RefPtr<ServiceWorkerRegistrationPromise> ServiceWorkerManager::Register(
     const ClientInfo& aClientInfo, const nsACString& aScopeURL,
     const nsACString& aScriptURL, ServiceWorkerUpdateViaCache aUpdateViaCache) {
   nsCOMPtr<nsIURI> scopeURI;
-  nsresult rv =
-      NS_NewURI(getter_AddRefs(scopeURI), aScopeURL, nullptr, nullptr);
+  nsresult rv = NS_NewURI(getter_AddRefs(scopeURI), aScopeURL);
   if (NS_FAILED(rv)) {
     return ServiceWorkerRegistrationPromise::CreateAndReject(
         CopyableErrorResult(rv), __func__);
   }
 
   nsCOMPtr<nsIURI> scriptURI;
-  rv = NS_NewURI(getter_AddRefs(scriptURI), aScriptURL, nullptr, nullptr);
+  rv = NS_NewURI(getter_AddRefs(scriptURI), aScriptURL);
   if (NS_FAILED(rv)) {
     return ServiceWorkerRegistrationPromise::CreateAndReject(
         CopyableErrorResult(rv), __func__);
@@ -824,7 +823,7 @@ class GetRegistrationsRunnable final : public Runnable {
 
     nsTArray<ServiceWorkerRegistrationDescriptor> array;
 
-    if (NS_WARN_IF(!BasePrincipal::Cast(principal)->IsCodebasePrincipal())) {
+    if (NS_WARN_IF(!BasePrincipal::Cast(principal)->IsContentPrincipal())) {
       return NS_OK;
     }
 
@@ -844,15 +843,11 @@ class GetRegistrationsRunnable final : public Runnable {
     for (uint32_t i = 0; i < data->mOrderedScopes.Length(); ++i) {
       RefPtr<ServiceWorkerRegistrationInfo> info =
           data->mInfos.GetWeak(data->mOrderedScopes[i]);
-      if (info->IsPendingUninstall()) {
-        continue;
-      }
 
       NS_ConvertUTF8toUTF16 scope(data->mOrderedScopes[i]);
 
       nsCOMPtr<nsIURI> scopeURI;
-      nsresult rv =
-          NS_NewURI(getter_AddRefs(scopeURI), scope, nullptr, nullptr);
+      nsresult rv = NS_NewURI(getter_AddRefs(scopeURI), scope);
       if (NS_WARN_IF(NS_FAILED(rv))) {
         break;
       }
@@ -914,7 +909,7 @@ class GetRegistrationRunnable final : public Runnable {
     }
 
     nsCOMPtr<nsIURI> uri;
-    nsresult rv = NS_NewURI(getter_AddRefs(uri), mURL, nullptr, nullptr);
+    nsresult rv = NS_NewURI(getter_AddRefs(uri), mURL);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       mPromise->Reject(rv, __func__);
       return NS_OK;
@@ -1133,8 +1128,7 @@ void ServiceWorkerManager::NoteInheritedController(
   NS_ENSURE_TRUE_VOID(principal);
 
   nsCOMPtr<nsIURI> scope;
-  nsresult rv =
-      NS_NewURI(getter_AddRefs(scope), aController.Scope(), nullptr, nullptr);
+  nsresult rv = NS_NewURI(getter_AddRefs(scope), aController.Scope());
   NS_ENSURE_SUCCESS_VOID(rv);
 
   RefPtr<ServiceWorkerRegistrationInfo> registration =
@@ -1151,12 +1145,12 @@ ServiceWorkerInfo* ServiceWorkerManager::GetActiveWorkerInfoForScope(
   MOZ_ASSERT(NS_IsMainThread());
 
   nsCOMPtr<nsIURI> scopeURI;
-  nsresult rv = NS_NewURI(getter_AddRefs(scopeURI), aScope, nullptr, nullptr);
+  nsresult rv = NS_NewURI(getter_AddRefs(scopeURI), aScope);
   if (NS_FAILED(rv)) {
     return nullptr;
   }
   nsCOMPtr<nsIPrincipal> principal =
-      BasePrincipal::CreateCodebasePrincipal(scopeURI, aOriginAttributes);
+      BasePrincipal::CreateContentPrincipal(scopeURI, aOriginAttributes);
   RefPtr<ServiceWorkerRegistrationInfo> registration =
       GetServiceWorkerRegistrationInfo(principal, scopeURI);
   if (!registration) {
@@ -1216,7 +1210,7 @@ ServiceWorkerManager::Unregister(nsIPrincipal* aPrincipal,
 // a correct URI, so this is wrapped in DEBUG
 #ifdef DEBUG
   nsCOMPtr<nsIURI> scopeURI;
-  rv = NS_NewURI(getter_AddRefs(scopeURI), aScope, nullptr, nullptr);
+  rv = NS_NewURI(getter_AddRefs(scopeURI), aScope);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return NS_ERROR_DOM_SECURITY_ERR;
   }
@@ -1254,7 +1248,7 @@ nsresult ServiceWorkerManager::NotifyUnregister(nsIPrincipal* aPrincipal,
 // a correct URI, so this is wrapped in DEBUG
 #ifdef DEBUG
   nsCOMPtr<nsIURI> scopeURI;
-  rv = NS_NewURI(getter_AddRefs(scopeURI), aScope, nullptr, nullptr);
+  rv = NS_NewURI(getter_AddRefs(scopeURI), aScope);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -1287,11 +1281,6 @@ void ServiceWorkerManager::WorkerIsIdle(ServiceWorkerInfo* aWorker) {
   }
 
   if (reg->GetActive() != aWorker) {
-    return;
-  }
-
-  if (!reg->IsControllingClients() && reg->IsPendingUninstall()) {
-    RemoveRegistration(reg);
     return;
   }
 
@@ -1500,8 +1489,7 @@ ServiceWorkerManager::GetServiceWorkerRegistrationInfo(
   NS_ENSURE_TRUE(principal, nullptr);
 
   nsCOMPtr<nsIURI> uri;
-  nsresult rv =
-      NS_NewURI(getter_AddRefs(uri), aClientInfo.URL(), nullptr, nullptr);
+  nsresult rv = NS_NewURI(getter_AddRefs(uri), aClientInfo.URL());
   NS_ENSURE_SUCCESS(rv, nullptr);
 
   return GetServiceWorkerRegistrationInfo(principal, uri);
@@ -1553,9 +1541,6 @@ ServiceWorkerManager::GetServiceWorkerRegistrationInfo(
   MOZ_ASSERT(origin.Equals(aScopeKey));
 #endif
 
-  if (registration->IsPendingUninstall()) {
-    return nullptr;
-  }
   return registration.forget();
 }
 
@@ -1564,7 +1549,7 @@ nsresult ServiceWorkerManager::PrincipalToScopeKey(nsIPrincipal* aPrincipal,
                                                    nsACString& aKey) {
   MOZ_ASSERT(aPrincipal);
 
-  if (!BasePrincipal::Cast(aPrincipal)->IsCodebasePrincipal()) {
+  if (!BasePrincipal::Cast(aPrincipal)->IsContentPrincipal()) {
     return NS_ERROR_FAILURE;
   }
 
@@ -1599,6 +1584,7 @@ void ServiceWorkerManager::AddScopeAndRegistration(
     const nsACString& aScope, ServiceWorkerRegistrationInfo* aInfo) {
   MOZ_ASSERT(aInfo);
   MOZ_ASSERT(aInfo->Principal());
+  MOZ_ASSERT(!aInfo->IsUnregistered());
 
   RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
   if (!swm) {
@@ -1717,22 +1703,19 @@ void ServiceWorkerManager::RemoveScopeAndRegistration(
   for (auto iter = swm->mControlledClients.Iter(); !iter.Done(); iter.Next()) {
     auto& reg = iter.UserData()->mRegistrationInfo;
     if (reg->Scope().Equals(aRegistration->Scope()) &&
-        reg->Principal()->Equals(aRegistration->Principal())) {
-      MOZ_DIAGNOSTIC_ASSERT(
-          aRegistration->IsCorrupt(),
-          "controlled client when removing non-corrupt registration");
+        reg->Principal()->Equals(aRegistration->Principal()) &&
+        reg->IsCorrupt()) {
       iter.Remove();
-      break;
     }
   }
 
   RefPtr<ServiceWorkerRegistrationInfo> info;
   data->mInfos.Remove(aRegistration->Scope(), getter_AddRefs(info));
+  aRegistration->SetUnregistered();
   data->mOrderedScopes.RemoveElement(aRegistration->Scope());
   swm->NotifyListenersOnUnregister(info);
 
   swm->MaybeRemoveRegistrationInfo(scopeKey);
-  aRegistration->NotifyRemoved();
 }
 
 void ServiceWorkerManager::MaybeRemoveRegistrationInfo(
@@ -1755,8 +1738,7 @@ bool ServiceWorkerManager::StartControlling(
   NS_ENSURE_TRUE(principal, false);
 
   nsCOMPtr<nsIURI> scope;
-  nsresult rv = NS_NewURI(getter_AddRefs(scope), aServiceWorker.Scope(),
-                          nullptr, nullptr);
+  nsresult rv = NS_NewURI(getter_AddRefs(scope), aServiceWorker.Scope());
   NS_ENSURE_SUCCESS(rv, false);
 
   RefPtr<ServiceWorkerRegistrationInfo> registration =
@@ -1790,12 +1772,16 @@ void ServiceWorkerManager::MaybeCheckNavigationUpdate(
 void ServiceWorkerManager::StopControllingRegistration(
     ServiceWorkerRegistrationInfo* aRegistration) {
   aRegistration->StopControllingClient();
-  if (aRegistration->IsControllingClients() || !aRegistration->IsIdle()) {
+  if (aRegistration->IsControllingClients()) {
     return;
   }
 
-  if (aRegistration->IsPendingUninstall()) {
-    RemoveRegistration(aRegistration);
+  if (aRegistration->IsUnregistered()) {
+    if (aRegistration->IsIdle()) {
+      aRegistration->Clear();
+    } else {
+      aRegistration->ClearWhenIdle();
+    }
     return;
   }
 
@@ -1812,7 +1798,7 @@ ServiceWorkerManager::GetScopeForUrl(nsIPrincipal* aPrincipal,
   MOZ_ASSERT(aPrincipal);
 
   nsCOMPtr<nsIURI> uri;
-  nsresult rv = NS_NewURI(getter_AddRefs(uri), aUrl, nullptr, nullptr);
+  nsresult rv = NS_NewURI(getter_AddRefs(uri), aUrl);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return NS_ERROR_FAILURE;
   }
@@ -1954,10 +1940,11 @@ void ServiceWorkerManager::DispatchFetchEvent(nsIInterceptedChannel* aChannel,
       return;
     }
 
-    RefPtr<ServiceWorkerRegistrationInfo> registration = GetRegistration(
-        controller.ref().PrincipalInfo(), controller.ref().Scope());
-    if (NS_WARN_IF(!registration)) {
-      aRv.Throw(NS_ERROR_FAILURE);
+    RefPtr<ServiceWorkerRegistrationInfo> registration;
+    nsresult rv = GetClientRegistration(loadInfo->GetClientInfo().ref(),
+                                        getter_AddRefs(registration));
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      aRv.Throw(rv);
       return;
     }
 
@@ -1975,7 +1962,7 @@ void ServiceWorkerManager::DispatchFetchEvent(nsIInterceptedChannel* aChannel,
     }
 
     // non-subresource request means the URI contains the principal
-    nsCOMPtr<nsIPrincipal> principal = BasePrincipal::CreateCodebasePrincipal(
+    nsCOMPtr<nsIPrincipal> principal = BasePrincipal::CreateContentPrincipal(
         uri, loadInfo->GetOriginAttributes());
 
     RefPtr<ServiceWorkerRegistrationInfo> registration =
@@ -2214,7 +2201,7 @@ void ServiceWorkerManager::SoftUpdateInternal(
   }
 
   nsCOMPtr<nsIPrincipal> principal =
-      BasePrincipal::CreateCodebasePrincipal(scopeURI, aOriginAttributes);
+      BasePrincipal::CreateContentPrincipal(scopeURI, aOriginAttributes);
   if (NS_WARN_IF(!principal)) {
     return;
   }
@@ -2228,11 +2215,6 @@ void ServiceWorkerManager::SoftUpdateInternal(
   RefPtr<ServiceWorkerRegistrationInfo> registration =
       GetRegistration(scopeKey, aScope);
   if (NS_WARN_IF(!registration)) {
-    return;
-  }
-
-  // "If registration's uninstalling flag is set, abort these steps."
-  if (registration->IsPendingUninstall()) {
     return;
   }
 
@@ -2501,7 +2483,7 @@ ServiceWorkerManager::GetRegistrationByPrincipal(
   MOZ_ASSERT(aInfo);
 
   nsCOMPtr<nsIURI> scopeURI;
-  nsresult rv = NS_NewURI(getter_AddRefs(scopeURI), aScope, nullptr, nullptr);
+  nsresult rv = NS_NewURI(getter_AddRefs(scopeURI), aScope);
   if (NS_FAILED(rv)) {
     return NS_ERROR_FAILURE;
   }
@@ -2537,7 +2519,7 @@ ServiceWorkerManager::CreateNewRegistration(
 #ifdef DEBUG
   MOZ_ASSERT(NS_IsMainThread());
   nsCOMPtr<nsIURI> scopeURI;
-  nsresult rv = NS_NewURI(getter_AddRefs(scopeURI), aScope, nullptr, nullptr);
+  nsresult rv = NS_NewURI(getter_AddRefs(scopeURI), aScope);
   MOZ_ASSERT(NS_SUCCEEDED(rv));
 
   RefPtr<ServiceWorkerRegistrationInfo> tmp =
@@ -2574,18 +2556,7 @@ void ServiceWorkerManager::RemoveRegistration(
   // 3) Through the failure to install a new service worker.  Since we don't
   //    store the registration until install succeeds, we do not need to call
   //    SendUnregister here.
-  // Assert these conditions by testing for pending uninstall (cases 1 and 2) or
-  // null workers (case 3).
-#ifdef DEBUG
-  RefPtr<ServiceWorkerInfo> newest = aRegistration->Newest();
-  MOZ_ASSERT(aRegistration->IsPendingUninstall() || !newest);
-#endif
-
   MOZ_ASSERT(HasScope(aRegistration->Principal(), aRegistration->Scope()));
-
-  // When a registration is removed, we must clear its contents since the DOM
-  // object may be held by content script.
-  aRegistration->Clear();
 
   RemoveScopeAndRegistration(aRegistration);
 }
@@ -2603,10 +2574,6 @@ ServiceWorkerManager::GetAllRegistrations(nsIArray** aResult) {
     for (auto it2 = it1.UserData()->mInfos.Iter(); !it2.Done(); it2.Next()) {
       ServiceWorkerRegistrationInfo* reg = it2.UserData();
       MOZ_ASSERT(reg);
-
-      if (reg->IsPendingUninstall()) {
-        continue;
-      }
 
       array->AppendElement(reg);
     }
@@ -2655,8 +2622,7 @@ void ServiceWorkerManager::Remove(const nsACString& aHost) {
     for (auto it2 = data->mInfos.Iter(); !it2.Done(); it2.Next()) {
       ServiceWorkerRegistrationInfo* reg = it2.UserData();
       nsCOMPtr<nsIURI> scopeURI;
-      nsresult rv =
-          NS_NewURI(getter_AddRefs(scopeURI), it2.Key(), nullptr, nullptr);
+      nsresult rv = NS_NewURI(getter_AddRefs(scopeURI), it2.Key());
       if (NS_WARN_IF(NS_FAILED(rv))) {
         continue;
       }

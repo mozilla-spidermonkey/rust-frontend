@@ -1164,6 +1164,7 @@ impl YamlFrameReader {
         // TODO(gw): Support other YUV color depth and spaces.
         let color_depth = ColorDepth::Color8;
         let color_space = YuvColorSpace::Rec709;
+        let color_range = ColorRange::Limited;
 
         let yuv_data = match item["format"].as_str().expect("no format supplied") {
             "planar" => {
@@ -1210,6 +1211,7 @@ impl YamlFrameReader {
             yuv_data,
             color_depth,
             color_space,
+            color_range,
             ImageRendering::Auto,
         );
     }
@@ -1881,6 +1883,7 @@ impl YamlFrameReader {
 
         let filters = yaml["filters"].as_vec_filter_op().unwrap_or(vec![]);
         let filter_datas = yaml["filter-datas"].as_vec_filter_data().unwrap_or(vec![]);
+        let filter_primitives = yaml["filter-primitives"].as_vec_filter_primitive().unwrap_or(vec![]);
 
         dl.push_stacking_context(
             bounds.origin,
@@ -1891,6 +1894,7 @@ impl YamlFrameReader {
             mix_blend_mode,
             &filters,
             &filter_datas,
+            &filter_primitives,
             raster_space,
             cache_tiles,
         );

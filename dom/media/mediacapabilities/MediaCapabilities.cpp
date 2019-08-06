@@ -15,7 +15,7 @@
 #include "VPXDecoder.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/Move.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_media.h"
 #include "mozilla/TaskQueue.h"
 #include "mozilla/dom/DOMMozPromiseRequestHolder.h"
 #include "mozilla/dom/MediaCapabilitiesBinding.h"
@@ -534,7 +534,7 @@ already_AddRefed<layers::KnowsCompositor> MediaCapabilities::GetCompositor() {
 }
 
 bool MediaCapabilities::Enabled(JSContext* aCx, JSObject* aGlobal) {
-  return StaticPrefs::MediaCapabilitiesEnabled();
+  return StaticPrefs::media_media_capabilities_enabled();
 }
 
 JSObject* MediaCapabilities::WrapObject(JSContext* aCx,

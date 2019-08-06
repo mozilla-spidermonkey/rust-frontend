@@ -7,34 +7,185 @@
   <head>
     <meta charset="utf-8">
     <meta http-equiv="Content-Security-Policy" content="default-src chrome: blob:">
-    <link rel="stylesheet" type="text/css"
-          href="chrome://browser/content/protections.css">
-    <link rel="icon" href="chrome://global/skin/icons/warning.svg">
-    <script type="text/javascript" src="chrome://browser/content/protections.js"></script>
-    <title>Protection Report</title>
+    <link rel="localization" href="browser/branding/brandings.ftl"/>
+    <link rel="localization" href="branding/brand.ftl"/>
+    <link rel="localization" href="browser/branding/sync-brand.ftl">
+    <!-- rename to browser/protections.ftl when exposing to l10n -->
+    <link rel="localization" href="preview/protections.ftl">
+    <link rel="stylesheet" href="chrome://global/skin/in-content/common.css">
+    <link rel="stylesheet" href="chrome://browser/content/protections.css">
+    <link rel="icon" href="chrome://browser/skin/controlcenter/dashboard.svg">
+    <script type="module" src="chrome://browser/content/protections.js"></script>
+    <script type="module" src="chrome://browser/content/lockwise-card.js"></script>
+    <script type="module" src="chrome://browser/content/monitor-card.js"></script>
+    <title data-l10n-id="protection-report-page-title"></title>
   </head>
 
   <body>
     <div id="report-content">
-      <h2 id="report-title">Privacy Protections</h2>
-      <div class="report-card etp-card">
+      <h2 id="report-title" data-l10n-id="protection-report-content-title"></h2>
+      <div class="card card-no-hover etp-card">
         <div class="card-header">
           <div class="icon"></div>
           <div class="wrapper">
-            <h3 class="card-title">
-              Enhanced Tracking Protection
-            </h3>
-            <p class="content">
-              Trackers follow you around online to collect information about your browsing habits and interests. Firefox blocks many of these trackers and other malicious scripts.
-            </p>
-            <p id="protection-details">
-              Protection Level is set to <span>Standard</span>
-            </p>
+            <h3 class="card-title" data-l10n-id="etp-card-title"></h3>
+            <p class="content" data-l10n-id="etp-card-content"></p>
+            <p id="protection-details"></p>
           </div>
         </div>
         <div class="card-body">
+          <div class="body-wrapper">
+            <p id="graph-week-summary"></p>
+            <div id="graph-wrapper">
+              <div id="graph"></div>
+              <div id="legend">
+                <input id="tab-social" data-type="social" type="radio" name="tabs" checked>
+                <label for="tab-social" data-type="social"></label>
+
+                <input id="tab-cookie" data-type="cookie" type="radio" name="tabs">
+                <label for="tab-cookie" data-type="cookie"></label>
+
+                <input id="tab-tracker" data-type="tracker" type="radio" name="tabs">
+                <label for="tab-tracker" data-type="tracker"></label>
+
+                <input id="tab-fingerprinter" data-type="fingerprinter" type="radio" name="tabs">
+                <label for="tab-fingerprinter" data-type="fingerprinter"></label>
+
+                <input id="tab-cryptominer" data-type="cryptominer" type="radio" name="tabs">
+                <label for="tab-cryptominer" data-type="cryptominer"></label>
+
+                <div id="social" class="tab-content">
+                  <p class="content-title" data-l10n-id="social-tab-title"></p>
+                  <p data-l10n-id="social-tab-contant"></p>
+                </div>
+                <div id="cookie" class="tab-content">
+                  <p class="content-title" data-l10n-id="cookie-tab-title"></p>
+                  <p data-l10n-id="cookie-tab-content"></p>
+                </div>
+                <div id="tracker" class="tab-content">
+                  <p class="content-title" data-l10n-id="tracker-tab-title"></p>
+                  <p data-l10n-id="tracker-tab-content"></p>
+                </div>
+                <div id="fingerprinter" class="tab-content">
+                  <p class="content-title" data-l10n-id="fingerprinter-tab-title"></p>
+                  <p data-l10n-id="fingerprinter-tab-content"></p>
+                </div>
+                <div id="cryptominer" class="tab-content">
+                  <p class="content-title" data-l10n-id="cryptominer-tab-title"></p>
+                  <p data-l10n-id="cryptominer-tab-content"></p>
+                </div>
+              </div>
+            </div>
+            <div id="graph-total-summary"></div>
+          </div>
         </div>
       </div>
+     <!-- Markup for Monitor card. -->
+      <section class="card card-no-hover monitor-card hidden">
+          <div class="card-header">
+            <div class="icon"></div>
+            <div class="wrapper">
+              <h3 id="monitor-title" class="card-title" data-l10n-id="monitor-title"></h3>
+              <p id="monitor-header-content" class="content">
+                <span>
+                  <!-- Insert Monitor header content here. -->
+                </span>
+                <a href="" data-l10n-id="monitor-link"></a>
+              </p>
+              <span class="inline-text-icon monitor-scanned-text" data-l10n-id="auto-scan"></span>
+            </div>
+            <a target="_blank" id="sign-up-for-monitor-link">
+              <!-- Insert Monitor link content here. -->
+            </a>
+          </div>
+          <div class="card-body">
+            <div class="body-wrapper">
+              <div id="monitor-body-content">
+                <div class="monitor-block email">
+                  <span class="monitor-stat">
+                    <span class="monitor-icon"></span>
+                    <span data-type="stored-emails">
+                      <!-- Display number of stored emails here. -->
+                    </span>
+                  </span>
+                  <span id="info-monitored-addresses" class="info-text"></span>
+                </div>
+                <div class="monitor-block breaches">
+                  <span class="monitor-stat">
+                    <span class="monitor-icon"></span>
+                    <span data-type="known-breaches">
+                      <!-- Display number of known breaches here. -->
+                    </span>
+                  </span>
+                  <span id="info-known-breaches" class="info-text"></span>
+                </div>
+                <div class="monitor-block passwords">
+                  <span class="monitor-stat">
+                      <span class="monitor-icon"></span>
+                      <span data-type="exposed-passwords">
+                        <!-- Display number of exposed passwords here. -->
+                      </span>
+                  </span>
+                  <span id="info-exposed-passwords" class="info-text"></span>
+                </div>
+                <div class="monitor-view-full-report" data-l10n-id="full-report-link">
+                    <a data-l10n-name="monitor-inline-link" href=""></a>
+                </div>
+                <div class="monitor-breached-passwords hidden">
+                  <span data-type="breached-lockwise-passwords" class="number-of-breaches block">
+                    <!-- Display number of exposed stored passwords here. -->
+                  </span>
+                  <span id="password-warning">
+                    <a href="" data-l10n-name="lockwise-link"></a>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+      </section>
+      <!-- Markup for Lockwise card. -->
+      <section class="card card-no-hover lockwise-card hidden">
+        <div class="card-header">
+          <div class="icon"></div>
+          <div class="wrapper">
+            <h3 id="lockwise-title" class="card-title">
+              <!-- Insert Lockwise card title here. -->
+            </h3>
+            <p id="lockwise-header-content" class="content">
+              <!-- Insert Lockwise header content here. -->
+            </p>
+          </div>
+          <button id="open-about-logins-button" class="primary" data-l10n-id="open-about-logins-button"></button>
+        </div>
+        <div class="card-body">
+          <div id="lockwise-body-content" class="body-wrapper">
+            <div class="no-logins hidden">
+                <div class="lockwise-mobile-app-icon"></div>
+                <span data-l10n-id="lockwise-no-logins-content">
+                  <a data-l10n-name="lockwise-inline-link" href=""></a>
+                </span>
+            </div>
+            <div class="has-logins hidden">
+              <span class="number-of-logins block">
+                <!-- Display number of stored logins here. -->
+              </span>
+              <span id="lockwise-passwords-stored" class="inline-text-icon passwords-stored-text">
+                 <!-- Display message for stored logins here. -->
+                <a data-l10n-name="lockwise-how-it-works" href=""></a>
+              </span>
+              <span class="number-of-synced-devices block">
+                <!-- Display number of synced devices here. -->
+              </span>
+              <span class="inline-text-icon synced-devices-text">
+                <span>
+                  <!-- Display message for status of synced devices here. -->
+                </span>
+                <a class="hidden" href="" data-l10n-id="turn-on-sync"></a>
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   </body>
 </html>

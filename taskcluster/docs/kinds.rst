@@ -11,6 +11,22 @@ users or automated tests.  This is more restrictive than most definitions of
 "build" in a Mozilla context: it does not include tasks that run build-like
 actions for static analysis or to produce instrumented artifacts.
 
+build-fat-aar
+-------------
+
+Build architecture-independent GeckoView AAR (Android ARchive) files. This build-like tasks is an
+artifact build (ARMv7, but this is arbitrary) that itself depends on arch-specific Android build
+jobs. It fetches arch-specific AAR files, extracts arch-specific libraries and preference files,
+and then assembles a multi-architecture "fat AAR". Downstream consumers are expected to use
+per-ABI feature splits to produce arch-specific APKs.
+
+If you want to run this task locally, you need to specify these environment variable:
+  - MOZ_ANDROID_FAT_AAR_ARCHITECTURES: must be a comma-separated list of architecture.
+    Eg: "armeabi-v7a,arm64-v8a,x86,x86_64".
+  - each of MOZ_ANDROID_FAT_AAR_ARM64_V8A, MOZ_ANDROID_FAT_AAR_ARMEABI_V7A,
+    MOZ_ANDROID_FAT_AAR_X86, MOZ_ANDROID_FAT_AAR_X86_64 must be a path relative to
+    MOZ_FETCHES_DIR.
+
 build-signing
 -------------
 
@@ -232,11 +248,6 @@ Beetmover, takes source specific artifact checksums and pushes it to a location 
 of Taskcluster's task artifacts (archive.mozilla.org as one place) and in the
 process determines the final location and "pretty" names it (version product name)
 
-google-play-strings
--------------------
-Download strings to display on Google Play from https://l10n.mozilla-community.org/stores_l10n/.
-Artifact is then used by push-apk.
-
 push-apk
 --------
 PushApk publishes Android packages onto Google Play Store. Jobs of this kind take
@@ -426,6 +437,11 @@ External signing of partner repacks.
 release-partner-repack-beetmover
 --------------------------------
 Moves the partner repacks to S3 buckets.
+
+release-partner-repack-bouncer-sub
+----------------------------------
+Sets up bouncer products for partners.
+
 
 release-early-tagging
 ---------------------

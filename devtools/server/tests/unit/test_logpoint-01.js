@@ -10,25 +10,29 @@
 
 var gDebuggee;
 var gClient;
-var gThreadClient;
+var gThreadFront;
 
 function run_test() {
   initTestDebuggerServer();
   gDebuggee = addTestGlobal("test-logpoint");
   gClient = new DebuggerClient(DebuggerServer.connectPipe());
   gClient.connect().then(function() {
-    attachTestTabAndResume(gClient, "test-logpoint",
-                           function(response, targetFront, threadClient) {
-                             gThreadClient = threadClient;
-                             test_simple_breakpoint();
-                           });
+    attachTestTabAndResume(gClient, "test-logpoint", function(
+      response,
+      targetFront,
+      threadFront
+    ) {
+      gThreadFront = threadFront;
+      test_simple_breakpoint();
+    });
   });
   do_test_pending();
 }
 
 function test_simple_breakpoint() {
   const rootActor = gClient.transport._serverConnection.rootActor;
-  const threadActor = rootActor._parameters.tabList._targetActors[0].threadActor;
+  const threadActor =
+    rootActor._parameters.tabList._targetActors[0].threadActor;
 
   let lastMessage;
   threadActor._parent._consoleActor = {
@@ -37,21 +41,21 @@ function test_simple_breakpoint() {
     },
   };
 
-  gThreadClient.once("paused", async function(packet) {
-    const source = await getSourceById(
-      gThreadClient,
-      packet.frame.where.actor
-    );
+  gThreadFront.once("paused", async function(packet) {
+    const source = await getSourceById(gThreadFront, packet.frame.where.actor);
 
     // Set a logpoint which should invoke console.log.
-    gThreadClient.setBreakpoint({
-      sourceUrl: source.url,
-      line: 3,
-    }, { logValue: "a" });
+    gThreadFront.setBreakpoint(
+      {
+        sourceUrl: source.url,
+        line: 3,
+      },
+      { logValue: "a" }
+    );
     await gClient.waitForRequestsToSettle();
 
     // Execute the rest of the code.
-    await gThreadClient.resume();
+    await gThreadFront.resume();
     Assert.equal(lastMessage.level, "logPoint");
     Assert.equal(lastMessage.arguments[0], "three");
     finishClient(gClient);

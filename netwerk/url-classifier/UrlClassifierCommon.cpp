@@ -11,7 +11,9 @@
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/net/HttpBaseChannel.h"
 #include "mozilla/net/UrlClassifierFeatureFactory.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_network.h"
+#include "mozilla/StaticPrefs_privacy.h"
+#include "mozilla/StaticPrefs_channelclassifier.h"
 #include "mozIThirdPartyUtil.h"
 #include "nsContentUtils.h"
 #include "nsIChannel.h"
@@ -499,11 +501,18 @@ bool UrlClassifierCommon::IsAllowListed(
 
 // static
 bool UrlClassifierCommon::IsTrackingClassificationFlag(uint32_t aFlag) {
-  if (StaticPrefs::privacy_annotate_channels_strict_list_enabled()) {
-    return (
-        aFlag &
-        nsIHttpChannel::ClassificationFlags::CLASSIFIED_ANY_STRICT_TRACKING);
+  if (StaticPrefs::privacy_annotate_channels_strict_list_enabled() &&
+      (aFlag &
+       nsIHttpChannel::ClassificationFlags::CLASSIFIED_ANY_STRICT_TRACKING)) {
+    return true;
   }
+
+  if (StaticPrefs::privacy_socialtracking_block_cookies_enabled() &&
+      (aFlag &
+       nsIHttpChannel::ClassificationFlags::CLASSIFIED_ANY_SOCIAL_TRACKING)) {
+    return true;
+  }
+
   return (aFlag &
           nsIHttpChannel::ClassificationFlags::CLASSIFIED_ANY_BASIC_TRACKING);
 }

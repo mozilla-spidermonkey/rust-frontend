@@ -20,7 +20,13 @@
 #include "mozilla/gfx/GPUProcessManager.h"
 #include "mozilla/gfx/GraphicsMessages.h"
 #include "mozilla/ClearOnShutdown.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_accessibility.h"
+#include "mozilla/StaticPrefs_apz.h"
+#include "mozilla/StaticPrefs_gfx.h"
+#include "mozilla/StaticPrefs_layout.h"
+#include "mozilla/StaticPrefs_layers.h"
+#include "mozilla/StaticPrefs_media.h"
+#include "mozilla/StaticPrefs_webgl.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Unused.h"
@@ -605,7 +611,8 @@ static uint32_t GetSkiaGlyphCacheSize() {
   // We don't need to change the font cache count since we usually
   // cache thrash due to asian character sets in talos.
   // Only increase memory on the content process
-  uint32_t cacheSize = StaticPrefs::SkiaContentFontCacheSize() * 1024 * 1024;
+  uint32_t cacheSize =
+      StaticPrefs::gfx_content_skia_font_cache_size_AtStartup() * 1024 * 1024;
   if (mozilla::BrowserTabsRemoteAutostart()) {
     return XRE_IsContentProcess() ? cacheSize : kDefaultGlyphCacheSize;
   }
@@ -897,8 +904,6 @@ void gfxPlatform::Init() {
       gfxVars::SetProfDirectory(nsString(path));
     }
 
-    gfxUtils::RemoveShaderCacheFromDiskIfNecessary();
-
     nsAutoCString path;
     Preferences::GetCString("layers.windowrecording.path", path);
     gfxVars::SetLayersWindowRecordingPath(path);
@@ -911,25 +916,30 @@ void gfxPlatform::Init() {
   {
     nsAutoCString forcedPrefs;
     // D2D prefs
-    forcedPrefs.AppendPrintf("FP(D%d%d", StaticPrefs::Direct2DDisabled(),
-                             StaticPrefs::Direct2DForceEnabled());
+    forcedPrefs.AppendPrintf(
+        "FP(D%d%d", StaticPrefs::gfx_direct2d_disabled_AtStartup(),
+        StaticPrefs::gfx_direct2d_force_enabled_AtStartup());
     // Layers prefs
     forcedPrefs.AppendPrintf(
-        "-L%d%d%d%d", StaticPrefs::LayersAMDSwitchableGfxEnabled(),
-        StaticPrefs::LayersAccelerationDisabledDoNotUseDirectly(),
-        StaticPrefs::LayersAccelerationForceEnabledDoNotUseDirectly(),
-        StaticPrefs::LayersD3D11ForceWARP());
+        "-L%d%d%d%d",
+        StaticPrefs::layers_amd_switchable_gfx_enabled_AtStartup(),
+        StaticPrefs::layers_acceleration_disabled_AtStartup_DoNotUseDirectly(),
+        StaticPrefs::
+            layers_acceleration_force_enabled_AtStartup_DoNotUseDirectly(),
+        StaticPrefs::layers_d3d11_force_warp_AtStartup());
     // WebGL prefs
     forcedPrefs.AppendPrintf(
-        "-W%d%d%d%d%d%d%d%d", StaticPrefs::WebGLANGLEForceD3D11(),
-        StaticPrefs::WebGLANGLEForceWARP(), StaticPrefs::WebGLDisabled(),
-        StaticPrefs::WebGLDisableANGLE(), StaticPrefs::WebGLDXGLEnabled(),
-        StaticPrefs::WebGLForceEnabled(),
-        StaticPrefs::WebGLForceLayersReadback(), StaticPrefs::WebGLForceMSAA());
+        "-W%d%d%d%d%d%d%d%d", StaticPrefs::webgl_angle_force_d3d11(),
+        StaticPrefs::webgl_angle_force_warp(), StaticPrefs::webgl_disabled(),
+        StaticPrefs::webgl_disable_angle(), StaticPrefs::webgl_dxgl_enabled(),
+        StaticPrefs::webgl_force_enabled(),
+        StaticPrefs::webgl_force_layers_readback(),
+        StaticPrefs::webgl_msaa_force());
     // Prefs that don't fit into any of the other sections
-    forcedPrefs.AppendPrintf("-T%d%d%d) ", StaticPrefs::AndroidRGB16Force(),
+    forcedPrefs.AppendPrintf("-T%d%d%d) ",
+                             StaticPrefs::gfx_android_rgb16_force_AtStartup(),
                              0,  // SkiaGL canvas no longer supported
-                             StaticPrefs::ForceShmemTiles());
+                             StaticPrefs::layers_force_shmem_tiles_AtStartup());
     ScopedGfxFeatureReporter::AppNote(forcedPrefs);
   }
 
@@ -988,7 +998,7 @@ void gfxPlatform::Init() {
   gLastUsedFrameRate = ForceSoftwareVsync() ? GetSoftwareVsyncRate() : -1;
   Preferences::RegisterCallback(
       FrameRatePrefChanged,
-      nsDependentCString(StaticPrefs::GetLayoutFrameRatePrefName()));
+      nsDependentCString(StaticPrefs::GetPrefName_layout_frame_rate()));
   // Set up the vsync source for the parent process.
   ReInitFrameRate();
 
@@ -1133,7 +1143,9 @@ int32_t gfxPlatform::MaxTextureSize() {
   // Make sure we don't completely break rendering because of a typo in the
   // pref or whatnot.
   const int32_t kMinSizePref = 2048;
-  return std::max(kMinSizePref, StaticPrefs::MaxTextureSizeDoNotUseDirectly());
+  return std::max(
+      kMinSizePref,
+      StaticPrefs::gfx_max_texture_size_AtStartup_DoNotUseDirectly());
 }
 
 /* static */
@@ -1141,14 +1153,15 @@ int32_t gfxPlatform::MaxAllocSize() {
   // Make sure we don't completely break rendering because of a typo in the
   // pref or whatnot.
   const int32_t kMinAllocPref = 10000000;
-  return std::max(kMinAllocPref, StaticPrefs::MaxAllocSizeDoNotUseDirectly());
+  return std::max(kMinAllocPref,
+                  StaticPrefs::gfx_max_alloc_size_AtStartup_DoNotUseDirectly());
 }
 
 /* static */
 void gfxPlatform::InitMoz2DLogging() {
   auto fwd = new CrashStatsLogForwarder(
       CrashReporter::Annotation::GraphicsCriticalError);
-  fwd->SetCircularBufferSize(StaticPrefs::GfxLoggingCrashLength());
+  fwd->SetCircularBufferSize(StaticPrefs::gfx_logging_crash_length_AtStartup());
 
   mozilla::gfx::Config cfg;
   cfg.mLogForwarder = fwd;
@@ -1291,7 +1304,7 @@ void gfxPlatform::ShutdownLayersIPC() {
   if (XRE_IsContentProcess()) {
     gfx::VRManagerChild::ShutDown();
     // cf bug 1215265.
-    if (StaticPrefs::ChildProcessShutdown()) {
+    if (StaticPrefs::layers_child_process_shutdown()) {
       layers::CompositorManagerChild::Shutdown();
       layers::ImageBridgeChild::ShutDown();
     }
@@ -1351,8 +1364,7 @@ void gfxPlatform::WillShutdown() {
 #endif
 }
 
-gfxPlatform::~gfxPlatform() {
-}
+gfxPlatform::~gfxPlatform() {}
 
 /* static */
 already_AddRefed<DrawTarget> gfxPlatform::CreateDrawTargetForSurface(
@@ -1553,10 +1565,10 @@ void gfxPlatform::ComputeTileSize() {
     return;
   }
 
-  int32_t w = StaticPrefs::LayersTileWidth();
-  int32_t h = StaticPrefs::LayersTileHeight();
+  int32_t w = StaticPrefs::layers_tile_width_AtStartup();
+  int32_t h = StaticPrefs::layers_tile_height_AtStartup();
 
-  if (StaticPrefs::LayersTilesAdjust()) {
+  if (StaticPrefs::layers_tiles_adjust_AtStartup()) {
     gfx::IntSize screenSize = GetScreenSize();
     if (screenSize.width > 0) {
       // Choose a size so that there are between 2 and 4 tiles per screen width.
@@ -1858,16 +1870,16 @@ gfxFontEntry* gfxPlatform::MakePlatformFont(const nsACString& aFontName,
 
 mozilla::layers::DiagnosticTypes gfxPlatform::GetLayerDiagnosticTypes() {
   mozilla::layers::DiagnosticTypes type = DiagnosticTypes::NO_DIAGNOSTIC;
-  if (StaticPrefs::DrawLayerBorders()) {
+  if (StaticPrefs::layers_draw_borders()) {
     type |= mozilla::layers::DiagnosticTypes::LAYER_BORDERS;
   }
-  if (StaticPrefs::DrawTileBorders()) {
+  if (StaticPrefs::layers_draw_tile_borders()) {
     type |= mozilla::layers::DiagnosticTypes::TILE_BORDERS;
   }
-  if (StaticPrefs::DrawBigImageBorders()) {
+  if (StaticPrefs::layers_draw_bigimage_borders()) {
     type |= mozilla::layers::DiagnosticTypes::BIGIMAGE_BORDERS;
   }
-  if (StaticPrefs::FlashLayerBorders()) {
+  if (StaticPrefs::layers_flash_borders()) {
     type |= mozilla::layers::DiagnosticTypes::FLASH_BORDERS;
   }
   return type;
@@ -1985,12 +1997,12 @@ bool gfxPlatform::OffMainThreadCompositingEnabled() {
 
 eCMSMode gfxPlatform::GetCMSMode() {
   if (!gCMSInitialized) {
-    int32_t mode = StaticPrefs::CMSMode();
+    int32_t mode = StaticPrefs::gfx_color_management_mode();
     if (mode >= 0 && mode < eCMSMode_AllCount) {
       gCMSMode = static_cast<eCMSMode>(mode);
     }
 
-    bool enableV4 = StaticPrefs::CMSEnableV4();
+    bool enableV4 = StaticPrefs::gfx_color_management_enablev4();
     if (enableV4) {
       qcms_enable_iccv4();
     }
@@ -2005,14 +2017,14 @@ eCMSMode gfxPlatform::GetCMSMode() {
 }
 
 int gfxPlatform::GetRenderingIntent() {
-  // StaticPrefs.h is using 0 as the default for the rendering
+  // StaticPrefs.yaml is using 0 as the default for the rendering
   // intent preference, based on that being the value for
   // QCMS_INTENT_DEFAULT.  Assert here to catch if that ever
   // changes and we can then figure out what to do about it.
   MOZ_ASSERT(QCMS_INTENT_DEFAULT == 0);
 
   /* Try to query the pref system for a rendering intent. */
-  int32_t pIntent = StaticPrefs::CMSRenderingIntent();
+  int32_t pIntent = StaticPrefs::gfx_color_management_rendering_intent();
   if ((pIntent < QCMS_INTENT_MIN) || (pIntent > QCMS_INTENT_MAX)) {
     /* If the pref is out of range, use embedded profile. */
     pIntent = -1;
@@ -2412,6 +2424,10 @@ void gfxPlatform::InitAcceleration() {
       gfxCriticalNote << "Cannot evaluate keyed mutex feature status";
       gfxVars::SetAllowD3D11KeyedMutex(true);
     }
+    if (StaticPrefs::gfx_direct3d11_use_double_buffering() &&
+        IsWin10OrLater()) {
+      gfxVars::SetUseDoubleBufferingWithCompositor(true);
+    }
 #endif
   }
 
@@ -2423,7 +2439,7 @@ void gfxPlatform::InitAcceleration() {
           gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_HARDWARE_VIDEO_DECODING,
                                     discardFailureId, &status))) {
     if (status == nsIGfxInfo::FEATURE_STATUS_OK ||
-        StaticPrefs::HardwareVideoDecodingForceEnabled()) {
+        StaticPrefs::media_hardware_video_decoding_force_enabled_AtStartup()) {
       sLayersSupportsHardwareVideoDecoding = true;
     }
   }
@@ -2436,7 +2452,7 @@ void gfxPlatform::InitAcceleration() {
         "media.hardware-video-decoding.failed");
     InitGPUProcessPrefs();
 
-    gfxVars::SetRemoteCanvasEnabled(StaticPrefs::CanvasRemote() &&
+    gfxVars::SetRemoteCanvasEnabled(StaticPrefs::gfx_canvas_remote() &&
                                     gfxConfig::IsEnabled(Feature::GPU_PROCESS));
   }
 }
@@ -2444,8 +2460,8 @@ void gfxPlatform::InitAcceleration() {
 void gfxPlatform::InitGPUProcessPrefs() {
   // We want to hide this from about:support, so only set a default if the
   // pref is known to be true.
-  if (!StaticPrefs::GPUProcessEnabled() &&
-      !StaticPrefs::GPUProcessForceEnabled()) {
+  if (!StaticPrefs::layers_gpu_process_enabled_AtStartup() &&
+      !StaticPrefs::layers_gpu_process_force_enabled_AtStartup()) {
     return;
   }
 
@@ -2459,12 +2475,12 @@ void gfxPlatform::InitGPUProcessPrefs() {
                              "Multi-process mode is not enabled",
                              NS_LITERAL_CSTRING("FEATURE_FAILURE_NO_E10S"));
   } else {
-    gpuProc.SetDefaultFromPref(StaticPrefs::GetGPUProcessEnabledPrefName(),
-                               true,
-                               StaticPrefs::GetGPUProcessEnabledPrefDefault());
+    gpuProc.SetDefaultFromPref(
+        StaticPrefs::GetPrefName_layers_gpu_process_enabled(), true,
+        StaticPrefs::GetPrefDefault_layers_gpu_process_enabled());
   }
 
-  if (StaticPrefs::GPUProcessForceEnabled()) {
+  if (StaticPrefs::layers_gpu_process_force_enabled_AtStartup()) {
     gpuProc.UserForceEnable("User force-enabled via pref");
   }
 
@@ -2478,7 +2494,7 @@ void gfxPlatform::InitGPUProcessPrefs() {
                          NS_LITERAL_CSTRING("FEATURE_FAILURE_SAFE_MODE"));
     return;
   }
-  if (StaticPrefs::LayerScopeEnabled()) {
+  if (StaticPrefs::gfx_layerscope_enabled()) {
     gpuProc.ForceDisable(FeatureStatus::Blocked,
                          "LayerScope does not work in the GPU process",
                          NS_LITERAL_CSTRING("FEATURE_FAILURE_LAYERSCOPE"));
@@ -2496,7 +2512,8 @@ void gfxPlatform::InitCompositorAccelerationPrefs() {
   // Base value - does the platform allow acceleration?
   if (feature.SetDefault(AccelerateLayersByDefault(), FeatureStatus::Blocked,
                          "Acceleration blocked by platform")) {
-    if (StaticPrefs::LayersAccelerationDisabledDoNotUseDirectly()) {
+    if (StaticPrefs::
+            layers_acceleration_disabled_AtStartup_DoNotUseDirectly()) {
       feature.UserDisable("Disabled by pref",
                           NS_LITERAL_CSTRING("FEATURE_FAILURE_COMP_PREF"));
     } else if (acceleratedEnv && *acceleratedEnv == '0') {
@@ -2510,7 +2527,8 @@ void gfxPlatform::InitCompositorAccelerationPrefs() {
   }
 
   // This has specific meaning elsewhere, so we always record it.
-  if (StaticPrefs::LayersAccelerationForceEnabledDoNotUseDirectly()) {
+  if (StaticPrefs::
+          layers_acceleration_force_enabled_AtStartup_DoNotUseDirectly()) {
     feature.UserForceEnable("Force-enabled by pref");
   }
 
@@ -2534,8 +2552,8 @@ void gfxPlatform::InitCompositorAccelerationPrefs() {
 
 /*static*/
 bool gfxPlatform::WebRenderPrefEnabled() {
-  return StaticPrefs::WebRenderAll() ||
-         StaticPrefs::WebRenderEnabledDoNotUseDirectly();
+  return StaticPrefs::gfx_webrender_all_AtStartup() ||
+         StaticPrefs::gfx_webrender_enabled_AtStartup_DoNotUseDirectly();
 }
 
 /*static*/
@@ -2547,6 +2565,13 @@ bool gfxPlatform::WebRenderEnvvarEnabled() {
 static bool WebRenderEnvvarDisabled() {
   const char* env = PR_GetEnv("MOZ_WEBRENDER");
   return (env && *env == '0');
+}
+
+static bool InMarionetteRolloutTest() {
+  // This pref only ever gets set in test_pref_rollout_workaround, and in
+  // that case we want to ignore the MOZ_WEBRENDER=0 that will be set by
+  // the test harness so as to actually make the test work.
+  return Preferences::HasUserValue(WR_ROLLOUT_HW_QUALIFIED_OVERRIDE);
 }
 
 // If the "gfx.webrender.all.qualified" pref is true we want to enable
@@ -2599,11 +2624,229 @@ static bool CalculateWrQualifiedPrefValue() {
   return Preferences::GetBool(WR_ROLLOUT_PREF, WR_ROLLOUT_PREF_DEFAULTVALUE);
 }
 
+static void HardwareTooOldForWR(FeatureState& aFeature) {
+  aFeature.Disable(FeatureStatus::BlockedDeviceTooOld, "Device too old",
+                   NS_LITERAL_CSTRING("FEATURE_FAILURE_DEVICE_TOO_OLD"));
+}
+
+static void UpdateWRQualificationForNvidia(FeatureState& aFeature,
+                                           int32_t aDeviceId,
+                                           bool* aOutGuardedByQualifiedPref) {
+  // 0x6c0 is the lowest Fermi device id. Unfortunately some Tesla
+  // devices that don't support D3D 10.1 have higher deviceIDs. They
+  // will be included, but blocked by ANGLE.
+  bool supported = aDeviceId >= 0x6c0;
+
+  if (!supported) {
+    HardwareTooOldForWR(aFeature);
+    return;
+  }
+
+  // Any additional Nvidia checks go here. Make sure to leave
+  // aOutGuardedByQualifiedPref as true unless the hardware is qualified
+  // for users on the release channel.
+
+#if defined(XP_WIN)
+  // Nvidia devices with device id >= 0x6c0 got WR in release Firefox 67.
+  *aOutGuardedByQualifiedPref = false;
+#elif defined(NIGHTLY_BUILD)
+  // Qualify on Linux Nightly, but leave *aOutGuardedByQualifiedPref as true
+  // to indicate users on release don't have it yet, and it's still guarded
+  // by the qualified pref.
+#else
+  // Disqualify everywhere else
+  aFeature.Disable(
+      FeatureStatus::BlockedReleaseChannelNvidia, "Release channel and Nvidia",
+      NS_LITERAL_CSTRING("FEATURE_FAILURE_RELEASE_CHANNEL_NVIDIA"));
+#endif
+}
+
+static void UpdateWRQualificationForAMD(FeatureState& aFeature,
+                                        int32_t aDeviceId,
+                                        bool* aOutGuardedByQualifiedPref) {
+  // AMD deviceIDs are not very well ordered. This
+  // condition is based off the information in gpu-db
+  bool supported = (aDeviceId >= 0x6600 && aDeviceId < 0x66b0) ||
+                   (aDeviceId >= 0x6700 && aDeviceId < 0x6720) ||
+                   (aDeviceId >= 0x6780 && aDeviceId < 0x6840) ||
+                   (aDeviceId >= 0x6860 && aDeviceId < 0x6880) ||
+                   (aDeviceId >= 0x6900 && aDeviceId < 0x6a00) ||
+                   (aDeviceId == 0x7300) ||
+                   (aDeviceId >= 0x7310 && aDeviceId < 0x7320) ||
+                   (aDeviceId >= 0x9830 && aDeviceId < 0x9870) ||
+                   (aDeviceId >= 0x9900 && aDeviceId < 0x9a00);
+
+  if (!supported) {
+    HardwareTooOldForWR(aFeature);
+    return;
+  }
+
+  // we have a desktop CAYMAN, SI, CIK, VI, or GFX9 device.
+
+#if defined(XP_WIN)
+  // These devices got WR in release Firefox 68.
+  *aOutGuardedByQualifiedPref = false;
+#elif defined(NIGHTLY_BUILD)
+  // Qualify on Linux Nightly, but leave *aOutGuardedByQualifiedPref as true
+  // to indicate users on release don't have it yet, and it's still guarded
+  // by the qualified pref.
+#else
+  // Disqualify everywhere else
+  aFeature.Disable(FeatureStatus::BlockedReleaseChannelAMD,
+                   "Release channel and AMD",
+                   NS_LITERAL_CSTRING("FEATURE_FAILURE_RELEASE_CHANNEL_AMD"));
+#endif
+}
+
+static void UpdateWRQualificationForIntel(FeatureState& aFeature,
+                                          int32_t aDeviceId,
+                                          int32_t aScreenPixels,
+                                          bool* aOutGuardedByQualifiedPref) {
+  const uint16_t supportedDevices[] = {
+      // skylake gt2+
+      0x1912,
+      0x1913,
+      0x1915,
+      0x1916,
+      0x1917,
+      0x191a,
+      0x191b,
+      0x191d,
+      0x191e,
+      0x1921,
+      0x1923,
+      0x1926,
+      0x1927,
+      0x192b,
+      0x1932,
+      0x193b,
+      0x193d,
+
+      // kabylake gt2+
+      0x5912,
+      0x5916,
+      0x5917,
+      0x591a,
+      0x591b,
+      0x591c,
+      0x591d,
+      0x591e,
+      0x5921,
+      0x5926,
+      0x5923,
+      0x5927,
+      0x593b,
+
+      // coffeelake gt2+
+      0x3e91,
+      0x3e92,
+      0x3e96,
+      0x3e98,
+      0x3e9a,
+      0x3e9b,
+      0x3e94,
+      0x3ea0,
+      0x3ea9,
+      0x3ea2,
+      0x3ea6,
+      0x3ea7,
+      0x3ea8,
+      0x3ea5,
+
+      // broadwell gt2+
+      0x1612,
+      0x1616,
+      0x161a,
+      0x161b,
+      0x161d,
+      0x161e,
+      0x1622,
+      0x1626,
+      0x162a,
+      0x162b,
+      0x162d,
+      0x162e,
+      0x1632,
+      0x1636,
+      0x163a,
+      0x163b,
+      0x163d,
+      0x163e,
+
+      // HD Graphics 4600
+      0x0412,
+      0x0416,
+      0x041a,
+      0x041b,
+      0x041e,
+      0x0a12,
+      0x0a16,
+      0x0a1a,
+      0x0a1b,
+      0x0a1e,
+  };
+  bool supported = false;
+  for (uint16_t id : supportedDevices) {
+    if (aDeviceId == id) {
+      supported = true;
+      break;
+    }
+  }
+  if (!supported) {
+    HardwareTooOldForWR(aFeature);
+    return;
+  }
+
+  // Performance is not great on 4k screens with WebRender.
+  // Disable it for now on all release platforms, and also on Linux
+  // nightly. We only allow it on Windows nightly.
+#if defined(XP_WIN) && defined(NIGHTLY_BUILD)
+  // Windows nightly, so don't do screen size checks
+#else
+  // Windows release, Linux nightly, Linux release. Do screen size
+  // checks. (macOS is still completely blocked by the blocklist).
+  // On Windows release, we only allow really small screens (sub-WUXGA). On
+  // Linux we allow medium size screens as well (anything sub-4k).
+#  if defined(XP_WIN)
+  // Allow up to WUXGA on Windows release
+  const int32_t kMaxPixels = 1920 * 1200;  // WUXGA
+#  else
+  // Allow up to 4k on Linux
+  const int32_t kMaxPixels = 3440 * 1440;  // UWQHD
+#  endif
+  if (aScreenPixels > kMaxPixels) {
+    aFeature.Disable(
+        FeatureStatus::BlockedScreenTooLarge, "Screen size too large",
+        NS_LITERAL_CSTRING("FEATURE_FAILURE_SCREEN_SIZE_TOO_LARGE"));
+    return;
+  }
+  if (aScreenPixels <= 0) {
+    aFeature.Disable(FeatureStatus::BlockedScreenUnknown, "Screen size unknown",
+                     NS_LITERAL_CSTRING("FEATURE_FAILURE_SCREEN_SIZE_UNKNOWN"));
+    return;
+  }
+#endif
+
+#if (defined(XP_WIN) || (defined(MOZ_WIDGET_GTK) && defined(NIGHTLY_BUILD)))
+  // Qualify Intel graphics cards on Windows to release and on Linux nightly
+  // (subject to device whitelist and screen size checks above).
+  // Leave *aOutGuardedByQualifiedPref as true to indicate no existing
+  // release users have this yet, and it's still guarded by the qualified pref.
+#else
+  // Disqualify everywhere else
+  aFeature.Disable(FeatureStatus::BlockedReleaseChannelIntel,
+                   "Release channel and Intel",
+                   NS_LITERAL_CSTRING("FEATURE_FAILURE_RELEASE_CHANNEL_INTEL"));
+#endif
+}
+
 static FeatureState& WebRenderHardwareQualificationStatus(
-    const IntSize& aScreenSize, bool aHasBattery, nsCString& aOutFailureId) {
+    const IntSize& aScreenSize, bool aHasBattery,
+    bool* aOutGuardedByQualifiedPref) {
   FeatureState& featureWebRenderQualified =
       gfxConfig::GetFeature(Feature::WEBRENDER_QUALIFIED);
   featureWebRenderQualified.EnableByDefault();
+  MOZ_ASSERT(aOutGuardedByQualifiedPref && *aOutGuardedByQualifiedPref);
 
   if (Preferences::HasUserValue(WR_ROLLOUT_HW_QUALIFIED_OVERRIDE)) {
     if (!Preferences::GetBool(WR_ROLLOUT_HW_QUALIFIED_OVERRIDE)) {
@@ -2615,215 +2858,87 @@ static FeatureState& WebRenderHardwareQualificationStatus(
   }
 
   nsCOMPtr<nsIGfxInfo> gfxInfo = services::GetGfxInfo();
+  nsCString failureId;
   int32_t status;
-  if (NS_SUCCEEDED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_WEBRENDER,
-                                             aOutFailureId, &status))) {
-    if (status != nsIGfxInfo::FEATURE_STATUS_OK) {
-      featureWebRenderQualified.Disable(FeatureStatus::Blacklisted,
-                                        "No qualified hardware", aOutFailureId);
-    } else {
-      nsAutoString adapterVendorID;
-      gfxInfo->GetAdapterVendorID(adapterVendorID);
-
-      nsAutoString adapterDeviceID;
-      gfxInfo->GetAdapterDeviceID(adapterDeviceID);
-      nsresult valid;
-      int32_t deviceID = adapterDeviceID.ToInteger(&valid, 16);
-      if (valid != NS_OK) {
-        featureWebRenderQualified.Disable(
-            FeatureStatus::BlockedDeviceUnknown, "Bad device id",
-            NS_LITERAL_CSTRING("FEATURE_FAILURE_BAD_DEVICE_ID"));
-      } else {
-        const int32_t screenPixels = aScreenSize.width * aScreenSize.height;
-
-        if (adapterVendorID == u"0x10de") {
-          if (deviceID < 0x6c0) {
-            // 0x6c0 is the lowest Fermi device id. Unfortunately some Tesla
-            // devices that don't support D3D 10.1 have higher deviceIDs. They
-            // will be included, but blocked by ANGLE.
-            featureWebRenderQualified.Disable(
-                FeatureStatus::BlockedDeviceTooOld, "Device too old",
-                NS_LITERAL_CSTRING("FEATURE_FAILURE_DEVICE_TOO_OLD"));
-          }
-        } else if (adapterVendorID == u"0x1002") {  // AMD
-          // AMD deviceIDs are not very well ordered. This
-          // condition is based off the information in gpu-db
-          if ((deviceID >= 0x6600 && deviceID < 0x66b0) ||
-              (deviceID >= 0x6700 && deviceID < 0x6720) ||
-              (deviceID >= 0x6780 && deviceID < 0x6840) ||
-              (deviceID >= 0x6860 && deviceID < 0x6880) ||
-              (deviceID >= 0x6900 && deviceID < 0x6a00) ||
-              (deviceID == 0x7300) ||
-              (deviceID >= 0x9830 && deviceID < 0x9870) ||
-              (deviceID >= 0x9900 && deviceID < 0x9a00)) {
-            // we have a desktop CAYMAN, SI, CIK, VI, or GFX9 device
-            // so treat the device as qualified unless it is not Windows
-            // and not nightly.
-#if !defined(XP_WIN) && !defined(NIGHTLY_BUILD)
-            featureWebRenderQualified.Disable(
-                FeatureStatus::BlockedReleaseChannelAMD,
-                "Release channel and AMD",
-                NS_LITERAL_CSTRING("FEATURE_FAILURE_RELEASE_CHANNEL_AMD"));
-#endif  // !XPWIN && !NIGHTLY_BUILD
-          } else {
-            featureWebRenderQualified.Disable(
-                FeatureStatus::BlockedDeviceTooOld, "Device too old",
-                NS_LITERAL_CSTRING("FEATURE_FAILURE_DEVICE_TOO_OLD"));
-          }
-        } else if (adapterVendorID == u"0x8086") {  // Intel
-          const uint16_t supportedDevices[] = {
-              // skylake gt2+
-              0x1912,
-              0x1913,
-              0x1915,
-              0x1916,
-              0x1917,
-              0x191a,
-              0x191b,
-              0x191d,
-              0x191e,
-              0x1921,
-              0x1923,
-              0x1926,
-              0x1927,
-              0x192b,
-              0x1932,
-              0x193b,
-              0x193d,
-
-              // kabylake gt2+
-              0x5912,
-              0x5916,
-              0x5917,
-              0x591a,
-              0x591b,
-              0x591c,
-              0x591d,
-              0x591e,
-              0x5921,
-              0x5926,
-              0x5923,
-              0x5927,
-              0x593b,
-
-              // coffeelake gt2+
-              0x3e91,
-              0x3e92,
-              0x3e96,
-              0x3e98,
-              0x3e9a,
-              0x3e9b,
-              0x3e94,
-              0x3ea0,
-              0x3ea9,
-              0x3ea2,
-              0x3ea6,
-              0x3ea7,
-              0x3ea8,
-              0x3ea5,
-
-              // broadwell gt2+
-              0x1612,
-              0x1616,
-              0x161a,
-              0x161b,
-              0x161d,
-              0x161e,
-              0x1622,
-              0x1626,
-              0x162a,
-              0x162b,
-              0x162d,
-              0x162e,
-              0x1632,
-              0x1636,
-              0x163a,
-              0x163b,
-              0x163d,
-              0x163e,
-
-              // HD Graphics 4600
-              0x0412,
-              0x0416,
-              0x041a,
-              0x041b,
-              0x041e,
-              0x0a12,
-              0x0a16,
-              0x0a1a,
-              0x0a1b,
-              0x0a1e,
-          };
-          bool supported = false;
-          for (uint16_t id : supportedDevices) {
-            if (deviceID == id) {
-              supported = true;
-              break;
-            }
-          }
-          if (supported) {
-#ifdef MOZ_WIDGET_GTK
-            // Performance is not great on 4k screens with WebRender + Linux.
-            // Disable it for now if it is too large.
-            const int32_t kMaxPixelsLinux = 3440 * 1440;  // UWQHD
-            if (screenPixels > kMaxPixelsLinux) {
-              featureWebRenderQualified.Disable(
-                  FeatureStatus::BlockedScreenTooLarge, "Screen size too large",
-                  NS_LITERAL_CSTRING("FEATURE_FAILURE_SCREEN_SIZE_TOO_LARGE"));
-            } else if (screenPixels <= 0) {
-              featureWebRenderQualified.Disable(
-                  FeatureStatus::BlockedScreenUnknown, "Screen size unknown",
-                  NS_LITERAL_CSTRING("FEATURE_FAILURE_SCREEN_SIZE_UNKNOWN"));
-            } else {
-#endif  // MOZ_WIDGET_GTK
-#ifndef NIGHTLY_BUILD
-              featureWebRenderQualified.Disable(
-                  FeatureStatus::BlockedReleaseChannelIntel,
-                  "Release channel and Intel",
-                  NS_LITERAL_CSTRING("FEATURE_FAILURE_RELEASE_CHANNEL_INTEL"));
-#endif  // !NIGHTLY_BUILD
-#ifdef MOZ_WIDGET_GTK
-            }
-#endif  // MOZ_WIDGET_GTK
-          } else {
-            featureWebRenderQualified.Disable(
-                FeatureStatus::BlockedDeviceTooOld, "Device too old",
-                NS_LITERAL_CSTRING("FEATURE_FAILURE_DEVICE_TOO_OLD"));
-          }
-        } else {
-          featureWebRenderQualified.Disable(
-              FeatureStatus::BlockedVendorUnsupported, "Unsupported vendor",
-              NS_LITERAL_CSTRING("FEATURE_FAILURE_UNSUPPORTED_VENDOR"));
-        }
-
-        // We leave checking the battery for last because we would like to know
-        // which users were denied WebRender only because they have a battery.
-        if (featureWebRenderQualified.IsEnabled() && aHasBattery) {
-          // For AMD/Intel devices, if we have a battery, ignore it if the
-          // screen is small enough. Note that we always check for a battery
-          // with NVIDIA because we do not have a limited/curated set of devices
-          // to support WebRender on.
-          const int32_t kMaxPixelsBattery = 1920 * 1200;  // WUXGA
-          if ((adapterVendorID == u"0x8086" || adapterVendorID == u"0x1002") &&
-              screenPixels > 0 && screenPixels <= kMaxPixelsBattery) {
-#ifndef NIGHTLY_BUILD
-            featureWebRenderQualified.Disable(
-                FeatureStatus::BlockedReleaseChannelBattery,
-                "Release channel and battery",
-                NS_LITERAL_CSTRING("FEATURE_FAILURE_RELEASE_CHANNEL_BATTERY"));
-#endif  // !NIGHTLY_BUILD
-          } else {
-            featureWebRenderQualified.Disable(
-                FeatureStatus::BlockedHasBattery, "Has battery",
-                NS_LITERAL_CSTRING("FEATURE_FAILURE_WR_HAS_BATTERY"));
-          }
-        }
-      }
-    }
-  } else {
+  if (NS_FAILED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_WEBRENDER,
+                                          failureId, &status))) {
     featureWebRenderQualified.Disable(
         FeatureStatus::BlockedNoGfxInfo, "gfxInfo is broken",
         NS_LITERAL_CSTRING("FEATURE_FAILURE_WR_NO_GFX_INFO"));
+    return featureWebRenderQualified;
+  }
+
+  if (status != nsIGfxInfo::FEATURE_STATUS_OK) {
+    featureWebRenderQualified.Disable(FeatureStatus::Blacklisted,
+                                      "No qualified hardware", failureId);
+    return featureWebRenderQualified;
+  }
+
+  nsAutoString adapterVendorID;
+  gfxInfo->GetAdapterVendorID(adapterVendorID);
+
+  nsAutoString adapterDeviceID;
+  gfxInfo->GetAdapterDeviceID(adapterDeviceID);
+  nsresult valid;
+  int32_t deviceID = adapterDeviceID.ToInteger(&valid, 16);
+  if (valid != NS_OK) {
+    featureWebRenderQualified.Disable(
+        FeatureStatus::BlockedDeviceUnknown, "Bad device id",
+        NS_LITERAL_CSTRING("FEATURE_FAILURE_BAD_DEVICE_ID"));
+    return featureWebRenderQualified;
+  }
+
+  const int32_t screenPixels = aScreenSize.width * aScreenSize.height;
+
+  if (adapterVendorID == u"0x10de") {  // Nvidia
+    UpdateWRQualificationForNvidia(featureWebRenderQualified, deviceID,
+                                   aOutGuardedByQualifiedPref);
+  } else if (adapterVendorID == u"0x1002") {  // AMD
+    UpdateWRQualificationForAMD(featureWebRenderQualified, deviceID,
+                                aOutGuardedByQualifiedPref);
+  } else if (adapterVendorID == u"0x8086") {  // Intel
+    UpdateWRQualificationForIntel(featureWebRenderQualified, deviceID,
+                                  screenPixels, aOutGuardedByQualifiedPref);
+  } else {
+    featureWebRenderQualified.Disable(
+        FeatureStatus::BlockedVendorUnsupported, "Unsupported vendor",
+        NS_LITERAL_CSTRING("FEATURE_FAILURE_UNSUPPORTED_VENDOR"));
+  }
+
+  if (!featureWebRenderQualified.IsEnabled()) {
+    // One of the checks above failed, early exit. If this happens then
+    // this population must still be guarded by the qualified pref.
+    MOZ_ASSERT(*aOutGuardedByQualifiedPref);
+    return featureWebRenderQualified;
+  }
+
+  // We leave checking the battery for last because we would like to know
+  // which users were denied WebRender only because they have a battery.
+  if (aHasBattery) {
+#ifndef XP_WIN
+    // aHasBattery is only ever true on Windows, we don't check it on other
+    // platforms.
+    MOZ_ASSERT(false);
+#endif
+    // We never released WR to the battery populations, so let's keep the pref
+    // guard for these populations. That way we can do a gradual rollout to
+    // the battery population using the pref.
+    *aOutGuardedByQualifiedPref = true;
+
+    // if we have a battery, ignore it if the screen is small enough.
+    const int32_t kMaxPixelsBattery = 1920 * 1200;  // WUXGA
+    if (screenPixels > 0 && screenPixels <= kMaxPixelsBattery) {
+#ifndef NIGHTLY_BUILD
+      featureWebRenderQualified.Disable(
+          FeatureStatus::BlockedReleaseChannelBattery,
+          "Release channel and battery",
+          NS_LITERAL_CSTRING("FEATURE_FAILURE_RELEASE_CHANNEL_BATTERY"));
+#endif  // !NIGHTLY_BUILD
+    } else {
+      featureWebRenderQualified.Disable(
+          FeatureStatus::BlockedHasBattery, "Has battery",
+          NS_LITERAL_CSTRING("FEATURE_FAILURE_WR_HAS_BATTERY"));
+    }
   }
   return featureWebRenderQualified;
 }
@@ -2857,10 +2972,10 @@ void gfxPlatform::InitWebRenderConfig() {
     return;
   }
 
-  nsCString failureId;
+  bool guardedByQualifiedPref = true;
   FeatureState& featureWebRenderQualified =
       WebRenderHardwareQualificationStatus(GetScreenSize(), HasBattery(),
-                                           failureId);
+                                           &guardedByQualifiedPref);
   FeatureState& featureWebRender = gfxConfig::GetFeature(Feature::WEBRENDER);
 
   featureWebRender.DisableByDefault(
@@ -2877,14 +2992,22 @@ void gfxPlatform::InitWebRenderConfig() {
     featureWebRender.UserEnable("Force enabled by envvar");
   } else if (prefEnabled) {
     featureWebRender.UserEnable("Force enabled by pref");
-  } else if (wrQualifiedAll && featureWebRenderQualified.IsEnabled()) {
-    featureWebRender.UserEnable("Qualified enabled by pref ");
+  } else if (featureWebRenderQualified.IsEnabled()) {
+    // If the HW is qualified, we enable if either the HW has been qualified
+    // on the release channel (i.e. it's no longer guarded by the qualified
+    // pref), or if the qualified pref is enabled.
+    if (!guardedByQualifiedPref) {
+      featureWebRender.UserEnable("Qualified in release");
+    } else if (wrQualifiedAll) {
+      featureWebRender.UserEnable("Qualified enabled by pref");
+    }
   }
 
   // If the user set the pref to force-disable, let's do that. This will
   // override all the other enabling prefs (gfx.webrender.enabled,
   // gfx.webrender.all, and gfx.webrender.all.qualified).
-  if (StaticPrefs::WebRenderForceDisabled() || WebRenderEnvvarDisabled()) {
+  if (StaticPrefs::gfx_webrender_force_disabled_AtStartup() ||
+      (WebRenderEnvvarDisabled() && !InMarionetteRolloutTest())) {
     featureWebRender.UserDisable(
         "User force-disabled WR",
         NS_LITERAL_CSTRING("FEATURE_FAILURE_USER_FORCE_DISABLED"));
@@ -2912,12 +3035,6 @@ void gfxPlatform::InitWebRenderConfig() {
         FeatureStatus::UnavailableInSafeMode, "Safe-mode is enabled",
         NS_LITERAL_CSTRING("FEATURE_FAILURE_SAFE_MODE"));
   }
-
-#ifndef MOZ_BUILD_WEBRENDER
-  featureWebRender.ForceDisable(
-      FeatureStatus::UnavailableNotBuilt, "Build doesn't include WebRender",
-      NS_LITERAL_CSTRING("FEATURE_FAILURE_NO_WEBRENDER"));
-#endif
 
 #ifdef XP_WIN
   if (Preferences::GetBool("gfx.webrender.force-angle", false)) {
@@ -2969,7 +3086,7 @@ void gfxPlatform::InitWebRenderConfig() {
 
     if (!gfxConfig::IsEnabled(Feature::HW_COMPOSITING) &&
         gfxConfig::IsEnabled(Feature::GPU_PROCESS) &&
-        !StaticPrefs::GPUProcessAllowSoftware()) {
+        !StaticPrefs::layers_gpu_process_allow_software_AtStartup()) {
       // We have neither WebRender nor OpenGL, we don't allow the GPU process
       // for basic compositor, and it wasn't disabled already.
       gfxConfig::Disable(Feature::GPU_PROCESS, FeatureStatus::Unavailable,
@@ -2979,19 +3096,28 @@ void gfxPlatform::InitWebRenderConfig() {
 #endif
 
 #ifdef XP_WIN
+  if (Preferences::GetBool("gfx.webrender.flip-sequential", false)) {
+    // XXX relax win version to windows 8.
+    if (IsWin10OrLater() && UseWebRender() && gfxVars::UseWebRenderANGLE()) {
+      gfxVars::SetUseWebRenderFlipSequentialWin(true);
+    }
+  }
   if (Preferences::GetBool("gfx.webrender.dcomp-win.enabled", false)) {
     // XXX relax win version to windows 8.
     if (IsWin10OrLater() && UseWebRender() && gfxVars::UseWebRenderANGLE()) {
       gfxVars::SetUseWebRenderDCompWin(true);
     }
   }
-  if (Preferences::GetBool("gfx.webrender.dcomp-win-triple-buffering.enabled",
-                           false)) {
-    if (gfxVars::UseWebRenderDCompWin()) {
-      gfxVars::SetUseWebRenderDCompWinTripleBuffering(true);
+  if (Preferences::GetBool("gfx.webrender.triple-buffering.enabled", false)) {
+    if (gfxVars::UseWebRenderDCompWin() ||
+        gfxVars::UseWebRenderFlipSequentialWin()) {
+      gfxVars::SetUseWebRenderTripleBufferingWin(true);
     }
   }
 #endif
+  // The RemoveShaderCacheFromDiskIfNecessary() needs to be called after
+  // WebRenderConfig initialization.
+  gfxUtils::RemoveShaderCacheFromDiskIfNecessary();
 }
 
 void gfxPlatform::InitOMTPConfig() {
@@ -3057,7 +3183,8 @@ bool gfxPlatform::AccelerateLayersByDefault() {
 bool gfxPlatform::BufferRotationEnabled() {
   MutexAutoLock autoLock(*gGfxPlatformPrefsLock);
 
-  return sBufferRotationCheckPref && StaticPrefs::BufferRotationEnabled();
+  return sBufferRotationCheckPref &&
+         StaticPrefs::layers_bufferrotation_enabled_AtStartup();
 }
 
 void gfxPlatform::DisableBufferRotation() {
@@ -3078,10 +3205,12 @@ bool gfxPlatform::UsesOffMainThreadCompositing() {
   if (firstTime) {
     MOZ_ASSERT(sLayersAccelerationPrefsInitialized);
     result = gfxVars::BrowserTabsRemoteAutostart() ||
-             !StaticPrefs::LayersOffMainThreadCompositionForceDisabled();
+             !StaticPrefs::
+                 layers_offmainthreadcomposition_force_disabled_AtStartup();
 #if defined(MOZ_WIDGET_GTK)
     // Linux users who chose OpenGL are being grandfathered in to OMTC
-    result |= StaticPrefs::LayersAccelerationForceEnabledDoNotUseDirectly();
+    result |= StaticPrefs::
+        layers_acceleration_force_enabled_AtStartup_DoNotUseDirectly();
 
 #endif
     firstTime = false;
@@ -3097,12 +3226,12 @@ bool gfxPlatform::UsesTiling() const {
   // this function is used when initializing the PaintThread. So instead we
   // check the conditions that enable OMTP with parallel painting.
   bool usesPOMTP = XRE_IsContentProcess() && gfxVars::UseOMTP() &&
-                   (StaticPrefs::LayersOMTPPaintWorkers() == -1 ||
-                    StaticPrefs::LayersOMTPPaintWorkers() > 1);
+                   (StaticPrefs::layers_omtp_paint_workers_AtStartup() == -1 ||
+                    StaticPrefs::layers_omtp_paint_workers_AtStartup() > 1);
 
-  return StaticPrefs::LayersTilesEnabled() ||
-         (StaticPrefs::LayersTilesEnabledIfSkiaPOMTP() && usesSkia &&
-          usesPOMTP);
+  return StaticPrefs::layers_enable_tiles_AtStartup() ||
+         (StaticPrefs::layers_enable_tiles_if_skia_pomtp_AtStartup() &&
+          usesSkia && usesPOMTP);
 }
 
 bool gfxPlatform::ContentUsesTiling() const {
@@ -3114,12 +3243,13 @@ bool gfxPlatform::ContentUsesTiling() const {
 
   bool contentUsesSkia = contentBackend == BackendType::SKIA;
   bool contentUsesPOMTP =
-      gfxVars::UseOMTP() && (StaticPrefs::LayersOMTPPaintWorkers() == -1 ||
-                             StaticPrefs::LayersOMTPPaintWorkers() > 1);
+      gfxVars::UseOMTP() &&
+      (StaticPrefs::layers_omtp_paint_workers_AtStartup() == -1 ||
+       StaticPrefs::layers_omtp_paint_workers_AtStartup() > 1);
 
-  return StaticPrefs::LayersTilesEnabled() ||
-         (StaticPrefs::LayersTilesEnabledIfSkiaPOMTP() && contentUsesSkia &&
-          contentUsesPOMTP);
+  return StaticPrefs::layers_enable_tiles_AtStartup() ||
+         (StaticPrefs::layers_enable_tiles_if_skia_pomtp_AtStartup() &&
+          contentUsesSkia && contentUsesPOMTP);
 }
 
 /***
@@ -3143,18 +3273,18 @@ bool gfxPlatform::IsInLayoutAsapMode() {
   // the second is that the compositor goes ASAP and the refresh driver
   // goes at whatever the configurated rate is. This only checks the version
   // talos uses, which is the refresh driver and compositor are in lockstep.
-  return StaticPrefs::LayoutFrameRate() == 0;
+  return StaticPrefs::layout_frame_rate() == 0;
 }
 
 /* static */
 bool gfxPlatform::ForceSoftwareVsync() {
-  return StaticPrefs::LayoutFrameRate() > 0 ||
+  return StaticPrefs::layout_frame_rate() > 0 ||
          recordreplay::IsRecordingOrReplaying();
 }
 
 /* static */
 int gfxPlatform::GetSoftwareVsyncRate() {
-  int preferenceRate = StaticPrefs::LayoutFrameRate();
+  int preferenceRate = StaticPrefs::layout_frame_rate();
   if (preferenceRate <= 0) {
     return gfxPlatform::GetDefaultFrameRate();
   }
@@ -3242,7 +3372,7 @@ void gfxPlatform::GetApzSupportInfo(mozilla::widget::InfoObject& aObj) {
 }
 
 void gfxPlatform::GetTilesSupportInfo(mozilla::widget::InfoObject& aObj) {
-  if (!StaticPrefs::LayersTilesEnabled()) {
+  if (!StaticPrefs::layers_enable_tiles_AtStartup()) {
     return;
   }
 
@@ -3322,7 +3452,7 @@ class FrameStatsComparator {
 };
 
 void gfxPlatform::NotifyFrameStats(nsTArray<FrameStats>&& aFrameStats) {
-  if (!StaticPrefs::LoggingSlowFramesEnabled()) {
+  if (!StaticPrefs::gfx_logging_slow_frames_enabled_AtStartup()) {
     return;
   }
 
@@ -3358,12 +3488,15 @@ bool gfxPlatform::AsyncPanZoomEnabled() {
 #ifdef MOZ_WIDGET_ANDROID
   return true;
 #else
-  return StaticPrefs::AsyncPanZoomEnabledDoNotUseDirectly();
+  return StaticPrefs::
+      layers_async_pan_zoom_enabled_AtStartup_DoNotUseDirectly();
 #endif
 }
 
 /*static*/
-bool gfxPlatform::PerfWarnings() { return StaticPrefs::PerfWarnings(); }
+bool gfxPlatform::PerfWarnings() {
+  return StaticPrefs::gfx_perf_warnings_enabled();
+}
 
 void gfxPlatform::GetAcceleratedCompositorBackends(
     nsTArray<LayersBackend>& aBackends) {
@@ -3481,7 +3614,7 @@ bool gfxPlatform::SupportsApzDragInput() const {
 }
 
 bool gfxPlatform::SupportsApzKeyboardInput() const {
-  return StaticPrefs::apz_keyboard_enabled();
+  return StaticPrefs::apz_keyboard_enabled_AtStartup();
 }
 
 bool gfxPlatform::SupportsApzAutoscrolling() const {
@@ -3510,15 +3643,16 @@ void gfxPlatform::InitOpenGLConfig() {
 
 #ifdef XP_WIN
   openGLFeature.SetDefaultFromPref(
-      StaticPrefs::GetLayersPreferOpenGLPrefName(), true,
-      StaticPrefs::GetLayersPreferOpenGLPrefDefault());
+      StaticPrefs::GetPrefName_layers_prefer_opengl(), true,
+      StaticPrefs::GetPrefDefault_layers_prefer_opengl());
 #else
   openGLFeature.EnableByDefault();
 #endif
 
   // When layers acceleration is force-enabled, enable it even for blacklisted
   // devices.
-  if (StaticPrefs::LayersAccelerationForceEnabledDoNotUseDirectly()) {
+  if (StaticPrefs::
+          layers_acceleration_force_enabled_AtStartup_DoNotUseDirectly()) {
     openGLFeature.UserForceEnable("Force-enabled by pref");
     return;
   }

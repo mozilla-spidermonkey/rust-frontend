@@ -17,10 +17,10 @@
  * @param  {String} options.backgroundClass
  *         The background highlight color class to set on the element.
  */
-function flashElementOn(backgroundElt, {
-  foregroundElt = backgroundElt,
-  backgroundClass = "theme-bg-contrast",
-} = {}) {
+function flashElementOn(
+  backgroundElt,
+  { foregroundElt = backgroundElt, backgroundClass = "theme-bg-contrast" } = {}
+) {
   if (!backgroundElt || !foregroundElt) {
     return;
   }
@@ -51,10 +51,10 @@ function flashElementOn(backgroundElt, {
  * @param  {String} options.backgroundClass
  *         The background highlight color class to remove on the element.
  */
-function flashElementOff(backgroundElt, {
-  foregroundElt = backgroundElt,
-  backgroundClass = "theme-bg-contrast",
-} = {}) {
+function flashElementOff(
+  backgroundElt,
+  { foregroundElt = backgroundElt, backgroundClass = "theme-bg-contrast" } = {}
+) {
   if (!backgroundElt || !foregroundElt) {
     return;
   }
@@ -66,6 +66,8 @@ function flashElementOff(backgroundElt, {
   backgroundElt.classList.remove(backgroundClass);
 
   foregroundElt.classList.remove("theme-fg-contrast");
+  // Make sure the foreground animation class is removed
+  foregroundElt.classList.remove("flash-out");
   [].forEach.call(
     foregroundElt.querySelectorAll("[class*=theme-fg-color]"),
     span => span.classList.remove("theme-fg-contrast")
@@ -103,13 +105,14 @@ function parseAttributeValues(attr, doc) {
   // Handle bad user inputs by appending a " or ' if it fails to parse without
   // them. Also note that a SVG tag is used to make sure the HTML parser
   // preserves mixed-case attributes
-  const el = parseAndGetNode("<svg " + attr + "></svg>") ||
-           parseAndGetNode("<svg " + attr + "\"></svg>") ||
-           parseAndGetNode("<svg " + attr + "'></svg>");
+  const el =
+    parseAndGetNode("<svg " + attr + "></svg>") ||
+    parseAndGetNode("<svg " + attr + '"></svg>') ||
+    parseAndGetNode("<svg " + attr + "'></svg>");
 
   const div = doc.createElement("div");
   const attributes = [];
-  for (const {name, value} of el.attributes) {
+  for (const { name, value } of el.attributes) {
     // Try to set on an element in the document, throws exception on bad input.
     // Prevents InvalidCharacterError - "String contains an invalid character".
     try {

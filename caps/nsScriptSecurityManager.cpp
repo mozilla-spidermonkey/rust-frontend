@@ -7,6 +7,7 @@
 #include "nsScriptSecurityManager.h"
 
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/StaticPrefs_security.h"
 #include "mozilla/StoragePrincipalHelper.h"
 
 #include "xpcpublic.h"
@@ -376,7 +377,7 @@ nsScriptSecurityManager::GetChannelURIPrincipal(nsIChannel* aChannel,
   OriginAttributes attrs = loadInfo->GetOriginAttributes();
 
   nsCOMPtr<nsIPrincipal> prin =
-      BasePrincipal::CreateCodebasePrincipal(uri, attrs);
+      BasePrincipal::CreateContentPrincipal(uri, attrs);
   prin.forget(aPrincipal);
   return *aPrincipal ? NS_OK : NS_ERROR_FAILURE;
 }
@@ -400,12 +401,6 @@ bool nsScriptSecurityManager::ContentSecurityPolicyPermitsJSAction(
     JSContext* cx, JS::HandleValue aValue) {
   MOZ_ASSERT(cx == nsContentUtils::GetCurrentJSContext());
 
-#if defined(DEBUG) && !defined(ANDROID)
-  nsCOMPtr<nsIPrincipal> subjectPrincipal = nsContentUtils::SubjectPrincipal();
-  nsContentSecurityManager::AssertEvalNotUsingSystemPrincipal(subjectPrincipal,
-                                                              cx);
-#endif
-
   // Get the window, if any, corresponding to the current global
   nsCOMPtr<nsIContentSecurityPolicy> csp;
   if (nsGlobalWindowInner* win = xpc::CurrentWindowOrNull(cx)) {
@@ -428,24 +423,35 @@ bool nsScriptSecurityManager::ContentSecurityPolicyPermitsJSAction(
   bool reportViolation = false;
   nsresult rv = csp->GetAllowsEval(&reportViolation, &evalOK);
 
-  if (NS_FAILED(rv)) {
-    NS_WARNING("CSP: failed to get allowsEval");
-    return true;  // fail open to not break sites.
-  }
-
-  if (reportViolation) {
+  // A little convoluted. We want the scriptSample for a) reporting a violation
+  // or b) passing it to AssertEvalNotUsingSystemPrincipal. So do the work to
+  // get it if either of those cases is true.
+  nsAutoJSString scriptSample;
+  nsCOMPtr<nsIPrincipal> subjectPrincipal = nsContentUtils::SubjectPrincipal();
+  if (reportViolation || subjectPrincipal->IsSystemPrincipal()) {
     JS::Rooted<JSString*> jsString(cx, JS::ToString(cx, aValue));
     if (NS_WARN_IF(!jsString)) {
       JS_ClearPendingException(cx);
       return false;
     }
 
-    nsAutoJSString scriptSample;
     if (NS_WARN_IF(!scriptSample.init(cx, jsString))) {
       JS_ClearPendingException(cx);
       return false;
     }
+  }
 
+#if !defined(ANDROID) && (defined(NIGHTLY_BUILD) || defined(DEBUG))
+  nsContentSecurityManager::AssertEvalNotUsingSystemPrincipal(
+      cx, subjectPrincipal, scriptSample);
+#endif
+
+  if (NS_FAILED(rv)) {
+    NS_WARNING("CSP: failed to get allowsEval");
+    return true;  // fail open to not break sites.
+  }
+
+  if (reportViolation) {
     JS::AutoFilename scriptFilename;
     nsAutoString fileName;
     unsigned lineNum = 0;
@@ -886,18 +892,7 @@ nsresult nsScriptSecurityManager::CheckLoadURIFlags(
       }
 
       if (targetScheme.EqualsLiteral("resource")) {
-        // Mochitests that need to load resource:// URIs not declared
-        // content-accessible in manifests should set the preference
-        // "security.all_resource_uri_content_accessible" true.
-        static bool sSecurityPrefCached = false;
-        static bool sAllResourceUriContentAccessible = false;
-        if (!sSecurityPrefCached) {
-          sSecurityPrefCached = true;
-          Preferences::AddBoolVarCache(
-              &sAllResourceUriContentAccessible,
-              "security.all_resource_uri_content_accessible", false);
-        }
-        if (sAllResourceUriContentAccessible) {
+        if (StaticPrefs::security_all_resource_uri_content_accessible()) {
           return NS_OK;
         }
 
@@ -1051,8 +1046,7 @@ nsScriptSecurityManager::CheckLoadURIStrWithPrincipal(
     uint32_t aFlags) {
   nsresult rv;
   nsCOMPtr<nsIURI> target;
-  rv = NS_NewURI(getter_AddRefs(target), aTargetURIStr, nullptr, nullptr,
-                 sIOService);
+  rv = NS_NewURI(getter_AddRefs(target), aTargetURIStr);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = CheckLoadURIWithPrincipal(aPrincipal, target, aFlags);
@@ -1121,7 +1115,7 @@ nsScriptSecurityManager::GetSystemPrincipal(nsIPrincipal** result) {
 }
 
 NS_IMETHODIMP
-nsScriptSecurityManager::CreateCodebasePrincipal(
+nsScriptSecurityManager::CreateContentPrincipal(
     nsIURI* aURI, JS::Handle<JS::Value> aOriginAttributes, JSContext* aCx,
     nsIPrincipal** aPrincipal) {
   OriginAttributes attrs;
@@ -1129,13 +1123,13 @@ nsScriptSecurityManager::CreateCodebasePrincipal(
     return NS_ERROR_INVALID_ARG;
   }
   nsCOMPtr<nsIPrincipal> prin =
-      BasePrincipal::CreateCodebasePrincipal(aURI, attrs);
+      BasePrincipal::CreateContentPrincipal(aURI, attrs);
   prin.forget(aPrincipal);
   return *aPrincipal ? NS_OK : NS_ERROR_FAILURE;
 }
 
 NS_IMETHODIMP
-nsScriptSecurityManager::CreateCodebasePrincipalFromOrigin(
+nsScriptSecurityManager::CreateContentPrincipalFromOrigin(
     const nsACString& aOrigin, nsIPrincipal** aPrincipal) {
   if (StringBeginsWith(aOrigin, NS_LITERAL_CSTRING("["))) {
     return NS_ERROR_INVALID_ARG;
@@ -1146,7 +1140,7 @@ nsScriptSecurityManager::CreateCodebasePrincipalFromOrigin(
     return NS_ERROR_INVALID_ARG;
   }
 
-  nsCOMPtr<nsIPrincipal> prin = BasePrincipal::CreateCodebasePrincipal(aOrigin);
+  nsCOMPtr<nsIPrincipal> prin = BasePrincipal::CreateContentPrincipal(aOrigin);
   prin.forget(aPrincipal);
   return *aPrincipal ? NS_OK : NS_ERROR_FAILURE;
 }
@@ -1199,22 +1193,22 @@ nsScriptSecurityManager::CreateNullPrincipal(
 }
 
 NS_IMETHODIMP
-nsScriptSecurityManager::GetLoadContextCodebasePrincipal(
+nsScriptSecurityManager::GetLoadContextContentPrincipal(
     nsIURI* aURI, nsILoadContext* aLoadContext, nsIPrincipal** aPrincipal) {
   NS_ENSURE_STATE(aLoadContext);
   OriginAttributes docShellAttrs;
   aLoadContext->GetOriginAttributes(docShellAttrs);
 
   nsCOMPtr<nsIPrincipal> prin =
-      BasePrincipal::CreateCodebasePrincipal(aURI, docShellAttrs);
+      BasePrincipal::CreateContentPrincipal(aURI, docShellAttrs);
   prin.forget(aPrincipal);
   return *aPrincipal ? NS_OK : NS_ERROR_FAILURE;
 }
 
 NS_IMETHODIMP
-nsScriptSecurityManager::GetDocShellCodebasePrincipal(
+nsScriptSecurityManager::GetDocShellContentPrincipal(
     nsIURI* aURI, nsIDocShell* aDocShell, nsIPrincipal** aPrincipal) {
-  nsCOMPtr<nsIPrincipal> prin = BasePrincipal::CreateCodebasePrincipal(
+  nsCOMPtr<nsIPrincipal> prin = BasePrincipal::CreateContentPrincipal(
       aURI, nsDocShell::Cast(aDocShell)->GetOriginAttributes());
   prin.forget(aPrincipal);
   return *aPrincipal ? NS_OK : NS_ERROR_FAILURE;
@@ -1227,7 +1221,7 @@ nsScriptSecurityManager::PrincipalWithOA(
   if (!aPrincipal) {
     return NS_OK;
   }
-  if (aPrincipal->GetIsCodebasePrincipal()) {
+  if (aPrincipal->GetIsContentPrincipal()) {
     OriginAttributes attrs;
     if (!aOriginAttributes.isObject() || !attrs.Init(aCx, aOriginAttributes)) {
       return NS_ERROR_INVALID_ARG;
@@ -1487,8 +1481,7 @@ void nsScriptSecurityManager::AddSitesToFileURIAllowlist(
 
     // Convert it to a URI and add it to our list.
     nsCOMPtr<nsIURI> uri;
-    nsresult rv =
-        NS_NewURI(getter_AddRefs(uri), site, nullptr, nullptr, sIOService);
+    nsresult rv = NS_NewURI(getter_AddRefs(uri), site);
     if (NS_SUCCEEDED(rv)) {
       mFileURIAllowlist.ref().AppendElement(uri);
     } else {
@@ -1518,8 +1511,6 @@ nsresult nsScriptSecurityManager::InitPrefs() {
   Preferences::RegisterPrefixCallbacks(
       PREF_CHANGE_METHOD(nsScriptSecurityManager::ScriptSecurityPrefChanged),
       kObservedPrefs, this);
-
-  OriginAttributes::InitPrefs();
 
   return NS_OK;
 }

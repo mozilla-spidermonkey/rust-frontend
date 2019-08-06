@@ -308,14 +308,11 @@ uint32_t Table::grow(uint32_t delta, JSContext* cx) {
 
   MOZ_ASSERT(movingGrowable());
 
-  JSRuntime* rt =
-      cx->runtime();  // Use JSRuntime's MallocProvider to avoid throwing.
-
   switch (kind_) {
     case TableKind::FuncRef: {
       // Note that realloc does not release functions_'s pointee on failure
       // which is exactly what we need here.
-      FunctionTableElem* newFunctions = rt->pod_realloc<FunctionTableElem>(
+      FunctionTableElem* newFunctions = js_pod_realloc<FunctionTableElem>(
           functions_.get(), length_, newLength.value());
       if (!newFunctions) {
         return -1;
@@ -338,7 +335,15 @@ uint32_t Table::grow(uint32_t delta, JSContext* cx) {
     }
   }
 
+  if (auto object = maybeObject_.unbarrieredGet()) {
+    RemoveCellMemory(object, gcMallocBytes(), MemoryUse::WasmTableTable);
+  }
+
   length_ = newLength.value();
+
+  if (auto object = maybeObject_.unbarrieredGet()) {
+    AddCellMemory(object, gcMallocBytes(), MemoryUse::WasmTableTable);
+  }
 
   for (InstanceSet::Range r = observers_.all(); !r.empty(); r.popFront()) {
     r.front()->instance().onMovingGrowTable(this);
@@ -370,4 +375,14 @@ size_t Table::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const {
     return mallocSizeOf(functions_.get());
   }
   return objects_.sizeOfExcludingThis(mallocSizeOf);
+}
+
+size_t Table::gcMallocBytes() const {
+  size_t size = sizeof(*this);
+  if (isFunction()) {
+    size += length() * sizeof(FunctionTableElem);
+  } else {
+    size += length() * sizeof(TableAnyRefVector::ElementType);
+  }
+  return size;
 }

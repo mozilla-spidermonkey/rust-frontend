@@ -16,7 +16,7 @@
 #include "GMPUtils.h"
 #include "mozilla/dom/MediaKeyMessageEventBinding.h"
 #include "mozilla/gmp/GMPTypes.h"
-#include "mozilla/StaticPrefs.h"
+#include "mozilla/StaticPrefs_media.h"
 #include "mozilla/Unused.h"
 #include "AnnexB.h"
 #include "H264.h"
@@ -32,7 +32,7 @@ ChromiumCDMParent::ChromiumCDMParent(GMPContentParent* aContentParent,
                                      uint32_t aPluginId)
     : mPluginId(aPluginId),
       mContentParent(aContentParent),
-      mVideoShmemLimit(StaticPrefs::MediaEmeChromiumApiVideoShmems()) {
+      mVideoShmemLimit(StaticPrefs::media_eme_chromium_api_video_shmems()) {
   GMP_LOG(
       "ChromiumCDMParent::ChromiumCDMParent(this=%p, contentParent=%p, id=%u)",
       this, aContentParent, aPluginId);
@@ -768,6 +768,11 @@ already_AddRefed<VideoData> ChromiumCDMParent::CreateVideoFrame(
   b.mPlanes[2].mStride = aFrame.mVPlane().mStride();
   b.mPlanes[2].mOffset = aFrame.mVPlane().mPlaneOffset();
   b.mPlanes[2].mSkip = 0;
+
+  // We unfortunately can't know which colorspace the video is using at this
+  // stage.
+  b.mYUVColorSpace =
+      DefaultColorSpace({aFrame.mImageWidth(), aFrame.mImageHeight()});
 
   gfx::IntRect pictureRegion(0, 0, aFrame.mImageWidth(), aFrame.mImageHeight());
   RefPtr<VideoData> v = VideoData::CreateAndCopyData(
