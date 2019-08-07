@@ -1,6 +1,9 @@
+extern crate parser;
+
 #[no_mangle]
-pub extern fn asdf() {
+pub extern "C" fn asdf() {
     println!("Hiiiii!");
+    println!("{:?}", parser::parse_script("2+2"));
 }
 #[cfg(test)]
 mod tests {

@@ -1,0 +1,3 @@
+[submodule "js/src/frontend-rs/jsparagus"]
+	path = js/src/frontend-rs/jsparagus
+	url = git@github.com:jorendorff/jsparagus.git

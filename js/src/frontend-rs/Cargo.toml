@@ -5,6 +5,7 @@ authors = ["Ashley Hauck <khyperia@mozilla.com>"]
 edition = "2018"
 
 [dependencies]
+parser = { path = "jsparagus/rust/parser" }
 
 [build-dependencies]
 cbindgen = "0.9"
