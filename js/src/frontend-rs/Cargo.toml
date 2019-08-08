@@ -5,6 +5,8 @@ authors = ["Ashley Hauck <khyperia@mozilla.com>"]
 edition = "2018"
 
 [dependencies]
+ast = { path = "jsparagus/rust/ast" }
+emitter = { path = "jsparagus/rust/emitter" }
 parser = { path = "jsparagus/rust/parser" }
 
 [build-dependencies]

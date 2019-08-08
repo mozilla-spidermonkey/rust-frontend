@@ -1,5 +1,8 @@
 extern crate parser;
 
+use ast::Program;
+use emitter::emit;
+use parser::parse_script;
 use std::mem;
 use std::slice;
 use std::str;
@@ -30,15 +33,8 @@ pub unsafe extern "C" fn free_bytecode(bytecode: Bytecode) {
 }
 
 fn jsparagus(text: &str) -> Vec<u8> {
-    //vec![153] // ret
-
-    vec![64, 112] // null, throw
-}
-
-#[no_mangle]
-pub extern "C" fn asdf() {
-    println!("Hiiiii!");
-    println!("{:?}", parser::parse_script("2+2"));
+    let parse_result = parse_script(text).expect("Failed to parse");
+    emit(&Program::Script(*parse_result))
 }
 
 #[cfg(test)]

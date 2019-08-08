@@ -1013,6 +1013,14 @@ version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
+name = "emitter"
+version = "0.1.0"
+dependencies = [
+ "ast 0.1.0",
+ "parser 0.1.0",
+]
+
+[[package]]
 name = "encoding_c"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1146,7 +1154,9 @@ dependencies = [
 name = "frontend-rs"
 version = "0.1.0"
 dependencies = [
+ "ast 0.1.0",
  "cbindgen 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "emitter 0.1.0",
  "parser 0.1.0",
 ]
 

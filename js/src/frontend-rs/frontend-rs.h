@@ -11,8 +11,6 @@ struct Bytecode {
 
 extern "C" {
 
-void asdf();
-
 void free_bytecode(Bytecode bytecode);
 
 Bytecode run_jsparagus(const uint8_t *text, uintptr_t text_len);

@@ -386,8 +386,6 @@ template <class ParseHandler, typename Unit>
 typename ParseHandler::ListNodeType GeneralParser<ParseHandler, Unit>::parse() {
   MOZ_ASSERT(checkOptionsCalled_);
 
-  asdf();
-
   Directives directives(options().strictOption);
   GlobalSharedContext globalsc(cx_, ScopeKind::Global, directives,
                                options().extraWarningsOption);
