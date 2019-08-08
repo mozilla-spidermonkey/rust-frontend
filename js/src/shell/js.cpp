@@ -75,6 +75,7 @@
 #if defined(JS_BUILD_BINAST)
 #  include "frontend/BinASTParser.h"
 #endif  // defined(JS_BUILD_BINAST)
+#include "frontend/Frontend2.h"
 #include "frontend/ModuleSharedContext.h"
 #include "frontend/Parser.h"
 #include "gc/PublicIterators.h"
@@ -10049,6 +10050,10 @@ static MOZ_MUST_USE bool ProcessArgs(JSContext* cx, OptionParser* op) {
   binASTPaths = op->getMultiStringOption('B');
 #endif  // JS_BUILD_BINAST
 
+  if (op->getBoolOption("rust-frontend")) {
+    return Create(cx, "x", 1);
+  }
+
   if (filePaths.empty() && utf8FilePaths.empty() && codeChunks.empty() &&
       modulePaths.empty() && binASTPaths.empty() &&
       !op->getStringArg("script")) {
@@ -11152,7 +11157,8 @@ int main(int argc, char** argv, char** envp) {
                         "Suppress crash minidumps") ||
       !op.addBoolOption('\0', "wasm-compile-and-serialize",
                         "Compile the wasm bytecode from stdin and serialize "
-                        "the results to stdout")) {
+                        "the results to stdout") ||
+      !op.addBoolOption('\0', "rust-frontend", "Use Rust frontend")) {
     return EXIT_FAILURE;
   }
 
@@ -11255,7 +11261,7 @@ int main(int argc, char** argv, char** envp) {
     cpuCount = op.getIntOption("thread-count");  // Legacy name
   }
   if (cpuCount >= 0 && !SetFakeCPUCount(cpuCount)) {
-      return 1;
+    return 1;
   }
 
   size_t nurseryBytes = JS::DefaultNurseryBytes;

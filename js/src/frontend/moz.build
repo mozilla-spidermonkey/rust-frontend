@@ -39,6 +39,7 @@ UNIFIED_SOURCES += [
     'ForInEmitter.cpp',
     'ForOfEmitter.cpp',
     'ForOfLoopControl.cpp',
+    'Frontend2.cpp',
     'FunctionEmitter.cpp',
     'IfEmitter.cpp',
     'JumpList.cpp',

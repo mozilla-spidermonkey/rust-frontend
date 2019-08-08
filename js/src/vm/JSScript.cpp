@@ -1018,9 +1018,8 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
   // which are not normally present. Globals with instrumentation enabled must
   // compile scripts via the bytecode emitter, which will insert these
   // instructions.
-  if (xdr->hasOptions()
-      ? !!xdr->options().instrumentationKinds
-      : !!cx->global()->getInstrumentationHolder()) {
+  if (xdr->hasOptions() ? !!xdr->options().instrumentationKinds
+                        : !!cx->global()->getInstrumentationHolder()) {
     return xdr->fail(JS::TranscodeResult_Failure);
   }
 
@@ -3972,51 +3971,6 @@ bool JSScript::createPrivateScriptData(JSContext* cx, HandleScript script,
   return true;
 }
 
-/* static */
-bool JSScript::initFunctionPrototype(JSContext* cx, HandleScript script,
-                                     HandleFunction functionProto) {
-  uint32_t numGCThings = 1;
-  if (!createPrivateScriptData(cx, script, numGCThings)) {
-    return false;
-  }
-
-  RootedScope enclosing(cx, &cx->global()->emptyGlobalScope());
-  Scope* functionProtoScope = FunctionScope::create(cx, nullptr, false, false,
-                                                    functionProto, enclosing);
-  if (!functionProtoScope) {
-    return false;
-  }
-
-  mozilla::Span<JS::GCCellPtr> gcthings = script->data_->gcthings();
-  gcthings[0] = JS::GCCellPtr(functionProtoScope);
-
-  uint32_t codeLength = 1;
-  uint32_t noteLength = 3;
-  uint32_t numResumeOffsets = 0;
-  uint32_t numScopeNotes = 0;
-  uint32_t numTryNotes = 0;
-  if (!script->createImmutableScriptData(cx, codeLength, noteLength,
-                                         numResumeOffsets, numScopeNotes,
-                                         numTryNotes)) {
-    return false;
-  }
-
-  jsbytecode* code = script->immutableScriptData()->code();
-  code[0] = JSOP_RETRVAL;
-
-  jssrcnote* notes = script->immutableScriptData()->notes();
-  notes[0] = SRC_NULL;
-  notes[1] = SRC_NULL;
-  notes[2] = SRC_NULL;
-
-  uint32_t numAtoms = 0;
-  if (!script->createScriptData(cx, numAtoms)) {
-    return false;
-  }
-
-  return script->shareScriptData(cx);
-}
-
 static void InitAtomMap(frontend::AtomIndexMap& indices, GCPtrAtom* atoms) {
   for (frontend::AtomIndexMap::Range r = indices.all(); !r.empty();
        r.popFront()) {
@@ -4541,9 +4495,8 @@ static JSObject* CloneInnerInterpretedFunction(
     cx->markAtom(atom);
   }
   RootedFunction clone(
-      cx, NewFunctionWithProto(cx, nullptr, srcFun->nargs(),
-                               flags, nullptr, atom, cloneProto,
-                               allocKind, TenuredObject));
+      cx, NewFunctionWithProto(cx, nullptr, srcFun->nargs(), flags, nullptr,
+                               atom, cloneProto, allocKind, TenuredObject));
   if (!clone) {
     return nullptr;
   }
@@ -5384,8 +5337,8 @@ LazyScript* LazyScript::CreateForXDR(
     uint32_t toStringEnd, uint32_t lineno, uint32_t column) {
   LazyScript* res = LazyScript::CreateRaw(
       cx, numClosedOverBindings, numInnerFunctions, fun, sourceObject,
-      immutableFlags, sourceStart, sourceEnd, toStringStart, toStringEnd, lineno,
-      column);
+      immutableFlags, sourceStart, sourceEnd, toStringStart, toStringEnd,
+      lineno, column);
   if (!res) {
     return nullptr;
   }

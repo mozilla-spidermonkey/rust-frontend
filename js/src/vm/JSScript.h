@@ -2225,6 +2225,9 @@ class JSScript : public js::BaseScript {
       js::HandleScriptSourceObject sourceObject,
       js::MutableHandle<JS::GCVector<js::Scope*>> scopes);
 
+  friend bool InitScript(JSContext* cx, JS::HandleScript script,
+                         JS::HandleFunction functionProto);
+
  private:
   JSScript(JS::Realm* realm, uint8_t* stubEntry,
            js::HandleScriptSourceObject sourceObject, uint32_t sourceStart,
@@ -2257,10 +2260,6 @@ class JSScript : public js::BaseScript {
  public:
   static bool fullyInitFromEmitter(JSContext* cx, js::HandleScript script,
                                    js::frontend::BytecodeEmitter* bce);
-
-  // Initialize the Function.prototype script.
-  static bool initFunctionPrototype(JSContext* cx, js::HandleScript script,
-                                    JS::HandleFunction functionProto);
 
 #ifdef DEBUG
  private:
