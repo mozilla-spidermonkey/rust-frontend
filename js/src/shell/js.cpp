@@ -10051,7 +10051,8 @@ static MOZ_MUST_USE bool ProcessArgs(JSContext* cx, OptionParser* op) {
 #endif  // JS_BUILD_BINAST
 
   if (op->getBoolOption("rust-frontend")) {
-    return Create(cx, "x", 1);
+    AutoReportException are(cx);
+    return Create(cx, (const unsigned char*)"x", 1);
   }
 
   if (filePaths.empty() && utf8FilePaths.empty() && codeChunks.empty() &&

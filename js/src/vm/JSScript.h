@@ -25,6 +25,7 @@
 
 #include "jstypes.h"
 
+#include "frontend-rs/frontend-rs.h"
 #include "frontend/BinASTRuntimeSupport.h"
 #include "frontend/NameAnalysisTypes.h"
 #include "gc/Barrier.h"
@@ -2226,7 +2227,8 @@ class JSScript : public js::BaseScript {
       js::MutableHandle<JS::GCVector<js::Scope*>> scopes);
 
   friend bool InitScript(JSContext* cx, JS::HandleScript script,
-                         JS::HandleFunction functionProto);
+                         JS::HandleFunction canoicalFunction,
+                         const Bytecode& bytecode);
 
  private:
   JSScript(JS::Realm* realm, uint8_t* stubEntry,

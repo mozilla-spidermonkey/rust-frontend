@@ -36,7 +36,6 @@
 
 #include "builtin/ModuleObject.h"
 #include "builtin/SelfHostingDefines.h"
-#include "frontend-rs/frontend-rs.h"
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/FoldConstants.h"
 #include "frontend/ModuleSharedContext.h"

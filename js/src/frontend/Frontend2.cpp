@@ -6,6 +6,7 @@
 
 #include "frontend/Frontend2.h"
 
+// #include "frontend-rs/frontend-rs.h"
 #include "gc/AllocKind.h"
 
 using JS::RootedScript;
@@ -15,8 +16,14 @@ using namespace js::gc;
 using namespace js::frontend;
 using namespace js;
 
+// https://stackoverflow.com/questions/3407012/c-rounding-up-to-the-nearest-multiple-of-a-number
+int roundUp(int numToRound, int multiple) {
+  // assert(multiple && ((multiple & (multiple - 1)) == 0));
+  return (numToRound + multiple - 1) & -multiple;
+}
+
 bool InitScript(JSContext* cx, HandleScript script,
-                HandleFunction canoicalFunction) {
+                HandleFunction canoicalFunction, const Bytecode& bytecode) {
   uint32_t natoms = 0;
   if (!script->createScriptData(cx, natoms)) {
     return false;
@@ -37,8 +44,8 @@ bool InitScript(JSContext* cx, HandleScript script,
   mozilla::Span<JS::GCCellPtr> gcthings = script->data_->gcthings();
   gcthings[0] = JS::GCCellPtr(functionProtoScope);
 
-  uint32_t codeLength = 1;
-  uint32_t noteLength = 2;
+  uint32_t codeLength = bytecode.len;
+  uint32_t noteLength = roundUp(1 + bytecode.len, 4) - (1 + bytecode.len);
   uint32_t numResumeOffsets = 0;
   uint32_t numScopeNotes = 0;
   uint32_t numTryNotes = 0;
@@ -49,32 +56,65 @@ bool InitScript(JSContext* cx, HandleScript script,
   }
 
   jsbytecode* code = script->immutableScriptData()->code();
-  code[0] = JSOP_RETRVAL;
+  for (size_t i = 0; i < codeLength; i++) {
+    code[i] = bytecode.data[i];
+  }
 
   jssrcnote* notes = script->immutableScriptData()->notes();
-  notes[0] = SRC_NULL;
-  notes[1] = SRC_NULL;
+  for (size_t i = 0; i < noteLength; i++) {
+    notes[i] = SRC_NULL;
+  }
 
   return script->shareScriptData(cx);
 }
 
-bool Create(JSContext* cx, const char* bytes, size_t length) {
+static bool Execute(JSContext* cx, HandleScript script) {
+  RootedValue result(cx);
+  result.setUndefined();
+  if (!JS_ExecuteScript(cx, script, &result)) {
+    return false;
+  }
+
+  if (!result.isUndefined()) {
+    // Print.
+    RootedString str(cx, JS_ValueToSource(cx, result));
+    if (!str) {
+      return false;
+    }
+
+    UniqueChars utf8chars = JS_EncodeStringToUTF8(cx, str);
+    if (!utf8chars) {
+      return false;
+    }
+    printf("%s\n", utf8chars.get());
+  }
+  return true;
+}
+
+bool Create(JSContext* cx, const uint8_t* bytes, size_t length) {
+  // void free_bytecode(Bytecode bytecode);
+
+  // Bytecode run_jsparagus(const uint8_t *text, uintptr_t text_len);
+
+  Bytecode bytecode = run_jsparagus(bytes, length);
+
   JS::CompileOptions options(cx);
   options.setIntroductionType("js shell interactive")
       .setIsRunOnce(true)
       .setFileAndLine("typein", 1);
 
-  JS::SourceText<Utf8Unit> srcBuf;
-  if (!srcBuf.init(cx, bytes, length, JS::SourceOwnership::Borrowed)) {
-    return false;
-  }
+  // JS::SourceText<Utf8Unit> srcBuf;
+  // if (!srcBuf.init(cx, (const char*)bytes, length,
+  //                  JS::SourceOwnership::Borrowed)) {
+  //   return false;
+  // }
 
   ScriptSource* ss = cx->new_<ScriptSource>();
   if (!ss) {
     return false;
   }
 
-  ScriptSourceHolder ssHolder(ss);
+  ScriptSourceHolder ssHolder(ss);  // TODO
 
   if (!ss->initFromOptions(cx, options, mozilla::Nothing())) {
     return false;
@@ -105,14 +145,15 @@ bool Create(JSContext* cx, const char* bytes, size_t length) {
   RootedScript script(cx,
                       JSScript::Create(cx, options, sso, 0, length, 0, length));
 
-  if (!InitScript(cx, script, nullptr)) {
+  if (!InitScript(cx, script, canoicalFunction, bytecode)) {
     return false;
   }
 
-  RootedValue result(cx);
-  if (!JS_ExecuteScript(cx, script, &result)) {
+  if (!Execute(cx, script)) {
     return false;
   }
+
+  free_bytecode(bytecode);
 
   return true;
 }
