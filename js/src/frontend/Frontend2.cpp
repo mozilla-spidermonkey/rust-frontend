@@ -22,27 +22,19 @@ int roundUp(int numToRound, int multiple) {
   return (numToRound + multiple - 1) & -multiple;
 }
 
-bool InitScript(JSContext* cx, HandleScript script,
-                HandleFunction canoicalFunction, const Bytecode& bytecode) {
-  uint32_t natoms = 0;
-  if (!script->createScriptData(cx, natoms)) {
-    return false;
-  }
-
+bool InitScript(JSContext* cx, HandleScript script, const Bytecode& bytecode) {
   uint32_t numGCThings = 1;
   if (!JSScript::createPrivateScriptData(cx, script, numGCThings)) {
     return false;
   }
 
-  RootedScope enclosing(cx, &cx->global()->emptyGlobalScope());
-  Scope* functionProtoScope = FunctionScope::create(
-      cx, nullptr, false, false, canoicalFunction, enclosing);
-  if (!functionProtoScope) {
+  mozilla::Span<JS::GCCellPtr> gcthings = script->data_->gcthings();
+  gcthings[0] = JS::GCCellPtr(&cx->global()->emptyGlobalScope());
+
+  uint32_t natoms = 0;
+  if (!script->createScriptData(cx, natoms)) {
     return false;
   }
-
-  mozilla::Span<JS::GCCellPtr> gcthings = script->data_->gcthings();
-  gcthings[0] = JS::GCCellPtr(functionProtoScope);
 
   uint32_t codeLength = bytecode.len;
   uint32_t noteLength = roundUp(1 + bytecode.len, 4) - (1 + bytecode.len);
@@ -135,17 +127,10 @@ bool Create(JSContext* cx, const uint8_t* bytes, size_t length) {
     return false;
   }
 
-  Rooted<JSAtom*> name(cx, cx->names().name);
-  FunctionFlags flags;
-  flags.setInterpreted();
-  RootedFunction canoicalFunction(
-      cx, NewFunctionWithProto(cx, nullptr, 0, flags, nullptr, name, proto,
-                               AllocKind::FUNCTION, TenuredObject));
-
   RootedScript script(cx,
                       JSScript::Create(cx, options, sso, 0, length, 0, length));
 
-  if (!InitScript(cx, script, canoicalFunction, bytecode)) {
+  if (!InitScript(cx, script, bytecode)) {
     return false;
   }
 

@@ -2227,7 +2227,6 @@ class JSScript : public js::BaseScript {
       js::MutableHandle<JS::GCVector<js::Scope*>> scopes);
 
   friend bool InitScript(JSContext* cx, JS::HandleScript script,
-                         JS::HandleFunction canoicalFunction,
                          const Bytecode& bytecode);
 
  private:
