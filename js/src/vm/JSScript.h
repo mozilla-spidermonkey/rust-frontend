@@ -2226,8 +2226,8 @@ class JSScript : public js::BaseScript {
       js::HandleScriptSourceObject sourceObject,
       js::MutableHandle<JS::GCVector<js::Scope*>> scopes);
 
-  friend bool InitScript(JSContext* cx, JS::HandleScript script,
-                         const Bytecode& bytecode);
+  friend bool InitScript(JSContext* cx, js::HandleScript script,
+                         const JsparagusResult& jsparagus);
 
  private:
   JSScript(JS::Realm* realm, uint8_t* stubEntry,

@@ -3,16 +3,22 @@
 #include <cstdlib>
 #include <new>
 
-struct Bytecode {
-  uint8_t *data;
+template<typename T>
+struct CVec {
+  T *data;
   uintptr_t len;
   uintptr_t capacity;
 };
 
+struct JsparagusResult {
+  CVec<uint8_t> bytecode;
+  CVec<CVec<uint8_t>> strings;
+};
+
 extern "C" {
 
-void free_bytecode(Bytecode bytecode);
+void free_jsparagus(JsparagusResult result);
 
-Bytecode run_jsparagus(const uint8_t *text, uintptr_t text_len);
+JsparagusResult run_jsparagus(const uint8_t *text, uintptr_t text_len);
 
 } // extern "C"

@@ -22,7 +22,8 @@ int roundUp(int numToRound, int multiple) {
   return (numToRound + multiple - 1) & -multiple;
 }
 
-bool InitScript(JSContext* cx, HandleScript script, const Bytecode& bytecode) {
+bool InitScript(JSContext* cx, HandleScript script,
+                const JsparagusResult& jsparagus) {
   uint32_t numGCThings = 1;
   if (!JSScript::createPrivateScriptData(cx, script, numGCThings)) {
     return false;
@@ -31,13 +32,19 @@ bool InitScript(JSContext* cx, HandleScript script, const Bytecode& bytecode) {
   mozilla::Span<JS::GCCellPtr> gcthings = script->data_->gcthings();
   gcthings[0] = JS::GCCellPtr(&cx->global()->emptyGlobalScope());
 
-  uint32_t natoms = 0;
+  uint32_t natoms = jsparagus.strings.len;
   if (!script->createScriptData(cx, natoms)) {
     return false;
   }
+  for (uint32_t i = 0; i < natoms; i++) {
+    const CVec<uint8_t>& string = jsparagus.strings.data[i];
+    script->getAtom(i) =
+        AtomizeUTF8Chars(cx, (const char*)string.data, string.len);
+  }
 
-  uint32_t codeLength = bytecode.len;
-  uint32_t noteLength = roundUp(1 + bytecode.len, 4) - (1 + bytecode.len);
+  uint32_t codeLength = jsparagus.bytecode.len;
+  uint32_t noteLength =
+      roundUp(1 + jsparagus.bytecode.len, 4) - (1 + jsparagus.bytecode.len);
   uint32_t numResumeOffsets = 0;
   uint32_t numScopeNotes = 0;
   uint32_t numTryNotes = 0;
@@ -49,7 +56,7 @@ bool InitScript(JSContext* cx, HandleScript script, const Bytecode& bytecode) {
 
   jsbytecode* code = script->immutableScriptData()->code();
   for (size_t i = 0; i < codeLength; i++) {
-    code[i] = bytecode.data[i];
+    code[i] = jsparagus.bytecode.data[i];
   }
 
   jssrcnote* notes = script->immutableScriptData()->notes();
@@ -84,22 +91,12 @@ static bool Execute(JSContext* cx, HandleScript script) {
 }
 
 bool Create(JSContext* cx, const uint8_t* bytes, size_t length) {
-  // void free_bytecode(Bytecode bytecode);
-
-  // Bytecode run_jsparagus(const uint8_t *text, uintptr_t text_len);
-
-  Bytecode bytecode = run_jsparagus(bytes, length);
+  JsparagusResult jsparagus = run_jsparagus(bytes, length);
 
   JS::CompileOptions options(cx);
   options.setIntroductionType("js shell interactive")
       .setIsRunOnce(true)
       .setFileAndLine("typein", 1);
-
-  // JS::SourceText<Utf8Unit> srcBuf;
-  // if (!srcBuf.init(cx, (const char*)bytes, length,
-  //                  JS::SourceOwnership::Borrowed)) {
-  //   return false;
-  // }
 
   ScriptSource* ss = cx->new_<ScriptSource>();
   if (!ss) {
@@ -130,7 +127,7 @@ bool Create(JSContext* cx, const uint8_t* bytes, size_t length) {
   RootedScript script(cx,
                       JSScript::Create(cx, options, sso, 0, length, 0, length));
 
-  if (!InitScript(cx, script, bytecode)) {
+  if (!InitScript(cx, script, jsparagus)) {
     return false;
   }
 
@@ -138,7 +135,7 @@ bool Create(JSContext* cx, const uint8_t* bytes, size_t length) {
     return false;
   }
 
-  free_bytecode(bytecode);
+  free_jsparagus(jsparagus);
 
   return true;
 }
