@@ -61,7 +61,7 @@ pub unsafe extern "C" fn free_jsparagus(result: JsparagusResult) {
 
 fn jsparagus(text: &str) -> EmitResult {
     let parse_result = parse_script(text).expect("Failed to parse");
-    emit(&Program::Script(*parse_result))
+    emit(&mut Program::Script(*parse_result))
 }
 
 #[cfg(test)]
