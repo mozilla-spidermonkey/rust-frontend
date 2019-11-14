@@ -1,3 +1,5 @@
+// |jit-test| allow-unhandlable-oom
+
 // These tests will be using object literals as keys, and we want some of them
 // to be dead after being inserted into a WeakMap. That means we must wrap
 // everything in functions because it seems like the toplevel script hangs onto
@@ -181,7 +183,7 @@ function zone_edges() {
   for (let zonebits = 0; zonebits < 2 ** zones.length; zonebits++) {
     for (let z in zones) {
       if (zonebits & (1 << z))
-        schedulegc(zones[z]);
+        schedulezone(zones[z]);
     }
     startgc(1);
     wm1.set(wm1.get(m.get(m)).others[0], g2.genObj('val2'));
@@ -202,7 +204,7 @@ function zone_edges() {
   for (let zonebits = 0; zonebits < 2 ** zones.length; zonebits++) {
     for (let z in zones) {
       if (zonebits & (1 << z))
-        schedulegc(zones[z]);
+        schedulezone(zones[z]);
     }
     startgc(1);
     wm1.set(wm1.get(m.get(m)).others[0], g2.genObj('val2'));

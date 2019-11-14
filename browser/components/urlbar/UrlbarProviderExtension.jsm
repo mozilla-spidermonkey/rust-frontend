@@ -214,6 +214,18 @@ class UrlbarProviderExtension extends UrlbarProvider {
   }
 
   /**
+   * This method is called when a result from the provider without a URL is
+   * picked, but currently only for tip results.  The provider should handle the
+   * pick.
+   *
+   * @param {UrlbarResult} result
+   *   The result that was picked.
+   */
+  pickResult(result) {
+    this._notifyListener("resultPicked", result.payload);
+  }
+
+  /**
    * Calls a listener function set by the extension API implementation, if any.
    *
    * @param {string} eventName
@@ -298,7 +310,7 @@ class UrlbarProviderExtension extends UrlbarProvider {
       extResult.payload.engine = engine.name;
     }
 
-    return new UrlbarResult(
+    let result = new UrlbarResult(
       UrlbarProviderExtension.RESULT_TYPES[extResult.type],
       UrlbarProviderExtension.SOURCE_TYPES[extResult.source],
       ...UrlbarResult.payloadAndSimpleHighlights(
@@ -306,6 +318,17 @@ class UrlbarProviderExtension extends UrlbarProvider {
         extResult.payload || {}
       )
     );
+    if (extResult.heuristic && this.behavior == "restricting") {
+      // The muxer chooses the final heuristic result by taking the first one
+      // that claims to be the heuristic.  We don't want extensions to clobber
+      // UnifiedComplete's heuristic, so we allow this only if the provider is
+      // restricting.
+      result.heuristic = extResult.heuristic;
+    }
+    if (extResult.suggestedIndex !== undefined) {
+      result.suggestedIndex = extResult.suggestedIndex;
+    }
+    return result;
   }
 }
 
@@ -316,6 +339,7 @@ UrlbarProviderExtension.RESULT_TYPES = {
   remote_tab: UrlbarUtils.RESULT_TYPE.REMOTE_TAB,
   search: UrlbarUtils.RESULT_TYPE.SEARCH,
   tab: UrlbarUtils.RESULT_TYPE.TAB_SWITCH,
+  tip: UrlbarUtils.RESULT_TYPE.TIP,
   url: UrlbarUtils.RESULT_TYPE.URL,
 };
 

@@ -70,9 +70,6 @@ class GeckoInstance(object):
         "extensions.getAddons.cache.enabled": False,
         # Disable intalling any distribution add-ons
         "extensions.installDistroAddons": False,
-        # Make sure Shield doesn't hit the network.
-        # Removed in Firefox 60.
-        "extensions.shield-recipe-client.api_url": "",
         # Disable extensions compatibility dialogue.
         # Removed in Firefox 61.
         "extensions.showMismatchUI": False,
@@ -596,10 +593,6 @@ class DesktopInstance(GeckoInstance):
         # Turn off search suggestions in the location bar so as not to trigger network
         # connections.
         "browser.urlbar.suggest.searches": False,
-
-        # Turn off the location bar search suggestions opt-in.  It interferes with
-        # tests that don't expect it to be there.
-        "browser.urlbar.userMadeSearchSuggestionsChoice": True,
 
         # Don't warn when exiting the browser
         "browser.warnOnQuit": False,

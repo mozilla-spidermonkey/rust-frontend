@@ -28,7 +28,6 @@ module.exports = {
     privileged: require("../lib/environments/privileged.js"),
   },
   processors: {
-    ".xml": require("../lib/processors/xbl-bindings"),
     ".xul": require("../lib/processors/xul"),
   },
   rules: {
@@ -50,6 +49,7 @@ module.exports = {
     "no-useless-parameters": require("../lib/rules/no-useless-parameters"),
     "no-useless-removeEventListener": require("../lib/rules/no-useless-removeEventListener"),
     "no-useless-run-test": require("../lib/rules/no-useless-run-test"),
+    "prefer-boolean-length-check": require("../lib/rules/prefer-boolean-length-check"),
     "reject-importGlobalProperties": require("../lib/rules/reject-importGlobalProperties"),
     "reject-some-requires": require("../lib/rules/reject-some-requires"),
     "rejects-requires-await": require("../lib/rules/rejects-requires-await"),

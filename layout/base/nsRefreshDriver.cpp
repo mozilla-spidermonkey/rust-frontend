@@ -82,7 +82,7 @@
 #include "nsTransitionManager.h"
 
 #if defined(MOZ_WIDGET_ANDROID)
-#  include "VRManager.h"
+#  include "VRManagerChild.h"
 #endif  // defined(MOZ_WIDGET_ANDROID)
 
 #ifdef MOZ_XUL
@@ -271,13 +271,14 @@ class RefreshDriverTimer {
     TimeStamp idleEnd = mostRecentRefresh + refreshRate;
 
     if (idleEnd +
-            refreshRate * nsLayoutUtils::QuiescentFramesBeforeIdlePeriod() <
+            refreshRate *
+                StaticPrefs::layout_idle_period_required_quiescent_frames() <
         TimeStamp::Now()) {
       return aDefault;
     }
 
     idleEnd = idleEnd - TimeDuration::FromMilliseconds(
-                            nsLayoutUtils::IdlePeriodDeadlineLimit());
+                            StaticPrefs::layout_idle_period_time_limit());
     return idleEnd < aDefault ? idleEnd : aDefault;
   }
 
@@ -519,15 +520,7 @@ class VsyncRefreshDriverTimer : public RefreshDriverTimer {
 
       NS_IMETHOD Run() override {
         MOZ_ASSERT(NS_IsMainThread());
-        static bool sCacheInitialized = false;
-        static bool sHighPriorityPrefValue = false;
-        if (!sCacheInitialized) {
-          sCacheInitialized = true;
-          Preferences::AddBoolVarCache(&sHighPriorityPrefValue,
-                                       "vsync.parentProcess.highPriority",
-                                       mozilla::BrowserTabsRemoteAutostart());
-        }
-        sHighPriorityEnabled = sHighPriorityPrefValue;
+        sHighPriorityEnabled = mozilla::BrowserTabsRemoteAutostart();
 
         mObserver->TickRefreshDriver(mId, mVsyncTimestamp);
         return NS_OK;
@@ -1493,6 +1486,7 @@ nsRefreshDriver::ObserverArray& nsRefreshDriver::ArrayFor(
     case FlushType::Event:
       return mObservers[0];
     case FlushType::Style:
+    case FlushType::Frames:
       return mObservers[1];
     case FlushType::Layout:
       return mObservers[2];
@@ -1712,6 +1706,14 @@ void nsRefreshDriver::RunFrameRequestCallbacks(TimeStamp aNowTime) {
         mozilla::dom::Performance* perf = innerWindow->GetPerformance();
         if (perf) {
           timeStamp = perf->GetDOMTiming()->TimeStampToDOMHighRes(aNowTime);
+          // 0 is an inappropriate mixin for this this area; however CSS
+          // Animations needs to have it's Time Reduction Logic refactored, so
+          // it's currently only clamping for RFP mode. RFP mode gives a much
+          // lower time precision, so we accept the security leak here for now
+          if (!perf->IsSystemPrincipal()) {
+            timeStamp = nsRFPService::ReduceTimePrecisionAsMSecs(
+                timeStamp, 0, TimerPrecisionType::RFPOnly);
+          }
         }
         // else window is partially torn down already
       }
@@ -1796,14 +1798,6 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
     return;
   }
 
-#if defined(MOZ_WIDGET_ANDROID)
-  gfx::VRManager* vm = gfx::VRManager::Get();
-  if (vm->IsPresenting()) {
-    RunFrameRequestCallbacks(aNowTime);
-    return;
-  }
-#endif  // defined(MOZ_WIDGET_ANDROID)
-
   AUTO_PROFILER_LABEL("nsRefreshDriver::Tick", LAYOUT);
 
   // We're either frozen or we were disconnected (likely in the middle
@@ -1823,7 +1817,15 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
     return;
   }
 
-  if (IsWaitingForPaint(aNowTime)) {
+  bool isPresentingInVR = false;
+#if defined(MOZ_WIDGET_ANDROID)
+  isPresentingInVR = gfx::VRManagerChild::IsPresenting();
+#endif // defined(MOZ_WIDGET_ANDROID)
+
+  if (!isPresentingInVR && IsWaitingForPaint(aNowTime)) {
+    // In immersive VR mode, we do not get notifications when frames are
+    // presented, so we do not wait for the compositor in that mode.
+
     // We're currently suspended waiting for earlier Tick's to
     // be completed (on the Compositor). Mark that we missed the paint
     // and keep waiting.
@@ -1993,6 +1995,9 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
           // a layout flush).
           presShell->NotifyFontFaceSetOnRefresh();
           mNeedToRecomputeVisibility = true;
+
+          // Record the telemetry for events that occurred between ticks.
+          presShell->PingPerTickTelemetry(FlushType::Style);
         }
       }
     } else if (i == 2) {
@@ -2018,6 +2023,9 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
         // ready promise if it needs to.
         presShell->NotifyFontFaceSetOnRefresh();
         mNeedToRecomputeVisibility = true;
+
+        // Record the telemetry for events that occurred between ticks.
+        presShell->PingPerTickTelemetry(FlushType::Layout);
       }
     }
 
@@ -2131,7 +2139,11 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
 
     mViewManagerFlushIsPending = false;
     RefPtr<nsViewManager> vm = mPresContext->GetPresShell()->GetViewManager();
-    {
+    const bool skipPaint = isPresentingInVR;
+    // Skip the paint in immersive VR mode because whatever we paint here will
+    // not end up on the screen. The screen is displaying WebGL content from a
+    // single canvas in that mode.
+    if (!skipPaint) {
       PaintTelemetry::AutoRecordPaint record;
       vm->ProcessPendingUpdates();
     }

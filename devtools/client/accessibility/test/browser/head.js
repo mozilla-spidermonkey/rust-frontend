@@ -6,8 +6,9 @@
 
 /* global waitUntilState, gBrowser */
 /* exported addTestTab, checkTreeState, checkSidebarState, checkAuditState, selectRow,
-            toggleRow, toggleFilter, addA11yPanelTestsTask, reload,
-            navigate */
+            toggleRow, toggleMenuItem, addA11yPanelTestsTask, reload, navigate,
+            openSimulationMenu, toggleSimulationOption, TREE_FILTERS_MENU_ID,
+            PREFS_MENU_ID */
 
 "use strict";
 
@@ -29,10 +30,22 @@ Services.scriptloader.loadSubScript(
   this
 );
 
-const { ORDERED_PROPS } = require("devtools/client/accessibility/constants");
+const {
+  ORDERED_PROPS,
+  PREF_KEYS,
+} = require("devtools/client/accessibility/constants");
 
 // Enable the Accessibility panel
 Services.prefs.setBoolPref("devtools.accessibility.enabled", true);
+
+const SIMULATION_MENU_BUTTON_ID = "#simulation-menu-button";
+const TREE_FILTERS_MENU_ID = "accessibility-tree-filters-menu";
+const PREFS_MENU_ID = "accessibility-tree-filters-prefs-menu";
+
+const MENU_INDEXES = {
+  [TREE_FILTERS_MENU_ID]: 0,
+  [PREFS_MENU_ID]: 1,
+};
 
 /**
  * Enable accessibility service and wait for a11y init event.
@@ -408,23 +421,100 @@ async function checkSidebarState(store, expectedState) {
 }
 
 /**
- * Check the state of the accessibility checks toolbar.
- * @param  {Object} store         React store for the panel (includes store for
- *                                the sidebar).
- * @param  {Object} expected      Expected active state of the filters in the
- *                                toolbar.
+ * Check the state of the accessibility related prefs.
+ * @param  {Document} doc
+ *         accessibility inspector panel document.
+ * @param  {Object}   toolbarPrefValues
+ *         Expected state of the panel prefs as well as the redux state that
+ *         keeps track of it. Includes:
+ *         - SCROLL_INTO_VIEW (devtools.accessibility.scroll-into-view)
+ * @param  {Object}   store
+ *         React store for the panel (includes store for the sidebar).
  */
-async function checkToolbarState(doc, expected) {
+async function checkToolbarPrefsState(doc, toolbarPrefValues, store) {
+  info("Checking toolbar prefs state.");
+  const [hasExpectedStructure] = await Promise.all([
+    // Check that appropriate preferences are set as expected.
+    BrowserTestUtils.waitForCondition(() => {
+      return Object.keys(toolbarPrefValues).every(
+        name =>
+          Services.prefs.getBoolPref(PREF_KEYS[name], false) ===
+          toolbarPrefValues[name]
+      );
+    }, "Wait for the right prefs state."),
+    // Check that ui state is set as expected.
+    waitUntilState(store, ({ ui }) => {
+      for (const name in toolbarPrefValues) {
+        if (ui[name] !== toolbarPrefValues[name]) {
+          return false;
+        }
+      }
+
+      ok(true, "UI pref state is correct.");
+      return true;
+    }),
+  ]);
+  ok(hasExpectedStructure, "Prefs state is correct.");
+}
+
+/**
+ * Check the state of the accessibility checks toolbar.
+ * @param  {Object} store
+ *         React store for the panel (includes store for the sidebar).
+ * @param  {Object} activeToolbarFilters
+ *         Expected active state of the filters in the toolbar.
+ */
+async function checkToolbarState(doc, activeToolbarFilters) {
   info("Checking toolbar state.");
   const hasExpectedStructure = await BrowserTestUtils.waitForCondition(
     () =>
-      [...doc.querySelectorAll("button.toggle-button.badge")].every(
-        (filter, i) => expected[i] === filter.classList.contains("checked")
+      [
+        ...doc.querySelectorAll("#accessibility-tree-filters-menu .command"),
+      ].every(
+        (filter, i) =>
+          (activeToolbarFilters[i] ? "true" : null) ===
+          filter.getAttribute("aria-checked")
       ),
     "Wait for the right toolbar state."
   );
 
   ok(hasExpectedStructure, "Toolbar state is correct.");
+}
+
+/**
+ * Check the state of the simulation button and menu components.
+ * @param  {Object} doc         Panel document.
+ * @param  {Object} expected    Expected states of the simulation components:
+ *                              menuVisible, buttonActive, checkedOptionIndices (Optional)
+ */
+async function checkSimulationState(doc, expected) {
+  const { buttonActive, checkedOptionIndices } = expected;
+  const simulationMenuOptions = doc
+    .querySelector(SIMULATION_MENU_BUTTON_ID + "-menu")
+    .querySelectorAll(".menuitem");
+
+  // Check simulation menu button state
+  is(
+    doc.querySelector(SIMULATION_MENU_BUTTON_ID).className,
+    `devtools-button toolbar-menu-button simulation${
+      buttonActive ? " active" : ""
+    }`,
+    `Simulation menu button contains ${buttonActive ? "active" : "base"} class.`
+  );
+
+  // Check simulation menu options states, if specified
+  if (checkedOptionIndices) {
+    simulationMenuOptions.forEach((menuListItem, index) => {
+      const isChecked = checkedOptionIndices.includes(index);
+      const button = menuListItem.firstChild;
+
+      is(
+        button.getAttribute("aria-checked"),
+        isChecked ? "true" : null,
+        `Simulation option ${index} is ${isChecked ? "" : "not "}selected.`
+      );
+    });
+  }
 }
 
 /**
@@ -514,30 +604,72 @@ async function toggleRow(doc, rowNumber) {
 }
 
 /**
- * Toggle an accessibility audit filter based on its index in the toolbar.
- * @param  {document} doc         panel documnent.
- * @param  {Number}   filterIndex index of the filter to be toggled.
+ * Toggle a specific menu item based on its index in the menu.
+ * @param  {document} toolboxDoc
+ *         toolbox document.
+ * @param  {document} doc
+ *         panel document.
+ * @param  {String} menuId
+ *         The id of the menu (menuId passed to the MenuButton component)
+ * @param  {Number}   menuItemIndex
+ *         index of the menu item to be toggled.
  */
-async function toggleFilter(doc, filterIndex) {
-  const win = doc.defaultView;
-  const filter = doc.querySelectorAll(".devtools-toolbar .badge.toggle-button")[
-    filterIndex
-  ];
-  const expected = !filter.classList.contains("checked");
+async function toggleMenuItem(doc, toolboxDoc, menuId, menuItemIndex) {
+  const toolboxWin = toolboxDoc.defaultView;
+  const panelWin = doc.defaultView;
 
-  EventUtils.synthesizeMouseAtCenter(filter, {}, win);
+  const menuButton = doc.querySelectorAll(".toolbar-menu-button")[
+    MENU_INDEXES[menuId]
+  ];
+  ok(menuButton, "Expected menu button");
+
+  const menuEl = toolboxDoc.getElementById(menuId);
+  const menuItem = menuEl.querySelectorAll(".command")[menuItemIndex];
+  ok(menuItem, "Expected menu item");
+
+  const expected =
+    menuItem.getAttribute("aria-checked") === "true" ? null : "true";
+
+  // Make the menu visible first.
+  EventUtils.synthesizeMouseAtCenter(menuButton, {}, panelWin);
   await BrowserTestUtils.waitForCondition(
-    () => expected === filter.classList.contains("checked"),
-    "Filter updated."
+    () => !!menuItem.offsetParent,
+    "Menu item is visible."
+  );
+
+  EventUtils.synthesizeMouseAtCenter(menuItem, {}, toolboxWin);
+  await BrowserTestUtils.waitForCondition(
+    () => expected === menuItem.getAttribute("aria-checked"),
+    "Menu item updated."
+  );
+}
+
+async function openSimulationMenu(doc) {
+  doc.querySelector(SIMULATION_MENU_BUTTON_ID).click();
+
+  await BrowserTestUtils.waitForCondition(() =>
+    doc
+      .querySelector(SIMULATION_MENU_BUTTON_ID + "-menu")
+      .classList.contains("tooltip-visible")
+  );
+}
+
+async function toggleSimulationOption(doc, optionIndex) {
+  const simulationMenu = doc.querySelector(SIMULATION_MENU_BUTTON_ID + "-menu");
+  simulationMenu.querySelectorAll(".menuitem")[optionIndex].firstChild.click();
+
+  await BrowserTestUtils.waitForCondition(
+    () => !simulationMenu.classList.contains("tooltip-visible")
   );
 }
 
 async function findAccessibleFor(
-  { toolbox: { walker: domWalker }, panel: { walker: a11yWalker } },
+  { toolbox: { target }, panel: { walker: accessibilityWalker } },
   selector
 ) {
+  const domWalker = (await target.getFront("inspector")).walker;
   const node = await domWalker.querySelector(domWalker.rootNode, selector);
-  return a11yWalker.getAccessibleFor(node);
+  return accessibilityWalker.getAccessibleFor(node);
 }
 
 async function selectAccessibleForNode(env, selector) {
@@ -552,17 +684,28 @@ async function selectAccessibleForNode(env, selector) {
 /**
  * Iterate over setups/tests structure and test the state of the
  * accessibility panel.
- * @param  {JSON}   tests test data that has the format of:
- *                    {
- *                      desc     {String}    description for better logging
- *                      setup    {Function}  An optional setup that needs to be
- *                                           performed before the state of the
- *                                           tree and the sidebar can be checked
- *                      expected {JSON}      An expected states for the tree and
- *                                           the sidebar
- *                    }
- * @param  {Object} env  contains all relevant environment objects (same
- *                       structure as the return value of 'addTestTab' funciton)
+ * @param  {JSON}   tests
+ *         test data that has the format of:
+ *         {
+ *           desc     {String}    description for better logging
+ *           setup    {Function}  An optional setup that needs to be
+ *                                performed before the state of the
+ *                                tree and the sidebar can be checked
+ *           expected {JSON}      An expected states for parts of
+ *                                accessibility panel:
+ *            - tree:                 state of the accessibility tree widget
+ *            - sidebar:              state of the accessibility panel sidebar
+ *            - audit:                state of the audit redux state of the
+ *                                    panel
+ *            - toolbarPrefValues:    state of the accessibility panel
+ *                                    toolbar prefs and corresponding user
+ *                                    preferences.
+ *            - activeToolbarFilters: state of the accessibility panel
+ *                                    toolbar filters.
+ *         }
+ * @param  {Object} env
+ *         contains all relevant environment objects (same structure as the
+ *         return value of 'addTestTab' funciton)
  */
 async function runA11yPanelTests(tests, env) {
   for (const { desc, setup, expected } of tests) {
@@ -572,7 +715,14 @@ async function runA11yPanelTests(tests, env) {
       await setup(env);
     }
 
-    const { tree, sidebar, audit, toolbar } = expected;
+    const {
+      tree,
+      sidebar,
+      audit,
+      toolbarPrefValues,
+      activeToolbarFilters,
+      simulation,
+    } = expected;
     if (tree) {
       await checkTreeState(env.doc, tree);
     }
@@ -581,12 +731,20 @@ async function runA11yPanelTests(tests, env) {
       await checkSidebarState(env.store, sidebar);
     }
 
-    if (toolbar) {
-      await checkToolbarState(env.doc, toolbar);
+    if (activeToolbarFilters) {
+      await checkToolbarState(env.doc, activeToolbarFilters);
+    }
+
+    if (toolbarPrefValues) {
+      await checkToolbarPrefsState(env.doc, toolbarPrefValues, env.store);
     }
 
     if (typeof audit !== "undefined") {
       await checkAuditState(env.store, audit);
+    }
+
+    if (simulation) {
+      await checkSimulationState(env.doc, simulation);
     }
   }
 }

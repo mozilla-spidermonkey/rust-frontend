@@ -52,6 +52,7 @@ import android.content.res.TypedArray;
 import android.graphics.Bitmap;
 import android.graphics.ImageFormat;
 import android.graphics.PixelFormat;
+import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.hardware.Camera;
@@ -251,9 +252,6 @@ public class GeckoAppShell {
     // helper methods
     @WrapForJNI
     /* package */ static native void reportJavaCrash(Throwable exc, String stackTrace);
-
-    @WrapForJNI(dispatchTo = "gecko")
-    public static native void notifyUriVisited(String uri);
 
     private static Rect sScreenSizeOverride;
 
@@ -873,13 +871,13 @@ public class GeckoAppShell {
     }
 
     @WrapForJNI(calledFrom = "gecko")
-    private static boolean getHWEncoderCapability() {
-        return HardwareCodecCapabilityUtils.getHWEncoderCapability();
+    private static boolean hasHWVP8Encoder() {
+        return HardwareCodecCapabilityUtils.hasHWVP8(true /* aIsEncoder */);
     }
 
     @WrapForJNI(calledFrom = "gecko")
-    private static boolean getHWDecoderCapability() {
-        return HardwareCodecCapabilityUtils.getHWDecoderCapability();
+    private static boolean hasHWVP8Decoder() {
+        return HardwareCodecCapabilityUtils.hasHWVP8(false /* aIsEncoder */);
     }
 
     static List<ResolveInfo> queryIntentActivities(final Intent intent) {
@@ -1957,7 +1955,12 @@ public class GeckoAppShell {
         final WindowManager wm = (WindowManager)
                 getApplicationContext().getSystemService(Context.WINDOW_SERVICE);
         final Display disp = wm.getDefaultDisplay();
-        return new Rect(0, 0, disp.getWidth(), disp.getHeight());
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            return new Rect(0, 0, disp.getWidth(), disp.getHeight());
+        }
+        Point size = new Point();
+        disp.getRealSize(size);
+        return new Rect(0, 0, size.x, size.y);
     }
 
     @WrapForJNI(calledFrom = "any")
@@ -2057,18 +2060,5 @@ public class GeckoAppShell {
 
         locales[0] = getLanguageTag(locale);
         return locales;
-    }
-
-    private static Boolean sIsFennec;
-
-    public static boolean isFennec() {
-        if (sIsFennec == null) {
-            try {
-                sIsFennec = Class.forName("org.mozilla.gecko.GeckoApp") != null;
-            } catch (ClassNotFoundException e) {
-                sIsFennec = false;
-            }
-        }
-        return sIsFennec;
     }
 }

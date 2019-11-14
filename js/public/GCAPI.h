@@ -19,18 +19,7 @@
 #include "js/UniquePtr.h"
 #include "js/Utility.h"
 
-struct JSFreeOp;
-
-#ifdef JS_BROKEN_GCC_ATTRIBUTE_WARNING
-#  pragma GCC diagnostic push
-#  pragma GCC diagnostic ignored "-Wattributes"
-#endif  // JS_BROKEN_GCC_ATTRIBUTE_WARNING
-
 class JS_PUBLIC_API JSTracer;
-
-#ifdef JS_BROKEN_GCC_ATTRIBUTE_WARNING
-#  pragma GCC diagnostic pop
-#endif  // JS_BROKEN_GCC_ATTRIBUTE_WARNING
 
 namespace js {
 namespace gc {
@@ -86,7 +75,7 @@ typedef enum JSGCParamKey {
    * This will be rounded to the nearest gc::ChunkSize.
    *
    * Pref: javascript.options.mem.nursery.max_kb
-   * Default: JS::DefaultNurseryBytes
+   * Default: JS::DefaultNurseryMaxBytes
    */
   JSGC_MAX_NURSERY_BYTES = 2,
 
@@ -132,7 +121,7 @@ typedef enum JSGCParamKey {
    * The "do we collect?" decision depends on various parameters and can be
    * summarised as:
    *
-   *    ZoneSize * 1/UsageFactor > Max(ThresholdBase, LastSize) * GrowthFactor
+   *   ZoneSize > Max(ThresholdBase, LastSize) * GrowthFactor * ThresholdFactor
    *
    * Where
    *   ZoneSize: Current size of this zone.
@@ -141,13 +130,14 @@ typedef enum JSGCParamKey {
    *   GrowthFactor: A number above 1, calculated based on some of the
    *                 following parameters.
    *                 See computeZoneHeapGrowthFactorForHeapSize() in GC.cpp
-   *   UsageFactor: JSGC_ALLOCATION_THRESHOLD_FACTOR or
-   *                JSGC_ALLOCATION_THRESHOLD_FACTOR_AVOID_INTERRUPT or 1.0 for
-   *                non-incremental collections.
+   *   ThresholdFactor: 1.0 for incremental collections or
+   *                    JSGC_NON_INCREMENTAL_FACTOR or
+   *                    JSGC_AVOID_INTERRUPT_FACTOR for non-incremental
+   *                    collections.
    *
    * The RHS of the equation above is calculated and sets
-   * zone->threshold.gcTriggerBytes(). When usage.gcBytes() surpasses
-   * threshold.gcTriggerBytes() for a zone, the zone may be scheduled for a GC.
+   * zone->gcHeapThreshold.bytes(). When gcHeapSize.bytes() exeeds
+   * gcHeapThreshold.bytes() for a zone, the zone may be scheduled for a GC.
    */
 
   /**
@@ -253,26 +243,26 @@ typedef enum JSGCParamKey {
   JSGC_COMPACTING_ENABLED = 23,
 
   /**
-   * Percentage for triggering a GC based on zone->threshold.gcTriggerBytes().
+   * Percentage for how far over a trigger threshold we go before triggering a
+   * non-incremental GC.
    *
-   * When the heap reaches this percentage of the allocation threshold an
-   * incremental collection is started.
+   * We trigger an incremental GC when a trigger threshold is reached but the
+   * collection may not be fast enough to keep up with the mutator. At some
+   * point we finish the collection non-incrementally.
    *
-   * Default: ZoneAllocThresholdFactorDefault
+   * Default: NonIncrementalFactor
    * Pref: None
    */
-  JSGC_ALLOCATION_THRESHOLD_FACTOR = 25,
+  JSGC_NON_INCREMENTAL_FACTOR = 25,
 
   /**
-   * Percentage for triggering a GC based on zone->threshold.gcTriggerBytes().
+   * Percentage for how far over a trigger threshold we go before triggering an
+   * incremental collection that would reset an in-progress collection.
    *
-   * Used instead of the above percentage if if another GC (in different zones)
-   * is already running.
-   *
-   * Default: ZoneAllocThresholdFactorAvoidInterruptDefault
+   * Default: AvoidInterruptFactor
    * Pref: None
    */
-  JSGC_ALLOCATION_THRESHOLD_FACTOR_AVOID_INTERRUPT = 26,
+  JSGC_AVOID_INTERRUPT_FACTOR = 26,
 
   /**
    * Attempt to run a minor GC in the idle time if the free space falls
@@ -406,12 +396,37 @@ typedef void (*JSWeakPointerCompartmentCallback)(JSContext* cx,
                                                  JS::Compartment* comp,
                                                  void* data);
 
-/**
- * Finalizes external strings created by JS_NewExternalString. The finalizer
- * can be called off the main thread.
+/*
+ * This is called to tell the embedding that the FinalizationGroup object
+ * |group| has cleanup work, and that then engine should be called back at an
+ * appropriate later time to perform this cleanup.
+ *
+ * This callback must not do anything that could cause GC.
  */
-struct JSStringFinalizer {
-  void (*finalize)(const JSStringFinalizer* fin, char16_t* chars);
+using JSHostCleanupFinalizationGroupCallback = void (*)(JSObject* group,
+                                                        void* data);
+
+/**
+ * Each external string has a pointer to JSExternalStringCallbacks. Embedders
+ * can use this to implement custom finalization or memory reporting behavior.
+ */
+struct JSExternalStringCallbacks {
+  /**
+   * Finalizes external strings created by JS_NewExternalString. The finalizer
+   * can be called off the main thread.
+   */
+  virtual void finalize(char16_t* chars) const = 0;
+
+  /**
+   * Callback used by memory reporting to ask the embedder how much memory an
+   * external string is keeping alive.  The embedder is expected to return a
+   * value that corresponds to the size of the allocation that will be released
+   * by the finalizer callback above.
+   *
+   * Implementations of this callback MUST NOT do anything that can cause GC.
+   */
+  virtual size_t sizeOfBuffer(const char16_t* chars,
+                              mozilla::MallocSizeOf mallocSizeOf) const = 0;
 };
 
 namespace JS {
@@ -1050,7 +1065,7 @@ extern JS_PUBLIC_API void JS_SetGCParametersBasedOnAvailableMemory(
  */
 extern JS_PUBLIC_API JSString* JS_NewExternalString(
     JSContext* cx, const char16_t* chars, size_t length,
-    const JSStringFinalizer* fin);
+    const JSExternalStringCallbacks* callbacks);
 
 /**
  * Create a new JSString whose chars member may refer to external memory.
@@ -1061,7 +1076,7 @@ extern JS_PUBLIC_API JSString* JS_NewExternalString(
  */
 extern JS_PUBLIC_API JSString* JS_NewMaybeExternalString(
     JSContext* cx, const char16_t* chars, size_t length,
-    const JSStringFinalizer* fin, bool* allocatedExternal);
+    const JSExternalStringCallbacks* callbacks, bool* allocatedExternal);
 
 /**
  * Return whether 'str' was created with JS_NewExternalString or
@@ -1070,16 +1085,20 @@ extern JS_PUBLIC_API JSString* JS_NewMaybeExternalString(
 extern JS_PUBLIC_API bool JS_IsExternalString(JSString* str);
 
 /**
- * Return the 'fin' arg passed to JS_NewExternalString.
+ * Return the 'callbacks' arg passed to JS_NewExternalString or
+ * JS_NewMaybeExternalString.
  */
-extern JS_PUBLIC_API const JSStringFinalizer* JS_GetExternalStringFinalizer(
-    JSString* str);
+extern JS_PUBLIC_API const JSExternalStringCallbacks*
+JS_GetExternalStringCallbacks(JSString* str);
 
 namespace JS {
 
 extern JS_PUBLIC_API bool IsIdleGCTaskNeeded(JSRuntime* rt);
 
 extern JS_PUBLIC_API void RunIdleTimeGCTask(JSRuntime* rt);
+
+extern JS_PUBLIC_API void SetHostCleanupFinalizationGroupCallback(
+    JSContext* cx, JSHostCleanupFinalizationGroupCallback cb, void* data);
 
 }  // namespace JS
 
@@ -1092,6 +1111,17 @@ namespace gc {
  * malloc memory.
  */
 extern JS_PUBLIC_API JSObject* NewMemoryInfoObject(JSContext* cx);
+
+/*
+ * Run the finalizer of a nursery-allocated JSObject that is known to be dead.
+ *
+ * This is a dangerous operation - only use this if you know what you're doing!
+ *
+ * This is used by the browser to implement nursery-allocated wrapper cached
+ * wrappers.
+ */
+extern JS_PUBLIC_API void FinalizeDeadNurseryObject(JSContext* cx,
+                                                    JSObject* obj);
 
 } /* namespace gc */
 } /* namespace js */

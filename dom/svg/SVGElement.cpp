@@ -7,6 +7,7 @@
 #include "mozilla/dom/SVGElement.h"
 
 #include "mozilla/dom/MutationEventBinding.h"
+#include "mozilla/dom/MutationObservers.h"
 #include "mozilla/dom/SVGElementBinding.h"
 #include "mozilla/dom/SVGGeometryElement.h"
 #include "mozilla/dom/SVGLengthBinding.h"
@@ -22,6 +23,7 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/RestyleManager.h"
 #include "mozilla/SMILAnimationController.h"
+#include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/SVGContentUtils.h"
 #include "mozilla/Unused.h"
 
@@ -1127,23 +1129,13 @@ void MappedAttrParser::ParseMappedAttrValue(nsAtom* aMappedAttrName,
         ParsingMode::AllowUnitlessLength,
         mElement->OwnerDoc()->GetCompatibilityMode(), mLoader, {});
 
-    if (changed) {
-      // The normal reporting of use counters by the nsCSSParser won't happen
-      // since it doesn't have a sheet.
-      if (nsCSSProps::IsShorthand(propertyID)) {
-        CSSPROPS_FOR_SHORTHAND_SUBPROPERTIES(subprop, propertyID,
-                                             CSSEnabledState::ForAllContent) {
-          UseCounter useCounter = nsCSSProps::UseCounterFor(*subprop);
-          if (useCounter != eUseCounter_UNKNOWN) {
-            mElement->OwnerDoc()->SetDocumentAndPageUseCounter(useCounter);
-          }
-        }
-      } else {
-        UseCounter useCounter = nsCSSProps::UseCounterFor(propertyID);
-        if (useCounter != eUseCounter_UNKNOWN) {
-          mElement->OwnerDoc()->SetDocumentAndPageUseCounter(useCounter);
-        }
-      }
+    // TODO(emilio): If we want to record these from CSSOM more generally, we
+    // can pass the document use counters down the FFI call. For now manually
+    // count them.
+    if (changed && StaticPrefs::layout_css_use_counters_enabled()) {
+      UseCounter useCounter = nsCSSProps::UseCounterFor(propertyID);
+      MOZ_ASSERT(useCounter != eUseCounter_UNKNOWN);
+      mElement->OwnerDoc()->SetUseCounter(useCounter);
     }
     return;
   }
@@ -1300,7 +1292,8 @@ nsAttrValue SVGElement::WillChangeValue(nsAtom* aName) {
   uint8_t modType =
       attrValue ? static_cast<uint8_t>(MutationEvent_Binding::MODIFICATION)
                 : static_cast<uint8_t>(MutationEvent_Binding::ADDITION);
-  nsNodeUtils::AttributeWillChange(this, kNameSpaceID_None, aName, modType);
+  MutationObservers::NotifyAttributeWillChange(this, kNameSpaceID_None, aName,
+                                               modType);
 
   // This is not strictly correct--the attribute value parameter for
   // BeforeSetAttr should reflect the value that *will* be set but that implies
@@ -2049,13 +2042,13 @@ void SVGElement::DidAnimateTransformList(int32_t aModType) {
     nsAtom* transformAttr = GetTransformListAttrName();
     frame->AttributeChanged(kNameSpaceID_None, transformAttr, aModType);
     // When script changes the 'transform' attribute, Element::SetAttrAndNotify
-    // will call nsNodeUtils::AttributeChanged, under which
+    // will call MutationObservers::NotifyAttributeChanged, under which
     // SVGTransformableElement::GetAttributeChangeHint will be called and an
     // appropriate change event posted to update our frame's overflow rects.
     // The SetAttrAndNotify doesn't happen for transform changes caused by
     // 'animateTransform' though (and sending out the mutation events that
-    // nsNodeUtils::AttributeChanged dispatches would be inappropriate
-    // anyway), so we need to post the change event ourself.
+    // MutationObservers::NotifyAttributeChanged dispatches would be
+    // inappropriate anyway), so we need to post the change event ourself.
     nsChangeHint changeHint = GetAttributeChangeHint(transformAttr, aModType);
     if (changeHint) {
       nsLayoutUtils::PostRestyleEvent(this, RestyleHint{0}, changeHint);

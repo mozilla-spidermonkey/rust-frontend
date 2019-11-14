@@ -7,6 +7,7 @@
 #include "MediaDecoder.h"
 
 #include "DOMMediaStream.h"
+#include "DecoderBenchmark.h"
 #include "ImageContainer.h"
 #include "Layers.h"
 #include "MediaDecoderStateMachine.h"
@@ -40,13 +41,6 @@ using namespace mozilla::layers;
 using namespace mozilla::media;
 
 namespace mozilla {
-
-// GetCurrentTime is defined in winbase.h as zero argument macro forwarding to
-// GetTickCount() and conflicts with MediaDecoder::GetCurrentTime
-// implementation.
-#ifdef GetCurrentTime
-#  undef GetCurrentTime
-#endif
 
 // avoid redefined macro in unified build
 #undef LOG
@@ -238,11 +232,11 @@ RefPtr<GenericPromise> MediaDecoder::SetSink(AudioDeviceInfo* aSink) {
 }
 
 void MediaDecoder::AddOutputStream(DOMMediaStream* aStream,
-                                   MediaStreamGraphImpl* aGraph) {
+                                   SharedDummyTrack* aDummyStream) {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(mDecoderStateMachine, "Must be called after Load().");
   AbstractThread::AutoEnter context(AbstractMainThread());
-  mDecoderStateMachine->EnsureOutputStreamManager(aGraph);
+  mDecoderStateMachine->EnsureOutputStreamManager(aDummyStream);
   if (mInfo) {
     mDecoderStateMachine->EnsureOutputStreamManagerHasTracks(*mInfo);
   }
@@ -287,6 +281,7 @@ MediaDecoder::MediaDecoder(MediaDecoderInit& aInit)
       mOwner(aInit.mOwner),
       mAbstractMainThread(aInit.mOwner->AbstractMainThread()),
       mFrameStats(new FrameStatistics()),
+      mDecoderBenchmark(new DecoderBenchmark()),
       mVideoFrameContainer(aInit.mOwner->GetVideoFrameContainer()),
       mMinimizePreroll(aInit.mMinimizePreroll),
       mFiredMetadataLoaded(false),
@@ -368,6 +363,7 @@ void MediaDecoder::Shutdown() {
     mOnWaitingForKey.Disconnect();
     mOnDecodeWarning.Disconnect();
     mOnNextFrameStatus.Disconnect();
+    mOnStoreDecoderBenchmark.Disconnect();
 
     mDecoderStateMachine->BeginShutdown()->Then(
         mAbstractMainThread, __func__, this, &MediaDecoder::FinishShutdown,
@@ -500,6 +496,29 @@ void MediaDecoder::OnNextFrameStatus(
   }
 }
 
+void MediaDecoder::OnStoreDecoderBenchmark(const VideoInfo& aInfo) {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  int32_t videoFrameRate = aInfo.GetFrameRate().ref();
+
+  if (mFrameStats && videoFrameRate) {
+    DecoderBenchmarkInfo benchmarkInfo{
+        aInfo.mMimeType,
+        aInfo.mDisplay.width,
+        aInfo.mDisplay.height,
+        videoFrameRate,
+        BitDepthForColorDepth(aInfo.mColorDepth),
+    };
+
+    LOG("Store benchmark: Video width=%d, height=%d, frameRate=%d, content "
+        "type = %s\n",
+        benchmarkInfo.mWidth, benchmarkInfo.mHeight, benchmarkInfo.mFrameRate,
+        benchmarkInfo.mContentType.BeginReading());
+
+    mDecoderBenchmark->Store(benchmarkInfo, mFrameStats);
+  }
+}
+
 void MediaDecoder::FinishShutdown() {
   MOZ_ASSERT(NS_IsMainThread());
   SetStateMachine(nullptr);
@@ -545,6 +564,8 @@ void MediaDecoder::SetStateMachineParameters() {
       mAbstractMainThread, this, &MediaDecoder::OnMediaNotSeekable);
   mOnNextFrameStatus = mDecoderStateMachine->OnNextFrameStatus().Connect(
       mAbstractMainThread, this, &MediaDecoder::OnNextFrameStatus);
+  mOnStoreDecoderBenchmark = mReader->OnStoreDecoderBenchmark().Connect(
+      mAbstractMainThread, this, &MediaDecoder::OnStoreDecoderBenchmark);
 
   mOnEncrypted = mReader->OnEncrypted().Connect(
       mAbstractMainThread, GetOwner(), &MediaDecoderOwner::DispatchEncrypted);
@@ -599,7 +620,6 @@ void MediaDecoder::DiscardOngoingSeekIfExists() {
   MOZ_ASSERT(NS_IsMainThread());
   AbstractThread::AutoEnter context(AbstractMainThread());
   mSeekRequest.DisconnectIfExists();
-  GetOwner()->AsyncRejectSeekDOMPromiseIfExists();
 }
 
 void MediaDecoder::CallSeek(const SeekTarget& aTarget) {
@@ -808,14 +828,14 @@ void MediaDecoder::OnSeekResolved() {
   mSeekRequest.Complete();
 
   GetOwner()->SeekCompleted();
-  GetOwner()->AsyncResolveSeekDOMPromiseIfExists();
 }
 
 void MediaDecoder::OnSeekRejected() {
   MOZ_ASSERT(NS_IsMainThread());
   mSeekRequest.Complete();
   mLogicallySeeking = false;
-  GetOwner()->AsyncRejectSeekDOMPromiseIfExists();
+
+  GetOwner()->SeekAborted();
 }
 
 void MediaDecoder::SeekingStarted() {
@@ -1336,7 +1356,7 @@ RefPtr<GenericPromise> MediaDecoder::RequestDebugInfo(
           SystemGroup::AbstractMainThreadFor(TaskCategory::Other), __func__,
           []() { return GenericPromise::CreateAndResolve(true, __func__); },
           []() {
-            UNREACHABLE();
+            MOZ_ASSERT_UNREACHABLE("Unexpected RequestDebugInfo() rejection");
             return GenericPromise::CreateAndResolve(false, __func__);
           });
 }

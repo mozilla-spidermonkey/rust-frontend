@@ -10,7 +10,6 @@ const InspectorUtils = require("InspectorUtils");
 const protocol = require("devtools/shared/protocol");
 const { PSEUDO_CLASSES } = require("devtools/shared/css/constants");
 const { nodeSpec, nodeListSpec } = require("devtools/shared/specs/node");
-
 loader.lazyRequireGetter(
   this,
   "getCssPath",
@@ -26,6 +25,12 @@ loader.lazyRequireGetter(
 loader.lazyRequireGetter(
   this,
   "findCssSelector",
+  "devtools/shared/inspector/css-logic",
+  true
+);
+loader.lazyRequireGetter(
+  this,
+  "findAllCssSelectors",
   "devtools/shared/inspector/css-logic",
   true
 );
@@ -92,7 +97,7 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
-  "isXBLAnonymous",
+  "isRemoteFrame",
   "devtools/shared/layout/utils",
   true
 );
@@ -136,6 +141,12 @@ loader.lazyRequireGetter(
   this,
   "scrollbarTreeWalkerFilter",
   "devtools/server/actors/inspector/utils",
+  true
+);
+loader.lazyRequireGetter(
+  this,
+  "DOMHelpers",
+  "devtools/shared/dom-helpers",
   true
 );
 
@@ -243,7 +254,6 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
       isAfterPseudoElement: isAfterPseudoElement(this.rawNode),
       isAnonymous: isAnonymous(this.rawNode),
       isNativeAnonymous: isNativeAnonymous(this.rawNode),
-      isXBLAnonymous: isXBLAnonymous(this.rawNode),
       isShadowAnonymous: isShadowAnonymous(this.rawNode),
       isShadowRoot: shadowRoot,
       shadowRootMode: getShadowRootMode(this.rawNode),
@@ -257,10 +267,24 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
         this.rawNode.ownerDocument &&
         this.rawNode.ownerDocument.contentType === "text/html",
       hasEventListeners: this._hasEventListeners,
+      traits: {
+        // Added in FF72
+        supportsGetAllSelectors: true,
+        // Added in FF72
+        supportsWaitForFrameLoad: true,
+      },
     };
 
     if (this.isDocumentElement()) {
       form.isDocumentElement = true;
+    }
+
+    // Flag the remote frame and declare at least one child (the #document element) so
+    // that they can be expanded.
+    if (this.isRemoteFrame) {
+      form.remoteFrame = true;
+      form.numChildren = 1;
+      form.browsingContextID = this.rawNode.browsingContext.id;
     }
 
     return form;
@@ -293,6 +317,17 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
   watchSlotchange: function(callback) {
     this.slotchangeListener = callback;
     this.rawNode.addEventListener("slotchange", this.slotchangeListener);
+  },
+
+  /**
+   * Check if the current node is representing a remote frame.
+   * In the context of the browser toolbox, a remote frame can be the <browser remote>
+   * element found inside each tab.
+   * In the context of the content toolbox, a remote frame can be a <iframe> that contains
+   * a different origin document.
+   */
+  get isRemoteFrame() {
+    return isRemoteFrame(this.rawNode);
   },
 
   // Estimate the number of children that the walker will return without making
@@ -369,8 +404,8 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
     if (
       SUBGRID_ENABLED &&
       (display === "grid" || display === "inline-grid") &&
-      (style.gridTemplateRows === "subgrid" ||
-        style.gridTemplateColumns === "subgrid")
+      (style.gridTemplateRows.startsWith("subgrid") ||
+        style.gridTemplateColumns.startsWith("subgrid"))
     ) {
       display = "subgrid";
     }
@@ -526,9 +561,20 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
    */
   getUniqueSelector: function() {
     if (Cu.isDeadWrapper(this.rawNode)) {
-      return "";
+      return [];
     }
     return findCssSelector(this.rawNode);
+  },
+
+  /**
+   * Get the full array of selectors from the topmost document, going through
+   * iframes.
+   */
+  getAllSelectors: function() {
+    if (Cu.isDeadWrapper(this.rawNode)) {
+      return "";
+    }
+    return findAllCssSelectors(this.rawNode);
   },
 
   /**
@@ -660,6 +706,19 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
   },
 
   /**
+   * Finds the background color range for the parent of a single text node
+   * (i.e. for multi-colored backgrounds with gradients, images) or a single
+   * background color for single-colored backgrounds. Defaults to the closest
+   * background color if an error is encountered.
+   *
+   * @return {Object}
+   *         Object with one or more of the following properties: value, min, max
+   */
+  getBackgroundColor: function() {
+    return InspectorActorUtils.getBackgroundColor(this);
+  },
+
+  /**
    * Returns an object with the width and height of the node's owner window.
    *
    * @return {Object}
@@ -670,6 +729,22 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
       innerWidth: win.innerWidth,
       innerHeight: win.innerHeight,
     };
+  },
+
+  /**
+   * If the current node is an iframe, wait for the content window to be loaded.
+   */
+  async waitForFrameLoad() {
+    if (Cu.isDeadWrapper(this.rawNode)) {
+      return;
+    }
+
+    const { contentDocument, contentWindow } = this.rawNode;
+    if (contentDocument && contentDocument.readyState !== "complete") {
+      await new Promise(resolve => {
+        DOMHelpers.onceDOMReady(contentWindow, resolve);
+      });
+    }
   },
 });
 

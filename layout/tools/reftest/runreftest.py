@@ -5,6 +5,7 @@
 """
 Runs the reftest test harness.
 """
+from __future__ import print_function
 
 import copy
 import json
@@ -39,15 +40,17 @@ import mozrunner
 from manifestparser import TestManifest, filters as mpf
 from mozrunner.utils import get_stack_fixer_function, test_environment
 from mozscreenshot import printstatus, dump_screen
+from six import reraise, string_types
+from six.moves import range
 
 try:
     from marionette_driver.addons import Addons
     from marionette_harness import Marionette
-except ImportError, e:
+except ImportError as e:  # noqa
     # Defer ImportError until attempt to use Marionette
-    def reraise(*args, **kwargs):
-        raise(e)
-    Marionette = reraise
+    def reraise_(*args, **kwargs):
+        raise(e)  # noqa
+    Marionette = reraise_
 
 from output import OutputHandler, ReftestFormatter
 import reftestcommandline
@@ -108,12 +111,12 @@ class ReftestThread(threading.Thread):
 
     def run(self):
         with printLock:
-            print "Starting thread with", self.cmdargs
+            print("Starting thread with", self.cmdargs)
             sys.stdout.flush()
         process = subprocess.Popen(self.cmdargs, stdout=subprocess.PIPE)
         for chunk in self.chunkForMergedOutput(process.stdout):
             with printLock:
-                print chunk,
+                print(chunk,)
                 sys.stdout.flush()
         self.retcode = process.wait()
 
@@ -351,6 +354,8 @@ class RefTest(object):
             prefs['reftest.repeat'] = options.repeat
         if options.runUntilFailure:
             prefs['reftest.runUntilFailure'] = True
+            if not options.repeat:
+                prefs['reftest.repeat'] = 30
         if options.verify:
             prefs['reftest.verify'] = True
         if options.cleanupCrashes:
@@ -358,7 +363,9 @@ class RefTest(object):
         prefs['reftest.focusFilterMode'] = options.focusFilterMode
         prefs['reftest.logLevel'] = options.log_tbpl_level or 'info'
         prefs['reftest.suite'] = options.suite
-        prefs['gfx.font_ahem_antialias_none'] = True
+        prefs['gfx.font_rendering.ahem_antialias_none'] = True
+        # Disable dark scrollbars because it's semi-transparent.
+        prefs['widget.disable-dark-scrollbar'] = True
 
         # Set tests to run or manifests to parse.
         if tests:
@@ -405,7 +412,7 @@ class RefTest(object):
         for v in options.extraPrefs:
             thispref = v.split('=')
             if len(thispref) < 2:
-                print "Error: syntax error in --setpref=" + v
+                print("Error: syntax error in --setpref=" + v)
                 sys.exit(1)
             prefs[thispref[0]] = thispref[1].strip()
 
@@ -448,7 +455,7 @@ class RefTest(object):
         for v in options.environment:
             ix = v.find("=")
             if ix <= 0:
-                print "Error: syntax error in --setenv=" + v
+                print("Error: syntax error in --setenv=" + v)
                 return None
             browserEnv[v[:ix]] = v[ix + 1:]
 
@@ -497,7 +504,7 @@ class RefTest(object):
 
         def step2():
             stepOptions = copy.deepcopy(options)
-            for i in xrange(VERIFY_REPEAT_SINGLE_BROWSER):
+            for i in range(VERIFY_REPEAT_SINGLE_BROWSER):
                 result = self.runTests(tests, stepOptions)
                 if result != 0:
                     break
@@ -514,7 +521,7 @@ class RefTest(object):
         def step4():
             stepOptions = copy.deepcopy(options)
             stepOptions.environment.append("MOZ_CHAOSMODE=3")
-            for i in xrange(VERIFY_REPEAT_SINGLE_BROWSER):
+            for i in range(VERIFY_REPEAT_SINGLE_BROWSER):
                 result = self.runTests(tests, stepOptions)
                 if result != 0:
                     break
@@ -656,11 +663,12 @@ class RefTest(object):
                     threadMatches.group('total') if threadMatches else 0)
                 summaryObj['total'] += amount
 
-        print 'REFTEST INFO | Result summary:'
+        print('REFTEST INFO | Result summary:')
         for (summaryObj, (text, categories)) in zip(summaryObjects, summaryLines):
             details = ', '.join(["%d %s" % (summaryObj[attribute], description) for (
                 attribute, description) in categories])
-            print 'REFTEST INFO | ' + text + ': ' + str(summaryObj['total']) + ' (' + details + ')'
+            print('REFTEST INFO | ' + text + ': ' + str(summaryObj['total']) +
+                  ' (' + details + ')')
 
         return int(any(t.retcode != 0 for t in threads))
 
@@ -843,7 +851,7 @@ class RefTest(object):
 
         if marionette_exception is not None:
             exc, value, tb = marionette_exception
-            raise exc, value, tb
+            raise reraise(exc, value, tb)
 
         self.log.info("Process mode: {}".format('e10s' if options.e10s else 'non-e10s'))
         return status
@@ -887,7 +895,7 @@ class RefTest(object):
         def run(**kwargs):
             if kwargs.get('tests'):
                 self.lastTest = kwargs['tests'][-1]['identifier']
-                if not isinstance(self.lastTest, basestring):
+                if not isinstance(self.lastTest, string_types):
                     self.lastTest = ' '.join(self.lastTest)
 
             status = self.runApp(

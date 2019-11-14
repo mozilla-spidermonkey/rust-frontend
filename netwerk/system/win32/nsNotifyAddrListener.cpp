@@ -8,6 +8,9 @@
 // inet_ntop() doesn't exist on Windows XP.
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 
+#include <algorithm>
+#include <vector>
+
 #include <stdarg.h>
 #include <windef.h>
 #include <winbase.h>
@@ -34,7 +37,7 @@
 #include "nsAutoPtr.h"
 #include "mozilla/Services.h"
 #include "nsCRT.h"
-#include "mozilla/Preferences.h"
+#include "mozilla/StaticPrefs_network.h"
 #include "mozilla/SHA1.h"
 #include "mozilla/Base64.h"
 #include "mozilla/ScopeExit.h"
@@ -46,63 +49,11 @@ using namespace mozilla;
 
 static LazyLogModule gNotifyAddrLog("nsNotifyAddr");
 #define LOG(args) MOZ_LOG(gNotifyAddrLog, mozilla::LogLevel::Debug, args)
-
-static HMODULE sNetshell;
-static decltype(NcFreeNetconProperties)* sNcFreeNetconProperties;
-
-static HMODULE sIphlpapi;
-static decltype(NotifyIpInterfaceChange)* sNotifyIpInterfaceChange;
-static decltype(CancelMibChangeNotify2)* sCancelMibChangeNotify2;
-
-#define NETWORK_NOTIFY_CHANGED_PREF "network.notify.changed"
-#define NETWORK_NOTIFY_IPV6_PREF "network.notify.IPv6"
+#define LOG_ENABLED() MOZ_LOG_TEST(gNotifyAddrLog, mozilla::LogLevel::Debug)
 
 // period during which to absorb subsequent network change events, in
 // milliseconds
 static const unsigned int kNetworkChangeCoalescingPeriod = 1000;
-
-static void InitIphlpapi(void) {
-  if (!sIphlpapi) {
-    sIphlpapi = LoadLibraryW(L"Iphlpapi.dll");
-    if (sIphlpapi) {
-      sNotifyIpInterfaceChange =
-          (decltype(NotifyIpInterfaceChange)*)GetProcAddress(
-              sIphlpapi, "NotifyIpInterfaceChange");
-      sCancelMibChangeNotify2 =
-          (decltype(CancelMibChangeNotify2)*)GetProcAddress(
-              sIphlpapi, "CancelMibChangeNotify2");
-    } else {
-      NS_WARNING(
-          "Failed to load Iphlpapi.dll - cannot detect network"
-          " changes!");
-    }
-  }
-}
-
-static void InitNetshellLibrary(void) {
-  if (!sNetshell) {
-    sNetshell = LoadLibraryW(L"Netshell.dll");
-    if (sNetshell) {
-      sNcFreeNetconProperties =
-          (decltype(NcFreeNetconProperties)*)GetProcAddress(
-              sNetshell, "NcFreeNetconProperties");
-    }
-  }
-}
-
-static void FreeDynamicLibraries(void) {
-  if (sNetshell) {
-    sNcFreeNetconProperties = nullptr;
-    FreeLibrary(sNetshell);
-    sNetshell = nullptr;
-  }
-  if (sIphlpapi) {
-    sNotifyIpInterfaceChange = nullptr;
-    sCancelMibChangeNotify2 = nullptr;
-    FreeLibrary(sIphlpapi);
-    sIphlpapi = nullptr;
-  }
-}
 
 NS_IMPL_ISUPPORTS(nsNotifyAddrListener, nsINetworkLinkService, nsIRunnable,
                   nsIObserver)
@@ -115,15 +66,10 @@ nsNotifyAddrListener::nsNotifyAddrListener()
       mCheckEvent(nullptr),
       mShutdown(false),
       mIPInterfaceChecksum(0),
-      mAllowChangedEvent(true),
-      mIPv6Changes(false),
-      mCoalescingActive(false) {
-  InitIphlpapi();
-}
+      mCoalescingActive(false) {}
 
 nsNotifyAddrListener::~nsNotifyAddrListener() {
   NS_ASSERTION(!mThread, "nsNotifyAddrListener thread shutdown failed");
-  FreeDynamicLibraries();
 }
 
 NS_IMETHODIMP
@@ -159,11 +105,47 @@ nsNotifyAddrListener::GetNetworkID(nsACString& aNetworkID) {
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsNotifyAddrListener::GetDnsSuffixList(nsTArray<nsCString>& aDnsSuffixList) {
+  aDnsSuffixList.Clear();
+  MutexAutoLock lock(mMutex);
+  aDnsSuffixList.AppendElements(mDnsSuffixList);
+  return NS_OK;
+}
+
+//
+// Hash the sorted network ids
+//
+void nsNotifyAddrListener::HashSortedNetworkIds(std::vector<GUID> nwGUIDS,
+                                                SHA1Sum& sha1) {
+  std::sort(nwGUIDS.begin(), nwGUIDS.end(), [](const GUID& a, const GUID& b) {
+    return memcmp(&a, &b, sizeof(GUID)) < 0;
+  });
+
+  for (auto const& nwGUID : nwGUIDS) {
+    sha1.update(&nwGUID, sizeof(GUID));
+
+    if (LOG_ENABLED()) {
+      nsPrintfCString guid("%08lX%04X%04X%02X%02X%02X%02X%02X%02X%02X%02X%lX",
+                           nwGUID.Data1, nwGUID.Data2, nwGUID.Data3,
+                           nwGUID.Data4[0], nwGUID.Data4[1], nwGUID.Data4[2],
+                           nwGUID.Data4[3], nwGUID.Data4[4], nwGUID.Data4[5],
+                           nwGUID.Data4[6], nwGUID.Data4[7]);
+      LOG(("calculateNetworkId: interface networkID: %s\n", guid.get()));
+    }
+  }
+}
+
 //
 // Figure out the current "network identification" string.
 //
 void nsNotifyAddrListener::calculateNetworkId(void) {
   MOZ_ASSERT(!NS_IsMainThread(), "Must not be called on the main thread");
+
+  // No need to recompute the networkId if we're shutting down.
+  if (mShutdown) {
+    return;
+  }
 
   if (FAILED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) {
     return;
@@ -186,8 +168,17 @@ void nsNotifyAddrListener::calculateNetworkId(void) {
     return;
   }
 
+  // We will hash the found network ids
+  // for privacy reasons
   SHA1Sum sha1;
-  uint32_t networkCount = 0;
+
+  // The networks stored in enumNetworks
+  // are not ordered. We will sort them
+  // To keep a consistent hash
+  // regardless of the found networks order.
+  std::vector<GUID> nwGUIDS;
+
+  // Consume the found networks iterator
   while (true) {
     RefPtr<INetwork> network;
     hr = enumNetworks->Next(1, getter_AddRefs(network), nullptr);
@@ -200,18 +191,10 @@ void nsNotifyAddrListener::calculateNetworkId(void) {
     if (hr != S_OK) {
       continue;
     }
-    networkCount++;
-    sha1.update(&nwGUID, sizeof(nwGUID));
-
-    nsPrintfCString guid("%08lX%04X%04X%02X%02X%02X%02X%02X%02X%02X%02X%lX",
-                         nwGUID.Data1, nwGUID.Data2, nwGUID.Data3,
-                         nwGUID.Data4[0], nwGUID.Data4[1], nwGUID.Data4[2],
-                         nwGUID.Data4[3], nwGUID.Data4[4], nwGUID.Data4[5],
-                         nwGUID.Data4[6], nwGUID.Data4[7]);
-    LOG(("calculateNetworkId: interface networkID: %s\n", guid.get()));
+    nwGUIDS.push_back(nwGUID);
   }
 
-  if (networkCount == 0) {
+  if (nwGUIDS.empty()) {
     MutexAutoLock lock(mMutex);
     mNetworkId.Truncate();
     LOG(("calculateNetworkId: no network ID - no active networks"));
@@ -221,6 +204,8 @@ void nsNotifyAddrListener::calculateNetworkId(void) {
 
   nsAutoCString output;
   SHA1Sum::Hash digest;
+  HashSortedNetworkIds(nwGUIDS, sha1);
+
   sha1.finish(digest);
   nsCString newString(reinterpret_cast<char*>(digest), SHA1Sum::kHashSize);
   nsresult rv = Base64Encode(newString, output);
@@ -259,6 +244,13 @@ nsNotifyAddrListener::nextCoalesceWaitTime() {
   // check if coalescing period should continue
   double period = (TimeStamp::Now() - mChangeTime).ToMilliseconds();
   if (period >= kNetworkChangeCoalescingPeriod) {
+    if (!mNetworkChangeTime.IsNull()) {
+      Telemetry::AccumulateTimeDelta(
+          Telemetry::NETWORK_TIME_BETWEEN_NETWORK_CHANGE_EVENTS,
+          mNetworkChangeTime);
+    }
+    mNetworkChangeTime = TimeStamp::Now();
+
     SendEvent(NS_NETWORK_LINK_DATA_CHANGED);
     mCoalescingActive = false;
     return INFINITE;  // return default
@@ -276,60 +268,31 @@ nsNotifyAddrListener::Run() {
 
   DWORD waitTime = INFINITE;
 
-  if (!sNotifyIpInterfaceChange || !sCancelMibChangeNotify2 || !mIPv6Changes) {
-    // For Windows versions which are older than Vista which lack
-    // NotifyIpInterfaceChange. Note this means no IPv6 support.
-    HANDLE ev = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    NS_ENSURE_TRUE(ev, NS_ERROR_OUT_OF_MEMORY);
+  // Windows Vista and newer versions.
+  HANDLE interfacechange;
+  // The callback will simply invoke CheckLinkStatus()
+  DWORD ret = NotifyIpInterfaceChange(
+      StaticPrefs::network_notify_IPv6() ? AF_UNSPEC
+                                         : AF_INET,  // IPv4 and IPv6
+      (PIPINTERFACE_CHANGE_CALLBACK)OnInterfaceChange,
+      this,   // pass to callback
+      false,  // no initial notification
+      &interfacechange);
 
-    HANDLE handles[2] = {ev, mCheckEvent};
-    OVERLAPPED overlapped = {0};
-    bool shuttingDown = false;
-
-    overlapped.hEvent = ev;
-    while (!shuttingDown) {
-      HANDLE h;
-      DWORD ret = NotifyAddrChange(&h, &overlapped);
-
-      if (ret == ERROR_IO_PENDING) {
-        ret = WaitForMultipleObjects(2, handles, FALSE, waitTime);
-        if (ret == WAIT_OBJECT_0) {
-          CheckLinkStatus();
-        } else if (!mShutdown) {
-          waitTime = nextCoalesceWaitTime();
-        } else {
-          shuttingDown = true;
-        }
+  if (ret == NO_ERROR) {
+    do {
+      ret = WaitForSingleObject(mCheckEvent, waitTime);
+      if (!mShutdown) {
+        waitTime = nextCoalesceWaitTime();
       } else {
-        shuttingDown = true;
+        break;
       }
-    }
-    CloseHandle(ev);
+    } while (ret != WAIT_FAILED);
+    CancelMibChangeNotify2(interfacechange);
   } else {
-    // Windows Vista and newer versions.
-    HANDLE interfacechange;
-    // The callback will simply invoke CheckLinkStatus()
-    DWORD ret = sNotifyIpInterfaceChange(
-        AF_UNSPEC,  // IPv4 and IPv6
-        (PIPINTERFACE_CHANGE_CALLBACK)OnInterfaceChange,
-        this,   // pass to callback
-        false,  // no initial notification
-        &interfacechange);
-
-    if (ret == NO_ERROR) {
-      do {
-        ret = WaitForSingleObject(mCheckEvent, waitTime);
-        if (!mShutdown) {
-          waitTime = nextCoalesceWaitTime();
-        } else {
-          break;
-        }
-      } while (ret != WAIT_FAILED);
-      sCancelMibChangeNotify2(interfacechange);
-    } else {
-      LOG(("Link Monitor: sNotifyIpInterfaceChange returned %d\n", (int)ret));
-    }
+    LOG(("Link Monitor: NotifyIpInterfaceChange returned %d\n", (int)ret));
   }
+
   return NS_OK;
 }
 
@@ -350,17 +313,17 @@ nsresult nsNotifyAddrListener::Init(void) {
       observerService->AddObserver(this, "xpcom-shutdown-threads", false);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  Preferences::AddBoolVarCache(&mAllowChangedEvent, NETWORK_NOTIFY_CHANGED_PREF,
-                               true);
-  Preferences::AddBoolVarCache(&mIPv6Changes, NETWORK_NOTIFY_IPV6_PREF, false);
-
   mCheckEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
   NS_ENSURE_TRUE(mCheckEvent, NS_ERROR_OUT_OF_MEMORY);
 
-  rv = NS_NewNamedThread("Link Monitor", getter_AddRefs(mThread), this);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIThreadPool> threadPool = new nsThreadPool();
+  MOZ_ALWAYS_SUCCEEDS(threadPool->SetThreadLimit(1));
+  MOZ_ALWAYS_SUCCEEDS(
+      threadPool->SetThreadStackSize(nsIThreadManager::kThreadPoolStackSize));
+  MOZ_ALWAYS_SUCCEEDS(threadPool->SetName(NS_LITERAL_CSTRING("Link Monitor")));
+  mThread = threadPool.forget();
 
-  return NS_OK;
+  return mThread->Dispatch(this, NS_DISPATCH_NORMAL);
 }
 
 nsresult nsNotifyAddrListener::Shutdown(void) {
@@ -375,7 +338,7 @@ nsresult nsNotifyAddrListener::Shutdown(void) {
   mShutdown = true;
   SetEvent(mCheckEvent);
 
-  nsresult rv = mThread ? mThread->Shutdown() : NS_OK;
+  nsresult rv = mThread ? mThread->ShutdownWithTimeout(2000) : NS_OK;
 
   // Have to break the cycle here, otherwise nsNotifyAddrListener holds
   // onto the thread and the thread holds onto the nsNotifyAddrListener
@@ -415,13 +378,6 @@ nsresult nsNotifyAddrListener::SendEvent(const char* aEventID) {
 
   LOG(("SendEvent: network is '%s'\n", aEventID));
 
-  // The event was caused by a call to GetIsLinkUp on the main thread.
-  // We only need to recalculate for events caused by NotifyAddrChange or
-  // OnInterfaceChange
-  if (!NS_IsMainThread()) {
-    calculateNetworkId();
-  }
-
   nsresult rv;
   nsCOMPtr<nsIRunnable> event = new ChangeEvent(this, aEventID);
   if (NS_FAILED(rv = NS_DispatchToMainThread(event)))
@@ -437,94 +393,6 @@ nsNotifyAddrListener::ChangeEvent::Run() {
     observerService->NotifyObservers(mService, NS_NETWORK_LINK_TOPIC,
                                      NS_ConvertASCIItoUTF16(mEventID).get());
   return NS_OK;
-}
-
-// Bug 465158 features an explanation for this check. ICS being "Internet
-// Connection Sharing). The description says it is always IP address
-// 192.168.0.1 for this case.
-bool nsNotifyAddrListener::CheckICSGateway(PIP_ADAPTER_ADDRESSES aAdapter) {
-  if (!aAdapter->FirstUnicastAddress) return false;
-
-  LPSOCKADDR aAddress = aAdapter->FirstUnicastAddress->Address.lpSockaddr;
-  if (!aAddress) return false;
-
-  PSOCKADDR_IN in_addr = (PSOCKADDR_IN)aAddress;
-  bool isGateway = (aAddress->sa_family == AF_INET &&
-                    in_addr->sin_addr.S_un.S_un_b.s_b1 == 192 &&
-                    in_addr->sin_addr.S_un.S_un_b.s_b2 == 168 &&
-                    in_addr->sin_addr.S_un.S_un_b.s_b3 == 0 &&
-                    in_addr->sin_addr.S_un.S_un_b.s_b4 == 1);
-
-  if (isGateway) isGateway = CheckICSStatus(aAdapter->FriendlyName);
-
-  return isGateway;
-}
-
-bool nsNotifyAddrListener::CheckICSStatus(PWCHAR aAdapterName) {
-  InitNetshellLibrary();
-
-  // This method enumerates all privately shared connections and checks if some
-  // of them has the same name as the one provided in aAdapterName. If such
-  // connection is found in the collection the adapter is used as ICS gateway
-  bool isICSGatewayAdapter = false;
-
-  HRESULT hr;
-  RefPtr<INetSharingManager> netSharingManager;
-  hr = CoCreateInstance(CLSID_NetSharingManager, nullptr, CLSCTX_INPROC_SERVER,
-                        IID_INetSharingManager,
-                        getter_AddRefs(netSharingManager));
-
-  RefPtr<INetSharingPrivateConnectionCollection> privateCollection;
-  if (SUCCEEDED(hr)) {
-    hr = netSharingManager->get_EnumPrivateConnections(
-        ICSSC_DEFAULT, getter_AddRefs(privateCollection));
-  }
-
-  RefPtr<IEnumNetSharingPrivateConnection> privateEnum;
-  if (SUCCEEDED(hr)) {
-    RefPtr<IUnknown> privateEnumUnknown;
-    hr = privateCollection->get__NewEnum(getter_AddRefs(privateEnumUnknown));
-    if (SUCCEEDED(hr)) {
-      hr = privateEnumUnknown->QueryInterface(
-          IID_IEnumNetSharingPrivateConnection, getter_AddRefs(privateEnum));
-    }
-  }
-
-  if (SUCCEEDED(hr)) {
-    ULONG fetched;
-    VARIANT connectionVariant;
-    while (!isICSGatewayAdapter &&
-           SUCCEEDED(hr = privateEnum->Next(1, &connectionVariant, &fetched)) &&
-           fetched) {
-      if (connectionVariant.vt != VT_UNKNOWN) {
-        // We should call VariantClear here but it needs to link
-        // with oleaut32.lib that produces a Ts incrase about 10ms
-        // that is undesired. As it is quit unlikely the result would
-        // be of a different type anyway, let's pass the variant
-        // unfreed here.
-        NS_ERROR(
-            "Variant of unexpected type, expecting VT_UNKNOWN, we probably "
-            "leak it!");
-        continue;
-      }
-
-      RefPtr<INetConnection> connection;
-      if (SUCCEEDED(connectionVariant.punkVal->QueryInterface(
-              IID_INetConnection, getter_AddRefs(connection)))) {
-        connectionVariant.punkVal->Release();
-
-        NETCON_PROPERTIES* properties;
-        if (SUCCEEDED(connection->GetProperties(&properties))) {
-          if (!wcscmp(properties->pszwName, aAdapterName))
-            isICSGatewayAdapter = true;
-
-          if (sNcFreeNetconProperties) sNcFreeNetconProperties(properties);
-        }
-      }
-    }
-  }
-
-  return isICSGatewayAdapter;
 }
 
 DWORD
@@ -558,6 +426,8 @@ nsNotifyAddrListener::CheckAdaptersAddresses(void) {
   //
   ULONG sumAll = 0;
 
+  nsTArray<nsCString> dnsSuffixList;
+
   if (ret == ERROR_SUCCESS) {
     bool linkUp = false;
     ULONG sum = 0;
@@ -566,8 +436,7 @@ nsNotifyAddrListener::CheckAdaptersAddresses(void) {
          adapter = adapter->Next) {
       if (adapter->OperStatus != IfOperStatusUp ||
           !adapter->FirstUnicastAddress ||
-          adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK ||
-          CheckICSGateway(adapter)) {
+          adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
         continue;
       }
 
@@ -585,6 +454,15 @@ nsNotifyAddrListener::CheckAdaptersAddresses(void) {
           sum += (reinterpret_cast<unsigned char*>(sockAddr->lpSockaddr))[i];
         }
       }
+
+      if (StaticPrefs::network_notify_dnsSuffixList()) {
+        nsCString suffix = NS_ConvertUTF16toUTF8(adapter->DnsSuffix);
+        if (!suffix.IsEmpty()) {
+          LOG(("  found DNS suffix=%s\n", suffix.get()));
+          dnsSuffixList.AppendElement(suffix);
+        }
+      }
+
       linkUp = true;
       sumAll ^= sum;
     }
@@ -599,6 +477,13 @@ nsNotifyAddrListener::CheckAdaptersAddresses(void) {
   }
 
   CoUninitialize();
+
+  if (StaticPrefs::network_notify_dnsSuffixList()) {
+    MutexAutoLock lock(mMutex);
+    mDnsSuffixList.SwapElements(dnsSuffixList);
+  }
+
+  calculateNetworkId();
 
   return ret;
 }
@@ -649,7 +534,8 @@ void nsNotifyAddrListener::CheckLinkStatus(void) {
 
       // Network is online. Topology has changed. Always send CHANGED
       // before UP - if allowed to and having cooled down.
-      if (mAllowChangedEvent && (since.ToMilliseconds() > 2000)) {
+      if (StaticPrefs::network_notify_changed() &&
+          (since.ToMilliseconds() > 2000)) {
         NetworkChanged();
       }
     }

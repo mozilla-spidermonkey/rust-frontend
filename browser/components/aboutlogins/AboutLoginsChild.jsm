@@ -31,7 +31,10 @@ XPCOMUtils.defineLazyServiceGetter(
 );
 
 const TELEMETRY_EVENT_CATEGORY = "pwmgr";
+const TELEMETRY_MIN_MS_BETWEEN_OPEN_MANAGEMENT = 5000;
 
+let lastOpenManagementOuterWindowID = null;
+let lastOpenManagementEventTime = Number.NEGATIVE_INFINITY;
 let masterPasswordPromise;
 
 class AboutLoginsChild extends ActorChild {
@@ -64,6 +67,9 @@ class AboutLoginsChild extends ActorChild {
               "AboutLogins:MasterPasswordRequest"
             );
           },
+          // Default to enabled just in case a search is attempted before we get a response.
+          masterPasswordEnabled: true,
+          passwordRevealVisible: true,
         };
         waivedContent.AboutLoginsUtils = Cu.cloneInto(
           AboutLoginsUtils,
@@ -72,6 +78,14 @@ class AboutLoginsChild extends ActorChild {
             cloneFunctions: true,
           }
         );
+
+        const SUPPORT_URL =
+          Services.urlFormatter.formatURLPref("app.support.baseURL") +
+          "firefox-lockwise";
+        let loginIntro = Cu.waiveXrays(
+          this.content.document.querySelector("login-intro")
+        );
+        loginIntro.supportURL = SUPPORT_URL;
         break;
       }
       case "AboutLoginsCopyLoginDetail": {
@@ -90,24 +104,34 @@ class AboutLoginsChild extends ActorChild {
         });
         break;
       }
+      case "AboutLoginsDismissBreachAlert": {
+        this.mm.sendAsyncMessage("AboutLogins:DismissBreachAlert", {
+          login: event.detail,
+        });
+        break;
+      }
+      case "AboutLoginsGetHelp": {
+        this.mm.sendAsyncMessage("AboutLogins:GetHelp");
+        break;
+      }
+      case "AboutLoginsHideFooter": {
+        this.mm.sendAsyncMessage("AboutLogins:HideFooter");
+        break;
+      }
       case "AboutLoginsImport": {
         this.mm.sendAsyncMessage("AboutLogins:Import");
         break;
       }
-      case "AboutLoginsOpenFAQ": {
-        this.mm.sendAsyncMessage("AboutLogins:OpenFAQ");
-        break;
-      }
       case "AboutLoginsOpenMobileAndroid": {
-        this.mm.sendAsyncMessage("AboutLogins:OpenMobileAndroid");
+        this.mm.sendAsyncMessage("AboutLogins:OpenMobileAndroid", {
+          source: event.detail,
+        });
         break;
       }
       case "AboutLoginsOpenMobileIos": {
-        this.mm.sendAsyncMessage("AboutLogins:OpenMobileIos");
-        break;
-      }
-      case "AboutLoginsOpenFeedback": {
-        this.mm.sendAsyncMessage("AboutLogins:OpenFeedback");
+        this.mm.sendAsyncMessage("AboutLogins:OpenMobileIos", {
+          source: event.detail,
+        });
         break;
       }
       case "AboutLoginsOpenPreferences": {
@@ -121,18 +145,44 @@ class AboutLoginsChild extends ActorChild {
         break;
       }
       case "AboutLoginsRecordTelemetryEvent": {
-        let { method, object } = event.detail;
+        let { method, object, extra = {} } = event.detail;
+
+        if (method == "open_management") {
+          let { docShell } = event.target.ownerGlobal;
+          // Compare to the last time open_management was recorded for the same
+          // outerWindowID to not double-count them due to a redirect to remove
+          // the entryPoint query param (since replaceState isn't allowed for
+          // about:). Don't use performance.now for the tab since you can't
+          // compare that number between different tabs and this JSM is shared.
+          let now = docShell.now();
+          if (
+            docShell.outerWindowID == lastOpenManagementOuterWindowID &&
+            now - lastOpenManagementEventTime <
+              TELEMETRY_MIN_MS_BETWEEN_OPEN_MANAGEMENT
+          ) {
+            return;
+          }
+          lastOpenManagementEventTime = now;
+          lastOpenManagementOuterWindowID = docShell.outerWindowID;
+        }
+
         try {
           Services.telemetry.recordEvent(
             TELEMETRY_EVENT_CATEGORY,
             method,
-            object
+            object,
+            null,
+            extra
           );
         } catch (ex) {
           Cu.reportError(
             "AboutLoginsChild: error recording telemetry event: " + ex.message
           );
         }
+        break;
+      }
+      case "AboutLoginsSortChanged": {
+        this.mm.sendAsyncMessage("AboutLogins:SortChanged", event.detail);
         break;
       }
       case "AboutLoginsSyncEnable": {
@@ -166,10 +216,33 @@ class AboutLoginsChild extends ActorChild {
       case "AboutLogins:LoginRemoved":
         this.sendToContent("LoginRemoved", message.data);
         break;
+      case "AboutLogins:MasterPasswordAuthRequired":
+        this.sendToContent("MasterPasswordAuthRequired", message.data);
+        break;
       case "AboutLogins:MasterPasswordResponse":
         if (masterPasswordPromise) {
           masterPasswordPromise.resolve(message.data);
         }
+        break;
+      case "AboutLogins:SendFavicons":
+        this.sendToContent("SendFavicons", message.data);
+        break;
+      case "AboutLogins:SetBreaches":
+        this.sendToContent("SetBreaches", message.data);
+        break;
+      case "AboutLogins:Setup":
+        let waivedContent = Cu.waiveXrays(this.content);
+        waivedContent.AboutLoginsUtils.masterPasswordEnabled =
+          message.data.masterPasswordEnabled;
+        waivedContent.AboutLoginsUtils.passwordRevealVisible =
+          message.data.passwordRevealVisible;
+        waivedContent.AboutLoginsUtils.importVisible =
+          message.data.importVisible;
+        this.sendToContent("Setup", message.data);
+        break;
+      case "AboutLogins:ShowLoginItemError":
+        this.sendToContent("ShowLoginItemError", message.data);
+        break;
       case "AboutLogins:SyncState":
         this.sendToContent("SyncState", message.data);
         break;

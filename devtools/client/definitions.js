@@ -60,11 +60,6 @@ loader.lazyGetter(
 );
 loader.lazyGetter(
   this,
-  "ScratchpadPanel",
-  () => require("devtools/client/scratchpad/panel").ScratchpadPanel
-);
-loader.lazyGetter(
-  this,
   "DomPanel",
   () => require("devtools/client/dom/panel").DomPanel
 );
@@ -99,13 +94,19 @@ loader.lazyRequireGetter(
 loader.lazyRequireGetter(
   this,
   "ResponsiveUIManager",
-  "devtools/client/responsive.html/manager",
+  "devtools/client/responsive/manager"
+);
+
+loader.lazyRequireGetter(
+  this,
+  "AppConstants",
+  "resource://gre/modules/AppConstants.jsm",
   true
 );
-loader.lazyImporter(
+loader.lazyRequireGetter(
   this,
-  "ScratchpadManager",
-  "resource://devtools/client/scratchpad/scratchpad-manager.jsm"
+  "DevToolsFissionPrefs",
+  "devtools/client/devtools-fission-prefs"
 );
 
 const { MultiLocalizationHelper } = require("devtools/shared/l10n");
@@ -160,8 +161,11 @@ Tools.inspector = {
   inMenu: true,
 
   preventClosingOnKey: true,
+  // preventRaisingOnKey is used to keep the focus on the content window for shortcuts
+  // that trigger the element picker.
+  preventRaisingOnKey: true,
   onkey: function(panel, toolbox) {
-    toolbox.inspectorFront.nodePicker.togglePicker();
+    toolbox.nodePicker.togglePicker();
   },
 
   isTargetSupported: function(target) {
@@ -217,7 +221,11 @@ Tools.jsdebugger = {
   label: l10n("ToolboxDebugger.label"),
   panelLabel: l10n("ToolboxDebugger.panelLabel"),
   get tooltip() {
-    return l10n("ToolboxDebugger.tooltip3");
+    return l10n(
+      "ToolboxDebugger.tooltip4",
+      (osString == "Darwin" ? "Cmd+Opt+" : "Ctrl+Shift+") +
+        l10n("jsdebugger.commandkey2")
+    );
   },
   inMenu: true,
   isTargetSupported: function() {
@@ -284,8 +292,8 @@ function switchPerformancePanel() {
       // the perf actor yet. Also this function is not async, so we can't initialize
       // the actor yet.
       // We don't display the new performance panel for remote context in the
-      // toolbox, because this has an overhead. Instead we should use WebIDE (or
-      // the coming about:debugging).
+      // toolbox, because this has an overhead. Instead we should use
+      // about:debugging.
       return target.isLocalTab;
     };
   } else {
@@ -384,24 +392,6 @@ Tools.storage = {
   },
 };
 
-Tools.scratchpad = {
-  id: "scratchpad",
-  ordinal: 12,
-  visibilityswitch: "devtools.scratchpad.enabled",
-  icon: "chrome://devtools/skin/images/tool-scratchpad.svg",
-  url: "chrome://devtools/content/scratchpad/index.xul",
-  label: l10n("scratchpad.label"),
-  panelLabel: l10n("scratchpad.panelLabel"),
-  tooltip: l10n("scratchpad.tooltip"),
-  inMenu: false,
-  isTargetSupported: function(target) {
-    return target.hasActor("console");
-  },
-  build: function(iframeWindow, toolbox) {
-    return new ScratchpadPanel(iframeWindow, toolbox);
-  },
-};
-
 Tools.dom = {
   id: "dom",
   accesskey: l10n("dom.accesskey"),
@@ -491,7 +481,6 @@ var defaultTools = [
   Tools.performance,
   Tools.netMonitor,
   Tools.storage,
-  Tools.scratchpad,
   Tools.memory,
   Tools.dom,
   Tools.accessibility,
@@ -534,32 +523,33 @@ exports.ToolboxButtons = [
     },
   },
   {
-    id: "command-button-scratchpad",
-    description: l10n("toolbox.buttons.scratchpad"),
-    isTargetSupported: target => target.isLocalTab,
-    onClick(event, toolbox) {
-      ScratchpadManager.openScratchpad();
-    },
-  },
-  {
     id: "command-button-replay",
     description: l10n("toolbox.buttons.replay"),
     isTargetSupported: target =>
-      Services.prefs.getBoolPref("devtools.recordreplay.mvp.enabled") &&
+      Services.prefs.getBoolPref("devtools.recordreplay.enabled") &&
       !target.canRewind &&
       target.isLocalTab,
     onClick: () => reloadAndRecordTab(),
     isChecked: () => false,
+    experimentalURL:
+      "https://developer.mozilla.org/en-US/docs/Mozilla/Projects/WebReplay",
   },
   {
     id: "command-button-stop-replay",
     description: l10n("toolbox.buttons.stopReplay"),
     isTargetSupported: target =>
-      Services.prefs.getBoolPref("devtools.recordreplay.mvp.enabled") &&
+      Services.prefs.getBoolPref("devtools.recordreplay.enabled") &&
       target.canRewind &&
       target.isLocalTab,
     onClick: () => reloadAndStopRecordingTab(),
     isChecked: () => true,
+  },
+  {
+    id: "command-button-fission-prefs",
+    description: "DevTools Fission preferences",
+    isTargetSupported: target => !AppConstants.MOZILLA_OFFICIAL,
+    onClick: (event, toolbox) => DevToolsFissionPrefs.showTooltip(toolbox),
+    isChecked: () => DevToolsFissionPrefs.isAnyPreferenceEnabled(),
   },
   {
     id: "command-button-responsive",
@@ -616,8 +606,8 @@ function createHighlightButton(highlighterName, id) {
     description: l10n(`toolbox.buttons.${id}`),
     isTargetSupported: target => !target.chrome,
     async onClick(event, toolbox) {
-      await toolbox.initInspector();
-      const highlighter = await toolbox.inspectorFront.getOrCreateHighlighterByType(
+      const inspectorFront = await toolbox.target.getFront("inspector");
+      const highlighter = await inspectorFront.getOrCreateHighlighterByType(
         highlighterName
       );
       if (highlighter.isShown()) {
@@ -631,11 +621,7 @@ function createHighlightButton(highlighterName, id) {
     isChecked(toolbox) {
       // if the inspector doesn't exist, then the highlighter has not yet been connected
       // to the front end.
-      // TODO: we are using target._inspector here, but we should be using
-      // target.getCachedFront. This is a temporary solution until the inspector no
-      // longer relies on the toolbox and can be destroyed the same way any other
-      // front would be. Related: #1487677
-      const inspectorFront = toolbox.target._inspector;
+      const inspectorFront = toolbox.target.getCachedFront("inspector");
       if (!inspectorFront) {
         // initialize the inspector front asyncronously. There is a potential for buggy
         // behavior here, but we need to change how the buttons get data (have them

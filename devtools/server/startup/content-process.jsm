@@ -7,7 +7,8 @@
 /*
  * Module that listens for requests to start a `DebuggerServer` for an entire content
  * process.  Loaded into content processes by the main process during
- * `DebuggerServer.connectToContentProcess` via the process script `content-process.js`.
+ * content-process-connector.js' `connectToContentProcess` via the process
+ * script `content-process.js`.
  *
  * The actual server startup itself is in this JSM so that code can be cached.
  */
@@ -35,7 +36,7 @@ function setupServer(mm) {
   gLoader = new DevToolsLoader({
     invisibleToDebugger: true,
   });
-  const { DebuggerServer } = gLoader.require("devtools/server/main");
+  const { DebuggerServer } = gLoader.require("devtools/server/debugger-server");
 
   DebuggerServer.init();
   // For browser content toolbox, we do need a regular root actor and all tab
@@ -43,14 +44,21 @@ function setupServer(mm) {
   // debugging the parent process via the browser toolbox.
   DebuggerServer.registerActors({ root: true, target: true });
 
-  // Clean up things when the client disconnects
-  mm.addMessageListener("debug:content-process-destroy", function onDestroy() {
-    mm.removeMessageListener("debug:content-process-destroy", onDestroy);
+  // Destroy the server once its last connection closes. Note that multiple frame
+  // scripts may be running in parallel and reuse the same server.
+  function destroyServer() {
+    // Only destroy the server if there is no more connections to it. It may be used
+    // to debug the same process from another client.
+    if (DebuggerServer.hasConnection()) {
+      return;
+    }
+    DebuggerServer.off("connectionchange", destroyServer);
 
     DebuggerServer.destroy();
     gLoader.destroy();
     gLoader = null;
-  });
+  }
+  DebuggerServer.on("connectionchange", destroyServer);
 
   return gLoader;
 }
@@ -64,7 +72,7 @@ function init(msg) {
 
   // Connect both parent/child processes debugger servers RDP via message
   // managers
-  const { DebuggerServer } = loader.require("devtools/server/main");
+  const { DebuggerServer } = loader.require("devtools/server/debugger-server");
   const conn = DebuggerServer.connectToParent(prefix, mm);
   conn.parentMessageManager = mm;
 
@@ -79,4 +87,22 @@ function init(msg) {
 
   const response = { actor: actor.form() };
   mm.sendAsyncMessage("debug:content-process-actor", response);
+
+  // Clean up things when the client disconnects
+  mm.addMessageListener("debug:content-process-disconnect", function onDestroy(
+    message
+  ) {
+    if (message.data.prefix != prefix) {
+      // Several copies of this process script can be running for a single process if
+      // we are debugging the same process from multiple clients.
+      // If this disconnect request doesn't match a connection known here, ignore it.
+      return;
+    }
+    mm.removeMessageListener("debug:content-process-disconnect", onDestroy);
+
+    // Call DebuggerServerConnection.close to destroy all child actors. It should end up
+    // calling DebuggerServerConnection.onClosed that would actually cleanup all actor
+    // pools.
+    conn.close();
+  });
 }

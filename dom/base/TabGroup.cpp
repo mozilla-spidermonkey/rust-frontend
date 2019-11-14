@@ -150,7 +150,9 @@ already_AddRefed<DocGroup> TabGroup::AddDocument(const nsACString& aKey,
   if (entry->mDocGroup) {
     docGroup = entry->mDocGroup;
   } else {
-    docGroup = new DocGroup(this, aKey);
+    const nsID agentClusterId = nsContentUtils::GenerateUUID();
+
+    docGroup = new DocGroup(this, aKey, agentClusterId);
     entry->mDocGroup = docGroup;
   }
 
@@ -191,71 +193,17 @@ void TabGroup::Leave(nsPIDOMWindowOuter* aWindow) {
     mForegroundCount--;
   }
 
+  MaybeDestroy();
+}
+
+void TabGroup::MaybeDestroy() {
   // The Chrome TabGroup doesn't have cyclical references through mEventTargets
   // to itself, meaning that we don't have to worry about nulling mEventTargets
   // out after the last window leaves.
-  if (!mIsChrome && mWindows.IsEmpty()) {
+  if (!mIsChrome && !mLastWindowLeft && mWindows.IsEmpty()) {
     mLastWindowLeft = true;
     Shutdown(false);
   }
-}
-
-nsresult TabGroup::FindItemWithName(const nsAString& aName,
-                                    nsIDocShellTreeItem* aRequestor,
-                                    nsIDocShellTreeItem* aOriginalRequestor,
-                                    nsIDocShellTreeItem** aFoundItem) {
-  MOZ_ASSERT(NS_IsMainThread());
-  NS_ENSURE_ARG_POINTER(aFoundItem);
-  *aFoundItem = nullptr;
-
-  MOZ_ASSERT(!aName.LowerCaseEqualsLiteral("_blank") &&
-             !aName.LowerCaseEqualsLiteral("_top") &&
-             !aName.LowerCaseEqualsLiteral("_parent") &&
-             !aName.LowerCaseEqualsLiteral("_self"));
-
-  for (nsPIDOMWindowOuter* outerWindow : mWindows) {
-    // Ignore non-toplevel windows
-    if (outerWindow->GetInProcessScriptableParentOrNull()) {
-      continue;
-    }
-
-    nsCOMPtr<nsIDocShellTreeItem> docshell = outerWindow->GetDocShell();
-    if (!docshell) {
-      continue;
-    }
-
-    BrowsingContext* bc = outerWindow->GetBrowsingContext();
-    if (!bc || !bc->IsTargetable()) {
-      continue;
-    }
-
-    nsCOMPtr<nsIDocShellTreeItem> root;
-    docshell->GetInProcessSameTypeRootTreeItem(getter_AddRefs(root));
-    MOZ_RELEASE_ASSERT(docshell == root);
-    if (root && aRequestor != root) {
-      root->FindItemWithName(aName, aRequestor, aOriginalRequestor,
-                             /* aSkipTabGroup = */ true, aFoundItem);
-      if (*aFoundItem) {
-        break;
-      }
-    }
-  }
-
-  return NS_OK;
-}
-
-nsTArray<nsPIDOMWindowOuter*> TabGroup::GetTopLevelWindows() const {
-  MOZ_ASSERT(NS_IsMainThread());
-  nsTArray<nsPIDOMWindowOuter*> array;
-
-  for (nsPIDOMWindowOuter* outerWindow : mWindows) {
-    if (outerWindow->GetDocShell() &&
-        !outerWindow->GetInProcessScriptableParentOrNull()) {
-      array.AppendElement(outerWindow);
-    }
-  }
-
-  return array;
 }
 
 TabGroup::HashEntry::HashEntry(const nsACString* aKey)

@@ -15,8 +15,8 @@ const { TargetMixin } = require("./target-mixin");
 class ContentProcessTargetFront extends TargetMixin(
   FrontClassWithSpec(contentProcessTargetSpec)
 ) {
-  constructor(client) {
-    super(client);
+  constructor(client, targetFront, parentFront) {
+    super(client, targetFront, parentFront);
 
     this.traits = {};
   }
@@ -31,6 +31,10 @@ class ContentProcessTargetFront extends TargetMixin(
     // is no longer supported
     this._threadActor = json.threadActor || json.chromeDebugger;
     this.targetForm.contextActor = this._threadActor;
+  }
+
+  get name() {
+    return `Content Process ${this.processID}`;
   }
 
   attach() {

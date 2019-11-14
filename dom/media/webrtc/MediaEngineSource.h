@@ -14,7 +14,6 @@
 #include "mozilla/RefPtr.h"
 #include "mozilla/ThreadSafeWeakPtr.h"
 #include "nsStringFwd.h"
-#include "TrackID.h"
 
 namespace mozilla {
 
@@ -29,7 +28,7 @@ class PrincipalInfo;
 
 class MediaEnginePhotoCallback;
 class MediaEnginePrefs;
-class SourceMediaStream;
+class SourceMediaTrack;
 
 /**
  * Callback interface for TakePhoto(). Either PhotoComplete() or PhotoError()
@@ -111,18 +110,16 @@ class MediaEngineSourceInterface {
    */
   virtual nsresult Allocate(const dom::MediaTrackConstraints& aConstraints,
                             const MediaEnginePrefs& aPrefs,
-                            const nsString& aDeviceId, const nsString& aGroupId,
                             const mozilla::ipc::PrincipalInfo& aPrincipalInfo,
                             const char** aOutBadConstraint) = 0;
 
   /**
-   * Called by MediaEngine when a SourceMediaStream and TrackID have been
-   * provided for the source to feed data to.
+   * Called by MediaEngine when a SourceMediaTrack has been provided for the
+   * source to feed data to.
    *
    * This must be called before Start.
    */
-  virtual void SetTrack(const RefPtr<SourceMediaStream>& aStream,
-                        TrackID aTrackID,
+  virtual void SetTrack(const RefPtr<SourceMediaTrack>& aTrack,
                         const PrincipalHandle& aPrincipal) = 0;
 
   /**
@@ -163,8 +160,6 @@ class MediaEngineSourceInterface {
    */
   virtual nsresult Reconfigure(const dom::MediaTrackConstraints& aConstraints,
                                const MediaEnginePrefs& aPrefs,
-                               const nsString& aDeviceId,
-                               const nsString& aGroupId,
                                const char** aOutBadConstraint) = 0;
 
   /**
@@ -205,8 +200,8 @@ class MediaEngineSourceInterface {
    * calculate this device's ranking as a choice.
    */
   virtual uint32_t GetBestFitnessDistance(
-      const nsTArray<const NormalizedConstraintSet*>& aConstraintSets,
-      const nsString& aDeviceId, const nsString& aGroupId) const = 0;
+      const nsTArray<const NormalizedConstraintSet*>& aConstraintSets)
+      const = 0;
 
   /**
    * Returns the current settings of the underlying device.
@@ -262,6 +257,13 @@ class MediaEngineSource : public MediaEngineSourceInterface {
   // TakePhoto returns NS_ERROR_NOT_IMPLEMENTED by default,
   // to tell the caller to fallback to other methods.
   nsresult TakePhoto(MediaEnginePhotoCallback* aCallback) override;
+
+  // Returns a default distance of 0 for devices that don't have capabilities.
+  uint32_t GetBestFitnessDistance(
+      const nsTArray<const NormalizedConstraintSet*>& aConstraintSets)
+      const override {
+    return 0;
+  }
 
  protected:
   virtual ~MediaEngineSource();

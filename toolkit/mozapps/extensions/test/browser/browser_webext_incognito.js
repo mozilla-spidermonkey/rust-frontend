@@ -120,10 +120,7 @@ function checkHelpRow(selector, expected) {
   let helpRow = getHtmlElem(`${selector} + .addon-detail-help-row`);
   if (expected) {
     is_element_visible(helpRow, `Help row should be shown: ${selector}`);
-    is_element_visible(
-      helpRow.querySelector("a, [action='pb-learn-more']"),
-      "Expected learn more link"
-    );
+    is_element_visible(helpRow.querySelector("a"), "Expected learn more link");
   } else {
     is_element_hidden(helpRow, `Help row should be hidden: ${selector}`);
   }
@@ -261,28 +258,31 @@ add_task(async function test_badge_and_toggle_incognito() {
     type: "extension",
   };
 
-  assertTelemetryMatches(
+  assertAboutAddonsTelemetryEvents(
     [
       [
+        "addonsManager",
         "action",
         "aboutAddons",
         "on",
         { ...expectedExtras, addonId: "@test-default" },
       ],
       [
+        "addonsManager",
         "action",
         "aboutAddons",
         "off",
         { ...expectedExtras, addonId: "@test-override" },
       ],
       [
+        "addonsManager",
         "action",
         "aboutAddons",
         "off",
         { ...expectedExtras, addonId: "@test-override-permanent" },
       ],
     ],
-    { filterMethods: ["action"] }
+    { methods: ["action"] }
   );
 
   Services.prefs.clearUserPref("extensions.allowPrivateBrowsingByDefault");
@@ -491,8 +491,8 @@ add_task(async function test_addon_postinstall_incognito_hidden_checkbox() {
         applications: { gecko: { id: "static-theme@mozilla.com" } },
         theme: {
           colors: {
-            accentcolor: "#FFFFFF",
-            textcolor: "#000",
+            frame: "#FFFFFF",
+            tab_background_text: "#000",
           },
         },
       },

@@ -38,6 +38,7 @@
 #include "mozilla/dom/RemoteBrowser.h"
 #include "mozilla/EffectCompositor.h"
 #include "mozilla/EnumeratedArray.h"
+#include "mozilla/MotionPathUtils.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/gfx/UserData.h"
@@ -73,7 +74,6 @@ struct WrFiltersHolder;
 namespace mozilla {
 class FrameLayerBuilder;
 class PresShell;
-struct MotionPathData;
 namespace layers {
 struct FrameMetrics;
 class RenderRootStateManager;
@@ -847,31 +847,31 @@ class nsDisplayListBuilder {
    * Return true if we're currently building a display list for a
    * nested presshell.
    */
-  bool IsInSubdocument() { return mPresShellStates.Length() > 1; }
+  bool IsInSubdocument() const { return mPresShellStates.Length() > 1; }
 
   void SetDisablePartialUpdates(bool aDisable) {
     mDisablePartialUpdates = aDisable;
   }
-  bool DisablePartialUpdates() { return mDisablePartialUpdates; }
+  bool DisablePartialUpdates() const { return mDisablePartialUpdates; }
 
   void SetPartialBuildFailed(bool aFailed) { mPartialBuildFailed = aFailed; }
-  bool PartialBuildFailed() { return mPartialBuildFailed; }
+  bool PartialBuildFailed() const { return mPartialBuildFailed; }
 
-  bool IsInActiveDocShell() { return mIsInActiveDocShell; }
+  bool IsInActiveDocShell() const { return mIsInActiveDocShell; }
   void SetInActiveDocShell(bool aActive) { mIsInActiveDocShell = aActive; }
 
   /**
    * Return true if we're currently building a display list for the presshell
    * of a chrome document, or if we're building the display list for a popup.
    */
-  bool IsInChromeDocumentOrPopup() {
+  bool IsInChromeDocumentOrPopup() const {
     return mIsInChromePresContext || mIsBuildingForPopup;
   }
 
   /**
    * @return true if images have been set to decode synchronously.
    */
-  bool ShouldSyncDecodeImages() { return mSyncDecodeImages; }
+  bool ShouldSyncDecodeImages() const { return mSyncDecodeImages; }
 
   /**
    * Indicates whether we should synchronously decode images. If true, we decode
@@ -1116,17 +1116,6 @@ class nsDisplayListBuilder {
    */
   const DisplayItemClipChain* FuseClipChainUpTo(
       const DisplayItemClipChain* aClipChain, const ActiveScrolledRoot* aASR);
-
-  /**
-   * Only used for containerful root scrolling. This is a workaround.
-   */
-  void SetActiveScrolledRootForRootScrollframe(const ActiveScrolledRoot* aASR) {
-    mActiveScrolledRootForRootScrollframe = aASR;
-  }
-
-  const ActiveScrolledRoot* ActiveScrolledRootForRootScrollframe() const {
-    return mActiveScrolledRootForRootScrollframe;
-  }
 
   const ActiveScrolledRoot* GetFilterASR() const { return mFilterASR; }
 
@@ -1650,6 +1639,17 @@ class nsDisplayListBuilder {
   }
   bool ContainsBlendMode() const { return mContainsBlendMode; }
 
+  /**
+   * mContainsBackdropFilter is true if we proccessed a display item that
+   * has a backdrop filter set. We track this so we can insert a
+   * nsDisplayBackdropRootContainer in the stacking context of the nearest
+   * ancestor that forms a backdrop root.
+   */
+  void SetContainsBackdropFilter(bool aContainsBackdropFilter) {
+    mContainsBackdropFilter = aContainsBackdropFilter;
+  }
+  bool ContainsBackdropFilter() const { return mContainsBackdropFilter; }
+
   DisplayListClipState& ClipState() { return mClipState; }
   const ActiveScrolledRoot* CurrentActiveScrolledRoot() {
     return mCurrentActiveScrolledRoot;
@@ -1673,11 +1673,24 @@ class nsDisplayListBuilder {
    */
   bool IsInWillChangeBudget(nsIFrame* aFrame, const nsSize& aSize);
 
-  void RemoveFromWillChangeBudget(nsIFrame* aFrame);
+  /**
+   * Clears the will-change budget status for the given |aFrame|.
+   * This will also remove the frame from will-change budgets.
+   */
+  void ClearWillChangeBudgetStatus(nsIFrame* aFrame);
 
-  void ClearWillChangeBudget();
+  /**
+   * Removes the given |aFrame| from will-change budgets.
+   */
+  void RemoveFromWillChangeBudgets(const nsIFrame* aFrame);
 
-  void EnterSVGEffectsContents(nsDisplayList* aHoistedItemsStorage);
+  /**
+   * Clears the will-change budgets.
+   */
+  void ClearWillChangeBudgets();
+
+  void EnterSVGEffectsContents(nsIFrame* aEffectsFrame,
+                               nsDisplayList* aHoistedItemsStorage);
   void ExitSVGEffectsContents();
 
   bool ShouldBuildScrollInfoItemsForHoisting() const;
@@ -1742,6 +1755,10 @@ class nsDisplayListBuilder {
     return mBuildAsyncZoomContainer;
   }
   void UpdateShouldBuildAsyncZoomContainer();
+
+  void UpdateShouldBuildBackdropRootContainer();
+
+  bool ShouldRebuildDisplayListDueToPrefChange();
 
   /**
    * Represents a region composed of frame/rect pairs.
@@ -1863,19 +1880,13 @@ class nsDisplayListBuilder {
 
   void AddSizeOfExcludingThis(nsWindowSizes&) const;
 
-  struct DocumentWillChangeBudget {
-    DocumentWillChangeBudget() : mBudget(0) {}
-
-    uint32_t mBudget;
-  };
-
   struct FrameWillChangeBudget {
     FrameWillChangeBudget() : mPresContext(nullptr), mUsage(0) {}
 
-    FrameWillChangeBudget(nsPresContext* aPresContext, uint32_t aUsage)
+    FrameWillChangeBudget(const nsPresContext* aPresContext, uint32_t aUsage)
         : mPresContext(aPresContext), mUsage(aUsage) {}
 
-    nsPresContext* mPresContext;
+    const nsPresContext* mPresContext;
     uint32_t mUsage;
   };
 
@@ -1910,13 +1921,14 @@ class nsDisplayListBuilder {
   RefPtr<AnimatedGeometryRoot> mCurrentAGR;
 
   // will-change budget tracker
-  nsDataHashtable<nsPtrHashKey<nsPresContext>, DocumentWillChangeBudget>
-      mWillChangeBudget;
+  typedef uint32_t DocumentWillChangeBudget;
+  nsDataHashtable<nsPtrHashKey<const nsPresContext>, DocumentWillChangeBudget>
+      mDocumentWillChangeBudgets;
 
   // Any frame listed in this set is already counted in the budget
   // and thus is in-budget.
-  nsDataHashtable<nsPtrHashKey<nsIFrame>, FrameWillChangeBudget>
-      mWillChangeBudgetSet;
+  nsDataHashtable<nsPtrHashKey<const nsIFrame>, FrameWillChangeBudget>
+      mFrameWillChangeBudgets;
 
   uint8_t mBuildingExtraPagesForPageNum;
 
@@ -1967,14 +1979,13 @@ class nsDisplayListBuilder {
       mClipDeduplicator;
   DisplayItemClipChain* mFirstClipChainToDestroy;
   nsTArray<nsDisplayItem*> mTemporaryItems;
-  const ActiveScrolledRoot* mActiveScrolledRootForRootScrollframe;
   nsDisplayListBuilderMode mMode;
   nsDisplayTableBackgroundSet* mTableBackgroundSet;
   ViewID mCurrentScrollParentId;
   ViewID mCurrentScrollbarTarget;
   MaybeScrollDirection mCurrentScrollbarDirection;
   Preserves3DContext mPreserves3DCtx;
-  int32_t mSVGEffectsBuildingDepth;
+  nsTArray<nsIFrame*> mSVGEffectsFrames;
   // When we are inside a filter, the current ASR at the time we entered the
   // filter. Otherwise nullptr.
   const ActiveScrolledRoot* mFilterASR;
@@ -2020,6 +2031,8 @@ class nsDisplayListBuilder {
   bool mPartialBuildFailed;
   bool mIsInActiveDocShell;
   bool mBuildAsyncZoomContainer;
+  bool mBuildBackdropRootContainer;
+  bool mContainsBackdropFilter;
 
   nsRect mHitTestArea;
   CompositorHitTestInfo mHitTestInfo;
@@ -2731,8 +2744,6 @@ class nsDisplayItem : public nsDisplayItemBase {
   virtual bool ShouldFixToViewport(nsDisplayListBuilder* aBuilder) const {
     return false;
   }
-
-  virtual bool ClearsBackground() const { return false; }
 
   /**
    * Returns true if all layers that can be active should be forced to be
@@ -3731,7 +3742,7 @@ class nsDisplayListSet {
  private:
   // This class is only used on stack, so we don't have to worry about leaking
   // it.  Don't let us be heap-allocated!
-  void* operator new(size_t sz) CPP_THROW_NEW;
+  void* operator new(size_t sz) noexcept(true);
 
  protected:
   nsDisplayList* mBorderBackground;
@@ -3777,7 +3788,7 @@ struct nsDisplayListCollection : public nsDisplayListSet {
  private:
   // This class is only used on stack, so we don't have to worry about leaking
   // it.  Don't let us be heap-allocated!
-  void* operator new(size_t sz) CPP_THROW_NEW;
+  void* operator new(size_t sz) noexcept(true);
 
   nsDisplayList mLists[6];
 };
@@ -3857,8 +3868,8 @@ struct HitTestInfo {
   nsRect mArea;
   mozilla::gfx::CompositorHitTestInfo mFlags;
 
-  AnimatedGeometryRoot* mAGR;
-  const mozilla::ActiveScrolledRoot* mASR;
+  RefPtr<AnimatedGeometryRoot> mAGR;
+  RefPtr<const mozilla::ActiveScrolledRoot> mASR;
   RefPtr<const mozilla::DisplayItemClipChain> mClipChain;
   const mozilla::DisplayItemClip* mClip;
 };
@@ -3876,7 +3887,10 @@ class nsDisplayHitTestInfoItem : public nsPaintedDisplayItem {
                            const nsDisplayHitTestInfoItem& aOther)
       : nsPaintedDisplayItem(aBuilder, aOther) {}
 
-  const HitTestInfo& GetHitTestInfo() const { return *mHitTestInfo; }
+  const HitTestInfo& GetHitTestInfo() const {
+    MOZ_ASSERT(HasHitTestInfo());
+    return *mHitTestInfo;
+  }
 
   void SetActiveScrolledRoot(
       const ActiveScrolledRoot* aActiveScrolledRoot) override {
@@ -4251,7 +4265,7 @@ class nsDisplayBorder : public nsPaintedDisplayItem {
   template <typename T>
   T CalculateBounds(const nsStyleBorder& aStyleBorder) const {
     nsRect borderBounds(ToReferenceFrame(), mFrame->GetSize());
-    if (aStyleBorder.IsBorderImageLoaded()) {
+    if (aStyleBorder.IsBorderImageSizeAvailable()) {
       borderBounds.Inflate(aStyleBorder.GetImageOutset());
       return borderBounds;
     }
@@ -4370,8 +4384,10 @@ class nsDisplaySolidColor : public nsDisplaySolidColorBase {
  public:
   nsDisplaySolidColor(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
                       const nsRect& aBounds, nscolor aColor,
-                      bool aCanBeReused = true)
-      : nsDisplaySolidColorBase(aBuilder, aFrame, aColor), mBounds(aBounds) {
+                      uint16_t aIndex = 0, bool aCanBeReused = true)
+      : nsDisplaySolidColorBase(aBuilder, aFrame, aColor),
+        mBounds(aBounds),
+        mIndex(aIndex) {
     NS_ASSERTION(NS_GET_A(aColor) > 0,
                  "Don't create invisible nsDisplaySolidColors!");
     MOZ_COUNT_CTOR(nsDisplaySolidColor);
@@ -4412,10 +4428,18 @@ class nsDisplaySolidColor : public nsDisplaySolidColorBase {
   void SetOverrideZIndex(int32_t aZIndex) {
     mOverrideZIndex = mozilla::Some(aZIndex);
   }
+  /**
+   * If we have multiple SolidColor items in a single frame's
+   * display list, mIndex should be used as their unique
+   * identifier. Note this mapping remains stable even if the
+   * dirty rect changes.
+   */
+  uint16_t CalculatePerFrameKey() const override { return mIndex; }
 
  private:
   nsRect mBounds;
   mozilla::Maybe<int32_t> mOverrideZIndex;
+  const uint16_t mIndex;
 };
 
 /**
@@ -5043,49 +5067,6 @@ class nsDisplayTableBackgroundColor : public nsDisplayBackgroundColor {
  protected:
   nsIFrame* mAncestorFrame;
   TableType mTableType;
-};
-
-class nsDisplayClearBackground : public nsPaintedDisplayItem {
- public:
-  nsDisplayClearBackground(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame)
-      : nsPaintedDisplayItem(aBuilder, aFrame) {}
-
-  NS_DISPLAY_DECL_NAME("ClearBackground", TYPE_CLEAR_BACKGROUND)
-
-  nsRect GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap) const override {
-    *aSnap = true;
-    return nsRect(ToReferenceFrame(), Frame()->GetSize());
-  }
-
-  nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
-                           bool* aSnap) const override {
-    *aSnap = false;
-    return GetBounds(aBuilder, aSnap);
-  }
-
-  mozilla::Maybe<nscolor> IsUniform(
-      nsDisplayListBuilder* aBuilder) const override {
-    return mozilla::Some(NS_RGBA(0, 0, 0, 0));
-  }
-
-  bool ClearsBackground() const override { return true; }
-
-  LayerState GetLayerState(
-      nsDisplayListBuilder* aBuilder, LayerManager* aManager,
-      const ContainerLayerParameters& aParameters) override {
-    return mozilla::LayerState::LAYER_ACTIVE_FORCE;
-  }
-
-  already_AddRefed<Layer> BuildLayer(
-      nsDisplayListBuilder* aBuilder, LayerManager* aManager,
-      const ContainerLayerParameters& aContainerParameters) override;
-
-  bool CreateWebRenderCommands(
-      mozilla::wr::DisplayListBuilder& aBuilder,
-      mozilla::wr::IpcResourceUpdateQueue& aResources,
-      const StackingContextHelper& aSc,
-      mozilla::layers::RenderRootStateManager* aManager,
-      nsDisplayListBuilder* aDisplayListBuilder) override;
 };
 
 /**
@@ -6016,6 +5997,16 @@ class nsDisplayOwnLayer : public nsDisplayWrapList {
  public:
   typedef mozilla::layers::ScrollbarData ScrollbarData;
 
+  enum OwnLayerType {
+    OwnLayerForTransformWithRoundedClip,
+    OwnLayerForStackingContext,
+    OwnLayerForImageBoxFrame,
+    OwnLayerForScrollbar,
+    OwnLayerForScrollThumb,
+    OwnLayerForSubdoc,
+    OwnLayerForBoxFrame
+  };
+
   /**
    * @param aFlags eGenerateSubdocInvalidations :
    * Add UserData to the created ContainerLayer, so that invalidations
@@ -6032,7 +6023,8 @@ class nsDisplayOwnLayer : public nsDisplayWrapList {
       const ActiveScrolledRoot* aActiveScrolledRoot,
       nsDisplayOwnLayerFlags aFlags = nsDisplayOwnLayerFlags::None,
       const ScrollbarData& aScrollbarData = ScrollbarData{},
-      bool aForceActive = true, bool aClearClipChain = false);
+      bool aForceActive = true, bool aClearClipChain = false,
+      uint16_t aIndex = 0);
 
   nsDisplayOwnLayer(nsDisplayListBuilder* aBuilder,
                     const nsDisplayOwnLayer& aOther)
@@ -6040,7 +6032,8 @@ class nsDisplayOwnLayer : public nsDisplayWrapList {
         mFlags(aOther.mFlags),
         mScrollbarData(aOther.mScrollbarData),
         mForceActive(aOther.mForceActive),
-        mWrAnimationId(aOther.mWrAnimationId) {
+        mWrAnimationId(aOther.mWrAnimationId),
+        mIndex(aOther.mIndex) {
     MOZ_COUNT_CTOR(nsDisplayOwnLayer);
   }
 
@@ -6071,6 +6064,8 @@ class nsDisplayOwnLayer : public nsDisplayWrapList {
     return false;
   }
 
+  uint16_t CalculatePerFrameKey() const override { return mIndex; }
+
   bool ShouldFlattenAway(nsDisplayListBuilder* aBuilder) override {
     return false;
   }
@@ -6094,6 +6089,7 @@ class nsDisplayOwnLayer : public nsDisplayWrapList {
   ScrollbarData mScrollbarData;
   bool mForceActive;
   uint64_t mWrAnimationId;
+  uint16_t mIndex;
 };
 
 class nsDisplayRenderRoot : public nsDisplayWrapList {
@@ -6688,6 +6684,77 @@ class nsDisplayMasksAndClipPaths : public nsDisplayEffectsBase {
   nsTArray<nsRect> mDestRects;
 };
 
+class nsDisplayBackdropRootContainer : public nsDisplayWrapList {
+ public:
+  nsDisplayBackdropRootContainer(nsDisplayListBuilder* aBuilder,
+                                 nsIFrame* aFrame, nsDisplayList* aList,
+                                 const ActiveScrolledRoot* aActiveScrolledRoot)
+      : nsDisplayWrapList(aBuilder, aFrame, aList, aActiveScrolledRoot, true) {
+    MOZ_COUNT_CTOR(nsDisplayBackdropRootContainer);
+  }
+
+#ifdef NS_BUILD_REFCNT_LOGGING
+  ~nsDisplayBackdropRootContainer() override {
+    MOZ_COUNT_DTOR(nsDisplayBackdropRootContainer);
+  }
+#endif
+
+  NS_DISPLAY_DECL_NAME("BackdropRootContainer", TYPE_BACKDROP_ROOT_CONTAINER)
+
+  already_AddRefed<Layer> BuildLayer(
+      nsDisplayListBuilder* aBuilder, LayerManager* aManager,
+      const ContainerLayerParameters& aContainerParameters) override;
+  LayerState GetLayerState(
+      nsDisplayListBuilder* aBuilder, LayerManager* aManager,
+      const ContainerLayerParameters& aParameters) override;
+
+  bool CreateWebRenderCommands(
+      mozilla::wr::DisplayListBuilder& aBuilder,
+      mozilla::wr::IpcResourceUpdateQueue& aResources,
+      const StackingContextHelper& aSc,
+      mozilla::layers::RenderRootStateManager* aManager,
+      nsDisplayListBuilder* aDisplayListBuilder) override;
+
+  bool ShouldFlattenAway(nsDisplayListBuilder* aBuilder) override {
+    return !aBuilder->IsPaintingForWebRender();
+  }
+};
+
+class nsDisplayBackdropFilters : public nsDisplayWrapList {
+ public:
+  nsDisplayBackdropFilters(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
+                           nsDisplayList* aList, const nsRect& aBackdropRect)
+      : nsDisplayWrapList(aBuilder, aFrame, aList),
+        mBackdropRect(aBackdropRect) {
+    MOZ_COUNT_CTOR(nsDisplayBackdropFilters);
+  }
+
+#ifdef NS_BUILD_REFCNT_LOGGING
+  ~nsDisplayBackdropFilters() override {
+    MOZ_COUNT_DTOR(nsDisplayBackdropFilters);
+  }
+#endif
+
+  NS_DISPLAY_DECL_NAME("BackdropFilter", TYPE_BACKDROP_FILTER)
+
+  bool CreateWebRenderCommands(
+      mozilla::wr::DisplayListBuilder& aBuilder,
+      mozilla::wr::IpcResourceUpdateQueue& aResources,
+      const StackingContextHelper& aSc,
+      mozilla::layers::RenderRootStateManager* aManager,
+      nsDisplayListBuilder* aDisplayListBuilder) override;
+
+  static bool CanCreateWebRenderCommands(nsDisplayListBuilder* aBuilder,
+                                         nsIFrame* aFrame);
+
+  bool ShouldFlattenAway(nsDisplayListBuilder* aBuilder) override {
+    return !aBuilder->IsPaintingForWebRender();
+  }
+
+ private:
+  nsRect mBackdropRect;
+};
+
 /**
  * A display item to paint a stacking context with filter effects set by the
  * stacking context root frame's style.
@@ -6765,9 +6832,7 @@ class nsDisplayFilters : public nsDisplayEffectsBase {
       const StackingContextHelper& aSc,
       mozilla::layers::RenderRootStateManager* aManager,
       nsDisplayListBuilder* aDisplayListBuilder) override;
-  bool CanCreateWebRenderCommands(nsDisplayListBuilder* aBuilder);
-
-  bool CreateWebRenderCSSFilters(WrFiltersHolder& wrFilters);
+  bool CanCreateWebRenderCommands();
 
  private:
   NS_DISPLAY_ALLOW_CLONING()
@@ -7019,19 +7084,18 @@ class nsDisplayTransform : public nsDisplayHitTestInfoItem {
   struct MOZ_STACK_CLASS FrameTransformProperties {
     FrameTransformProperties(const nsIFrame* aFrame, float aAppUnitsPerPixel,
                              const nsRect* aBoundsOverride);
-    // This constructor is used on the compositor (for animations).
-    // FIXME: Bug 1186329: if we want to support compositor animations for
-    // motion path, we need to update this. For now, let mMotion be Nothing().
     FrameTransformProperties(const mozilla::StyleTranslate& aTranslate,
                              const mozilla::StyleRotate& aRotate,
                              const mozilla::StyleScale& aScale,
                              const mozilla::StyleTransform& aTransform,
+                             const Maybe<mozilla::MotionPathData>& aMotion,
                              const Point3D& aToTransformOrigin)
         : mFrame(nullptr),
           mTranslate(aTranslate),
           mRotate(aRotate),
           mScale(aScale),
           mTransform(aTransform),
+          mMotion(aMotion),
           mToTransformOrigin(aToTransformOrigin) {}
 
     bool HasTransform() const {

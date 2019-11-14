@@ -24,10 +24,9 @@ namespace mozilla {
 class DecodedStreamData;
 class AudioData;
 class VideoData;
-class MediaStream;
 class OutputStreamManager;
 struct PlaybackInfoInit;
-class ProcessedMediaStream;
+class ProcessedMediaTrack;
 class TimeStamp;
 
 template <class T>
@@ -75,7 +74,6 @@ class DecodedStream : public MediaSink {
   void SendAudio(double aVolume, const PrincipalHandle& aPrincipalHandle);
   void SendVideo(const PrincipalHandle& aPrincipalHandle);
   void ResetVideo(const PrincipalHandle& aPrincipalHandle);
-  StreamTime SentDuration();
   void SendData();
   void NotifyOutput(int64_t aTime);
 
@@ -113,7 +111,6 @@ class DecodedStream : public MediaSink {
 
   media::NullableTimeUnit mStartTime;
   media::TimeUnit mLastOutputTime;
-  StreamTime mStreamTimeOffset = 0;
   MediaInfo mInfo;
 
   MediaQueue<AudioData>& mAudioQueue;

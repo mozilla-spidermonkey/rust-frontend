@@ -4,6 +4,7 @@ build/clang-plugin/.*
 config/gcc-stl-wrapper.template.h
 config/msvc-stl-wrapper.template.h
 # Generated code
+js/src/builtin/intl/LanguageTagGenerated.cpp
 js/src/builtin/intl/TimeZoneDataGenerated.h
 
 # Don't want to reformat irregexp. bug 1510128
@@ -53,6 +54,9 @@ config/windows-h-.*.h
 # break some of the tests in that directory.
 tools/clang-tidy/test/.*
 
+# We are testing the incorrect formatting.
+tools/lint/test/files/file-whitespace/
+
 # The XPTCall stubs files have some inline assembly macros
 # that get reformatted badly. See bug 1510781.
 xpcom/reflect/xptcall/md/win32/.*
@@ -63,7 +67,6 @@ xpcom/reflect/xptcall/md/unix/.*
 browser/components/translation/cld2/.*
 browser/extensions/mortar/ppapi/.*
 devtools/client/shared/sourceeditor/codemirror/.*
-devtools/client/shared/sourceeditor/tern/.*
 dom/canvas/test/webgl-conf/checkout/closure-library/.*
 dom/media/gmp/rlz/.*
 dom/media/gmp/widevine-adapter/content_decryption_module.h
@@ -114,7 +117,6 @@ js/src/vtune/jitprofiling.c
 js/src/vtune/jitprofiling.h
 js/src/vtune/legacy/.*
 media/ffvpx/.*
-media/gmp-clearkey/0.1/openaes/.*
 media/kiss_fft/.*
 media/libaom/.*
 media/libcubeb/.*
@@ -139,9 +141,8 @@ media/openmax_il/.*
 media/webrtc/signaling/src/sdp/sipcc/.*
 media/webrtc/trunk/.*
 mfbt/double-conversion/double-conversion/.*
-mfbt/lz4.*
+mfbt/lz4/.*
 mobile/android/geckoview/src/thirdparty/.*
-mobile/android/thirdparty/.*
 modules/brotli/.*
 modules/fdlibm/.*
 modules/freetype2/.*

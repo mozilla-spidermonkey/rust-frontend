@@ -1,13 +1,44 @@
 //! Immediate operands for Cranelift instructions
 //!
 //! This module defines the types of immediate operands that can appear on Cranelift instructions.
-//! Each type here should have a corresponding definition in the `cranelift.immediates` Python
-//! module in the meta language.
+//! Each type here should have a corresponding definition in the
+//! `cranelift-codegen/meta/src/shared/immediates` crate in the meta language.
 
+use alloc::vec::Vec;
 use core::fmt::{self, Display, Formatter};
-use core::mem;
 use core::str::FromStr;
 use core::{i32, u32};
+
+/// Convert a type into a vector of bytes; all implementors in this file must use little-endian
+/// orderings of bytes to match WebAssembly's little-endianness.
+pub trait IntoBytes {
+    /// Return the little-endian byte representation of the implementing type.
+    fn into_bytes(self) -> Vec<u8>;
+}
+
+impl IntoBytes for u8 {
+    fn into_bytes(self) -> Vec<u8> {
+        vec![self]
+    }
+}
+
+impl IntoBytes for i16 {
+    fn into_bytes(self) -> Vec<u8> {
+        self.to_le_bytes().to_vec()
+    }
+}
+
+impl IntoBytes for i32 {
+    fn into_bytes(self) -> Vec<u8> {
+        self.to_le_bytes().to_vec()
+    }
+}
+
+impl IntoBytes for Vec<u8> {
+    fn into_bytes(self) -> Vec<u8> {
+        self
+    }
+}
 
 /// 64-bit immediate signed integer operand.
 ///
@@ -31,6 +62,12 @@ impl Imm64 {
 impl Into<i64> for Imm64 {
     fn into(self) -> i64 {
         self.0
+    }
+}
+
+impl IntoBytes for Imm64 {
+    fn into_bytes(self) -> Vec<u8> {
+        self.0.to_le_bytes().to_vec()
     }
 }
 
@@ -261,6 +298,38 @@ impl FromStr for Uimm32 {
                 Err("Uimm32 out of range")
             }
         })
+    }
+}
+
+/// A 128-bit immediate operand.
+///
+/// This is used as an immediate value in SIMD instructions.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+pub struct V128Imm(pub [u8; 16]);
+
+impl V128Imm {
+    /// Iterate over the bytes in the constant.
+    pub fn bytes(&self) -> impl Iterator<Item = &u8> {
+        self.0.iter()
+    }
+
+    /// Convert the immediate into a vector.
+    pub fn to_vec(self) -> Vec<u8> {
+        self.0.to_vec()
+    }
+
+    /// Convert the immediate into a slice.
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0[..]
+    }
+}
+
+impl From<&[u8]> for V128Imm {
+    fn from(slice: &[u8]) -> Self {
+        assert_eq!(slice.len(), 16);
+        let mut buffer = [0; 16];
+        buffer.copy_from_slice(slice);
+        V128Imm(buffer)
     }
 }
 
@@ -638,7 +707,7 @@ impl Ieee32 {
 
     /// Create a new `Ieee32` representing the number `x`.
     pub fn with_float(x: f32) -> Self {
-        Ieee32(unsafe { mem::transmute(x) })
+        Ieee32(x.to_bits())
     }
 
     /// Get the bitwise representation.
@@ -668,6 +737,12 @@ impl FromStr for Ieee32 {
 impl From<f32> for Ieee32 {
     fn from(x: f32) -> Self {
         Ieee32::with_float(x)
+    }
+}
+
+impl IntoBytes for Ieee32 {
+    fn into_bytes(self) -> Vec<u8> {
+        self.0.to_le_bytes().to_vec()
     }
 }
 
@@ -705,7 +780,7 @@ impl Ieee64 {
 
     /// Create a new `Ieee64` representing the number `x`.
     pub fn with_float(x: f64) -> Self {
-        Ieee64(unsafe { mem::transmute(x) })
+        Ieee64(x.to_bits())
     }
 
     /// Get the bitwise representation.
@@ -738,13 +813,26 @@ impl From<f64> for Ieee64 {
     }
 }
 
+impl From<u64> for Ieee64 {
+    fn from(x: u64) -> Self {
+        Ieee64::with_float(f64::from_bits(x))
+    }
+}
+
+impl IntoBytes for Ieee64 {
+    fn into_bytes(self) -> Vec<u8> {
+        self.0.to_le_bytes().to_vec()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
     use core::fmt::Display;
+    use core::mem;
     use core::str::FromStr;
     use core::{f32, f64};
-    use std::string::ToString;
 
     #[test]
     fn format_imm64() {

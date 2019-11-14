@@ -47,6 +47,15 @@ struct BGRAColor {
   static BGRAColor Blue() { return BGRAColor(0xFF, 0x00, 0x00, 0xFF); }
   static BGRAColor Transparent() { return BGRAColor(0x00, 0x00, 0x00, 0x00); }
 
+  static BGRAColor FromPixel(uint32_t aPixel) {
+    uint8_t r, g, b, a;
+    r = (aPixel >> gfx::SurfaceFormatBit::OS_R) & 0xFF;
+    g = (aPixel >> gfx::SurfaceFormatBit::OS_G) & 0xFF;
+    b = (aPixel >> gfx::SurfaceFormatBit::OS_B) & 0xFF;
+    a = (aPixel >> gfx::SurfaceFormatBit::OS_A) & 0xFF;
+    return BGRAColor(b, g, r, a, true);
+  }
+
   BGRAColor Premultiply() const {
     if (!mPremultiplied) {
       return BGRAColor(gfxPreMultiply(mBlue, mAlpha),
@@ -159,12 +168,6 @@ bool IsSolidColor(gfx::SourceSurface* aSurface, BGRAColor aColor,
                   uint8_t aFuzz = 0);
 
 /**
- * @returns true if every pixel of @aDecoder's surface has the palette index
- * specified by @aColor.
- */
-bool IsSolidPalettedColor(Decoder* aDecoder, uint8_t aColor);
-
-/**
  * @returns true if every pixel in the range of rows specified by @aStartRow and
  * @aRowCount of @aSurface is @aColor.
  *
@@ -176,13 +179,6 @@ bool RowsAreSolidColor(gfx::SourceSurface* aSurface, int32_t aStartRow,
                        int32_t aRowCount, BGRAColor aColor, uint8_t aFuzz = 0);
 
 /**
- * @returns true if every pixel in the range of rows specified by @aStartRow and
- * @aRowCount of @aDecoder's surface has the palette index specified by @aColor.
- */
-bool PalettedRowsAreSolidColor(Decoder* aDecoder, int32_t aStartRow,
-                               int32_t aRowCount, uint8_t aColor);
-
-/**
  * @returns true if every pixel in the rect specified by @aRect is @aColor.
  *
  * If @aFuzz is nonzero, a tolerance of @aFuzz is allowed in each color
@@ -191,13 +187,6 @@ bool PalettedRowsAreSolidColor(Decoder* aDecoder, int32_t aStartRow,
  */
 bool RectIsSolidColor(gfx::SourceSurface* aSurface, const gfx::IntRect& aRect,
                       BGRAColor aColor, uint8_t aFuzz = 0);
-
-/**
- * @returns true if every pixel in the rect specified by @aRect has the palette
- * index specified by @aColor.
- */
-bool PalettedRectIsSolidColor(Decoder* aDecoder, const gfx::IntRect& aRect,
-                              uint8_t aColor);
 
 /**
  * @returns true if the pixels in @aRow of @aSurface match the pixels given in
@@ -244,9 +233,9 @@ class CountResumes : public IResumable {
  * that requires a decoder to initialize or to allocate surfaces but doesn't
  * actually need the decoder to do any decoding.
  *
- * XXX(seth): We only need this because SurfaceSink and PalettedSurfaceSink
- * defer to the decoder for surface allocation. Once all decoders use
- * SurfacePipe we won't need to do that anymore and we can remove this function.
+ * XXX(seth): We only need this because SurfaceSink defer to the decoder for
+ * surface allocation. Once all decoders use SurfacePipe we won't need to do
+ * that anymore and we can remove this function.
  */
 already_AddRefed<Decoder> CreateTrivialDecoder();
 
@@ -350,19 +339,6 @@ void CheckGeneratedSurface(gfx::SourceSurface* aSurface,
                            const BGRAColor& aOuterColor, uint8_t aFuzz = 0);
 
 /**
- * Checks a generated paletted image for correctness. Reports any unexpected
- * deviation from the expected image as GTest failures.
- *
- * @param aDecoder The decoder which contains the image. The decoder's current
- *                 frame will be checked.
- * @param aRect The region in the space of the output surface that the filter
- *              pipeline will actually write to. It's expected that pixels in
- *              this region have a palette index of 255, while pixels outside
- *              this region have a palette index of 0.
- */
-void CheckGeneratedPalettedImage(Decoder* aDecoder, const gfx::IntRect& aRect);
-
-/**
  * Tests the result of calling WritePixels() using the provided SurfaceFilter
  * pipeline. The pipeline must be a normal (i.e., non-paletted) pipeline.
  *
@@ -399,11 +375,13 @@ void CheckWritePixels(Decoder* aDecoder, SurfaceFilter* aFilter,
 
 /**
  * Tests the result of calling WritePixels() using the provided SurfaceFilter
- * pipeline. The pipeline must be a paletted pipeline.
+ * pipeline. Allows for control over the input color to write, and the expected
+ * output color.
  * @see CheckWritePixels() for documentation of the arguments.
  */
-void CheckPalettedWritePixels(
-    Decoder* aDecoder, SurfaceFilter* aFilter,
+void CheckTransformedWritePixels(
+    Decoder* aDecoder, SurfaceFilter* aFilter, const BGRAColor& aInputColor,
+    const BGRAColor& aOutputColor,
     const Maybe<gfx::IntRect>& aOutputRect = Nothing(),
     const Maybe<gfx::IntRect>& aInputRect = Nothing(),
     const Maybe<gfx::IntRect>& aInputWriteRect = Nothing(),

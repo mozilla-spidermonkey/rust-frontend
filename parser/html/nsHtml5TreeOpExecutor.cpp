@@ -880,9 +880,7 @@ nsIURI* nsHtml5TreeOpExecutor::GetViewSourceBaseURI() {
     }
 
     nsCOMPtr<nsIURI> orig = mDocument->GetOriginalURI();
-    bool isViewSource;
-    orig->SchemeIs("view-source", &isViewSource);
-    if (isViewSource) {
+    if (orig->SchemeIs("view-source")) {
       nsCOMPtr<nsINestedURI> nested = do_QueryInterface(orig);
       NS_ASSERTION(nested, "URI with scheme view-source didn't QI to nested!");
       nested->GetInnerURI(getter_AddRefs(mViewSourceBaseURI));
@@ -899,11 +897,10 @@ bool nsHtml5TreeOpExecutor::IsExternalViewSource() {
   if (!StaticPrefs::view_source_editor_external()) {
     return false;
   }
-  bool isViewSource = false;
   if (mDocumentURI) {
-    mDocumentURI->SchemeIs("view-source", &isViewSource);
+    return mDocumentURI->SchemeIs("view-source");
   }
-  return isViewSource;
+  return false;
 }
 
 // Speculative loading
@@ -951,27 +948,26 @@ bool nsHtml5TreeOpExecutor::ShouldPreloadURI(nsIURI* aURI) {
   return mPreloadedURLs.EnsureInserted(spec);
 }
 
-net::ReferrerPolicy nsHtml5TreeOpExecutor::GetPreloadReferrerPolicy(
+dom::ReferrerPolicy nsHtml5TreeOpExecutor::GetPreloadReferrerPolicy(
     const nsAString& aReferrerPolicy) {
-  net::ReferrerPolicy referrerPolicy =
-      net::AttributeReferrerPolicyFromString(aReferrerPolicy);
+  dom::ReferrerPolicy referrerPolicy =
+      dom::ReferrerInfo::ReferrerPolicyAttributeFromString(aReferrerPolicy);
   return GetPreloadReferrerPolicy(referrerPolicy);
 }
 
-net::ReferrerPolicy nsHtml5TreeOpExecutor::GetPreloadReferrerPolicy(
+dom::ReferrerPolicy nsHtml5TreeOpExecutor::GetPreloadReferrerPolicy(
     ReferrerPolicy aReferrerPolicy) {
-  if (aReferrerPolicy != net::RP_Unset) {
+  if (aReferrerPolicy != dom::ReferrerPolicy::_empty) {
     return aReferrerPolicy;
   }
 
-  return static_cast<net::ReferrerPolicy>(
-      mDocument->GetPreloadReferrerInfo()->GetReferrerPolicy());
+  return mDocument->GetPreloadReferrerInfo()->ReferrerPolicy();
 }
 
 void nsHtml5TreeOpExecutor::PreloadScript(
     const nsAString& aURL, const nsAString& aCharset, const nsAString& aType,
     const nsAString& aCrossOrigin, const nsAString& aIntegrity,
-    net::ReferrerPolicy aReferrerPolicy, bool aScriptFromHead, bool aAsync,
+    dom::ReferrerPolicy aReferrerPolicy, bool aScriptFromHead, bool aAsync,
     bool aDefer, bool aNoModule) {
   nsCOMPtr<nsIURI> uri = ConvertIfNotPreloadedYet(aURL);
   if (!uri) {

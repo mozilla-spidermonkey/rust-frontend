@@ -131,8 +131,10 @@ WebExtensionPolicy::WebExtensionPolicy(GlobalObject& aGlobal,
     : mId(NS_AtomizeMainThread(aInit.mId)),
       mHostname(aInit.mMozExtensionHostname),
       mName(aInit.mName),
-      mContentSecurityPolicy(aInit.mContentSecurityPolicy),
+      mExtensionPageCSP(aInit.mExtensionPageCSP),
+      mContentScriptCSP(aInit.mContentScriptCSP),
       mLocalizeCallback(aInit.mLocalizeCallback),
+      mIsPrivileged(aInit.mIsPrivileged),
       mPermissions(new AtomSet(aInit.mPermissions)) {
   if (!ParseGlobs(aGlobal, aInit.mWebAccessibleResources, mWebAccessiblePaths,
                   aRv)) {
@@ -157,8 +159,12 @@ WebExtensionPolicy::WebExtensionPolicy(GlobalObject& aGlobal,
         aInit.mBackgroundScripts.Value());
   }
 
-  if (mContentSecurityPolicy.IsVoid()) {
-    EPS().DefaultCSP(mContentSecurityPolicy);
+  if (mExtensionPageCSP.IsVoid()) {
+    EPS().DefaultCSP(mExtensionPageCSP);
+  }
+
+  if (mContentScriptCSP.IsVoid()) {
+    EPS().DefaultCSP(mContentScriptCSP);
   }
 
   mContentScripts.SetCapacity(aInit.mContentScripts.Length());
@@ -670,8 +676,7 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE(MozDocumentMatcher)
 
 /* static */
 already_AddRefed<DocumentObserver> DocumentObserver::Constructor(
-    GlobalObject& aGlobal, dom::MozDocumentCallback& aCallbacks,
-    ErrorResult& aRv) {
+    GlobalObject& aGlobal, dom::MozDocumentCallback& aCallbacks) {
   RefPtr<DocumentObserver> matcher =
       new DocumentObserver(aGlobal.GetAsSupports(), aCallbacks);
   return matcher.forget();

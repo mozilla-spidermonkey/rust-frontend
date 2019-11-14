@@ -1,5 +1,3 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -814,7 +812,7 @@ VariablesView.prototype = {
   /**
    * Listener handling a key down event on the view.
    */
-  /* eslint-disable complexity */
+  // eslint-disable-next-line complexity
   _onViewKeyDown: function(e) {
     const item = this.getFocusedItem();
 
@@ -921,7 +919,6 @@ VariablesView.prototype = {
         item._onAddProperty(e);
     }
   },
-  /* eslint-enable complexity */
 
   /**
    * Sets the text displayed in this container when there are no available items.
@@ -2906,11 +2903,12 @@ Variable.prototype = extend(Scope.prototype, {
     event && event.stopPropagation();
 
     return async function() {
-      await this.toolbox.initInspector();
-
       let nodeFront = this._nodeFront;
       if (!nodeFront) {
-        nodeFront = await this.toolbox.walker.gripToNodeFront(this._valueGrip);
+        const inspectorFront = await this.toolbox.target.getFront("inspector");
+        nodeFront = await inspectorFront.getNodeFrontFromNodeGrip(
+          this._valueGrip
+        );
       }
 
       if (nodeFront) {
@@ -2933,15 +2931,18 @@ Variable.prototype = extend(Scope.prototype, {
    * linked to the toolbox's inspector, then highlight the corresponding node
    */
   highlightDomNode: async function() {
-    if (this.toolbox) {
-      await this.toolbox.initInspector();
-      if (!this._nodeFront) {
-        this.nodeFront = await this.toolbox.walker.gripToNodeFront(
-          this._valueGrip
-        );
-      }
-      await this.toolbox.highlighter.highlight(this._nodeFront);
+    if (!this.toolbox) {
+      return;
     }
+
+    if (!this._nodeFront) {
+      const inspectorFront = await this.toolbox.target.getFront("inspector");
+      this.nodeFront = await inspectorFront.getNodeFrontFromNodeGrip(
+        this._valueGrip
+      );
+    }
+
+    await this.nodeFront.highlighterFront.highlight(this._nodeFront);
   },
 
   /**
@@ -2949,9 +2950,11 @@ Variable.prototype = extend(Scope.prototype, {
    * @see highlightDomNode
    */
   unhighlightDomNode: function() {
-    if (this.toolbox) {
-      this.toolbox.highlighter.unhighlight();
+    if (!this.toolbox) {
+      return;
     }
+
+    this.nodeFront.highlighterFront.unhighlight();
   },
 
   /**
@@ -2959,7 +2962,7 @@ Variable.prototype = extend(Scope.prototype, {
    * and specifies if it's a 'this', '<exception>', '<return>' or '__proto__'
    * reference.
    */
-  /* eslint-disable complexity */
+  // eslint-disable-next-line complexity
   _setAttributes: function() {
     const ownerView = this.ownerView;
     if (ownerView.preventDescriptorModifiers) {
@@ -3017,7 +3020,6 @@ Variable.prototype = extend(Scope.prototype, {
       target.setAttribute("pseudo-item", "");
     }
   },
-  /* eslint-enable complexity */
 
   /**
    * Adds the necessary event listeners for this variable.

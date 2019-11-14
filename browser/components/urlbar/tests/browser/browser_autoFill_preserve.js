@@ -215,8 +215,8 @@ add_task(async function backspaceNoAutofill() {
 function checkKeys(testTuples) {
   for (let [key, value, selectedIndex] of testTuples) {
     EventUtils.synthesizeKey(key);
-    Assert.equal(UrlbarTestUtils.getSelectedIndex(window), selectedIndex);
-    Assert.equal(gURLBar.value, value);
+    Assert.equal(UrlbarTestUtils.getSelectedRowIndex(window), selectedIndex);
+    Assert.equal(gURLBar.untrimmedValue, value);
   }
 }
 

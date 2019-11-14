@@ -59,6 +59,7 @@ class TabboxPanel extends Component {
       toggleNetworkDetails: PropTypes.func,
       openNetworkDetails: PropTypes.func.isRequired,
       showWebSocketsTab: PropTypes.bool,
+      targetSearchResult: PropTypes.object,
     };
   }
 
@@ -90,6 +91,7 @@ class TabboxPanel extends Component {
       sourceMapService,
       toggleNetworkDetails,
       showWebSocketsTab,
+      targetSearchResult,
     } = this.props;
 
     if (!request) {
@@ -123,12 +125,14 @@ class TabboxPanel extends Component {
         {
           id: PANELS.HEADERS,
           title: HEADERS_TITLE,
+          className: "panel-with-code",
         },
         HeadersPanel({
           cloneSelectedRequest,
           connector,
           openLink,
           request,
+          targetSearchResult,
         })
       ),
       showWebSocketsPanel &&
@@ -136,6 +140,7 @@ class TabboxPanel extends Component {
           {
             id: PANELS.MESSAGES,
             title: MESSAGES_TITLE,
+            className: "panel-with-code",
           },
           WebSocketsPanel({
             connector,
@@ -145,26 +150,40 @@ class TabboxPanel extends Component {
         {
           id: PANELS.COOKIES,
           title: COOKIES_TITLE,
+          className: "panel-with-code",
         },
         CookiesPanel({
           connector,
           openLink,
           request,
+          targetSearchResult,
         })
       ),
       TabPanel(
         {
           id: PANELS.PARAMS,
           title: PARAMS_TITLE,
+          className: "panel-with-code",
         },
-        ParamsPanel({ connector, openLink, request })
+        ParamsPanel({
+          connector,
+          openLink,
+          request,
+          targetSearchResult,
+        })
       ),
       TabPanel(
         {
           id: PANELS.RESPONSE,
           title: RESPONSE_TITLE,
+          className: "panel-with-code",
         },
-        ResponsePanel({ request, openLink, connector })
+        ResponsePanel({
+          request,
+          openLink,
+          connector,
+          targetSearchResult,
+        })
       ),
       (request.fromCache || request.status == "304") &&
         TabPanel(
@@ -190,6 +209,7 @@ class TabboxPanel extends Component {
           {
             id: PANELS.STACK_TRACE,
             title: STACK_TRACE_TITLE,
+            className: "panel-with-code",
           },
           StackTracePanel({ connector, openLink, request, sourceMapService })
         ),

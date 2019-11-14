@@ -3,29 +3,30 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "Services",
-  "resource://gre/modules/Services.jsm"
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
 );
-ChromeUtils.defineModuleGetter(
+XPCOMUtils.defineLazyModuleGetters(this, {
+  Services: "resource://gre/modules/Services.jsm",
+  EveryWindow: "resource:///modules/EveryWindow.jsm",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
+});
+XPCOMUtils.defineLazyServiceGetter(
   this,
-  "EveryWindow",
-  "resource:///modules/EveryWindow.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "PrivateBrowsingUtils",
-  "resource://gre/modules/PrivateBrowsingUtils.jsm"
+  "TrackingDBService",
+  "@mozilla.org/tracking-db-service;1",
+  "nsITrackingDBService"
 );
 
 const WHATSNEW_ENABLED_PREF = "browser.messaging-system.whatsNewPanel.enabled";
+const PROTECTIONS_PANEL_INFOMSG_PREF =
+  "browser.protections_panel.infoMessage.seen";
 
 const TOOLBAR_BUTTON_ID = "whats-new-menu-button";
 const APPMENU_BUTTON_ID = "appMenu-whatsnew-button";
-const PANEL_HEADER_SELECTOR = "#PanelUI-whatsNew-title > label";
 
 const BUTTON_STRING_ID = "cfr-whatsnew-button";
+const WHATS_NEW_PANEL_SELECTOR = "PanelUI-whatsNew-message-container";
 
 class _ToolbarPanelHub {
   constructor() {
@@ -34,11 +35,17 @@ class _ToolbarPanelHub {
     this._hideAppmenuButton = this._hideAppmenuButton.bind(this);
     this._showToolbarButton = this._showToolbarButton.bind(this);
     this._hideToolbarButton = this._hideToolbarButton.bind(this);
+    this.insertProtectionPanelMessage = this.insertProtectionPanelMessage.bind(
+      this
+    );
+
+    this.state = null;
   }
 
-  async init(waitForInitialized, { getMessages, dispatch }) {
+  async init(waitForInitialized, { getMessages, dispatch, handleUserAction }) {
     this._getMessages = getMessages;
     this._dispatch = dispatch;
+    this._handleUserAction = handleUserAction;
     // Wait for ASRouter messages to become available in order to know
     // if we can show the What's New panel
     await waitForInitialized;
@@ -49,6 +56,13 @@ class _ToolbarPanelHub {
     }
     // Listen for pref changes that could turn off the feature
     Services.prefs.addObserver(WHATSNEW_ENABLED_PREF, this);
+
+    this.state = {
+      protectionPanelMessageSeen: Services.prefs.getBoolPref(
+        PROTECTIONS_PANEL_INFOMSG_PREF,
+        false
+      ),
+    };
   }
 
   uninit() {
@@ -81,6 +95,8 @@ class _ToolbarPanelHub {
 
   maybeInsertFTL(win) {
     win.MozXULElement.insertFTLIfNeeded("browser/newtab/asrouter.ftl");
+    win.MozXULElement.insertFTLIfNeeded("browser/branding/brandings.ftl");
+    win.MozXULElement.insertFTLIfNeeded("browser/branding/sync-brand.ftl");
   }
 
   // Turns on the Appmenu (hamburger menu) button for all open windows and future windows.
@@ -123,22 +139,38 @@ class _ToolbarPanelHub {
     });
   }
 
+  // Newer messages first and use `order` field to decide between messages
+  // with the same timestamp
+  _sortWhatsNewMessages(m1, m2) {
+    // Sort by published_date in descending order.
+    if (m1.content.published_date === m2.content.published_date) {
+      // Ascending order
+      return m1.order - m2.order;
+    }
+    if (m1.content.published_date > m2.content.published_date) {
+      return -1;
+    }
+    return 1;
+  }
+
   // Render what's new messages into the panel.
-  async renderMessages(win, doc, containerId) {
-    const messages = (await this.messages).sort((m1, m2) => {
-      // Sort by published_date in descending order.
-      if (m1.content.published_date === m2.content.published_date) {
-        return 0;
-      }
-      if (m1.content.published_date > m2.content.published_date) {
-        return -1;
-      }
-      return 1;
-    });
+  async renderMessages(win, doc, containerId, options = {}) {
+    const messages =
+      (options.force && options.messages) ||
+      (await this.messages).sort(this._sortWhatsNewMessages);
     const container = doc.getElementById(containerId);
 
-    if (messages && !container.querySelector(".whatsNew-message")) {
+    if (messages) {
+      // Targeting attribute state might have changed making new messages
+      // available and old messages invalid, we need to refresh
+      for (const prevMessageEl of container.querySelectorAll(
+        ".whatsNew-message"
+      )) {
+        container.removeChild(prevMessageEl);
+      }
       let previousDate = 0;
+      // Get and store any variable part of the message content
+      this.state.contentArguments = await this._contentArguments();
       for (let message of messages) {
         container.appendChild(
           this._createMessageElements(win, doc, message, previousDate)
@@ -167,6 +199,46 @@ class _ToolbarPanelHub {
     });
   }
 
+  removeMessages(win, containerId) {
+    const doc = win.document;
+    const messageNodes = doc
+      .getElementById(containerId)
+      .querySelectorAll(".whatsNew-message");
+    for (const messageNode of messageNodes) {
+      messageNode.remove();
+    }
+  }
+
+  /**
+   * Dispatch the action defined in the message and user telemetry event.
+   */
+  _dispatchUserAction(win, message) {
+    this._handleUserAction({
+      target: win,
+      data: {
+        type: message.content.cta_type,
+        data: {
+          args: message.content.cta_url,
+          where: "tabshifted",
+        },
+      },
+    });
+
+    this.sendUserEventTelemetry(win, "CLICK", message);
+  }
+
+  /**
+   * Attach event listener to dispatch message defined action.
+   */
+  _attachClickListener(win, element, message) {
+    // Add event listener for `mouseup` not to overlap with the
+    // `mousedown` & `click` events dispatched from PanelMultiView.jsm
+    // https://searchfox.org/mozilla-central/rev/7531325c8660cfa61bf71725f83501028178cbb9/browser/components/customizableui/PanelMultiView.jsm#1830-1837
+    element.addEventListener("mouseup", () => {
+      this._dispatchUserAction(win, message);
+    });
+  }
+
   _createMessageElements(win, doc, message, previousDate) {
     const { content } = message;
     const messageEl = this._createElement(doc, "div");
@@ -175,24 +247,24 @@ class _ToolbarPanelHub {
     // Only render date if it is different from the one rendered before.
     if (content.published_date !== previousDate) {
       messageEl.appendChild(
-        this._createDateElement(doc, content.published_date)
+        this._createElement(doc, "p", {
+          classList: "whatsNew-message-date",
+          content: new Date(content.published_date).toLocaleDateString(
+            "default",
+            {
+              month: "long",
+              day: "numeric",
+              year: "numeric",
+            }
+          ),
+        })
       );
     }
 
-    const wrapperEl = this._createElement(doc, "div");
+    const wrapperEl = this._createElement(doc, "button");
+    wrapperEl.doCommand = () => this._dispatchUserAction(win, message);
     wrapperEl.classList.add("whatsNew-message-body");
     messageEl.appendChild(wrapperEl);
-    wrapperEl.addEventListener("click", () => {
-      win.ownerGlobal.openLinkIn(content.cta_url, "tabshifted", {
-        private: false,
-        triggeringPrincipal: Services.scriptSecurityManager.createNullPrincipal(
-          {}
-        ),
-        csp: null,
-      });
-
-      this.sendUserEventTelemetry(win, "CLICK", message);
-    });
 
     if (content.icon_url) {
       wrapperEl.classList.add("has-icon");
@@ -203,45 +275,141 @@ class _ToolbarPanelHub {
       wrapperEl.appendChild(iconEl);
     }
 
-    const titleEl = this._createElement(doc, "h2");
-    titleEl.classList.add("whatsNew-message-title");
-    this._setString(doc, titleEl, content.title);
-    wrapperEl.appendChild(titleEl);
-
-    const bodyEl = this._createElement(doc, "p");
-    this._setString(doc, bodyEl, content.body);
-    wrapperEl.appendChild(bodyEl);
+    wrapperEl.appendChild(this._createMessageContent(win, doc, content));
 
     if (content.link_text) {
-      const linkEl = this._createElement(doc, "button");
-      linkEl.classList.add("text-link");
-      this._setString(doc, linkEl, content.link_text);
+      const anchorEl = this._createElement(doc, "a", {
+        classList: "text-link",
+        content: content.link_text,
+      });
+      anchorEl.doCommand = () => this._dispatchUserAction(win, message);
+      wrapperEl.appendChild(anchorEl);
+    }
+
+    // Attach event listener on entire message container
+    this._attachClickListener(win, messageEl, message);
+
+    return messageEl;
+  }
+
+  /**
+   * Return message title (optional subtitle) and body
+   */
+  _createMessageContent(win, doc, content) {
+    const wrapperEl = new win.DocumentFragment();
+
+    wrapperEl.appendChild(
+      this._createElement(doc, "h2", {
+        classList: "whatsNew-message-title",
+        content: content.title,
+      })
+    );
+
+    switch (content.layout) {
+      case "tracking-protections":
+        wrapperEl.appendChild(
+          this._createElement(doc, "h4", {
+            classList: "whatsNew-message-subtitle",
+            content: content.subtitle,
+          })
+        );
+        wrapperEl.appendChild(
+          this._createElement(doc, "h2", {
+            classList: "whatsNew-message-title-large",
+            content: this.state.contentArguments.blockedCount,
+          })
+        );
+        break;
+    }
+
+    wrapperEl.appendChild(
+      this._createElement(doc, "p", { content: content.body })
+    );
+
+    return wrapperEl;
+  }
+
+  _createHeroElement(win, doc, message) {
+    const messageEl = this._createElement(doc, "div");
+    messageEl.setAttribute("id", "protections-popup-message");
+    messageEl.classList.add("whatsNew-hero-message");
+    const wrapperEl = this._createElement(doc, "div");
+    wrapperEl.classList.add("whatsNew-message-body");
+    messageEl.appendChild(wrapperEl);
+
+    wrapperEl.appendChild(
+      this._createElement(doc, "h2", {
+        classList: "whatsNew-message-title",
+        content: message.content.title,
+      })
+    );
+    wrapperEl.appendChild(
+      this._createElement(doc, "p", { content: message.content.body })
+    );
+
+    if (message.content.link_text) {
+      let linkEl = this._createElement(doc, "a", {
+        classList: "text-link",
+        content: message.content.link_text,
+      });
       wrapperEl.appendChild(linkEl);
+      this._attachClickListener(win, linkEl, message);
+    } else {
+      this._attachClickListener(win, wrapperEl, message);
     }
 
     return messageEl;
   }
 
-  _createElement(doc, elem) {
-    return doc.createElementNS("http://www.w3.org/1999/xhtml", elem);
+  _createElement(doc, elem, options = {}) {
+    const node = doc.createElementNS("http://www.w3.org/1999/xhtml", elem);
+    if (options.classList) {
+      node.classList.add(options.classList);
+    }
+    if (options.content) {
+      this._setString(doc, node, options.content);
+    }
+
+    return node;
   }
 
-  _createDateElement(doc, date) {
-    const dateEl = this._createElement(doc, "p");
-    dateEl.classList.add("whatsNew-message-date");
-    dateEl.textContent = new Date(date).toLocaleDateString("default", {
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-    });
-    return dateEl;
+  async _contentArguments() {
+    // Between now and 6 weeks ago
+    const dateTo = new Date();
+    const dateFrom = new Date(dateTo.getTime() - 42 * 24 * 60 * 60 * 1000);
+    const eventsByDate = await TrackingDBService.getEventsByDateRange(
+      dateFrom,
+      dateTo
+    );
+    // Count all events in the past 6 weeks
+    const totalEvents = eventsByDate.reduce(
+      (acc, day) => acc + day.getResultByName("count"),
+      0
+    );
+    return {
+      // Keys need to match variable names used in asrouter.ftl
+      // `earliestDate` will be either 6 weeks ago or when tracking recording
+      // started. Whichever is more recent.
+      earliestDate: new Date(
+        Math.max(
+          new Date(await TrackingDBService.getEarliestRecordedDate()),
+          dateFrom
+        )
+      ).getTime(),
+      blockedCount: totalEvents.toLocaleString(),
+    };
   }
 
   // If `string_id` is present it means we are relying on fluent for translations.
   // Otherwise, we have a vanilla string.
   _setString(doc, el, stringObj) {
-    if (stringObj.string_id) {
-      doc.l10n.setAttributes(el, stringObj.string_id);
+    if (stringObj && stringObj.string_id) {
+      doc.l10n.setAttributes(
+        el,
+        stringObj.string_id,
+        // Pass all available arguments to Fluent
+        this.state.contentArguments
+      );
     } else {
       el.textContent = stringObj;
     }
@@ -250,7 +418,7 @@ class _ToolbarPanelHub {
   // If `string_id` is present it means we are relying on fluent for translations.
   // Otherwise, we have a vanilla string.
   _setTextAttribute(doc, el, attr, stringObj) {
-    if (stringObj.string_id) {
+    if (stringObj && stringObj.string_id) {
       doc.l10n.setAttributes(el, stringObj.string_id);
     } else {
       el.setAttribute(attr, stringObj);
@@ -274,13 +442,6 @@ class _ToolbarPanelHub {
     const document = win.browser.ownerDocument;
     this.maybeInsertFTL(win);
     this._showElement(document, TOOLBAR_BUTTON_ID, BUTTON_STRING_ID);
-    // The toolbar dropdown panel uses this extra header element that is hidden
-    // in the appmenu subview version of the panel. We only need to set it
-    // when showing the toolbar button.
-    document.l10n.setAttributes(
-      document.querySelector(PANEL_HEADER_SELECTOR),
-      "cfr-whatsnew-panel-header"
-    );
   }
 
   _hideToolbarButton(win) {
@@ -316,9 +477,87 @@ class _ToolbarPanelHub {
         message_id: message.id,
         bucket_id: message.id,
         event,
-        value: options.value,
+        event_context: options.value,
       });
     }
+  }
+
+  /**
+   * Inserts a message into the Protections Panel. The message is visible once
+   * and afterwards set in a collapsed state. It can be shown again using the
+   * info button in the panel header.
+   */
+  async insertProtectionPanelMessage(event) {
+    const win = event.target.ownerGlobal;
+    this.maybeInsertFTL(win);
+
+    const doc = event.target.ownerDocument;
+    const container = doc.getElementById("messaging-system-message-container");
+    const infoButton = doc.getElementById("protections-popup-info-button");
+    const panelContainer = doc.getElementById("protections-popup");
+    const toggleMessage = () => {
+      container.toggleAttribute("disabled");
+      infoButton.toggleAttribute("checked");
+      panelContainer.toggleAttribute("infoMessageShowing");
+    };
+    if (!container.childElementCount) {
+      const message = await this._getMessages({
+        template: "protections_panel",
+        triggerId: "protectionsPanelOpen",
+      });
+      if (message) {
+        const messageEl = this._createHeroElement(win, doc, message);
+        container.appendChild(messageEl);
+        infoButton.addEventListener("click", toggleMessage);
+        this.sendUserEventTelemetry(win, "IMPRESSION", message);
+      }
+    }
+    // Message is collapsed by default. If it was never shown before we want
+    // to expand it
+    if (
+      !this.state.protectionPanelMessageSeen &&
+      container.hasAttribute("disabled")
+    ) {
+      toggleMessage();
+    }
+    // Save state that we displayed the message
+    if (!this.state.protectionPanelMessageSeen) {
+      Services.prefs.setBoolPref(PROTECTIONS_PANEL_INFOMSG_PREF, true);
+      this.state.protectionPanelMessageSeen = true;
+    }
+    // Collapse the message after the panel is hidden so we don't get the
+    // animation when opening the panel
+    panelContainer.addEventListener(
+      "popuphidden",
+      () => {
+        if (
+          this.state.protectionPanelMessageSeen &&
+          !container.hasAttribute("disabled")
+        ) {
+          toggleMessage();
+        }
+      },
+      {
+        once: true,
+      }
+    );
+  }
+
+  /**
+   * @param {object} browser MessageChannel target argument as a response to a user action
+   * @param {object} message Message selected from devtools page
+   */
+  forceShowMessage(browser, message) {
+    const win = browser.browser.ownerGlobal;
+    const doc = browser.browser.ownerDocument;
+    this.removeMessages(win, WHATS_NEW_PANEL_SELECTOR);
+    this.renderMessages(win, doc, WHATS_NEW_PANEL_SELECTOR, {
+      force: true,
+      messages: [message],
+    });
+    win.PanelUI.panel.addEventListener("popuphidden", event =>
+      this.removeMessages(event.target.ownerGlobal, WHATS_NEW_PANEL_SELECTOR)
+    );
   }
 }
 

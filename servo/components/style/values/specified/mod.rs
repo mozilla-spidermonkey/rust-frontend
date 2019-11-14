@@ -8,11 +8,12 @@
 
 use super::computed::transform::DirectionVector;
 use super::computed::{Context, ToComputedValue};
+use super::generics::grid::ImplicitGridTracks as GenericImplicitGridTracks;
 use super::generics::grid::{GridLine as GenericGridLine, TrackBreadth as GenericTrackBreadth};
 use super::generics::grid::{TrackList as GenericTrackList, TrackSize as GenericTrackSize};
 use super::generics::transform::IsParallelTo;
 use super::generics::{self, GreaterThanOrEqualToOne, NonNegative};
-use super::{Auto, CSSFloat, CSSInteger, Either, None_};
+use super::{CSSFloat, CSSInteger, Either, None_};
 use crate::context::QuirksMode;
 use crate::parser::{Parse, ParserContext};
 use crate::values::serialize_atom_identifier;
@@ -61,7 +62,9 @@ pub use self::length::{FontRelativeLength, Length, LengthOrNumber, NonNegativeLe
 pub use self::length::{LengthOrAuto, LengthPercentage, LengthPercentageOrAuto};
 pub use self::length::{MaxSize, Size};
 pub use self::length::{NoCalcLength, ViewportPercentageLength};
-pub use self::length::{NonNegativeLengthPercentage, NonNegativeLengthPercentageOrAuto};
+pub use self::length::{
+    NonNegativeLength, NonNegativeLengthPercentage, NonNegativeLengthPercentageOrAuto,
+};
 #[cfg(feature = "gecko")]
 pub use self::list::ListStyleType;
 pub use self::list::MozListReversed;
@@ -77,11 +80,10 @@ pub use self::svg::MozContextProperties;
 pub use self::svg::{SVGLength, SVGOpacity, SVGPaint};
 pub use self::svg::{SVGPaintOrder, SVGStrokeDashArray, SVGWidth};
 pub use self::svg_path::SVGPathData;
-pub use self::table::XSpan;
 pub use self::text::{InitialLetter, LetterSpacing, LineBreak, LineHeight, TextAlign};
 pub use self::text::{OverflowWrap, TextEmphasisPosition, TextEmphasisStyle, WordBreak};
 pub use self::text::{TextAlignKeyword, TextDecorationLine, TextOverflow, WordSpacing};
-pub use self::text::{TextDecorationSkipInk, TextTransform};
+pub use self::text::{TextDecorationLength, TextDecorationSkipInk, TextTransform};
 pub use self::time::Time;
 pub use self::transform::{Rotate, Scale, Transform};
 pub use self::transform::{TransformOrigin, TransformStyle, Translate};
@@ -121,7 +123,6 @@ pub mod resolution;
 pub mod source_size_list;
 pub mod svg;
 pub mod svg_path;
-pub mod table;
 pub mod text;
 pub mod time;
 pub mod transform;
@@ -178,11 +179,24 @@ impl Parse for Number {
 
 impl Number {
     /// Returns a new number with the value `val`.
-    pub fn new(val: CSSFloat) -> Self {
-        Number {
-            value: val,
-            calc_clamping_mode: None,
+    fn new_with_clamping_mode(
+        value: CSSFloat,
+        calc_clamping_mode: Option<AllowedNumericType>,
+    ) -> Self {
+        Self {
+            value,
+            calc_clamping_mode,
         }
+    }
+
+    /// Returns this percentage as a number.
+    pub fn to_percentage(&self) -> Percentage {
+        Percentage::new_with_clamping_mode(self.value, self.calc_clamping_mode)
+    }
+
+    /// Returns a new number with the value `val`.
+    pub fn new(val: CSSFloat) -> Self {
+        Self::new_with_clamping_mode(val, None)
     }
 
     /// Returns whether this number came from a `calc()` expression.
@@ -369,6 +383,22 @@ impl NumberOrPercentage {
     ) -> Result<Self, ParseError<'i>> {
         Self::parse_with_clamping_mode(context, input, AllowedNumericType::NonNegative)
     }
+
+    /// Convert the number or the percentage to a number.
+    pub fn to_percentage(self) -> Percentage {
+        match self {
+            Self::Percentage(p) => p,
+            Self::Number(n) => n.to_percentage(),
+        }
+    }
+
+    /// Convert the number or the percentage to a number.
+    pub fn to_number(self) -> Number {
+        match self {
+            Self::Percentage(p) => p.to_number(),
+            Self::Number(n) => n,
+        }
+    }
 }
 
 impl Parse for NumberOrPercentage {
@@ -418,17 +448,7 @@ impl Parse for Opacity {
         context: &ParserContext,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self, ParseError<'i>> {
-        let number = match NumberOrPercentage::parse(context, input)? {
-            NumberOrPercentage::Percentage(p) => Number {
-                value: p.get(),
-                calc_clamping_mode: if p.is_calc() {
-                    Some(AllowedNumericType::All)
-                } else {
-                    None
-                },
-            },
-            NumberOrPercentage::Number(n) => n,
-        };
+        let number = NumberOrPercentage::parse(context, input)?.to_number();
         Ok(Opacity(number))
     }
 }
@@ -626,6 +646,9 @@ pub type TrackBreadth = GenericTrackBreadth<LengthPercentage>;
 /// The specified value of a grid `<track-size>`
 pub type TrackSize = GenericTrackSize<LengthPercentage>;
 
+/// The specified value of a grid `<track-size>+`
+pub type ImplicitGridTracks = GenericImplicitGridTracks<TrackSize>;
+
 /// The specified value of a grid `<track-list>`
 /// (could also be `<auto-track-list>` or `<explicit-track-list>`)
 pub type TrackList = GenericTrackList<LengthPercentage, Integer>;
@@ -637,7 +660,7 @@ pub type GridLine = GenericGridLine<Integer>;
 pub type GridTemplateComponent = GenericGridTemplateComponent<LengthPercentage, Integer>;
 
 /// rect(...)
-pub type ClipRect = generics::ClipRect<LengthOrAuto>;
+pub type ClipRect = generics::GenericClipRect<LengthOrAuto>;
 
 impl Parse for ClipRect {
     fn parse<'i, 't>(
@@ -650,7 +673,7 @@ impl Parse for ClipRect {
 
 impl ClipRect {
     /// Parses a rect(<top>, <left>, <bottom>, <right>), allowing quirks.
-    pub fn parse_quirky<'i, 't>(
+    fn parse_quirky<'i, 't>(
         context: &ParserContext,
         input: &mut Parser<'i, 't>,
         allow_quirks: AllowQuirks,
@@ -694,7 +717,7 @@ impl ClipRect {
 }
 
 /// rect(...) | auto
-pub type ClipRectOrAuto = Either<ClipRect, Auto>;
+pub type ClipRectOrAuto = generics::GenericClipRectOrAuto<ClipRect>;
 
 impl ClipRectOrAuto {
     /// Parses a ClipRect or Auto, allowing quirks.
@@ -704,10 +727,10 @@ impl ClipRectOrAuto {
         allow_quirks: AllowQuirks,
     ) -> Result<Self, ParseError<'i>> {
         if let Ok(v) = input.try(|i| ClipRect::parse_quirky(context, i, allow_quirks)) {
-            Ok(Either::First(v))
-        } else {
-            Auto::parse(context, input).map(Either::Second)
+            return Ok(generics::GenericClipRectOrAuto::Rect(v));
         }
+        input.expect_ident_matching("auto")?;
+        Ok(generics::GenericClipRectOrAuto::Auto)
     }
 }
 

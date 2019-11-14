@@ -51,7 +51,6 @@ namespace recordreplay {
 #define FOR_EACH_ORIGINAL_FUNCTION(MACRO)   \
   MACRO(__workq_kernreturn)                 \
   MACRO(CFDataGetLength)                    \
-  MACRO(CGPathApply)                        \
   MACRO(close)                              \
   MACRO(lseek)                              \
   MACRO(mach_absolute_time)                 \
@@ -88,7 +87,6 @@ FOR_EACH_ORIGINAL_FUNCTION(DECLARE_ORIGINAL_FUNCTION)
 
 enum CallbackEvent {
   CallbackEvent_CFRunLoopPerformCallBack,
-  CallbackEvent_CGPathApplierFunction
 };
 
 typedef void (*CFRunLoopPerformCallBack)(void*);
@@ -102,53 +100,11 @@ static void CFRunLoopPerformCallBackWrapper(void* aInfo) {
   PauseMainThreadAndServiceCallbacks();
 }
 
-static size_t CGPathElementPointCount(CGPathElement* aElement) {
-  switch (aElement->type) {
-    case kCGPathElementCloseSubpath:
-      return 0;
-    case kCGPathElementMoveToPoint:
-    case kCGPathElementAddLineToPoint:
-      return 1;
-    case kCGPathElementAddQuadCurveToPoint:
-      return 2;
-    case kCGPathElementAddCurveToPoint:
-      return 3;
-    default:
-      MOZ_CRASH();
-  }
-}
-
-static void CGPathApplierFunctionWrapper(void* aInfo, CGPathElement* aElement) {
-  RecordReplayCallback(CGPathApplierFunction, &aInfo);
-
-  CGPathElement replayElement;
-  if (IsReplaying()) {
-    aElement = &replayElement;
-  }
-
-  aElement->type = (CGPathElementType)RecordReplayValue(aElement->type);
-
-  size_t npoints = CGPathElementPointCount(aElement);
-  if (IsReplaying()) {
-    aElement->points = new CGPoint[npoints];
-  }
-  RecordReplayBytes(aElement->points, npoints * sizeof(CGPoint));
-
-  rrc.mFunction(aInfo, aElement);
-
-  if (IsReplaying()) {
-    delete[] aElement->points;
-  }
-}
-
 void ReplayInvokeCallback(size_t aCallbackId) {
   MOZ_RELEASE_ASSERT(IsReplaying());
   switch (aCallbackId) {
     case CallbackEvent_CFRunLoopPerformCallBack:
       CFRunLoopPerformCallBackWrapper(nullptr);
-      break;
-    case CallbackEvent_CGPathApplierFunction:
-      CGPathApplierFunctionWrapper(nullptr, nullptr);
       break;
     default:
       MOZ_CRASH();
@@ -423,8 +379,8 @@ static PreambleResult MiddlemanPreamble_sendmsg(CallArguments* aArguments) {
 }
 
 static PreambleResult Preamble_mprotect(CallArguments* aArguments) {
-  // Ignore any mprotect calls that occur after saving a checkpoint.
-  if (!HasSavedAnyCheckpoint()) {
+  // Ignore any mprotect calls that occur after taking a snapshot.
+  if (!NumSnapshots()) {
     return PreambleResult::PassThrough;
   }
   aArguments->Rval<ssize_t>() = 0;
@@ -452,7 +408,7 @@ static PreambleResult Preamble_mmap(CallArguments* aArguments) {
     // Get an anonymous mapping for the result.
     if (flags & MAP_FIXED) {
       // For fixed allocations, make sure this memory region is mapped and zero.
-      if (!HasSavedAnyCheckpoint()) {
+      if (!NumSnapshots()) {
         // Make sure this memory region is writable.
         CallFunction<int>(gOriginal_mprotect, address, size,
                           PROT_READ | PROT_WRITE | PROT_EXEC);
@@ -465,10 +421,10 @@ static PreambleResult Preamble_mmap(CallArguments* aArguments) {
     }
   } else {
     // We have to call mmap itself, which can change memory protection flags
-    // for memory that is already allocated. If we haven't saved a checkpoint
-    // then this is no problem, but after saving a checkpoint we have to make
+    // for memory that is already allocated. If we haven't taken a snapshot
+    // then this is no problem, but after taking a snapshot we have to make
     // sure that protection flags are what we expect them to be.
-    int newProt = HasSavedAnyCheckpoint() ? (PROT_READ | PROT_EXEC) : prot;
+    int newProt = NumSnapshots() ? (PROT_READ | PROT_EXEC) : prot;
     memory = CallFunction<void*>(gOriginal_mmap, address, size, newProt, flags,
                                  fd, offset);
 
@@ -652,7 +608,7 @@ static ssize_t WaitForCvar(pthread_mutex_t* aMutex, pthread_cond_t* aCond,
   if (!lock) {
     if (IsReplaying() && !AreThreadEventsPassedThrough()) {
       Thread* thread = Thread::Current();
-      if (thread->MaybeWaitForCheckpointSave(
+      if (thread->MaybeWaitForSnapshot(
               [=]() { pthread_mutex_unlock(aMutex); })) {
         // We unlocked the mutex while the thread idled, so don't wait on the
         // condvar: the state the thread is waiting on may have changed and it
@@ -947,7 +903,7 @@ static PreambleResult Preamble_mach_vm_map(CallArguments* aArguments) {
   } else if (AreThreadEventsPassedThrough()) {
     // We should only reach this at startup, when initializing the graphics
     // shared memory block.
-    MOZ_RELEASE_ASSERT(!HasSavedAnyCheckpoint());
+    MOZ_RELEASE_ASSERT(!NumSnapshots());
     return PreambleResult::PassThrough;
   }
 
@@ -960,9 +916,9 @@ static PreambleResult Preamble_mach_vm_map(CallArguments* aArguments) {
 }
 
 static PreambleResult Preamble_mach_vm_protect(CallArguments* aArguments) {
-  // Ignore any mach_vm_protect calls that occur after saving a checkpoint, as
+  // Ignore any mach_vm_protect calls that occur after taking a snapshot, as
   // for mprotect.
-  if (!HasSavedAnyCheckpoint()) {
+  if (!NumSnapshots()) {
     return PreambleResult::PassThrough;
   }
   aArguments->Rval<size_t>() = KERN_SUCCESS;
@@ -1716,25 +1672,104 @@ static void MM_CGDataProviderCreateWithData(MiddlemanCallContext& aCx) {
   }
 }
 
+static size_t CGPathElementPointCount(CGPathElementType aType) {
+  switch (aType) {
+    case kCGPathElementCloseSubpath:
+      return 0;
+    case kCGPathElementMoveToPoint:
+    case kCGPathElementAddLineToPoint:
+      return 1;
+    case kCGPathElementAddQuadCurveToPoint:
+      return 2;
+    case kCGPathElementAddCurveToPoint:
+      return 3;
+    default:
+      MOZ_CRASH();
+  }
+}
+
+static void CGPathDataCallback(void* aData, const CGPathElement* aElement) {
+  InfallibleVector<char>* data = (InfallibleVector<char>*)aData;
+
+  data->append((char)aElement->type);
+
+  for (size_t i = 0; i < CGPathElementPointCount(aElement->type); i++) {
+    data->append((char*)&aElement->points[i], sizeof(CGPoint));
+  }
+}
+
+static void GetCGPathData(CGPathRef aPath, InfallibleVector<char>& aData) {
+  CGPathApply(aPath, &aData, CGPathDataCallback);
+}
+
+static void CGPathApplyWithData(const InfallibleVector<char>& aData,
+                                void* aInfo, CGPathApplierFunction aFunction) {
+  size_t offset = 0;
+  while (offset < aData.length()) {
+    CGPathElement element;
+    element.type = (CGPathElementType)aData[offset++];
+
+    CGPoint points[3];
+    element.points = points;
+    size_t pointCount = CGPathElementPointCount(element.type);
+    MOZ_RELEASE_ASSERT(pointCount <= ArrayLength(points));
+    for (size_t i = 0; i < pointCount; i++) {
+      memcpy(&points[i], &aData[offset], sizeof(CGPoint));
+      offset += sizeof(CGPoint);
+    }
+
+    aFunction(aInfo, &element);
+  }
+}
+
 static PreambleResult Preamble_CGPathApply(CallArguments* aArguments) {
-  if (AreThreadEventsPassedThrough()) {
+  if (AreThreadEventsPassedThrough() || HasDivergedFromRecording()) {
     return PreambleResult::Redirect;
   }
 
   auto& path = aArguments->Arg<0, CGPathRef>();
-  auto& data = aArguments->Arg<1, void*>();
+  auto& info = aArguments->Arg<1, void*>();
   auto& function = aArguments->Arg<2, CGPathApplierFunction>();
 
-  RegisterCallbackData(BitwiseCast<void*>(function));
-  RegisterCallbackData(data);
-  PassThroughThreadEventsAllowCallbacks([&]() {
-    CallbackWrapperData wrapperData(function, data);
-    CallFunction<void>(gOriginal_CGPathApply, path, &wrapperData,
-                       CGPathApplierFunctionWrapper);
-  });
-  RemoveCallbackData(data);
+  InfallibleVector<char> pathData;
+  if (IsRecording()) {
+    AutoPassThroughThreadEvents pt;
+    GetCGPathData(path, pathData);
+  }
+  size_t len = RecordReplayValue(pathData.length());
+  if (IsReplaying()) {
+    pathData.appendN(0, len);
+  }
+  RecordReplayBytes(pathData.begin(), len);
+
+  CGPathApplyWithData(pathData, info, function);
 
   return PreambleResult::Veto;
+}
+
+static void MM_CGPathApply(MiddlemanCallContext& aCx) {
+  MM_CFTypeArg<0>(aCx);
+  MM_SkipInMiddleman(aCx);
+
+  if (aCx.AccessOutput()) {
+    InfallibleVector<char> pathData;
+    if (IsMiddleman()) {
+      auto path = aCx.mArguments->Arg<0, CGPathRef>();
+      GetCGPathData(path, pathData);
+    }
+    size_t len = pathData.length();
+    aCx.ReadOrWriteOutputBytes(&len, sizeof(len));
+    if (IsReplaying()) {
+      pathData.appendN(0, len);
+    }
+    aCx.ReadOrWriteOutputBytes(pathData.begin(), len);
+
+    if (IsReplaying()) {
+      auto& data = aCx.mArguments->Arg<1, void*>();
+      auto& function = aCx.mArguments->Arg<2, CGPathApplierFunction>();
+      CGPathApplyWithData(pathData, data, function);
+    }
+  }
 }
 
 // Note: We only redirect CTRunGetGlyphsPtr, not CTRunGetGlyphs. The latter may
@@ -1996,6 +2031,7 @@ static SystemRedirection gSystemRedirections[] = {
     {"setlocale", RR_CStringRval},
     {"strftime", RR_Compose<RR_ScalarRval, RR_WriteBufferViaRval<0, 1, 1>>},
     {"arc4random", RR_ScalarRval, nullptr, nullptr, Preamble_PassThrough},
+    {"arc4random_buf", RR_WriteBuffer<0, 1>},
     {"mach_absolute_time", RR_ScalarRval, Preamble_mach_absolute_time, nullptr,
      Preamble_PassThrough},
     {"mach_msg", RR_Compose<RR_ScalarRval, RR_WriteBuffer<0, 3>>, nullptr,
@@ -2057,6 +2093,7 @@ static SystemRedirection gSystemRedirections[] = {
     {"AcquireFirstMatchingEventInQueue", RR_ScalarRval},
     {"CFArrayAppendValue"},
     {"CFArrayCreate", RR_ScalarRval, nullptr, MM_CFArrayCreate},
+    {"CFArrayCreateMutable", RR_ScalarRval},
     {"CFArrayGetCount", RR_ScalarRval, nullptr, MM_CFTypeArg<0>},
     {"CFArrayGetValueAtIndex", RR_ScalarRval, nullptr,
      MM_CFArrayGetValueAtIndex},
@@ -2301,7 +2338,7 @@ static SystemRedirection gSystemRedirections[] = {
     {"CGImageRelease", RR_ScalarRval, nullptr, nullptr, Preamble_Veto<0>},
     {"CGMainDisplayID", RR_ScalarRval},
     {"CGPathAddPath"},
-    {"CGPathApply", nullptr, Preamble_CGPathApply},
+    {"CGPathApply", nullptr, Preamble_CGPathApply, MM_CGPathApply},
     {"CGPathContainsPoint", RR_ScalarRval},
     {"CGPathCreateMutable", RR_ScalarRval},
     {"CGPathCreateWithRoundedRect", RR_ScalarRval, nullptr,
@@ -2431,7 +2468,8 @@ static SystemRedirection gSystemRedirections[] = {
     {"GetEventDispatcherTarget", RR_ScalarRval},
     {"GetEventKind", RR_ScalarRval},
     {"HIThemeDrawButton",
-     RR_Compose<RR_WriteBufferFixedSize<4, sizeof(HIRect)>, RR_ScalarRval>,
+     RR_Compose<RR_WriteOptionalBufferFixedSize<4, sizeof(HIRect)>,
+                RR_ScalarRval>,
      nullptr,
      MM_Compose<MM_BufferFixedSize<0, sizeof(HIRect)>,
                 MM_BufferFixedSize<1, sizeof(HIThemeButtonDrawInfo)>,
@@ -2454,7 +2492,8 @@ static SystemRedirection gSystemRedirections[] = {
                 MM_BufferFixedSize<1, sizeof(HIThemeMenuDrawInfo)>,
                 MM_UpdateCFTypeArg<2>>},
     {"HIThemeDrawMenuItem",
-     RR_Compose<RR_WriteBufferFixedSize<5, sizeof(HIRect)>, RR_ScalarRval>,
+     RR_Compose<RR_WriteOptionalBufferFixedSize<5, sizeof(HIRect)>,
+                RR_ScalarRval>,
      nullptr,
      MM_Compose<MM_BufferFixedSize<0, sizeof(HIRect)>,
                 MM_BufferFixedSize<1, sizeof(HIRect)>,
@@ -2510,6 +2549,19 @@ static SystemRedirection gSystemRedirections[] = {
     {"NSSetFocusRingStyle", nullptr, nullptr, MM_NoOp},
     {"NSTemporaryDirectory", RR_ScalarRval},
     {"OSSpinLockLock", nullptr, Preamble_OSSpinLockLock},
+    {"PMCopyPageFormat", RR_ScalarRval},
+    {"PMGetAdjustedPaperRect",
+     RR_Compose<RR_ScalarRval, RR_WriteBufferFixedSize<1, sizeof(PMRect)>>},
+    {"PMGetPageFormatPaper",
+     RR_Compose<RR_ScalarRval, RR_WriteBufferFixedSize<1, sizeof(PMPaper)>>},
+    {"PMPageFormatCreateDataRepresentation",
+     RR_Compose<RR_ScalarRval, RR_WriteBufferFixedSize<1, sizeof(CFDataRef)>>},
+    {"PMPageFormatCreateWithDataRepresentation",
+     RR_Compose<RR_ScalarRval,
+                RR_WriteBufferFixedSize<1, sizeof(PMPageFormat)>>},
+    {"PMPaperGetMargins",
+     RR_Compose<RR_ScalarRval,
+                RR_WriteBufferFixedSize<1, sizeof(PMPaperMargins)>>},
     {"ReleaseEvent", RR_ScalarRval},
     {"RemoveEventFromQueue", RR_ScalarRval},
     {"RetainEvent", RR_ScalarRval},
@@ -2518,6 +2570,7 @@ static SystemRedirection gSystemRedirections[] = {
     {"SCDynamicStoreCreateRunLoopSource", RR_ScalarRval},
     {"SCDynamicStoreKeyCreateProxies", RR_ScalarRval},
     {"SCDynamicStoreSetNotificationKeys", RR_ScalarRval},
+    {"SecRandomCopyBytes", RR_SaveRvalHadErrorNegative<RR_WriteBuffer<2, 1>>},
     {"SendEventToEventTarget", RR_ScalarRval},
 
     // These are not public APIs, but other redirected functions may be aliases

@@ -1,0 +1,28 @@
+{
+  "data": [
+    {
+      "engineName": "engine1",
+      "webExtension": {
+        "id": "engine1@search.mozilla.org",
+        "version": "1.0"
+      },
+      "orderHint": 10000,
+      "appliesTo": [{
+        "included": { "everywhere": true },
+        "default": "yes"
+      }]
+    },
+    {
+      "engineName": "engine2",
+      "webExtension": {
+        "id": "engine2@search.mozilla.org",
+        "version": "1.0"
+      },
+      "orderHint": 7000,
+      "appliesTo": [{
+        "included": { "everywhere": true },
+        "default": "no"
+      }]
+    }
+  ]
+}

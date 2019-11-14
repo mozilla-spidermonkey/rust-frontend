@@ -1,3 +1,5 @@
+// |jit-test| allow-unhandlable-oom
+
 // weakmap marking tests that use the testing mark queue to force an ordering
 // of marking.
 
@@ -450,7 +452,7 @@ function grayKeyMap() {
 
   // Only mark this zone, to avoid interference from other tests that may have
   // created additional zones.
-  schedulegc(vals);
+  schedulezone(vals);
 
   startgc(100000);
   // getMarks() returns map/key/value

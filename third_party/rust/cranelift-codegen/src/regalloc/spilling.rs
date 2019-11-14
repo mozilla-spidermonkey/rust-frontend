@@ -27,9 +27,9 @@ use crate::regalloc::pressure::Pressure;
 use crate::regalloc::virtregs::VirtRegs;
 use crate::timing;
 use crate::topo_order::TopoOrder;
+use alloc::vec::Vec;
 use core::fmt;
 use log::debug;
-use std::vec::Vec;
 
 /// Return a top-level register class which contains `unit`.
 fn toprc_containing_regunit(unit: RegUnit, reginfo: &RegInfo) -> RegClass {
@@ -319,17 +319,16 @@ impl<'a> Context<'a> {
             for (idx, (op, &arg)) in constraints.ins.iter().zip(args).enumerate() {
                 let mut reguse = RegUse::new(arg, idx, op.regclass.into());
                 let lr = &self.liveness[arg];
-                let ctx = self.liveness.context(&self.cur.func.layout);
                 match op.kind {
                     ConstraintKind::Stack => continue,
                     ConstraintKind::FixedReg(_) => reguse.fixed = true,
                     ConstraintKind::Tied(_) => {
                         // A tied operand must kill the used value.
-                        reguse.tied = !lr.killed_at(inst, ebb, ctx);
+                        reguse.tied = !lr.killed_at(inst, ebb, &self.cur.func.layout);
                     }
                     ConstraintKind::FixedTied(_) => {
                         reguse.fixed = true;
-                        reguse.tied = !lr.killed_at(inst, ebb, ctx);
+                        reguse.tied = !lr.killed_at(inst, ebb, &self.cur.func.layout);
                     }
                     ConstraintKind::Reg => {}
                 }

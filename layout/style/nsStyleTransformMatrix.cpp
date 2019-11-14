@@ -12,7 +12,9 @@
 #include "nsLayoutUtils.h"
 #include "nsPresContext.h"
 #include "nsSVGUtils.h"
+#include "mozilla/MotionPathUtils.h"
 #include "mozilla/ServoBindings.h"
+#include "mozilla/StaticPrefs_svg.h"
 #include "mozilla/StyleAnimationValue.h"
 #include "gfxMatrix.h"
 #include "gfxQuaternion.h"
@@ -47,7 +49,7 @@ void TransformReferenceBox::EnsureDimensionsAreCached() {
   mIsCached = true;
 
   if (mFrame->GetStateBits() & NS_FRAME_SVG_LAYOUT) {
-    if (!nsLayoutUtils::SVGTransformBoxEnabled()) {
+    if (!StaticPrefs::svg_transform_box_enabled()) {
       mX = -mFrame->GetPosition().x;
       mY = -mFrame->GetPosition().y;
       Size contextSize = nsSVGUtils::GetContextSize(mFrame);
@@ -573,6 +575,15 @@ Matrix4x4 ReadTransforms(const StyleTranslate& aTranslate,
   result.PostScale(scale, scale, scale);
 
   return result;
+}
+
+mozilla::CSSPoint Convert2DPosition(const mozilla::LengthPercentage& aX,
+                                    const mozilla::LengthPercentage& aY,
+                                    const CSSSize& aSize) {
+  return {
+      aX.ResolveToCSSPixels(aSize.width),
+      aY.ResolveToCSSPixels(aSize.height),
+  };
 }
 
 CSSPoint Convert2DPosition(const LengthPercentage& aX,

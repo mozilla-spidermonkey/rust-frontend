@@ -10,12 +10,14 @@ import org.json.JSONException;
 import org.json.JSONTokener;
 import org.mozilla.gecko.GeckoThread;
 import org.mozilla.gecko.util.ThreadUtils;
+import org.mozilla.geckoview.Autofill;
 import org.mozilla.geckoview.ContentBlocking;
 import org.mozilla.geckoview.GeckoDisplay;
 import org.mozilla.geckoview.GeckoResult;
 import org.mozilla.geckoview.GeckoRuntime;
 import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.GeckoSessionSettings;
+import org.mozilla.geckoview.RuntimeTelemetry;
 import org.mozilla.geckoview.SessionTextInput;
 import org.mozilla.geckoview.WebExtension;
 import org.mozilla.geckoview.test.util.HttpBin;
@@ -551,7 +553,7 @@ public class GeckoSessionTestRule implements TestRule {
 
         public void delegate(final @Nullable GeckoSession session,
                              final @NonNull Object callback) {
-            for (final Class<?> ifce : DEFAULT_DELEGATES) {
+            for (final Class<?> ifce : mAllDelegates) {
                 if (!ifce.isInstance(callback)) {
                     continue;
                 }
@@ -613,7 +615,7 @@ public class GeckoSessionTestRule implements TestRule {
 
         /** Generate a JS function to set new prefs and return a set of saved prefs. */
         public void setPrefs(final @NonNull Map<String, ?> prefs) {
-            try {
+            mOldPrefs = (JSONObject) webExtensionApiCall("SetPrefs", args -> {
                 final JSONObject existingPrefs = mOldPrefs != null ? mOldPrefs : new JSONObject();
 
                 final JSONObject newPrefs = new JSONObject();
@@ -627,14 +629,9 @@ public class GeckoSessionTestRule implements TestRule {
                     }
                 }
 
-                final JSONObject args = new JSONObject();
                 args.put("oldPrefs", existingPrefs);
                 args.put("newPrefs", newPrefs);
-
-                mOldPrefs = (JSONObject) webExtensionApiCall("SetPrefs", args);
-            } catch (JSONException ex) {
-                throw new RuntimeException(ex);
-            }
+            });
         }
 
         /** Generate a JS function to set new prefs and reset a set of saved prefs. */
@@ -643,15 +640,10 @@ public class GeckoSessionTestRule implements TestRule {
                 return;
             }
 
-            try {
-                final JSONObject args = new JSONObject();
+            webExtensionApiCall("RestorePrefs", args -> {
                 args.put("oldPrefs", mOldPrefs);
-                webExtensionApiCall("RestorePrefs", args);
-
                 mOldPrefs = null;
-            } catch (JSONException ex) {
-                throw new RuntimeException(ex);
-            }
+            });
         }
 
         public void clear() {
@@ -859,6 +851,10 @@ public class GeckoSessionTestRule implements TestRule {
         return RuntimeCreator.getRuntime();
     }
 
+    public void setTelemetryDelegate(RuntimeTelemetry.Delegate delegate) {
+        RuntimeCreator.setTelemetryDelegate(delegate);
+    }
+
     public @Nullable GeckoDisplay getDisplay() {
         return mDisplay;
     }
@@ -875,6 +871,10 @@ public class GeckoSessionTestRule implements TestRule {
             return GeckoSession.class.getMethod("setContentBlockingDelegate", cls)
                    .invoke(session, delegate);
         }
+        if (cls == Autofill.Delegate.class) {
+            return GeckoSession.class.getMethod("setAutofillDelegate", cls)
+                   .invoke(session, delegate);
+        }
         return GeckoSession.class.getMethod("set" + cls.getSimpleName(), cls)
                .invoke(session, delegate);
     }
@@ -888,6 +888,10 @@ public class GeckoSessionTestRule implements TestRule {
         }
         if (cls == ContentBlocking.Delegate.class) {
             return GeckoSession.class.getMethod("getContentBlockingDelegate")
+                   .invoke(session);
+        }
+        if (cls == Autofill.Delegate.class) {
+            return GeckoSession.class.getMethod("getAutofillDelegate")
                    .invoke(session);
         }
         return GeckoSession.class.getMethod("get" + cls.getSimpleName())
@@ -1221,6 +1225,7 @@ public class GeckoSessionTestRule implements TestRule {
         mLastWaitStart = 0;
         mLastWaitEnd = 0;
         mTimeoutMillis = 0;
+        RuntimeCreator.setTelemetryDelegate(null);
     }
 
     @Override
@@ -1831,8 +1836,7 @@ public class GeckoSessionTestRule implements TestRule {
 
     public Object evaluateJS(final @NonNull GeckoSession session, final @NonNull String js) {
         // Let's make sure we have the port already
-        UiThreadUtils.waitForCondition(() -> mPorts.containsKey(session),
-                env.getDefaultTimeoutMillis());
+        UiThreadUtils.waitForCondition(() -> mPorts.containsKey(session), mTimeoutMillis);
 
         final JSONObject message = new JSONObject();
         final String id = UUID.randomUUID().toString();
@@ -1850,7 +1854,7 @@ public class GeckoSessionTestRule implements TestRule {
 
     private Object waitForMessage(String id) {
         UiThreadUtils.waitForCondition(() -> mPendingMessages.containsKey(id),
-                env.getDefaultTimeoutMillis());
+                mTimeoutMillis);
 
         final EvalJSResult result = mPendingMessages.get(id);
         mPendingMessages.remove(id);
@@ -1992,14 +1996,9 @@ public class GeckoSessionTestRule implements TestRule {
      * @return Pref values as a list of values.
      */
     public JSONArray getPrefs(final @NonNull String... prefs) {
-        try {
-            final JSONObject args = new JSONObject();
+        return (JSONArray) webExtensionApiCall("GetPrefs", args -> {
             args.put("prefs", new JSONArray(Arrays.asList(prefs)));
-
-            return (JSONArray) webExtensionApiCall("GetPrefs", args);
-        } catch (JSONException ex) {
-            throw new RuntimeException(ex);
-        }
+        });
     }
 
     /**
@@ -2010,15 +2009,10 @@ public class GeckoSessionTestRule implements TestRule {
      * @return String representing the color, e.g. rgb(0, 0, 255)
      */
     public String getLinkColor(final String uri, final String selector) {
-        try {
-            final JSONObject args = new JSONObject();
+        return (String) webExtensionApiCall("GetLinkColor", args -> {
             args.put("uri", uri);
             args.put("selector", selector);
-
-            return (String) webExtensionApiCall("GetLinkColor", args);
-        } catch (JSONException ex) {
-            throw new RuntimeException(ex);
-        }
+        });
     }
 
     public List<String> getRequestedLocales() {
@@ -2036,17 +2030,57 @@ public class GeckoSessionTestRule implements TestRule {
         }
     }
 
-    private Object webExtensionApiCall(final String apiName, JSONObject args) throws JSONException {
+    /**
+     * Adds value to the given histogram.
+     *
+     * @param id the histogram id to increment.
+     * @param value to add to the histogram.
+     */
+    public void addHistogram(final String id, final long value) {
+        webExtensionApiCall("AddHistogram", args -> {
+            args.put("id", id);
+            args.put("value", value);
+        });
+    }
+
+    private interface SetArgs {
+        void setArgs(JSONObject object) throws JSONException;
+    }
+
+    /**
+     * Sets value to the given scalar.
+     *
+     * @param id the scalar to be set.
+     * @param value the value to set.
+     */
+    public <T> void setScalar(final String id, final T value) {
+        webExtensionApiCall("SetScalar", args -> {
+            args.put("id", id);
+            args.put("value", value);
+        });
+    }
+
+    private Object webExtensionApiCall(final String apiName, SetArgs argsSetter) {
         // Ensure background script is connected
         UiThreadUtils.waitForCondition(() -> RuntimeCreator.backgroundPort() != null,
-                env.getDefaultTimeoutMillis());
+                mTimeoutMillis);
 
         final String id = UUID.randomUUID().toString();
 
         final JSONObject message = new JSONObject();
-        message.put("id", id);
-        message.put("type", apiName);
-        message.put("args", args);
+
+        try {
+            final JSONObject args = new JSONObject();
+            if (argsSetter != null) {
+                argsSetter.setArgs(args);
+            }
+
+            message.put("id", id);
+            message.put("type", apiName);
+            message.put("args", args);
+        } catch (JSONException ex) {
+            throw new RuntimeException(ex);
+        }
 
         RuntimeCreator.backgroundPort().postMessage(message);
         return waitForMessage(id);

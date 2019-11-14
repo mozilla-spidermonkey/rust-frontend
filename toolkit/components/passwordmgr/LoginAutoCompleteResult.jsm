@@ -37,8 +37,8 @@ ChromeUtils.defineModuleGetter(
 );
 ChromeUtils.defineModuleGetter(
   this,
-  "LoginManagerContent",
-  "resource://gre/modules/LoginManagerContent.jsm"
+  "LoginManagerChild",
+  "resource://gre/modules/LoginManagerChild.jsm"
 );
 
 XPCOMUtils.defineLazyServiceGetter(
@@ -70,6 +70,16 @@ function loginSort(formHostPort, a, b) {
   }
   if (formHostPort != maybeHostPortA && formHostPort == maybeHostPortB) {
     return 1;
+  }
+
+  if (a.httpRealm !== b.httpRealm) {
+    // Sort HTTP auth. logins after form logins for the same origin.
+    if (b.httpRealm === null) {
+      return 1;
+    }
+    if (a.httpRealm === null) {
+      return -1;
+    }
   }
 
   let userA = a.username.toLowerCase();
@@ -136,11 +146,12 @@ class LoginAutocompleteItem extends AutocompleteItem {
     isPasswordField,
     dateAndTimeFormatter,
     duplicateUsernames,
-    messageManager
+    actor,
+    isOriginMatched
   ) {
     super(SHOULD_SHOW_ORIGIN ? "loginWithOrigin" : "login");
     this._login = login.QueryInterface(Ci.nsILoginMetaInfo);
-    this._messageManager = messageManager;
+    this._actor = actor;
 
     XPCOMUtils.defineLazyGetter(this, "label", () => {
       let username = login.username;
@@ -154,7 +165,6 @@ class LoginAutocompleteItem extends AutocompleteItem {
         );
         username = getLocalizedString("loginHostAge", [username, time]);
       }
-
       return username;
     });
 
@@ -163,26 +173,20 @@ class LoginAutocompleteItem extends AutocompleteItem {
     });
 
     XPCOMUtils.defineLazyGetter(this, "comment", () => {
-      let comment = login.origin;
-      try {
-        let uri = Services.io.newURI(login.origin);
-        // Fallback to handle file: URIs
-        comment = uri.displayHostPort || login.origin;
-      } catch (ex) {
-        // Fallback to login.origin set above.
-      }
-
       return JSON.stringify({
         guid: login.guid,
-        comment,
+        comment:
+          isOriginMatched && login.httpRealm === null
+            ? getLocalizedString("displaySameOrigin")
+            : login.displayOrigin,
       });
     });
   }
 
   removeFromStorage() {
-    if (this._messageManager) {
+    if (this._actor) {
       let vanilla = LoginHelper.loginToVanillaObject(this._login);
-      this._messageManager.sendAsyncMessage("PasswordManager:removeLogin", {
+      this._actor.sendAsyncMessage("PasswordManager:removeLogin", {
         login: vanilla,
       });
     } else {
@@ -218,8 +222,8 @@ class LoginsFooterAutocompleteItem extends AutocompleteItem {
 function LoginAutoCompleteResult(
   aSearchString,
   matchingLogins,
-  formHostPort,
-  { generatedPassword, isSecure, messageManager, isPasswordField, hostname }
+  formOrigin,
+  { generatedPassword, isSecure, actor, isPasswordField, hostname }
 ) {
   let hidingFooterOnPWFieldAutoOpened = false;
   function isFooterEnabled() {
@@ -263,18 +267,23 @@ function LoginAutoCompleteResult(
   }
 
   // Saved login items
+  let formHostPort = LoginHelper.maybeGetHostPortForURL(formOrigin);
   let logins = matchingLogins.sort(loginSort.bind(null, formHostPort));
   let dateAndTimeFormatter = new Services.intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
   });
   let duplicateUsernames = findDuplicates(matchingLogins);
+
   for (let login of logins) {
     let item = new LoginAutocompleteItem(
       login,
       isPasswordField,
       dateAndTimeFormatter,
       duplicateUsernames,
-      messageManager
+      actor,
+      LoginHelper.isOriginMatching(login.origin, formOrigin, {
+        schemeUpgrades: LoginHelper.schemeUpgrades,
+      })
     );
     this._rows.push(item);
   }
@@ -404,6 +413,10 @@ LoginAutoComplete.prototype = {
    */
   startSearch(aSearchString, aPreviousResult, aElement, aCallback) {
     let { isNullPrincipal } = aElement.nodePrincipal;
+    if (aElement.nodePrincipal.schemeIs("about")) {
+      // Don't show autocomplete results for about: pages.
+      return;
+    }
     // Show the insecure login warning in the passwords field on null principal documents.
     let isSecure = !isNullPrincipal;
     // Avoid loading InsecurePasswordUtils.jsm in a sandboxed document (e.g. an ad. frame) if we
@@ -413,7 +426,7 @@ LoginAutoComplete.prototype = {
     // want the same treatment:
     // * The web console warnings will be confusing (as they're primarily about http:) and not very
     //   useful if the developer intentionally sandboxed the document.
-    // * The site identity insecure field warning would require LoginManagerContent being loaded and
+    // * The site identity insecure field warning would require LoginManagerChild being loaded and
     //   listening to some of the DOM events we're ignoring in null principal documents. For memory
     //   reasons it's better to not load LMC at all for these sandboxed frames. Also, if the top-
     //   document is sandboxing a document, it probably doesn't want that sandboxed document to be
@@ -425,26 +438,28 @@ LoginAutoComplete.prototype = {
     let isPasswordField = aElement.type == "password";
     let hostname = aElement.ownerDocument.documentURIObject.host;
 
+    let loginManagerActor = LoginManagerChild.forWindow(aElement.ownerGlobal);
+
     let completeSearch = (
       autoCompleteLookupPromise,
-      { generatedPassword, logins, messageManager }
+      { generatedPassword, logins }
     ) => {
       // If the search was canceled before we got our
       // results, don't bother reporting them.
       if (this._autoCompleteLookupPromise !== autoCompleteLookupPromise) {
         return;
       }
-      let formHostPort = LoginHelper.maybeGetHostPortForURL(
+      let formOrigin = LoginHelper.getLoginOrigin(
         aElement.ownerDocument.documentURI
       );
       this._autoCompleteLookupPromise = null;
       let results = new LoginAutoCompleteResult(
         aSearchString,
         logins,
-        formHostPort,
+        formOrigin,
         {
           generatedPassword,
-          messageManager,
+          actor: loginManagerActor,
           isSecure,
           isPasswordField,
           hostname,
@@ -492,7 +507,7 @@ LoginAutoComplete.prototype = {
       previousResult = null;
     }
 
-    let acLookupPromise = (this._autoCompleteLookupPromise = LoginManagerContent._autoCompleteSearchAsync(
+    let acLookupPromise = (this._autoCompleteLookupPromise = loginManagerActor._autoCompleteSearchAsync(
       aSearchString,
       previousResult,
       aElement

@@ -33,7 +33,7 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
-  "focusableSelector",
+  "getFocusableElements",
   "devtools/client/shared/focus",
   true
 );
@@ -43,6 +43,7 @@ loader.lazyRequireGetter(
   "devtools/client/webconsole/utils/messages",
   true
 );
+loader.lazyRequireGetter(this, "saveAs", "devtools/shared/DevToolsUtils", true);
 
 // React & Redux
 const { Component } = require("devtools/client/shared/vendor/react");
@@ -64,6 +65,8 @@ const {
   HISTORY_BACK,
   HISTORY_FORWARD,
 } = require("devtools/client/webconsole/constants");
+
+const JSTERM_CODEMIRROR_ORIGIN = "jsterm";
 
 /**
  * Create a JSTerminal (a JavaScript command line). This is attached to an
@@ -95,11 +98,12 @@ class JSTerm extends Component {
       autocompleteData: PropTypes.object.isRequired,
       // Toggle the editor mode.
       editorToggle: PropTypes.func.isRequired,
-      // Is the editor feature enabled
-      editorFeatureEnabled: PropTypes.bool,
+      // Dismiss the editor onboarding UI.
+      editorOnboardingDismiss: PropTypes.func.isRequired,
       // Is the input in editor mode.
       editorMode: PropTypes.bool,
       editorWidth: PropTypes.number,
+      showEditorOnboarding: PropTypes.bool,
       autocomplete: PropTypes.bool,
     };
   }
@@ -250,6 +254,28 @@ class JSTerm extends Component {
 
           "Cmd-Enter": onCtrlCmdEnter,
           "Ctrl-Enter": onCtrlCmdEnter,
+
+          [Editor.accel("S")]: () => {
+            const value = this._getValue();
+            if (!value) {
+              return null;
+            }
+
+            const date = new Date();
+            const suggestedName =
+              `console-input-${date.getFullYear()}-` +
+              `${date.getMonth() + 1}-${date.getDate()}_${date.getHours()}-` +
+              `${date.getMinutes()}-${date.getSeconds()}.js`;
+            const data = new TextEncoder().encode(value);
+            return saveAs(window, data, suggestedName, [
+              {
+                pattern: "*.js",
+                label: l10n.getStr("webconsole.input.openJavaScriptFileFilter"),
+              },
+            ]);
+          },
+
+          [Editor.accel("O")]: async () => this._openFile(),
 
           Tab: () => {
             if (this.hasEmptyInput()) {
@@ -470,10 +496,10 @@ class JSTerm extends Component {
   }
 
   shouldComponentUpdate(nextProps) {
-    // XXX: For now, everything is handled in an imperative way and we
-    // only want React to do the initial rendering of the component.
-    // This should be modified when the actual refactoring will take place.
-    return false;
+    return (
+      this.props.showEditorOnboarding !== nextProps.showEditorOnboarding ||
+      this.props.editorMode !== nextProps.editorMode
+    );
   }
 
   /**
@@ -537,7 +563,12 @@ class JSTerm extends Component {
         return null;
       }
 
-      const items = Array.from(el.querySelectorAll(focusableSelector));
+      // We only want to get visible focusable element, and for that we can assert that
+      // the offsetParent isn't null. We can do that because we don't have fixed position
+      // element in the console.
+      const items = getFocusableElements(el).filter(
+        ({ offsetParent }) => offsetParent !== null
+      );
       const inputIndex = items.indexOf(inputField);
 
       if (items.length === 0 || (inputIndex > -1 && items.length === 1)) {
@@ -558,7 +589,7 @@ class JSTerm extends Component {
    * Execute a string. Execution happens asynchronously in the content process.
    */
   _execute() {
-    const executeString = this._getValue();
+    const executeString = this.getSelectedText() || this._getValue();
     if (!executeString) {
       return;
     }
@@ -609,6 +640,49 @@ class JSTerm extends Component {
     return this.editor ? this.editor.getText() || "" : "";
   }
 
+  /**
+   * Open the file picker for the user to select a javascript file and open it.
+   *
+   */
+  async _openFile() {
+    const fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
+    fp.init(
+      this.webConsoleUI.document.defaultView,
+      l10n.getStr("webconsole.input.openJavaScriptFile"),
+      Ci.nsIFilePicker.modeOpen
+    );
+
+    // Append file filters
+    fp.appendFilter(
+      l10n.getStr("webconsole.input.openJavaScriptFileFilter"),
+      "*.js"
+    );
+
+    function readFile(file) {
+      return new Promise(resolve => {
+        const { OS } = Cu.import("resource://gre/modules/osfile.jsm");
+        OS.File.read(file.path).then(data => {
+          const decoder = new TextDecoder();
+          resolve(decoder.decode(data));
+        });
+      });
+    }
+
+    const content = await new Promise(resolve => {
+      fp.open(rv => {
+        if (rv == Ci.nsIFilePicker.returnOK) {
+          const file = Cc["@mozilla.org/file/local;1"].createInstance(
+            Ci.nsIFile
+          );
+          file.initWithPath(fp.file.path);
+          readFile(file).then(resolve);
+        }
+      });
+    });
+
+    this._setValue(content);
+  }
+
   getSelectionStart() {
     return this.getInputValueBeforeCursor().length;
   }
@@ -642,10 +716,20 @@ class JSTerm extends Component {
   /**
    * The editor "changes" event handler.
    */
-  _onEditorChanges() {
+  _onEditorChanges(cm, changes) {
     const value = this._getValue();
+
     if (this.lastInputValue !== value) {
-      if (this.props.autocomplete || this.autocompletePopup.isOpen) {
+      // We don't autocomplete if the changes were made by JsTerm (e.g. autocomplete was
+      // accepted).
+      const isJsTermChangeOnly = changes.every(
+        ({ origin }) => origin === JSTERM_CODEMIRROR_ORIGIN
+      );
+
+      if (
+        !isJsTermChangeOnly &&
+        (this.props.autocomplete || this.hasAutocompletionSuggestion())
+      ) {
         this.autocompleteUpdate();
       }
       this.lastInputValue = value;
@@ -941,27 +1025,15 @@ class JSTerm extends Component {
       return;
     }
 
-    const value = this._getValue();
-    let prefix = this.getInputValueBeforeCursor();
-    const suffix = value.replace(prefix, "");
+    const cursor = this.editor.getCursor();
+    const from = {
+      line: cursor.line,
+      ch: cursor.ch - numberOfCharsToReplaceCharsBeforeCursor,
+    };
 
-    if (numberOfCharsToReplaceCharsBeforeCursor) {
-      prefix = prefix.substring(
-        0,
-        prefix.length - numberOfCharsToReplaceCharsBeforeCursor
-      );
-    }
-
-    // We need to retrieve the cursor before setting the new value.
-    const { line, ch } = this.editor.getCursor();
-
-    this._setValue(prefix + str + suffix);
-
-    // Set the cursor on the same line it was already at, after the autocompleted text
-    this.editor.setCursor({
-      line,
-      ch: ch + str.length - numberOfCharsToReplaceCharsBeforeCursor,
-    });
+    this.editor
+      .getDoc()
+      .replaceRange(str, from, cursor, JSTERM_CODEMIRROR_ORIGIN);
   }
 
   /**
@@ -1045,6 +1117,59 @@ class JSTerm extends Component {
     this.webConsoleUI = null;
   }
 
+  renderOpenEditorButton() {
+    if (this.props.editorMode) {
+      return null;
+    }
+
+    return dom.button({
+      className: "devtools-button webconsole-input-openEditorButton",
+      title: l10n.getFormatStr("webconsole.input.openEditorButton.tooltip2", [
+        isMacOS ? "Cmd + B" : "Ctrl + B",
+      ]),
+      onClick: this.props.editorToggle,
+    });
+  }
+
+  renderEditorOnboarding() {
+    if (!this.props.showEditorOnboarding) {
+      return null;
+    }
+
+    // We deliberately use getStr, and not getFormatStr, because we want keyboard
+    // shortcuts to be wrapped in their own span.
+    const label = l10n.getStr("webconsole.input.editor.onboarding.label");
+    let [prefix, suffix] = label.split("%1$S");
+    suffix = suffix.split("%2$S");
+
+    const enterString = l10n.getStr("webconsole.enterKey");
+
+    return dom.header(
+      { className: "editor-onboarding" },
+      dom.img({
+        className: "editor-onboarding-fox",
+        src: "chrome://devtools/skin/images/fox-smiling.svg",
+      }),
+      dom.p(
+        {},
+        prefix,
+        dom.span({ className: "editor-onboarding-shortcut" }, enterString),
+        suffix[0],
+        dom.span({ className: "editor-onboarding-shortcut" }, [
+          isMacOS ? `Cmd+${enterString}` : `Ctrl+${enterString}`,
+        ]),
+        suffix[1]
+      ),
+      dom.button(
+        {
+          className: "editor-onboarding-dismiss-button",
+          onClick: () => this.props.editorOnboardingDismiss(),
+        },
+        l10n.getStr("webconsole.input.editor.onboarding.dissmis.label")
+      )
+    );
+  }
+
   render() {
     if (
       this.props.webConsoleUI.isBrowserConsole &&
@@ -1053,29 +1178,18 @@ class JSTerm extends Component {
       return null;
     }
 
-    const openEditorButton = this.props.editorFeatureEnabled
-      ? dom.button({
-          className: "devtools-button webconsole-input-openEditorButton",
-          title: l10n.getFormatStr(
-            "webconsole.input.openEditorButton.tooltip",
-            [isMacOS ? "Cmd + B" : "Ctrl + B"]
-          ),
-          onClick: this.props.editorToggle,
-        })
-      : undefined;
-
     return dom.div(
       {
         className: "jsterm-input-container devtools-input devtools-monospace",
         key: "jsterm-container",
-        style: { direction: "ltr" },
         "aria-live": "off",
         onContextMenu: this.onContextMenu,
         ref: node => {
           this.node = node;
         },
       },
-      openEditorButton
+      this.renderOpenEditorButton(),
+      this.renderEditorOnboarding()
     );
   }
 }
@@ -1087,6 +1201,7 @@ function mapStateToProps(state) {
     history: getHistory(state),
     getValueFromHistory: direction => getHistoryValue(state, direction),
     autocompleteData: getAutocompleteState(state),
+    showEditorOnboarding: state.ui.showEditorOnboarding,
   };
 }
 
@@ -1100,6 +1215,7 @@ function mapDispatchToProps(dispatch) {
     evaluateExpression: expression =>
       dispatch(actions.evaluateExpression(expression)),
     editorToggle: () => dispatch(actions.editorToggle()),
+    editorOnboardingDismiss: () => dispatch(actions.editorOnboardingDismiss()),
   };
 }
 

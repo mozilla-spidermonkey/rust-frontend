@@ -4,7 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/LauncherResult.h"
 #include "mozilla/NativeNt.h"
 #include "mozilla/WinHeaderOnlyUtils.h"
 
@@ -50,9 +49,10 @@ inline LauncherResult<nt::DataDirectoryEntry> GetImageDirectoryViaFileIo(
  *                        determine the base address of the binary within the
  *                        target process.
  */
-inline LauncherVoidResult RestoreImportDirectory(
-    const wchar_t* aFullImagePath, const nt::PEHeaders& aLocalExeImage,
-    HANDLE aTargetProcess, HMODULE aRemoteExeImage) {
+inline LauncherVoidResult RestoreImportDirectory(const wchar_t* aFullImagePath,
+                                                 nt::PEHeaders& aLocalExeImage,
+                                                 HANDLE aTargetProcess,
+                                                 HMODULE aRemoteExeImage) {
   uint32_t importDirEntryRva;
   PIMAGE_DATA_DIRECTORY importDirEntry =
       aLocalExeImage.GetImageDirectoryEntryPtr(IMAGE_DIRECTORY_ENTRY_IMPORT,
@@ -81,6 +81,10 @@ inline LauncherVoidResult RestoreImportDirectory(
   }
 
   nt::DataDirectoryEntry toWrite = realImportDirectory.unwrap();
+
+  if (toWrite != *importDirEntry) {
+    aLocalExeImage.SetImportDirectoryTampered();
+  }
 
   void* remoteAddress = reinterpret_cast<char*>(
                             nt::PEHeaders::HModuleToBaseAddr(aRemoteExeImage)) +

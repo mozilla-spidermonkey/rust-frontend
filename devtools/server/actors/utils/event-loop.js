@@ -1,5 +1,3 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2; js-indent-level: 2 -*- */
-/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,6 +5,7 @@
 "use strict";
 
 const xpcInspector = require("xpcInspector");
+const { Cu } = require("chrome");
 
 /**
  * Manages pushing event loops and automatically pops and exits them in the
@@ -133,7 +132,18 @@ EventLoop.prototype = {
         })
         // Ignore iframes as they will be paused automatically when pausing their
         // owner top level document
-        .filter(window => window.top === window)
+        .filter(window => {
+          try {
+            return window.top === window;
+          } catch (e) {
+            // Warn if this is throwing for an unknown reason, but suppress the
+            // exception regardless so that we can enter the nested event loop.
+            if (!Cu.isDeadWrapper(window) && !/not initialized/.test(e)) {
+              console.warn(`Exception in getAllWindowDebuggees: ${e}`);
+            }
+            return false;
+          }
+        })
     );
   },
 

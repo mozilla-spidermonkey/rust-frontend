@@ -17,13 +17,9 @@
 #endif
 
 ProfiledThreadData::ProfiledThreadData(ThreadInfo* aThreadInfo,
-                                       nsIEventTarget* aEventTarget,
-                                       bool aIncludeResponsiveness)
+                                       nsIEventTarget* aEventTarget)
     : mThreadInfo(aThreadInfo) {
   MOZ_COUNT_CTOR(ProfiledThreadData);
-  if (aIncludeResponsiveness) {
-    mResponsiveness.emplace(aEventTarget, aThreadInfo->IsMainThread());
-  }
 }
 
 ProfiledThreadData::~ProfiledThreadData() {
@@ -35,9 +31,11 @@ void ProfiledThreadData::StreamJSON(const ProfileBuffer& aBuffer,
                                     SpliceableJSONWriter& aWriter,
                                     const nsACString& aProcessName,
                                     const mozilla::TimeStamp& aProcessStartTime,
-                                    double aSinceTime, bool JSTracerEnabled) {
+                                    double aSinceTime, bool JSTracerEnabled,
+                                    ProfilerCodeAddressService* aService) {
   if (mJITFrameInfoForPreviousJSContexts &&
-      mJITFrameInfoForPreviousJSContexts->HasExpired(aBuffer.mRangeStart)) {
+      mJITFrameInfoForPreviousJSContexts->HasExpired(
+          aBuffer.BufferRangeStart())) {
     mJITFrameInfoForPreviousJSContexts = nullptr;
   }
 
@@ -54,6 +52,7 @@ void ProfiledThreadData::StreamJSON(const ProfileBuffer& aBuffer,
   }
 
   UniqueStacks uniqueStacks(std::move(jitFrameInfo));
+  uniqueStacks.mCodeAddressService = aService;
 
   aWriter.Start();
   {
@@ -244,8 +243,6 @@ void StreamSamplesAndMarkers(const char* aName, int aThreadId,
       schema.WriteField("stack");
       schema.WriteField("time");
       schema.WriteField("responsiveness");
-      schema.WriteField("rss");
-      schema.WriteField("uss");
     }
 
     aWriter.StartArrayProperty("data");
@@ -287,7 +284,8 @@ void ProfiledThreadData::NotifyAboutToLoseJSContext(
   MOZ_RELEASE_ASSERT(aContext);
 
   if (mJITFrameInfoForPreviousJSContexts &&
-      mJITFrameInfoForPreviousJSContexts->HasExpired(aBuffer.mRangeStart)) {
+      mJITFrameInfoForPreviousJSContexts->HasExpired(
+          aBuffer.BufferRangeStart())) {
     mJITFrameInfoForPreviousJSContexts = nullptr;
   }
 

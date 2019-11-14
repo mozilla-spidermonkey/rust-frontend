@@ -6,18 +6,66 @@
 
 #include "debugger/Object-inl.h"
 
-#include "debugger/NoExecute.h"
-#include "debugger/Script.h"
-#include "proxy/ScriptedProxyHandler.h"
-#include "vm/EnvironmentObject.h"
-#include "vm/Instrumentation.h"
-#include "vm/WrapperObject.h"
+#include "mozilla/Maybe.h"   // for Maybe, Nothing, Some
+#include "mozilla/Range.h"   // for Range
+#include "mozilla/Result.h"  // for Result
+#include "mozilla/Vector.h"  // for Vector
 
-#include "debugger/Debugger-inl.h"
-#include "vm/Compartment-inl.h"
-#include "vm/JSAtom-inl.h"
-#include "vm/JSObject-inl.h"
-#include "vm/NativeObject-inl.h"
+#include <algorithm>
+#include <string.h>     // for size_t, strlen
+#include <type_traits>  // for remove_reference<>::type
+#include <utility>      // for move
+
+#include "jsapi.h"        // for CallArgs, RootedObject, Rooted
+#include "jsfriendapi.h"  // for GetErrorMessage
+
+#include "builtin/Array.h"       // for NewDenseCopiedArray
+#include "debugger/Debugger.h"   // for Completion, Debugger
+#include "debugger/NoExecute.h"  // for LeaveDebuggeeNoExecute
+#include "debugger/Script.h"     // for DebuggerScript
+#include "debugger/Source.h"     // for DebuggerSource
+#include "gc/Barrier.h"          // for ImmutablePropertyNamePtr
+#include "gc/Rooting.h"          // for RootedDebuggerObject
+#include "gc/Tracer.h"  // for TraceManuallyBarrieredCrossCompartmentEdge
+#include "js/CompilationAndEvaluation.h"  //  for Compile
+#include "js/Conversions.h"               // for ToObject
+#include "js/HeapAPI.h"                   // for IsInsideNursery
+#include "js/Promise.h"                   // for PromiseState
+#include "js/Proxy.h"                     // for PropertyDescriptor
+#include "js/StableStringChars.h"         // for AutoStableStringChars
+#include "proxy/ScriptedProxyHandler.h"   // for ScriptedProxyHandler
+#include "vm/ArgumentsObject.h"           // for ARGS_LENGTH_MAX
+#include "vm/ArrayObject.h"               // for ArrayObject
+#include "vm/BytecodeUtil.h"              // for JSDVG_SEARCH_STACK
+#include "vm/Compartment.h"               // for Compartment
+#include "vm/EnvironmentObject.h"         // for GetDebugEnvironmentForFunction
+#include "vm/ErrorObject.h"               // for JSObject::is, ErrorObject
+#include "vm/GlobalObject.h"              // for JSObject::is, GlobalObject
+#include "vm/Instrumentation.h"           // for RealmInstrumentation
+#include "vm/Interpreter.h"               // for Call
+#include "vm/JSAtom.h"                    // for Atomize, js_apply_str
+#include "vm/JSContext.h"                 // for JSContext, ReportValueError
+#include "vm/JSFunction.h"                // for JSFunction
+#include "vm/JSScript.h"                  // for JSScript
+#include "vm/NativeObject.h"              // for NativeObject, JSObject::is
+#include "vm/ObjectGroup.h"               // for GenericObject, NewObjectKind
+#include "vm/ObjectOperations.h"          // for DefineProperty
+#include "vm/Realm.h"                     // for AutoRealm, ErrorCopier, Realm
+#include "vm/Runtime.h"                   // for JSAtomState
+#include "vm/SavedFrame.h"                // for SavedFrame
+#include "vm/Scope.h"                     // for PositionalFormalParameterIter
+#include "vm/SelfHosting.h"               // for GetClonedSelfHostedFunctionName
+#include "vm/Shape.h"                     // for Shape
+#include "vm/Stack.h"                     // for InvokeArgs
+#include "vm/StringType.h"                // for JSAtom, PropertyName
+#include "vm/WrapperObject.h"             // for JSObject::is, WrapperObject
+
+#include "vm/Compartment-inl.h"       // for Compartment::wrap
+#include "vm/JSAtom-inl.h"            // for ValueToId
+#include "vm/JSObject-inl.h"          // for GetObjectClassName, InitClass
+#include "vm/NativeObject-inl.h"      // for NativeObject::global
+#include "vm/ObjectOperations-inl.h"  // for DeleteProperty, GetProperty
+#include "vm/Realm-inl.h"             // for AutoRealm::AutoRealm
 
 using namespace js;
 
@@ -26,35 +74,37 @@ using mozilla::Maybe;
 using mozilla::Nothing;
 using mozilla::Some;
 
-const ClassOps DebuggerObject::classOps_ = {nullptr, /* addProperty */
-                                            nullptr, /* delProperty */
-                                            nullptr, /* enumerate   */
-                                            nullptr, /* newEnumerate */
-                                            nullptr, /* resolve     */
-                                            nullptr, /* mayResolve  */
-                                            nullptr, /* finalize    */
-                                            nullptr, /* call        */
-                                            nullptr, /* hasInstance */
-                                            nullptr, /* construct   */
-                                            trace};
+const JSClassOps DebuggerObject::classOps_ = {
+    nullptr,                         /* addProperty */
+    nullptr,                         /* delProperty */
+    nullptr,                         /* enumerate   */
+    nullptr,                         /* newEnumerate */
+    nullptr,                         /* resolve     */
+    nullptr,                         /* mayResolve  */
+    nullptr,                         /* finalize    */
+    nullptr,                         /* call        */
+    nullptr,                         /* hasInstance */
+    nullptr,                         /* construct   */
+    CallTraceMethod<DebuggerObject>, /* trace */
+};
 
-const Class DebuggerObject::class_ = {
+const JSClass DebuggerObject::class_ = {
     "Object", JSCLASS_HAS_PRIVATE | JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS),
     &classOps_};
 
-void DebuggerObject::trace(JSTracer* trc, JSObject* obj) {
+void DebuggerObject::trace(JSTracer* trc) {
   // There is a barrier on private pointers, so the Unbarriered marking
   // is okay.
-  if (JSObject* referent = (JSObject*)obj->as<NativeObject>().getPrivate()) {
-    TraceManuallyBarrieredCrossCompartmentEdge(trc, obj, &referent,
-                                               "Debugger.Object referent");
-    obj->as<NativeObject>().setPrivateUnbarriered(referent);
+  if (JSObject* referent = (JSObject*)getPrivate()) {
+    TraceManuallyBarrieredCrossCompartmentEdge(
+        trc, static_cast<JSObject*>(this), &referent,
+        "Debugger.Object referent");
+    setPrivateUnbarriered(referent);
   }
 }
 
 static DebuggerObject* DebuggerObject_checkThis(JSContext* cx,
-                                                const CallArgs& args,
-                                                const char* fnname) {
+                                                const CallArgs& args) {
   JSObject* thisobj = RequireObject(cx, args.thisv());
   if (!thisobj) {
     return nullptr;
@@ -62,7 +112,7 @@ static DebuggerObject* DebuggerObject_checkThis(JSContext* cx,
   if (thisobj->getClass() != &DebuggerObject::class_) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_INCOMPATIBLE_PROTO, "Debugger.Object",
-                              fnname, thisobj->getClass()->name);
+                              "method", thisobj->getClass()->name);
     return nullptr;
   }
 
@@ -73,63 +123,11 @@ static DebuggerObject* DebuggerObject_checkThis(JSContext* cx,
   if (!nthisobj->getPrivate()) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_INCOMPATIBLE_PROTO, "Debugger.Object",
-                              fnname, "prototype object");
+                              "method", "prototype object");
     return nullptr;
   }
   return nthisobj;
 }
-
-#define THIS_DEBUGOBJECT(cx, argc, vp, fnname, args, object)                   \
-  CallArgs args = CallArgsFromVp(argc, vp);                                    \
-  RootedDebuggerObject object(cx, DebuggerObject_checkThis(cx, args, fnname)); \
-  if (!object) return false;
-
-#define THIS_DEBUGOBJECT_REFERENT(cx, argc, vp, fnname, args, obj)  \
-  CallArgs args = CallArgsFromVp(argc, vp);                         \
-  RootedObject obj(cx, DebuggerObject_checkThis(cx, args, fnname)); \
-  if (!obj) return false;                                           \
-  obj = (JSObject*)obj->as<NativeObject>().getPrivate();            \
-  MOZ_ASSERT(obj)
-
-#define THIS_DEBUGOBJECT_OWNER_REFERENT(cx, argc, vp, fnname, args, dbg, obj) \
-  CallArgs args = CallArgsFromVp(argc, vp);                                   \
-  RootedObject obj(cx, DebuggerObject_checkThis(cx, args, fnname));           \
-  if (!obj) return false;                                                     \
-  Debugger* dbg = Debugger::fromChildJSObject(obj);                           \
-  obj = (JSObject*)obj->as<NativeObject>().getPrivate();                      \
-  MOZ_ASSERT(obj)
-
-#define THIS_DEBUGOBJECT_PROMISE(cx, argc, vp, fnname, args, obj)             \
-  THIS_DEBUGOBJECT_REFERENT(cx, argc, vp, fnname, args, obj);                 \
-  /* We only care about promises, so CheckedUnwrapStatic is OK. */            \
-  obj = CheckedUnwrapStatic(obj);                                             \
-  if (!obj) {                                                                 \
-    ReportAccessDenied(cx);                                                   \
-    return false;                                                             \
-  }                                                                           \
-  if (!obj->is<PromiseObject>()) {                                            \
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,                   \
-                              JSMSG_NOT_EXPECTED_TYPE, "Debugger", "Promise", \
-                              obj->getClass()->name);                         \
-    return false;                                                             \
-  }                                                                           \
-  Rooted<PromiseObject*> promise(cx, &obj->as<PromiseObject>());
-
-#define THIS_DEBUGOBJECT_OWNER_PROMISE(cx, argc, vp, fnname, args, dbg, obj)  \
-  THIS_DEBUGOBJECT_OWNER_REFERENT(cx, argc, vp, fnname, args, dbg, obj);      \
-  /* We only care about promises, so CheckedUnwrapStatic is OK. */            \
-  obj = CheckedUnwrapStatic(obj);                                             \
-  if (!obj) {                                                                 \
-    ReportAccessDenied(cx);                                                   \
-    return false;                                                             \
-  }                                                                           \
-  if (!obj->is<PromiseObject>()) {                                            \
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,                   \
-                              JSMSG_NOT_EXPECTED_TYPE, "Debugger", "Promise", \
-                              obj->getClass()->name);                         \
-    return false;                                                             \
-  }                                                                           \
-  Rooted<PromiseObject*> promise(cx, &obj->as<PromiseObject>());
 
 /* static */
 bool DebuggerObject::construct(JSContext* cx, unsigned argc, Value* vp) {
@@ -138,19 +136,109 @@ bool DebuggerObject::construct(JSContext* cx, unsigned argc, Value* vp) {
   return false;
 }
 
-/* static */
-bool DebuggerObject::callableGetter(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get callable", args, object)
+struct MOZ_STACK_CLASS DebuggerObject::CallData {
+  JSContext* cx;
+  const CallArgs& args;
 
+  HandleDebuggerObject object;
+  RootedObject referent;
+
+  CallData(JSContext* cx, const CallArgs& args, HandleDebuggerObject obj)
+      : cx(cx), args(args), object(obj), referent(cx, obj->referent()) {}
+
+  // JSNative properties
+  bool callableGetter();
+  bool isBoundFunctionGetter();
+  bool isArrowFunctionGetter();
+  bool isAsyncFunctionGetter();
+  bool isClassConstructorGetter();
+  bool isGeneratorFunctionGetter();
+  bool protoGetter();
+  bool classGetter();
+  bool nameGetter();
+  bool displayNameGetter();
+  bool parameterNamesGetter();
+  bool scriptGetter();
+  bool environmentGetter();
+  bool boundTargetFunctionGetter();
+  bool boundThisGetter();
+  bool boundArgumentsGetter();
+  bool allocationSiteGetter();
+  bool errorMessageNameGetter();
+  bool errorNotesGetter();
+  bool errorLineNumberGetter();
+  bool errorColumnNumberGetter();
+  bool isProxyGetter();
+  bool proxyTargetGetter();
+  bool proxyHandlerGetter();
+  bool isPromiseGetter();
+  bool promiseStateGetter();
+  bool promiseValueGetter();
+  bool promiseReasonGetter();
+  bool promiseLifetimeGetter();
+  bool promiseTimeToResolutionGetter();
+  bool promiseAllocationSiteGetter();
+  bool promiseResolutionSiteGetter();
+  bool promiseIDGetter();
+  bool promiseDependentPromisesGetter();
+
+  // JSNative methods
+  bool isExtensibleMethod();
+  bool isSealedMethod();
+  bool isFrozenMethod();
+  bool getPropertyMethod();
+  bool setPropertyMethod();
+  bool getOwnPropertyNamesMethod();
+  bool getOwnPropertySymbolsMethod();
+  bool getOwnPropertyDescriptorMethod();
+  bool preventExtensionsMethod();
+  bool sealMethod();
+  bool freezeMethod();
+  bool definePropertyMethod();
+  bool definePropertiesMethod();
+  bool deletePropertyMethod();
+  bool callMethod();
+  bool applyMethod();
+  bool asEnvironmentMethod();
+  bool forceLexicalInitializationByNameMethod();
+  bool executeInGlobalMethod();
+  bool executeInGlobalWithBindingsMethod();
+  bool createSource();
+  bool makeDebuggeeValueMethod();
+  bool makeDebuggeeNativeFunctionMethod();
+  bool isSameNativeMethod();
+  bool unsafeDereferenceMethod();
+  bool unwrapMethod();
+  bool setInstrumentationMethod();
+  bool setInstrumentationActiveMethod();
+
+  using Method = bool (CallData::*)();
+
+  template <Method MyMethod>
+  static bool ToNative(JSContext* cx, unsigned argc, Value* vp);
+};
+
+template <DebuggerObject::CallData::Method MyMethod>
+/* static */
+bool DebuggerObject::CallData::ToNative(JSContext* cx, unsigned argc,
+                                        Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  RootedDebuggerObject obj(cx, DebuggerObject_checkThis(cx, args));
+  if (!obj) {
+    return false;
+  }
+
+  CallData data(cx, args, obj);
+  return (data.*MyMethod)();
+}
+
+bool DebuggerObject::CallData::callableGetter() {
   args.rval().setBoolean(object->isCallable());
   return true;
 }
 
-/* static */
-bool DebuggerObject::isBoundFunctionGetter(JSContext* cx, unsigned argc,
-                                           Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get isBoundFunction", args, object)
-
+bool DebuggerObject::CallData::isBoundFunctionGetter() {
   if (!object->isDebuggeeFunction()) {
     args.rval().setUndefined();
     return true;
@@ -160,11 +248,7 @@ bool DebuggerObject::isBoundFunctionGetter(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::isArrowFunctionGetter(JSContext* cx, unsigned argc,
-                                           Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get isArrowFunction", args, object)
-
+bool DebuggerObject::CallData::isArrowFunctionGetter() {
   if (!object->isDebuggeeFunction()) {
     args.rval().setUndefined();
     return true;
@@ -174,11 +258,7 @@ bool DebuggerObject::isArrowFunctionGetter(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::isAsyncFunctionGetter(JSContext* cx, unsigned argc,
-                                           Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get isAsyncFunction", args, object)
-
+bool DebuggerObject::CallData::isAsyncFunctionGetter() {
   if (!object->isDebuggeeFunction()) {
     args.rval().setUndefined();
     return true;
@@ -188,11 +268,7 @@ bool DebuggerObject::isAsyncFunctionGetter(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::isGeneratorFunctionGetter(JSContext* cx, unsigned argc,
-                                               Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get isGeneratorFunction", args, object)
-
+bool DebuggerObject::CallData::isGeneratorFunctionGetter() {
   if (!object->isDebuggeeFunction()) {
     args.rval().setUndefined();
     return true;
@@ -202,10 +278,17 @@ bool DebuggerObject::isGeneratorFunctionGetter(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::protoGetter(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get proto", args, object)
+bool DebuggerObject::CallData::isClassConstructorGetter() {
+  if (!object->isDebuggeeFunction()) {
+    args.rval().setUndefined();
+    return true;
+  }
 
+  args.rval().setBoolean(object->isClassConstructor());
+  return true;
+}
+
+bool DebuggerObject::CallData::protoGetter() {
   RootedDebuggerObject result(cx);
   if (!DebuggerObject::getPrototypeOf(cx, object, &result)) {
     return false;
@@ -215,10 +298,7 @@ bool DebuggerObject::protoGetter(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-/* static */
-bool DebuggerObject::classGetter(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get class", args, object)
-
+bool DebuggerObject::CallData::classGetter() {
   RootedString result(cx);
   if (!DebuggerObject::getClassName(cx, object, &result)) {
     return false;
@@ -228,10 +308,7 @@ bool DebuggerObject::classGetter(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-/* static */
-bool DebuggerObject::nameGetter(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get name", args, object)
-
+bool DebuggerObject::CallData::nameGetter() {
   if (!object->isFunction()) {
     args.rval().setUndefined();
     return true;
@@ -246,11 +323,7 @@ bool DebuggerObject::nameGetter(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-/* static */
-bool DebuggerObject::displayNameGetter(JSContext* cx, unsigned argc,
-                                       Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get displayName", args, object)
-
+bool DebuggerObject::CallData::displayNameGetter() {
   if (!object->isFunction()) {
     args.rval().setUndefined();
     return true;
@@ -265,11 +338,7 @@ bool DebuggerObject::displayNameGetter(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::parameterNamesGetter(JSContext* cx, unsigned argc,
-                                          Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get parameterNames", args, object)
-
+bool DebuggerObject::CallData::parameterNamesGetter() {
   if (!object->isDebuggeeFunction()) {
     args.rval().setUndefined();
     return true;
@@ -300,16 +369,15 @@ bool DebuggerObject::parameterNamesGetter(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::scriptGetter(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT_OWNER_REFERENT(cx, argc, vp, "get script", args, dbg, obj);
+bool DebuggerObject::CallData::scriptGetter() {
+  Debugger* dbg = Debugger::fromChildJSObject(object);
 
-  if (!obj->is<JSFunction>()) {
+  if (!referent->is<JSFunction>()) {
     args.rval().setUndefined();
     return true;
   }
 
-  RootedFunction fun(cx, &obj->as<JSFunction>());
+  RootedFunction fun(cx, &referent->as<JSFunction>());
   if (!IsInterpretedNonSelfHostedFunction(fun)) {
     args.rval().setUndefined();
     return true;
@@ -335,20 +403,17 @@ bool DebuggerObject::scriptGetter(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-/* static */
-bool DebuggerObject::environmentGetter(JSContext* cx, unsigned argc,
-                                       Value* vp) {
-  THIS_DEBUGOBJECT_OWNER_REFERENT(cx, argc, vp, "get environment", args, dbg,
-                                  obj);
+bool DebuggerObject::CallData::environmentGetter() {
+  Debugger* dbg = Debugger::fromChildJSObject(object);
 
   // Don't bother switching compartments just to check obj's type and get its
   // env.
-  if (!obj->is<JSFunction>()) {
+  if (!referent->is<JSFunction>()) {
     args.rval().setUndefined();
     return true;
   }
 
-  RootedFunction fun(cx, &obj->as<JSFunction>());
+  RootedFunction fun(cx, &referent->as<JSFunction>());
   if (!IsInterpretedNonSelfHostedFunction(fun)) {
     args.rval().setUndefined();
     return true;
@@ -372,11 +437,7 @@ bool DebuggerObject::environmentGetter(JSContext* cx, unsigned argc,
   return dbg->wrapEnvironment(cx, env, args.rval());
 }
 
-/* static */
-bool DebuggerObject::boundTargetFunctionGetter(JSContext* cx, unsigned argc,
-                                               Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get boundTargetFunction", args, object)
-
+bool DebuggerObject::CallData::boundTargetFunctionGetter() {
   if (!object->isDebuggeeFunction() || !object->isBoundFunction()) {
     args.rval().setUndefined();
     return true;
@@ -391,10 +452,7 @@ bool DebuggerObject::boundTargetFunctionGetter(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::boundThisGetter(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get boundThis", args, object)
-
+bool DebuggerObject::CallData::boundThisGetter() {
   if (!object->isDebuggeeFunction() || !object->isBoundFunction()) {
     args.rval().setUndefined();
     return true;
@@ -403,11 +461,7 @@ bool DebuggerObject::boundThisGetter(JSContext* cx, unsigned argc, Value* vp) {
   return DebuggerObject::getBoundThis(cx, object, args.rval());
 }
 
-/* static */
-bool DebuggerObject::boundArgumentsGetter(JSContext* cx, unsigned argc,
-                                          Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get boundArguments", args, object)
-
+bool DebuggerObject::CallData::boundArgumentsGetter() {
   if (!object->isDebuggeeFunction() || !object->isBoundFunction()) {
     args.rval().setUndefined();
     return true;
@@ -428,11 +482,7 @@ bool DebuggerObject::boundArgumentsGetter(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::allocationSiteGetter(JSContext* cx, unsigned argc,
-                                          Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get allocationSite", args, object)
-
+bool DebuggerObject::CallData::allocationSiteGetter() {
   RootedObject result(cx);
   if (!DebuggerObject::getAllocationSite(cx, object, &result)) {
     return false;
@@ -445,11 +495,7 @@ bool DebuggerObject::allocationSiteGetter(JSContext* cx, unsigned argc,
 // Returns the "name" field (see js.msg), which may be used as a unique
 // identifier, for any error object with a JSErrorReport or undefined
 // if the object has no JSErrorReport.
-/* static */
-bool DebuggerObject::errorMessageNameGetter(JSContext* cx, unsigned argc,
-                                            Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get errorMessageName", args, object)
-
+bool DebuggerObject::CallData::errorMessageNameGetter() {
   RootedString result(cx);
   if (!DebuggerObject::getErrorMessageName(cx, object, &result)) {
     return false;
@@ -463,42 +509,24 @@ bool DebuggerObject::errorMessageNameGetter(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::errorNotesGetter(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get errorNotes", args, object)
-
+bool DebuggerObject::CallData::errorNotesGetter() {
   return DebuggerObject::getErrorNotes(cx, object, args.rval());
 }
 
-/* static */
-bool DebuggerObject::errorLineNumberGetter(JSContext* cx, unsigned argc,
-                                           Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get errorLineNumber", args, object)
-
+bool DebuggerObject::CallData::errorLineNumberGetter() {
   return DebuggerObject::getErrorLineNumber(cx, object, args.rval());
 }
 
-/* static */
-bool DebuggerObject::errorColumnNumberGetter(JSContext* cx, unsigned argc,
-                                             Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get errorColumnNumber", args, object)
-
+bool DebuggerObject::CallData::errorColumnNumberGetter() {
   return DebuggerObject::getErrorColumnNumber(cx, object, args.rval());
 }
 
-/* static */
-bool DebuggerObject::isProxyGetter(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get isProxy", args, object)
-
+bool DebuggerObject::CallData::isProxyGetter() {
   args.rval().setBoolean(object->isScriptedProxy());
   return true;
 }
 
-/* static */
-bool DebuggerObject::proxyTargetGetter(JSContext* cx, unsigned argc,
-                                       Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get proxyTarget", args, object)
-
+bool DebuggerObject::CallData::proxyTargetGetter() {
   if (!object->isScriptedProxy()) {
     args.rval().setUndefined();
     return true;
@@ -513,11 +541,7 @@ bool DebuggerObject::proxyTargetGetter(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::proxyHandlerGetter(JSContext* cx, unsigned argc,
-                                        Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get proxyHandler", args, object)
-
+bool DebuggerObject::CallData::proxyHandlerGetter() {
   if (!object->isScriptedProxy()) {
     args.rval().setUndefined();
     return true;
@@ -531,19 +555,12 @@ bool DebuggerObject::proxyHandlerGetter(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::isPromiseGetter(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get isPromise", args, object)
-
+bool DebuggerObject::CallData::isPromiseGetter() {
   args.rval().setBoolean(object->isPromise());
   return true;
 }
 
-/* static */
-bool DebuggerObject::promiseStateGetter(JSContext* cx, unsigned argc,
-                                        Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get promiseState", args, object);
-
+bool DebuggerObject::CallData::promiseStateGetter() {
   if (!DebuggerObject::requirePromise(cx, object)) {
     return false;
   }
@@ -565,11 +582,7 @@ bool DebuggerObject::promiseStateGetter(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::promiseValueGetter(JSContext* cx, unsigned argc,
-                                        Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get promiseValue", args, object);
-
+bool DebuggerObject::CallData::promiseValueGetter() {
   if (!DebuggerObject::requirePromise(cx, object)) {
     return false;
   }
@@ -584,11 +597,7 @@ bool DebuggerObject::promiseValueGetter(JSContext* cx, unsigned argc,
   ;
 }
 
-/* static */
-bool DebuggerObject::promiseReasonGetter(JSContext* cx, unsigned argc,
-                                         Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get promiseReason", args, object);
-
+bool DebuggerObject::CallData::promiseReasonGetter() {
   if (!DebuggerObject::requirePromise(cx, object)) {
     return false;
   }
@@ -600,14 +609,9 @@ bool DebuggerObject::promiseReasonGetter(JSContext* cx, unsigned argc,
   }
 
   return DebuggerObject::getPromiseReason(cx, object, args.rval());
-  ;
 }
 
-/* static */
-bool DebuggerObject::promiseLifetimeGetter(JSContext* cx, unsigned argc,
-                                           Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get promiseLifetime", args, object);
-
+bool DebuggerObject::CallData::promiseLifetimeGetter() {
   if (!DebuggerObject::requirePromise(cx, object)) {
     return false;
   }
@@ -616,11 +620,7 @@ bool DebuggerObject::promiseLifetimeGetter(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::promiseTimeToResolutionGetter(JSContext* cx, unsigned argc,
-                                                   Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "get promiseTimeToResolution", args, object);
-
+bool DebuggerObject::CallData::promiseTimeToResolutionGetter() {
   if (!DebuggerObject::requirePromise(cx, object)) {
     return false;
   }
@@ -635,11 +635,27 @@ bool DebuggerObject::promiseTimeToResolutionGetter(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::promiseAllocationSiteGetter(JSContext* cx, unsigned argc,
-                                                 Value* vp) {
-  THIS_DEBUGOBJECT_PROMISE(cx, argc, vp, "get promiseAllocationSite", args,
-                           refobj);
+static PromiseObject* EnsurePromise(JSContext* cx, HandleObject referent) {
+  // We only care about promises, so CheckedUnwrapStatic is OK.
+  RootedObject obj(cx, CheckedUnwrapStatic(referent));
+  if (!obj) {
+    ReportAccessDenied(cx);
+    return nullptr;
+  }
+  if (!obj->is<PromiseObject>()) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_NOT_EXPECTED_TYPE, "Debugger", "Promise",
+                              obj->getClass()->name);
+    return nullptr;
+  }
+  return &obj->as<PromiseObject>();
+}
+
+bool DebuggerObject::CallData::promiseAllocationSiteGetter() {
+  Rooted<PromiseObject*> promise(cx, EnsurePromise(cx, referent));
+  if (!promise) {
+    return false;
+  }
 
   RootedObject allocSite(cx, promise->allocationSite());
   if (!allocSite) {
@@ -654,11 +670,11 @@ bool DebuggerObject::promiseAllocationSiteGetter(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::promiseResolutionSiteGetter(JSContext* cx, unsigned argc,
-                                                 Value* vp) {
-  THIS_DEBUGOBJECT_PROMISE(cx, argc, vp, "get promiseResolutionSite", args,
-                           refobj);
+bool DebuggerObject::CallData::promiseResolutionSiteGetter() {
+  Rooted<PromiseObject*> promise(cx, EnsurePromise(cx, referent));
+  if (!promise) {
+    return false;
+  }
 
   if (promise->state() == JS::PromiseState::Pending) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
@@ -679,19 +695,23 @@ bool DebuggerObject::promiseResolutionSiteGetter(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::promiseIDGetter(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT_PROMISE(cx, argc, vp, "get promiseID", args, refobj);
+bool DebuggerObject::CallData::promiseIDGetter() {
+  Rooted<PromiseObject*> promise(cx, EnsurePromise(cx, referent));
+  if (!promise) {
+    return false;
+  }
 
   args.rval().setNumber(double(promise->getID()));
   return true;
 }
 
-/* static */
-bool DebuggerObject::promiseDependentPromisesGetter(JSContext* cx,
-                                                    unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT_OWNER_PROMISE(cx, argc, vp, "get promiseDependentPromises",
-                                 args, dbg, refobj);
+bool DebuggerObject::CallData::promiseDependentPromisesGetter() {
+  Debugger* dbg = Debugger::fromChildJSObject(object);
+
+  Rooted<PromiseObject*> promise(cx, EnsurePromise(cx, referent));
+  if (!promise) {
+    return false;
+  }
 
   Rooted<GCVector<Value>> values(cx, GCVector<Value>(cx));
   {
@@ -718,11 +738,7 @@ bool DebuggerObject::promiseDependentPromisesGetter(JSContext* cx,
   return true;
 }
 
-/* static */
-bool DebuggerObject::isExtensibleMethod(JSContext* cx, unsigned argc,
-                                        Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "isExtensible", args, object)
-
+bool DebuggerObject::CallData::isExtensibleMethod() {
   bool result;
   if (!DebuggerObject::isExtensible(cx, object, result)) {
     return false;
@@ -732,10 +748,7 @@ bool DebuggerObject::isExtensibleMethod(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::isSealedMethod(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "isSealed", args, object)
-
+bool DebuggerObject::CallData::isSealedMethod() {
   bool result;
   if (!DebuggerObject::isSealed(cx, object, result)) {
     return false;
@@ -745,10 +758,7 @@ bool DebuggerObject::isSealedMethod(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-/* static */
-bool DebuggerObject::isFrozenMethod(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "isFrozen", args, object)
-
+bool DebuggerObject::CallData::isFrozenMethod() {
   bool result;
   if (!DebuggerObject::isFrozen(cx, object, result)) {
     return false;
@@ -758,11 +768,7 @@ bool DebuggerObject::isFrozenMethod(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-/* static */
-bool DebuggerObject::getOwnPropertyNamesMethod(JSContext* cx, unsigned argc,
-                                               Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "getOwnPropertyNames", args, object)
-
+bool DebuggerObject::CallData::getOwnPropertyNamesMethod() {
   Rooted<IdVector> ids(cx, IdVector(cx));
   if (!DebuggerObject::getOwnPropertyNames(cx, object, &ids)) {
     return false;
@@ -777,11 +783,7 @@ bool DebuggerObject::getOwnPropertyNamesMethod(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::getOwnPropertySymbolsMethod(JSContext* cx, unsigned argc,
-                                                 Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "getOwnPropertySymbols", args, object)
-
+bool DebuggerObject::CallData::getOwnPropertySymbolsMethod() {
   Rooted<IdVector> ids(cx, IdVector(cx));
   if (!DebuggerObject::getOwnPropertySymbols(cx, object, &ids)) {
     return false;
@@ -796,11 +798,7 @@ bool DebuggerObject::getOwnPropertySymbolsMethod(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::getOwnPropertyDescriptorMethod(JSContext* cx,
-                                                    unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "getOwnPropertyDescriptor", args, object)
-
+bool DebuggerObject::CallData::getOwnPropertyDescriptorMethod() {
   RootedId id(cx);
   if (!ValueToId<CanGC>(cx, args.get(0), &id)) {
     return false;
@@ -814,11 +812,7 @@ bool DebuggerObject::getOwnPropertyDescriptorMethod(JSContext* cx,
   return JS::FromPropertyDescriptor(cx, desc, args.rval());
 }
 
-/* static */
-bool DebuggerObject::preventExtensionsMethod(JSContext* cx, unsigned argc,
-                                             Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "preventExtensions", args, object)
-
+bool DebuggerObject::CallData::preventExtensionsMethod() {
   if (!DebuggerObject::preventExtensions(cx, object)) {
     return false;
   }
@@ -827,10 +821,7 @@ bool DebuggerObject::preventExtensionsMethod(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::sealMethod(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "seal", args, object)
-
+bool DebuggerObject::CallData::sealMethod() {
   if (!DebuggerObject::seal(cx, object)) {
     return false;
   }
@@ -839,10 +830,7 @@ bool DebuggerObject::sealMethod(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-/* static */
-bool DebuggerObject::freezeMethod(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "freeze", args, object)
-
+bool DebuggerObject::CallData::freezeMethod() {
   if (!DebuggerObject::freeze(cx, object)) {
     return false;
   }
@@ -851,10 +839,7 @@ bool DebuggerObject::freezeMethod(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-/* static */
-bool DebuggerObject::definePropertyMethod(JSContext* cx, unsigned argc,
-                                          Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "defineProperty", args, object)
+bool DebuggerObject::CallData::definePropertyMethod() {
   if (!args.requireAtLeast(cx, "Debugger.Object.defineProperty", 2)) {
     return false;
   }
@@ -877,10 +862,7 @@ bool DebuggerObject::definePropertyMethod(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::definePropertiesMethod(JSContext* cx, unsigned argc,
-                                            Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "defineProperties", args, object);
+bool DebuggerObject::CallData::definePropertiesMethod() {
   if (!args.requireAtLeast(cx, "Debugger.Object.defineProperties", 1)) {
     return false;
   }
@@ -912,11 +894,7 @@ bool DebuggerObject::definePropertiesMethod(JSContext* cx, unsigned argc,
  * This does a non-strict delete, as a matter of API design. The case where the
  * property is non-configurable isn't necessarily exceptional here.
  */
-/* static */
-bool DebuggerObject::deletePropertyMethod(JSContext* cx, unsigned argc,
-                                          Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "deleteProperty", args, object)
-
+bool DebuggerObject::CallData::deletePropertyMethod() {
   RootedId id(cx);
   if (!ValueToId<CanGC>(cx, args.get(0), &id)) {
     return false;
@@ -931,35 +909,29 @@ bool DebuggerObject::deletePropertyMethod(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::callMethod(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "call", callArgs, object);
+bool DebuggerObject::CallData::callMethod() {
+  RootedValue thisv(cx, args.get(0));
 
-  RootedValue thisv(cx, callArgs.get(0));
-
-  Rooted<ValueVector> args(cx, ValueVector(cx));
-  if (callArgs.length() >= 2) {
-    if (!args.growBy(callArgs.length() - 1)) {
+  Rooted<ValueVector> nargs(cx, ValueVector(cx));
+  if (args.length() >= 2) {
+    if (!nargs.growBy(args.length() - 1)) {
       return false;
     }
-    for (size_t i = 1; i < callArgs.length(); ++i) {
-      args[i - 1].set(callArgs[i]);
+    for (size_t i = 1; i < args.length(); ++i) {
+      nargs[i - 1].set(args[i]);
     }
   }
 
   Rooted<Maybe<Completion>> completion(
-      cx, DebuggerObject::call(cx, object, thisv, args));
+      cx, DebuggerObject::call(cx, object, thisv, nargs));
   if (!completion.get()) {
     return false;
   }
 
-  return completion->buildCompletionValue(cx, object->owner(), callArgs.rval());
+  return completion->buildCompletionValue(cx, object->owner(), args.rval());
 }
 
-/* static */
-bool DebuggerObject::getPropertyMethod(JSContext* cx, unsigned argc,
-                                       Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "getProperty", args, object)
+bool DebuggerObject::CallData::getPropertyMethod() {
   Debugger* dbg = Debugger::fromChildJSObject(object);
 
   RootedId id(cx);
@@ -975,10 +947,7 @@ bool DebuggerObject::getPropertyMethod(JSContext* cx, unsigned argc,
   return comp.get().buildCompletionValue(cx, dbg, args.rval());
 }
 
-/* static */
-bool DebuggerObject::setPropertyMethod(JSContext* cx, unsigned argc,
-                                       Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "setProperty", args, object)
+bool DebuggerObject::CallData::setPropertyMethod() {
   Debugger* dbg = Debugger::fromChildJSObject(object);
 
   RootedId id(cx);
@@ -997,40 +966,37 @@ bool DebuggerObject::setPropertyMethod(JSContext* cx, unsigned argc,
   return comp.get().buildCompletionValue(cx, dbg, args.rval());
 }
 
-/* static */
-bool DebuggerObject::applyMethod(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "apply", callArgs, object);
+bool DebuggerObject::CallData::applyMethod() {
+  RootedValue thisv(cx, args.get(0));
 
-  RootedValue thisv(cx, callArgs.get(0));
-
-  Rooted<ValueVector> args(cx, ValueVector(cx));
-  if (callArgs.length() >= 2 && !callArgs[1].isNullOrUndefined()) {
-    if (!callArgs[1].isObject()) {
+  Rooted<ValueVector> nargs(cx, ValueVector(cx));
+  if (args.length() >= 2 && !args[1].isNullOrUndefined()) {
+    if (!args[1].isObject()) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_BAD_APPLY_ARGS, js_apply_str);
       return false;
     }
 
-    RootedObject argsobj(cx, &callArgs[1].toObject());
+    RootedObject argsobj(cx, &args[1].toObject());
 
     unsigned argc = 0;
     if (!GetLengthProperty(cx, argsobj, &argc)) {
       return false;
     }
-    argc = unsigned(Min(argc, ARGS_LENGTH_MAX));
+    argc = unsigned(std::min(argc, ARGS_LENGTH_MAX));
 
-    if (!args.growBy(argc) || !GetElements(cx, argsobj, argc, args.begin())) {
+    if (!nargs.growBy(argc) || !GetElements(cx, argsobj, argc, nargs.begin())) {
       return false;
     }
   }
 
   Rooted<Maybe<Completion>> completion(
-      cx, DebuggerObject::call(cx, object, thisv, args));
+      cx, DebuggerObject::call(cx, object, thisv, nargs));
   if (!completion.get()) {
     return false;
   }
 
-  return completion->buildCompletionValue(cx, object->owner(), callArgs.rval());
+  return completion->buildCompletionValue(cx, object->owner(), args.rval());
 }
 
 static void EnterDebuggeeObjectRealm(JSContext* cx, Maybe<AutoRealm>& ar,
@@ -1074,11 +1040,9 @@ static bool RequireGlobalObject(JSContext* cx, HandleValue dbgobj,
   return true;
 }
 
-/* static */
-bool DebuggerObject::asEnvironmentMethod(JSContext* cx, unsigned argc,
-                                         Value* vp) {
-  THIS_DEBUGOBJECT_OWNER_REFERENT(cx, argc, vp, "asEnvironment", args, dbg,
-                                  referent);
+bool DebuggerObject::CallData::asEnvironmentMethod() {
+  Debugger* dbg = Debugger::fromChildJSObject(object);
+
   if (!RequireGlobalObject(cx, args.thisv(), referent)) {
     return false;
   }
@@ -1099,12 +1063,7 @@ bool DebuggerObject::asEnvironmentMethod(JSContext* cx, unsigned argc,
 // if it is an uninitialized lexical, otherwise do nothing. The method's
 // JavaScript return value is true _only_ when an uninitialized lexical has been
 // altered, otherwise it is false.
-/* static */
-bool DebuggerObject::forceLexicalInitializationByNameMethod(JSContext* cx,
-                                                            unsigned argc,
-                                                            Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "forceLexicalInitializationByName", args,
-                   object)
+bool DebuggerObject::CallData::forceLexicalInitializationByNameMethod() {
   if (!args.requireAtLeast(
           cx, "Debugger.Object.prototype.forceLexicalInitializationByName",
           1)) {
@@ -1130,10 +1089,7 @@ bool DebuggerObject::forceLexicalInitializationByNameMethod(JSContext* cx,
   return true;
 }
 
-/* static */
-bool DebuggerObject::executeInGlobalMethod(JSContext* cx, unsigned argc,
-                                           Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "executeInGlobal", args, object);
+bool DebuggerObject::CallData::executeInGlobalMethod() {
   if (!args.requireAtLeast(cx, "Debugger.Object.prototype.executeInGlobal",
                            1)) {
     return false;
@@ -1162,11 +1118,7 @@ bool DebuggerObject::executeInGlobalMethod(JSContext* cx, unsigned argc,
   return comp.get().buildCompletionValue(cx, object->owner(), args.rval());
 }
 
-/* static */
-bool DebuggerObject::executeInGlobalWithBindingsMethod(JSContext* cx,
-                                                       unsigned argc,
-                                                       Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "executeInGlobalWithBindings", args, object);
+bool DebuggerObject::CallData::executeInGlobalWithBindingsMethod() {
   if (!args.requireAtLeast(
           cx, "Debugger.Object.prototype.executeInGlobalWithBindings", 2)) {
     return false;
@@ -1201,10 +1153,138 @@ bool DebuggerObject::executeInGlobalWithBindingsMethod(JSContext* cx,
   return comp.get().buildCompletionValue(cx, object->owner(), args.rval());
 }
 
-/* static */
-bool DebuggerObject::makeDebuggeeValueMethod(JSContext* cx, unsigned argc,
-                                             Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "makeDebuggeeValue", args, object);
+// Copy a narrow or wide string to a vector, appending a null terminator.
+template <typename T>
+static bool CopyStringToVector(JSContext* cx, JSString* str, Vector<T>& chars) {
+  JSLinearString* linear = str->ensureLinear(cx);
+  if (!linear) {
+    return false;
+  }
+  if (!chars.appendN(0, linear->length() + 1)) {
+    return false;
+  }
+  CopyChars(chars.begin(), *linear);
+  return true;
+}
+
+bool DebuggerObject::CallData::createSource() {
+  if (!args.requireAtLeast(cx, "Debugger.Object.prototype.createSource", 1)) {
+    return false;
+  }
+
+  if (!DebuggerObject::requireGlobal(cx, object)) {
+    return false;
+  }
+
+  RootedObject options(cx, ToObject(cx, args[0]));
+  if (!options) {
+    return false;
+  }
+
+  RootedValue v(cx);
+  if (!JS_GetProperty(cx, options, "text", &v)) {
+    return false;
+  }
+
+  RootedString text(cx, ToString<CanGC>(cx, v));
+  if (!text) {
+    return false;
+  }
+
+  if (!JS_GetProperty(cx, options, "url", &v)) {
+    return false;
+  }
+
+  RootedString url(cx, ToString<CanGC>(cx, v));
+  if (!url) {
+    return false;
+  }
+
+  if (!JS_GetProperty(cx, options, "startLine", &v)) {
+    return false;
+  }
+
+  uint32_t startLine;
+  if (!ToUint32(cx, v, &startLine)) {
+    return false;
+  }
+
+  if (!JS_GetProperty(cx, options, "sourceMapURL", &v)) {
+    return false;
+  }
+
+  RootedString sourceMapURL(cx);
+  if (!v.isUndefined()) {
+    sourceMapURL = ToString<CanGC>(cx, v);
+    if (!sourceMapURL) {
+      return false;
+    }
+  }
+
+  if (!JS_GetProperty(cx, options, "isScriptElement", &v)) {
+    return false;
+  }
+
+  bool isScriptElement = ToBoolean(v);
+
+  JS::CompileOptions compileOptions(cx);
+  compileOptions.lineno = startLine;
+
+  if (!JS_StringHasLatin1Chars(url)) {
+    JS_ReportErrorASCII(cx, "URL must be a narrow string");
+    return false;
+  }
+
+  Vector<Latin1Char> urlChars(cx);
+  if (!CopyStringToVector(cx, url, urlChars)) {
+    return false;
+  }
+  compileOptions.setFile((const char*)urlChars.begin());
+
+  Vector<char16_t> sourceMapURLChars(cx);
+  if (sourceMapURL) {
+    if (!CopyStringToVector(cx, sourceMapURL, sourceMapURLChars)) {
+      return false;
+    }
+    compileOptions.setSourceMapURL(sourceMapURLChars.begin());
+  }
+
+  if (isScriptElement) {
+    // The introduction type must be a statically allocated string.
+    compileOptions.setIntroductionType("scriptElement");
+  }
+
+  Vector<char16_t> textChars(cx);
+  if (!CopyStringToVector(cx, text, textChars)) {
+    return false;
+  }
+
+  JS::SourceText<char16_t> srcBuf;
+  if (!srcBuf.init(cx, textChars.begin(), text->length(),
+                   JS::SourceOwnership::Borrowed)) {
+    return false;
+  }
+
+  RootedScript script(cx);
+  {
+    AutoRealm ar(cx, object->referent());
+    script = JS::Compile(cx, compileOptions, srcBuf);
+    if (!script) {
+      return false;
+    }
+  }
+
+  RootedScriptSourceObject sso(cx, script->sourceObject());
+  RootedObject wrapped(cx, object->owner()->wrapSource(cx, sso));
+  if (!wrapped) {
+    return false;
+  }
+
+  args.rval().setObject(*wrapped);
+  return true;
+}
+
+bool DebuggerObject::CallData::makeDebuggeeValueMethod() {
   if (!args.requireAtLeast(cx, "Debugger.Object.prototype.makeDebuggeeValue",
                            1)) {
     return false;
@@ -1213,13 +1293,9 @@ bool DebuggerObject::makeDebuggeeValueMethod(JSContext* cx, unsigned argc,
   return DebuggerObject::makeDebuggeeValue(cx, object, args[0], args.rval());
 }
 
-/* static */
-bool DebuggerObject::makeDebuggeeNativeFunctionMethod(JSContext* cx,
-                                                      unsigned argc,
-                                                      Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "makeDebuggeeNativeFunction", args, object);
+bool DebuggerObject::CallData::makeDebuggeeNativeFunctionMethod() {
   if (!args.requireAtLeast(
-           cx, "Debugger.Object.prototype.makeDebuggeeNativeFunction", 1)) {
+          cx, "Debugger.Object.prototype.makeDebuggeeNativeFunction", 1)) {
     return false;
   }
 
@@ -1227,11 +1303,15 @@ bool DebuggerObject::makeDebuggeeNativeFunctionMethod(JSContext* cx,
                                                     args.rval());
 }
 
-/* static */
-bool DebuggerObject::unsafeDereferenceMethod(JSContext* cx, unsigned argc,
-                                             Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "unsafeDereference", args, object);
+bool DebuggerObject::CallData::isSameNativeMethod() {
+  if (!args.requireAtLeast(cx, "Debugger.Object.prototype.isSameNative", 1)) {
+    return false;
+  }
 
+  return DebuggerObject::isSameNative(cx, object, args[0], args.rval());
+}
+
+bool DebuggerObject::CallData::unsafeDereferenceMethod() {
   RootedObject result(cx);
   if (!DebuggerObject::unsafeDereference(cx, object, &result)) {
     return false;
@@ -1241,10 +1321,7 @@ bool DebuggerObject::unsafeDereferenceMethod(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::unwrapMethod(JSContext* cx, unsigned argc, Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "unwrap", args, object);
-
+bool DebuggerObject::CallData::unwrapMethod() {
   RootedDebuggerObject result(cx);
   if (!DebuggerObject::unwrap(cx, object, &result)) {
     return false;
@@ -1254,13 +1331,9 @@ bool DebuggerObject::unwrapMethod(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-/* static */
-bool DebuggerObject::setInstrumentationMethod(JSContext* cx, unsigned argc,
-                                              Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "setInstrumentation", args, object);
-
-  if (!args.requireAtLeast(
-           cx, "Debugger.Object.prototype.setInstrumentation", 2)) {
+bool DebuggerObject::CallData::setInstrumentationMethod() {
+  if (!args.requireAtLeast(cx, "Debugger.Object.prototype.setInstrumentation",
+                           2)) {
     return false;
   }
 
@@ -1320,18 +1393,13 @@ bool DebuggerObject::setInstrumentationMethod(JSContext* cx, unsigned argc,
   return true;
 }
 
-/* static */
-bool DebuggerObject::setInstrumentationActiveMethod(JSContext* cx,
-                                                    unsigned argc,
-                                                    Value* vp) {
-  THIS_DEBUGOBJECT(cx, argc, vp, "setInstrumentationActive", args, object);
-
+bool DebuggerObject::CallData::setInstrumentationActiveMethod() {
   if (!DebuggerObject::requireGlobal(cx, object)) {
     return false;
   }
 
   if (!args.requireAtLeast(
-      cx, "Debugger.Object.prototype.setInstrumentationActive", 1)) {
+          cx, "Debugger.Object.prototype.setInstrumentationActive", 1)) {
     return false;
   }
 
@@ -1350,82 +1418,77 @@ bool DebuggerObject::setInstrumentationActiveMethod(JSContext* cx,
 }
 
 const JSPropertySpec DebuggerObject::properties_[] = {
-    JS_PSG("callable", DebuggerObject::callableGetter, 0),
-    JS_PSG("isBoundFunction", DebuggerObject::isBoundFunctionGetter, 0),
-    JS_PSG("isArrowFunction", DebuggerObject::isArrowFunctionGetter, 0),
-    JS_PSG("isGeneratorFunction", DebuggerObject::isGeneratorFunctionGetter, 0),
-    JS_PSG("isAsyncFunction", DebuggerObject::isAsyncFunctionGetter, 0),
-    JS_PSG("proto", DebuggerObject::protoGetter, 0),
-    JS_PSG("class", DebuggerObject::classGetter, 0),
-    JS_PSG("name", DebuggerObject::nameGetter, 0),
-    JS_PSG("displayName", DebuggerObject::displayNameGetter, 0),
-    JS_PSG("parameterNames", DebuggerObject::parameterNamesGetter, 0),
-    JS_PSG("script", DebuggerObject::scriptGetter, 0),
-    JS_PSG("environment", DebuggerObject::environmentGetter, 0),
-    JS_PSG("boundTargetFunction", DebuggerObject::boundTargetFunctionGetter, 0),
-    JS_PSG("boundThis", DebuggerObject::boundThisGetter, 0),
-    JS_PSG("boundArguments", DebuggerObject::boundArgumentsGetter, 0),
-    JS_PSG("allocationSite", DebuggerObject::allocationSiteGetter, 0),
-    JS_PSG("errorMessageName", DebuggerObject::errorMessageNameGetter, 0),
-    JS_PSG("errorNotes", DebuggerObject::errorNotesGetter, 0),
-    JS_PSG("errorLineNumber", DebuggerObject::errorLineNumberGetter, 0),
-    JS_PSG("errorColumnNumber", DebuggerObject::errorColumnNumberGetter, 0),
-    JS_PSG("isProxy", DebuggerObject::isProxyGetter, 0),
-    JS_PSG("proxyTarget", DebuggerObject::proxyTargetGetter, 0),
-    JS_PSG("proxyHandler", DebuggerObject::proxyHandlerGetter, 0),
+    JS_DEBUG_PSG("callable", callableGetter),
+    JS_DEBUG_PSG("isBoundFunction", isBoundFunctionGetter),
+    JS_DEBUG_PSG("isArrowFunction", isArrowFunctionGetter),
+    JS_DEBUG_PSG("isGeneratorFunction", isGeneratorFunctionGetter),
+    JS_DEBUG_PSG("isAsyncFunction", isAsyncFunctionGetter),
+    JS_DEBUG_PSG("isClassConstructor", isClassConstructorGetter),
+    JS_DEBUG_PSG("proto", protoGetter),
+    JS_DEBUG_PSG("class", classGetter),
+    JS_DEBUG_PSG("name", nameGetter),
+    JS_DEBUG_PSG("displayName", displayNameGetter),
+    JS_DEBUG_PSG("parameterNames", parameterNamesGetter),
+    JS_DEBUG_PSG("script", scriptGetter),
+    JS_DEBUG_PSG("environment", environmentGetter),
+    JS_DEBUG_PSG("boundTargetFunction", boundTargetFunctionGetter),
+    JS_DEBUG_PSG("boundThis", boundThisGetter),
+    JS_DEBUG_PSG("boundArguments", boundArgumentsGetter),
+    JS_DEBUG_PSG("allocationSite", allocationSiteGetter),
+    JS_DEBUG_PSG("errorMessageName", errorMessageNameGetter),
+    JS_DEBUG_PSG("errorNotes", errorNotesGetter),
+    JS_DEBUG_PSG("errorLineNumber", errorLineNumberGetter),
+    JS_DEBUG_PSG("errorColumnNumber", errorColumnNumberGetter),
+    JS_DEBUG_PSG("isProxy", isProxyGetter),
+    JS_DEBUG_PSG("proxyTarget", proxyTargetGetter),
+    JS_DEBUG_PSG("proxyHandler", proxyHandlerGetter),
     JS_PS_END};
 
 const JSPropertySpec DebuggerObject::promiseProperties_[] = {
-    JS_PSG("isPromise", DebuggerObject::isPromiseGetter, 0),
-    JS_PSG("promiseState", DebuggerObject::promiseStateGetter, 0),
-    JS_PSG("promiseValue", DebuggerObject::promiseValueGetter, 0),
-    JS_PSG("promiseReason", DebuggerObject::promiseReasonGetter, 0),
-    JS_PSG("promiseLifetime", DebuggerObject::promiseLifetimeGetter, 0),
-    JS_PSG("promiseTimeToResolution",
-           DebuggerObject::promiseTimeToResolutionGetter, 0),
-    JS_PSG("promiseAllocationSite", DebuggerObject::promiseAllocationSiteGetter,
-           0),
-    JS_PSG("promiseResolutionSite", DebuggerObject::promiseResolutionSiteGetter,
-           0),
-    JS_PSG("promiseID", DebuggerObject::promiseIDGetter, 0),
-    JS_PSG("promiseDependentPromises",
-           DebuggerObject::promiseDependentPromisesGetter, 0),
+    JS_DEBUG_PSG("isPromise", isPromiseGetter),
+    JS_DEBUG_PSG("promiseState", promiseStateGetter),
+    JS_DEBUG_PSG("promiseValue", promiseValueGetter),
+    JS_DEBUG_PSG("promiseReason", promiseReasonGetter),
+    JS_DEBUG_PSG("promiseLifetime", promiseLifetimeGetter),
+    JS_DEBUG_PSG("promiseTimeToResolution", promiseTimeToResolutionGetter),
+    JS_DEBUG_PSG("promiseAllocationSite", promiseAllocationSiteGetter),
+    JS_DEBUG_PSG("promiseResolutionSite", promiseResolutionSiteGetter),
+    JS_DEBUG_PSG("promiseID", promiseIDGetter),
+    JS_DEBUG_PSG("promiseDependentPromises", promiseDependentPromisesGetter),
     JS_PS_END};
 
 const JSFunctionSpec DebuggerObject::methods_[] = {
-    JS_FN("isExtensible", DebuggerObject::isExtensibleMethod, 0, 0),
-    JS_FN("isSealed", DebuggerObject::isSealedMethod, 0, 0),
-    JS_FN("isFrozen", DebuggerObject::isFrozenMethod, 0, 0),
-    JS_FN("getProperty", DebuggerObject::getPropertyMethod, 0, 0),
-    JS_FN("setProperty", DebuggerObject::setPropertyMethod, 0, 0),
-    JS_FN("getOwnPropertyNames", DebuggerObject::getOwnPropertyNamesMethod, 0,
-          0),
-    JS_FN("getOwnPropertySymbols", DebuggerObject::getOwnPropertySymbolsMethod,
-          0, 0),
-    JS_FN("getOwnPropertyDescriptor",
-          DebuggerObject::getOwnPropertyDescriptorMethod, 1, 0),
-    JS_FN("preventExtensions", DebuggerObject::preventExtensionsMethod, 0, 0),
-    JS_FN("seal", DebuggerObject::sealMethod, 0, 0),
-    JS_FN("freeze", DebuggerObject::freezeMethod, 0, 0),
-    JS_FN("defineProperty", DebuggerObject::definePropertyMethod, 2, 0),
-    JS_FN("defineProperties", DebuggerObject::definePropertiesMethod, 1, 0),
-    JS_FN("deleteProperty", DebuggerObject::deletePropertyMethod, 1, 0),
-    JS_FN("call", DebuggerObject::callMethod, 0, 0),
-    JS_FN("apply", DebuggerObject::applyMethod, 0, 0),
-    JS_FN("asEnvironment", DebuggerObject::asEnvironmentMethod, 0, 0),
-    JS_FN("forceLexicalInitializationByName",
-          DebuggerObject::forceLexicalInitializationByNameMethod, 1, 0),
-    JS_FN("executeInGlobal", DebuggerObject::executeInGlobalMethod, 1, 0),
-    JS_FN("executeInGlobalWithBindings",
-          DebuggerObject::executeInGlobalWithBindingsMethod, 2, 0),
-    JS_FN("makeDebuggeeValue", DebuggerObject::makeDebuggeeValueMethod, 1, 0),
-    JS_FN("makeDebuggeeNativeFunction",
-          DebuggerObject::makeDebuggeeNativeFunctionMethod, 1, 0),
-    JS_FN("unsafeDereference", DebuggerObject::unsafeDereferenceMethod, 0, 0),
-    JS_FN("unwrap", DebuggerObject::unwrapMethod, 0, 0),
-    JS_FN("setInstrumentation", DebuggerObject::setInstrumentationMethod, 2, 0),
-    JS_FN("setInstrumentationActive",
-          DebuggerObject::setInstrumentationActiveMethod, 1, 0),
+    JS_DEBUG_FN("isExtensible", isExtensibleMethod, 0),
+    JS_DEBUG_FN("isSealed", isSealedMethod, 0),
+    JS_DEBUG_FN("isFrozen", isFrozenMethod, 0),
+    JS_DEBUG_FN("getProperty", getPropertyMethod, 0),
+    JS_DEBUG_FN("setProperty", setPropertyMethod, 0),
+    JS_DEBUG_FN("getOwnPropertyNames", getOwnPropertyNamesMethod, 0),
+    JS_DEBUG_FN("getOwnPropertySymbols", getOwnPropertySymbolsMethod, 0),
+    JS_DEBUG_FN("getOwnPropertyDescriptor", getOwnPropertyDescriptorMethod, 1),
+    JS_DEBUG_FN("preventExtensions", preventExtensionsMethod, 0),
+    JS_DEBUG_FN("seal", sealMethod, 0),
+    JS_DEBUG_FN("freeze", freezeMethod, 0),
+    JS_DEBUG_FN("defineProperty", definePropertyMethod, 2),
+    JS_DEBUG_FN("defineProperties", definePropertiesMethod, 1),
+    JS_DEBUG_FN("deleteProperty", deletePropertyMethod, 1),
+    JS_DEBUG_FN("call", callMethod, 0),
+    JS_DEBUG_FN("apply", applyMethod, 0),
+    JS_DEBUG_FN("asEnvironment", asEnvironmentMethod, 0),
+    JS_DEBUG_FN("forceLexicalInitializationByName",
+                forceLexicalInitializationByNameMethod, 1),
+    JS_DEBUG_FN("executeInGlobal", executeInGlobalMethod, 1),
+    JS_DEBUG_FN("executeInGlobalWithBindings",
+                executeInGlobalWithBindingsMethod, 2),
+    JS_DEBUG_FN("createSource", createSource, 1),
+    JS_DEBUG_FN("makeDebuggeeValue", makeDebuggeeValueMethod, 1),
+    JS_DEBUG_FN("makeDebuggeeNativeFunction", makeDebuggeeNativeFunctionMethod,
+                1),
+    JS_DEBUG_FN("isSameNative", isSameNativeMethod, 1),
+    JS_DEBUG_FN("unsafeDereference", unsafeDereferenceMethod, 0),
+    JS_DEBUG_FN("unwrap", unwrapMethod, 0),
+    JS_DEBUG_FN("setInstrumentation", setInstrumentationMethod, 2),
+    JS_DEBUG_FN("setInstrumentationActive", setInstrumentationActiveMethod, 1),
     JS_FS_END};
 
 /* static */
@@ -1497,6 +1560,12 @@ bool DebuggerObject::isGeneratorFunction() const {
   MOZ_ASSERT(isDebuggeeFunction());
 
   return referent()->as<JSFunction>().isGenerator();
+}
+
+bool DebuggerObject::isClassConstructor() const {
+  MOZ_ASSERT(isDebuggeeFunction());
+
+  return referent()->as<JSFunction>().isClassConstructor();
 }
 
 bool DebuggerObject::isGlobal() const { return referent()->is<GlobalObject>(); }
@@ -2319,6 +2388,20 @@ bool DebuggerObject::makeDebuggeeValue(JSContext* cx,
   return true;
 }
 
+static JSFunction* EnsureNativeFunction(const Value& value,
+                                        bool allowExtended = true) {
+  if (!value.isObject() || !value.toObject().is<JSFunction>()) {
+    return nullptr;
+  }
+
+  JSFunction* fun = &value.toObject().as<JSFunction>();
+  if (!fun->isNative() || (fun->isExtended() && !allowExtended)) {
+    return nullptr;
+  }
+
+  return fun;
+}
+
 /* static */
 bool DebuggerObject::makeDebuggeeNativeFunction(JSContext* cx,
                                                 HandleDebuggerObject object,
@@ -2327,19 +2410,10 @@ bool DebuggerObject::makeDebuggeeNativeFunction(JSContext* cx,
   RootedObject referent(cx, object->referent());
   Debugger* dbg = object->owner();
 
-  if (!value.isObject()) {
-    JS_ReportErrorASCII(cx, "Need object");
-    return false;
-  }
-
-  RootedObject obj(cx, &value.toObject());
-  if (!obj->is<JSFunction>()) {
-    JS_ReportErrorASCII(cx, "Need function");
-    return false;
-  }
-
-  RootedFunction fun(cx, &obj->as<JSFunction>());
-  if (!fun->isNative() || fun->isExtended()) {
+  // The logic below doesn't work with extended functions, so do not allow them.
+  RootedFunction fun(cx, EnsureNativeFunction(value,
+                                              /* allowExtended */ false));
+  if (!fun) {
     JS_ReportErrorASCII(cx, "Need native function");
     return false;
   }
@@ -2351,6 +2425,9 @@ bool DebuggerObject::makeDebuggeeNativeFunction(JSContext* cx,
 
     unsigned nargs = fun->nargs();
     RootedAtom name(cx, fun->displayAtom());
+    if (name) {
+      cx->markAtom(name);
+    }
     JSFunction* newFun = NewNativeFunction(cx, fun->native(), nargs, name);
     if (!newFun) {
       return false;
@@ -2366,6 +2443,43 @@ bool DebuggerObject::makeDebuggeeNativeFunction(JSContext* cx,
   }
 
   result.set(newValue);
+  return true;
+}
+
+static JSAtom* MaybeGetSelfHostedFunctionName(const Value& v) {
+  if (!v.isObject() || !v.toObject().is<JSFunction>()) {
+    return nullptr;
+  }
+
+  JSFunction* fun = &v.toObject().as<JSFunction>();
+  if (!fun->isSelfHostedBuiltin()) {
+    return nullptr;
+  }
+
+  return GetClonedSelfHostedFunctionName(fun);
+}
+
+/* static */
+bool DebuggerObject::isSameNative(JSContext* cx, HandleDebuggerObject object,
+                                  HandleValue value,
+                                  MutableHandleValue result) {
+  RootedValue referentValue(cx, ObjectValue(*object->referent()));
+
+  RootedFunction fun(cx, EnsureNativeFunction(value));
+  if (!fun) {
+    RootedAtom selfHostedName(cx, MaybeGetSelfHostedFunctionName(value));
+    if (!selfHostedName) {
+      JS_ReportErrorASCII(cx, "Need native function");
+      return false;
+    }
+
+    result.setBoolean(selfHostedName ==
+                      MaybeGetSelfHostedFunctionName(referentValue));
+    return true;
+  }
+
+  RootedFunction referentFun(cx, EnsureNativeFunction(referentValue));
+  result.setBoolean(referentFun && referentFun->native() == fun->native());
   return true;
 }
 

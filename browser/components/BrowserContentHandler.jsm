@@ -16,9 +16,12 @@ const { AppConstants } = ChromeUtils.import(
 );
 
 XPCOMUtils.defineLazyModuleGetters(this, {
+  AboutPrivateBrowsingHandler:
+    "resource:///modules/aboutpages/AboutPrivateBrowsingHandler.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
   HeadlessShell: "resource:///modules/HeadlessShell.jsm",
   HomePage: "resource:///modules/HomePage.jsm",
+  FirstStartup: "resource://gre/modules/FirstStartup.jsm",
   LaterRun: "resource:///modules/LaterRun.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   SessionStartup: "resource:///modules/sessionstore/SessionStartup.jsm",
@@ -46,6 +49,10 @@ XPCOMUtils.defineLazyGetter(this, "gSystemPrincipal", () =>
 XPCOMUtils.defineLazyGlobalGetters(this, [URL]);
 
 const NEWINSTALL_PAGE = "about:newinstall";
+
+// One-time startup homepage override configurations
+const ONCE_DOMAINS = ["mozilla.org", "firefox.com"];
+const ONCE_PREF = "browser.startup.homepage_override.once";
 
 function shouldLoadURI(aURI) {
   if (aURI && !aURI.schemeIs("chrome")) {
@@ -87,6 +94,8 @@ function resolveURIInternal(aCmdLine, aArgument) {
 
   return uri;
 }
+
+let gKiosk = false;
 
 let gRemoteInstallPage = null;
 
@@ -358,17 +367,25 @@ async function doSearch(searchTerm, cmdLine) {
   // be handled synchronously. Then load the search URI when the
   // SearchService has loaded.
   let win = openBrowserWindow(cmdLine, gSystemPrincipal, "about:blank");
-  var engine = await Services.search.getDefault();
-  var countId = (engine.identifier || "other-" + engine.name) + ".system";
-  var count = Services.telemetry.getKeyedHistogramById("SEARCH_COUNTS");
-  count.add(countId);
-
-  var submission = engine.getSubmission(searchTerm, null, "system");
-
-  win.gBrowser.selectedBrowser.loadURI(submission.uri.spec, {
-    triggeringPrincipal: gSystemPrincipal,
-    postData: submission.postData,
+  await new Promise(resolve => {
+    Services.obs.addObserver(function observe(subject) {
+      if (subject == win) {
+        Services.obs.removeObserver(
+          observe,
+          "browser-delayed-startup-finished"
+        );
+        resolve();
+      }
+    }, "browser-delayed-startup-finished");
   });
+
+  win.BrowserSearch.loadSearchFromCommandLine(
+    searchTerm,
+    PrivateBrowsingUtils.isInTemporaryAutoStartMode ||
+      PrivateBrowsingUtils.isWindowPrivate(win),
+    gSystemPrincipal,
+    win.gBrowser.selectedBrowser.csp
+  ).catch(Cu.reportError);
 }
 
 function nsBrowserContentHandler() {
@@ -388,6 +405,9 @@ nsBrowserContentHandler.prototype = {
 
   /* nsICommandLineHandler */
   handle: function bch_handle(cmdLine) {
+    if (cmdLine.handleFlag("kiosk", false)) {
+      gKiosk = true;
+    }
     if (cmdLine.handleFlag("browser", false)) {
       openBrowserWindow(cmdLine, gSystemPrincipal);
       cmdLine.preventDefault = true;
@@ -495,6 +515,9 @@ nsBrowserContentHandler.prototype = {
         false
       );
       if (privateWindowParam) {
+        // Ensure we initialize the handler before trying to load
+        // about:privatebrowsing.
+        AboutPrivateBrowsingHandler.init();
         let forcePrivate = true;
         let resolvedURI;
         if (!PrivateBrowsingUtils.enabled) {
@@ -520,6 +543,9 @@ nsBrowserContentHandler.prototype = {
       }
       // NS_ERROR_INVALID_ARG is thrown when flag exists, but has no param.
       if (cmdLine.handleFlag("private-window", false)) {
+        // Ensure we initialize the handler before trying to load
+        // about:privatebrowsing.
+        AboutPrivateBrowsingHandler.init();
         openBrowserWindow(
           cmdLine,
           gSystemPrincipal,
@@ -552,6 +578,10 @@ nsBrowserContentHandler.prototype = {
     }
     if (cmdLine.handleFlag("setDefaultBrowser", false)) {
       ShellService.setDefaultBrowser(true, true);
+    }
+
+    if (cmdLine.handleFlag("first-startup", false)) {
+      FirstStartup.init();
     }
 
     var fileParam = cmdLine.handleFlagWithParam("file", false);
@@ -595,6 +625,9 @@ nsBrowserContentHandler.prototype = {
     info +=
       "  --search <term>    Search <term> with your default search engine.\n";
     info += "  --setDefaultBrowser Set this app as the default browser.\n";
+    info +=
+      "  --first-startup    Run post-install actions before opening a new window.\n";
+    info += "  --kiosk Start the browser in kiosk mode.\n";
     return info;
   },
 
@@ -691,18 +724,44 @@ nsBrowserContentHandler.prototype = {
     }
 
     // Allow showing a one-time startup override if we're not showing one
-    const ONCE_PREF = "browser.startup.homepage_override.once";
     if (isStartup && overridePage == "" && prefb.prefHasUserValue(ONCE_PREF)) {
       try {
         // Show if we haven't passed the expiration or there's no expiration
         const { expire, url } = JSON.parse(
           Services.urlFormatter.formatURLPref(ONCE_PREF)
         );
-        if (!(Date.now() > expire) && typeof url == "string") {
-          overridePage = url;
+        if (!(Date.now() > expire)) {
+          // Only set allowed urls as override pages
+          overridePage = url
+            .split("|")
+            .map(val => {
+              try {
+                return new URL(val);
+              } catch (ex) {
+                // Invalid URL, so filter out below
+                Cu.reportError(`Invalid once url: ${ex}`);
+                return null;
+              }
+            })
+            .filter(
+              parsed =>
+                parsed &&
+                parsed.protocol == "https:" &&
+                // Only accept exact hostname or subdomain; without port
+                ONCE_DOMAINS.includes(
+                  Services.eTLD.getBaseDomainFromHost(parsed.host)
+                )
+            )
+            .join("|");
+
+          // Be noisy as properly configured urls should be unchanged
+          if (overridePage != url) {
+            Cu.reportError(`Mismatched once urls: ${url}`);
+          }
         }
       } catch (ex) {
         // Invalid json pref, so ignore (and clear below)
+        Cu.reportError(`Invalid once pref: ${ex}`);
       } finally {
         prefb.clearUserPref(ONCE_PREF);
       }
@@ -784,6 +843,10 @@ nsBrowserContentHandler.prototype = {
     return this.mFeatures;
   },
 
+  get kiosk() {
+    return gKiosk;
+  },
+
   /* nsIContentHandler */
 
   handleContent: function bch_handleContent(contentType, context, request) {
@@ -813,17 +876,16 @@ nsBrowserContentHandler.prototype = {
 
   /* nsICommandLineValidator */
   validate: function bch_validate(cmdLine) {
-    // Other handlers may use osint so only handle the osint flag if the url
-    // flag is also present and the command line is valid.
-    var osintFlagIdx = cmdLine.findFlag("osint", false);
     var urlFlagIdx = cmdLine.findFlag("url", false);
     if (
       urlFlagIdx > -1 &&
-      (osintFlagIdx > -1 ||
-        cmdLine.state == Ci.nsICommandLine.STATE_REMOTE_EXPLICIT)
+      cmdLine.state == Ci.nsICommandLine.STATE_REMOTE_EXPLICIT
     ) {
       var urlParam = cmdLine.getArgument(urlFlagIdx + 1);
-      if (cmdLine.length != urlFlagIdx + 2 || /firefoxurl:/i.test(urlParam)) {
+      if (
+        cmdLine.length != urlFlagIdx + 2 ||
+        /firefoxurl(-[a-f0-9]+)?:/i.test(urlParam)
+      ) {
         throw Cr.NS_ERROR_ABORT;
       }
       var isDefault = false;
@@ -840,7 +902,6 @@ nsBrowserContentHandler.prototype = {
         // We don't have to show the instruction page.
         throw Cr.NS_ERROR_ABORT;
       }
-      cmdLine.handleFlag("osint", false);
     }
   },
 };

@@ -45,11 +45,6 @@ class RemoteObjectProxyBase : public js::BaseProxyHandler,
   bool delete_(JSContext* aCx, JS::Handle<JSObject*> aProxy,
                JS::Handle<jsid> aId, JS::ObjectOpResult& aResult) const final;
 
-  bool getPrototype(JSContext* aCx, JS::Handle<JSObject*> aProxy,
-                    JS::MutableHandle<JSObject*> aProtop) const final;
-  bool setPrototype(JSContext* aCx, JS::Handle<JSObject*> aProxy,
-                    JS::Handle<JSObject*> aProto,
-                    JS::ObjectOpResult& aResult) const final;
   bool getPrototypeIfOrdinary(JSContext* aCx, JS::Handle<JSObject*> aProxy,
                               bool* aIsOrdinary,
                               JS::MutableHandle<JSObject*> aProtop) const final;
@@ -67,8 +62,6 @@ class RemoteObjectProxyBase : public js::BaseProxyHandler,
            JS::ObjectOpResult& aResult) const final;
 
   // SpiderMonkey extensions
-  bool hasOwn(JSContext* aCx, JS::Handle<JSObject*> aProxy,
-              JS::Handle<jsid> aId, bool* aBp) const override;
   bool getOwnEnumerablePropertyKeys(
       JSContext* aCx, JS::Handle<JSObject*> aProxy,
       JS::MutableHandleVector<jsid> aProps) const override;
@@ -116,7 +109,7 @@ class RemoteObjectProxyBase : public js::BaseProxyHandler,
    * failed after creating the object.
    */
   void GetOrCreateProxyObject(JSContext* aCx, void* aNative,
-                              const js::Class* aClasp,
+                              const JSClass* aClasp,
                               JS::Handle<JSObject*> aTransplantTo,
                               JS::MutableHandle<JSObject*> aProxy,
                               bool& aNewObjectCreated) const;
@@ -170,7 +163,7 @@ class RemoteObjectProxy : public RemoteObjectProxyBase {
         aCx, aProxy, /* slot = */ 0, P, F, aHolder);
   }
 
-  static const js::Class sClass;
+  static const JSClass sClass;
 };
 
 /**

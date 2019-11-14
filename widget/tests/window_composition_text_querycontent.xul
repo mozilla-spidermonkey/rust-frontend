@@ -30,6 +30,8 @@
         src="data:text/html,&lt;div contenteditable id='contenteditable'&gt;&lt;/div&gt;"></iframe><br/>
 <iframe id="iframe5" width="200" height="50" src="data:text/html,&lt;input id='input'&gt;"></iframe>
 <iframe id="iframe6" width="200" height="50" src="data:text/html,&lt;input id='password' type='password'&gt;"></iframe><br/>
+<iframe id="iframe7" width="300" height="150"
+        src="data:text/html,&lt;span contenteditable id='contenteditable'&gt;&lt;/span&gt;"></iframe><br/>
 <input id="input" type="text"/><br/>
 <input id="password" type="password"/><br/>
 </p>
@@ -47,32 +49,32 @@ const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 function ok(aCondition, aMessage)
 {
-  window.opener.wrappedJSObject.SimpleTest.ok(aCondition, aMessage);
+  window.arguments[0].SimpleTest.ok(aCondition, aMessage);
 }
 
 function is(aLeft, aRight, aMessage)
 {
-  window.opener.wrappedJSObject.SimpleTest.is(aLeft, aRight, aMessage);
+  window.arguments[0].SimpleTest.is(aLeft, aRight, aMessage);
 }
 
 function isnot(aLeft, aRight, aMessage)
 {
-  window.opener.wrappedJSObject.SimpleTest.isnot(aLeft, aRight, aMessage);
+  window.arguments[0].SimpleTest.isnot(aLeft, aRight, aMessage);
 }
 
 function todo(aCondition, aMessage)
 {
-  window.opener.wrappedJSObject.SimpleTest.todo(aCondition, aMessage);
+  window.arguments[0].SimpleTest.todo(aCondition, aMessage);
 }
 
 function todo_is(aLeft, aRight, aMessage)
 {
-  window.opener.wrappedJSObject.SimpleTest.todo_is(aLeft, aRight, aMessage);
+  window.arguments[0].SimpleTest.todo_is(aLeft, aRight, aMessage);
 }
 
 function todo_isnot(aLeft, aRight, aMessage)
 {
-  window.opener.wrappedJSObject.SimpleTest.todo_isnot(aLeft, aRight, aMessage);
+  window.arguments[0].SimpleTest.todo_isnot(aLeft, aRight, aMessage);
 }
 
 function isSimilarTo(aLeft, aRight, aAllowedDifference, aMessage)
@@ -98,6 +100,8 @@ var iframe2 = document.getElementById("iframe2");
 var iframe3 = document.getElementById("iframe3");
 var contenteditable;
 var windowOfContenteditable;
+var contenteditableBySpan;
+var windowOfContenteditableBySpan;
 var input = document.getElementById("input");
 var password = document.getElementById("password");
 var textareaInFrame;
@@ -5186,6 +5190,84 @@ function runBug1530649Test()
      "runBug1530649Test: Committing the new composition string shouldn't remove the last space");
 }
 
+function runBug1571375Test()
+{
+  let selection = windowOfContenteditableBySpan.getSelection();
+  let doc = document.getElementById("iframe7").contentDocument;
+
+  contenteditableBySpan.focus();
+
+  contenteditableBySpan.innerHTML = "hello world";
+  let range = doc.createRange();
+  range.setStart(contenteditableBySpan.firstChild, 6);
+  range.setEnd(contenteditableBySpan.firstChild, 11);
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  synthesizeCompositionChange({
+    composition: {string: "world", clauses: [{length: 5, attr: COMPOSITION_ATTR_RAW_CLAUSE}]},
+    caret: { start: 5, length: 0 },
+  });
+  synthesizeComposition({type: "compositioncommit", data: "world", key: " "});
+  is(contenteditableBySpan.innerHTML, "hello world",
+     "runBug1571375Test: space must not be removed by commit");
+
+  contenteditableBySpan.innerHTML = "hello world";
+  range = doc.createRange();
+  range.setStart(contenteditableBySpan.firstChild, 0);
+  range.setEnd(contenteditableBySpan.firstChild, 5);
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  synthesizeCompositionChange({
+    composition: {string: "hello", clauses: [{length: 5, attr: COMPOSITION_ATTR_RAW_CLAUSE}]},
+    caret: { start: 5, length: 0 },
+  });
+  synthesizeComposition({type: "compositioncommit", data: "hello", key: " "});
+  is(contenteditableBySpan.innerHTML, "hello world",
+     "runBug1571375Test: space must not be removed by commit");
+
+  contenteditableBySpan.innerHTML = "hello world<div>.</div>";
+  range = doc.createRange();
+  range.setStart(contenteditableBySpan.firstChild, 6);
+  range.setEnd(contenteditableBySpan.firstChild, 11);
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  synthesizeCompositionChange({
+    composition: {string: "world", clauses: [{length: 5, attr: COMPOSITION_ATTR_RAW_CLAUSE}]},
+    caret: {start: 0, length: 0}}
+  );
+  synthesizeComposition({type: "compositioncommit", data: "world", key: " "});
+  is(contenteditableBySpan.innerHTML, "hello world<div>.</div>",
+     "runBug1571375Test: space must not be removed by commit");
+}
+
+async function runBug1584901Test()
+{
+  contenteditableBySpan.focus();
+  contenteditableBySpan.innerHTML = "";
+
+  // XXX synthesizeCompositionChange won't work without wait.
+  await waitForTick();
+
+  synthesizeCompositionChange({
+    composition: {string: "a ", clauses: [{length: 2, attr: COMPOSITION_ATTR_RAW_CLAUSE}]},
+  });
+  synthesizeComposition({type: "compositioncommitasis", key: " "});
+
+  is(contenteditableBySpan.innerHTML, "a&nbsp;",
+     "runBug1584901Test: space must not be removed by composition change");
+
+  synthesizeCompositionChange({
+    composition: {string: "b ", clauses: [{length: 2, attr: COMPOSITION_ATTR_RAW_CLAUSE}]},
+  });
+  synthesizeComposition({type: "compositioncommitasis", key: " "});
+
+  is(contenteditableBySpan.innerHTML, "a b&nbsp;",
+     "runBug1584901Test: space must not be removed by composition change");
+}
+
 function runCSSTransformTest()
 {
   textarea.focus();
@@ -8758,6 +8840,37 @@ async function runIMEContentObserverTest()
     checkSelectionChangeNotification(notifications[1], description, { offset: getNativeText("\n1\n2\n3").length + offsetAtStart, text: "" });
     checkPositionChangeNotification(notifications[2], description);
     dumpUnexpectedNotifications(description, 3);
+
+    // "<p>abc</p><p><br></p><p>{<br>}</p>" and removing second paragraph with DOM API
+    aElement.innerHTML = "<p>abc</p><p><br></p><p><br></p>";
+    sel.collapse(aElement.firstChild.nextSibling.nextSibling, 0);
+    await flushNotifications();
+    description = aDescription + "deleting previous paragraph with DOM API";
+    waitNotifications = promiseReceiveNotifications();
+    synthesizeKey("KEY_Unidentified", { code: "" }, win, callback);  // For setting the callback to recode notifications
+    aElement.firstChild.nextSibling.remove();
+    await waitNotifications;
+    ensureToRemovePrecedingPositionChangeNotification();
+    is(aElement.innerHTML, "<p>abc</p><p><br></p>", description + " the second paragraph should've been removed");
+    checkTextChangeNotification(notifications[0], description, { offset: getNativeText("\nabc").length + offsetAtStart, removedLength: getNativeText("\n\n").length, addedLength: 0 });
+    checkSelectionChangeNotification(notifications[1], description, { offset: getNativeText("\nabc\n").length + offsetAtStart, text: "" });
+    checkPositionChangeNotification(notifications[2], description);
+    dumpUnexpectedNotifications(description, 3);
+
+    // "<p>abc</p><p>{<br>}</p><p><br></p>" and removing last paragraph with DOM API
+    aElement.innerHTML = "<p>abc</p><p><br></p><p><br></p>";
+    sel.collapse(aElement.firstChild.nextSibling, 0);
+    await flushNotifications();
+    description = aDescription + "deleting next paragraph with DOM API";
+    waitNotifications = promiseReceiveNotifications();
+    synthesizeKey("KEY_Unidentified", { code: "" }, win, callback);  // For setting the callback to recode notifications
+    aElement.firstChild.nextSibling.nextSibling.remove();
+    await waitNotifications;
+    ensureToRemovePrecedingPositionChangeNotification();
+    is(aElement.innerHTML, "<p>abc</p><p><br></p>", description + " the last paragraph should've been removed");
+    checkTextChangeNotification(notifications[0], description, { offset: getNativeText("\nabc\n\n").length + offsetAtStart, removedLength: getNativeText("\n\n").length, addedLength: 0 });
+    checkPositionChangeNotification(notifications[1], description);
+    dumpUnexpectedNotifications(description, 2);
   }
 
   await testWithPlaintextEditor("runIMEContentObserverTest with input element: ", input, false);
@@ -8766,7 +8879,7 @@ async function runIMEContentObserverTest()
   await testWithHTMLEditor("runIMEContentObserverTest with contenteditable (defaultParagraphSeparator is p): ", contenteditable, "p");
   await testWithHTMLEditor("runIMEContentObserverTest with contenteditable (defaultParagraphSeparator is div): ", contenteditable, "div");
   // XXX Due to the difference of HTML editor behavior between designMode and contenteditable,
-  //     testWithHTMLEditor() gets some unexpected behavior.  However, IMEContentObserveri is
+  //     testWithHTMLEditor() gets some unexpected behavior.  However, IMEContentObserver is
   //     not depend on editor's detail.  So, we should investigate this issue later.  It's not
   //     so important for now.
   // await testWithHTMLEditor("runIMEContentObserverTest in designMode (defaultParagraphSeparator is br): ", iframe2.contentDocument.body, "br");
@@ -8807,17 +8920,17 @@ async function runPasswordMaskDelayTest() {
   passwordElement.focus();
   let waitForMaskingLastInput = promiseAllPasswordMasked();
   synthesizeKey("a");
-  let unmaskedResult = snapshotWindow(passwordWindow, true);
+  let unmaskedResult = await snapshotWindow(passwordWindow, true);
   await waitForMaskingLastInput;
-  let maskedResult = snapshotWindow(passwordWindow, true);
+  let maskedResult = await snapshotWindow(passwordWindow, true);
 
   inputElement.value = "a";
   inputElement.focus();
   inputElement.setSelectionRange(1, 1);
-  let unmaskedReference = snapshotWindow(inputWindow, true);
+  let unmaskedReference = await snapshotWindow(inputWindow, true);
   inputElement.value = kMask;
   inputElement.setSelectionRange(1, 1);
-  let maskedReference = snapshotWindow(inputWindow, true);
+  let maskedReference = await snapshotWindow(inputWindow, true);
   checkSnapshots(unmaskedResult, unmaskedReference, true,
                  "runPasswordMaskDelayTest(): first inputted character should be unmasked for a while");
   checkSnapshots(maskedResult, maskedReference, true,
@@ -8829,17 +8942,17 @@ async function runPasswordMaskDelayTest() {
   passwordElement.setSelectionRange(1, 1);
   waitForMaskingLastInput = promiseAllPasswordMasked();
   synthesizeKey("b");
-  unmaskedResult = snapshotWindow(passwordWindow, true);
+  unmaskedResult = await snapshotWindow(passwordWindow, true);
   await waitForMaskingLastInput;
-  maskedResult = snapshotWindow(passwordWindow, true);
+  maskedResult = await snapshotWindow(passwordWindow, true);
 
   inputElement.value = `${kMask}b`;
   inputElement.focus();
   inputElement.setSelectionRange(2, 2);
-  unmaskedReference = snapshotWindow(inputWindow, true);
+  unmaskedReference = await snapshotWindow(inputWindow, true);
   inputElement.value = `${kMask}${kMask}`;
   inputElement.setSelectionRange(2, 2);
-  maskedReference = snapshotWindow(inputWindow, true);
+  maskedReference = await snapshotWindow(inputWindow, true);
   checkSnapshots(unmaskedResult, unmaskedReference, true,
                  "runPasswordMaskDelayTest(): second inputted character should be unmasked for a while");
   checkSnapshots(maskedResult, maskedReference, true,
@@ -8852,17 +8965,17 @@ async function runPasswordMaskDelayTest() {
   waitForMaskingLastInput = promiseAllPasswordMasked();
   synthesizeKey("c");
   synthesizeKey("d");
-  unmaskedResult = snapshotWindow(passwordWindow, true);
+  unmaskedResult = await snapshotWindow(passwordWindow, true);
   await waitForMaskingLastInput;
-  maskedResult = snapshotWindow(passwordWindow, true);
+  maskedResult = await snapshotWindow(passwordWindow, true);
 
   inputElement.value = `${kMask}${kMask}${kMask}d`;
   inputElement.focus();
   inputElement.setSelectionRange(4, 4);
-  unmaskedReference = snapshotWindow(inputWindow, true);
+  unmaskedReference = await snapshotWindow(inputWindow, true);
   inputElement.value = `${kMask}${kMask}${kMask}${kMask}`;
   inputElement.setSelectionRange(4, 4);
-  maskedReference = snapshotWindow(inputWindow, true);
+  maskedReference = await snapshotWindow(inputWindow, true);
   checkSnapshots(unmaskedResult, unmaskedReference, true,
                  "runPasswordMaskDelayTest(): forth character input should mask the third character");
   checkSnapshots(maskedResult, maskedReference, true,
@@ -8874,17 +8987,17 @@ async function runPasswordMaskDelayTest() {
   passwordElement.setSelectionRange(2, 2);
   waitForMaskingLastInput = promiseAllPasswordMasked();
   synthesizeKey("e");
-  unmaskedResult = snapshotWindow(passwordWindow, true);
+  unmaskedResult = await snapshotWindow(passwordWindow, true);
   await waitForMaskingLastInput;
-  maskedResult = snapshotWindow(passwordWindow, true);
+  maskedResult = await snapshotWindow(passwordWindow, true);
 
   inputElement.value = `${kMask}${kMask}e${kMask}${kMask}`;
   inputElement.focus();
   inputElement.setSelectionRange(3, 3);
-  unmaskedReference = snapshotWindow(inputWindow, true);
+  unmaskedReference = await snapshotWindow(inputWindow, true);
   inputElement.value = `${kMask}${kMask}${kMask}${kMask}${kMask}`;
   inputElement.setSelectionRange(3, 3);
-  maskedReference = snapshotWindow(inputWindow, true);
+  maskedReference = await snapshotWindow(inputWindow, true);
   checkSnapshots(unmaskedResult, unmaskedReference, true,
                  "runPasswordMaskDelayTest(): inserted character should be unmasked for a while");
   checkSnapshots(maskedResult, maskedReference, true,
@@ -8902,9 +9015,9 @@ async function runPasswordMaskDelayTest() {
       },
       caret: { start: 1, length: 0 },
     });
-  unmaskedResult = snapshotWindow(passwordWindow, true);
+  unmaskedResult = await snapshotWindow(passwordWindow, true);
   await waitForMaskingLastInput;
-  maskedResult = snapshotWindow(passwordWindow, true);
+  maskedResult = await snapshotWindow(passwordWindow, true);
   is(getEditor(passwordElement).composing, true,
      "runPasswordMaskDelayTest(): composition shouldn't be commited at masking the composing string #1");
   synthesizeComposition({ type: "compositioncommitasis", key: { key: "KEY_Enter" } });
@@ -8919,7 +9032,7 @@ async function runPasswordMaskDelayTest() {
       },
       caret: { start: 1, length: 0 },
     });
-  unmaskedReference = snapshotWindow(inputWindow, true);
+  unmaskedReference = await snapshotWindow(inputWindow, true);
   synthesizeCompositionChange(
     { composition:
       { string: kMask,
@@ -8927,7 +9040,7 @@ async function runPasswordMaskDelayTest() {
       },
       caret: { start: 1, length: 0 },
     });
-  maskedReference = snapshotWindow(inputWindow, true);
+  maskedReference = await snapshotWindow(inputWindow, true);
   checkSnapshots(unmaskedResult, unmaskedReference, true,
                  "runPasswordMaskDelayTest(): composing character should be unmasked for a while");
   checkSnapshots(maskedResult, maskedReference, true,
@@ -8955,9 +9068,9 @@ async function runPasswordMaskDelayTest() {
       },
       caret: { start: 1, length: 0 },
     });
-  unmaskedResult = snapshotWindow(passwordWindow, true);
+  unmaskedResult = await snapshotWindow(passwordWindow, true);
   await waitForMaskingLastInput;
-  maskedResult = snapshotWindow(passwordWindow, true);
+  maskedResult = await snapshotWindow(passwordWindow, true);
   is(getEditor(passwordElement).composing, true,
      "runPasswordMaskDelayTest(): composition shouldn't be commited at masking the composing string #2");
   synthesizeComposition({ type: "compositioncommitasis", key: { key: "KEY_Enter" } });
@@ -8972,7 +9085,7 @@ async function runPasswordMaskDelayTest() {
       },
       caret: { start: 1, length: 0 },
     });
-  unmaskedReference = snapshotWindow(inputWindow, true);
+  unmaskedReference = await snapshotWindow(inputWindow, true);
   synthesizeCompositionChange(
     { composition:
       { string: kMask,
@@ -8980,7 +9093,7 @@ async function runPasswordMaskDelayTest() {
       },
       caret: { start: 1, length: 0 },
     });
-  maskedReference = snapshotWindow(inputWindow, true);
+  maskedReference = await snapshotWindow(inputWindow, true);
   checkSnapshots(unmaskedResult, unmaskedReference, true,
                  "runPasswordMaskDelayTest(): updated composing character should be unmasked for a while");
   checkSnapshots(maskedResult, maskedReference, true,
@@ -9008,9 +9121,9 @@ async function runPasswordMaskDelayTest() {
       },
       caret: { start: 2, length: 0 },
     });
-  unmaskedResult = snapshotWindow(passwordWindow, true);
+  unmaskedResult = await snapshotWindow(passwordWindow, true);
   await waitForMaskingLastInput;
-  maskedResult = snapshotWindow(passwordWindow, true);
+  maskedResult = await snapshotWindow(passwordWindow, true);
   is(getEditor(passwordElement).composing, true,
      "runPasswordMaskDelayTest(): composition shouldn't be commited at masking the composing string #3");
   synthesizeComposition({ type: "compositioncommitasis", key: { key: "KEY_Enter" } });
@@ -9025,7 +9138,7 @@ async function runPasswordMaskDelayTest() {
       },
       caret: { start: 2, length: 0 },
     });
-  unmaskedReference = snapshotWindow(inputWindow, true);
+  unmaskedReference = await snapshotWindow(inputWindow, true);
   synthesizeCompositionChange(
     { composition:
       { string: `${kMask}${kMask}`,
@@ -9033,7 +9146,7 @@ async function runPasswordMaskDelayTest() {
       },
       caret: { start: 2, length: 0 },
     });
-  maskedReference = snapshotWindow(inputWindow, true);
+  maskedReference = await snapshotWindow(inputWindow, true);
   checkSnapshots(unmaskedResult, unmaskedReference, true,
                  "runPasswordMaskDelayTest(): all of composing string should be unmasked for a while");
   checkSnapshots(maskedResult, maskedReference, true,
@@ -9055,17 +9168,17 @@ async function runPasswordMaskDelayTest() {
   await waitForMaskingLastInput;
   waitForMaskingLastInput = promiseAllPasswordMasked();
   synthesizeComposition({ type: "compositioncommitasis", key: { key: "KEY_Enter" } });
-  unmaskedResult = snapshotWindow(passwordWindow, true);
+  unmaskedResult = await snapshotWindow(passwordWindow, true);
   await waitForMaskingLastInput;
-  maskedResult = snapshotWindow(passwordWindow, true);
+  maskedResult = await snapshotWindow(passwordWindow, true);
 
   inputElement.value = `${kMask}cd${kMask}`;
   inputElement.focus();
   inputElement.setSelectionRange(3, 3);
-  unmaskedReference = snapshotWindow(inputWindow, true);
+  unmaskedReference = await snapshotWindow(inputWindow, true);
   inputElement.value = `${kMask}${kMask}${kMask}${kMask}`;
   inputElement.setSelectionRange(3, 3);
-  maskedReference = snapshotWindow(inputWindow, true);
+  maskedReference = await snapshotWindow(inputWindow, true);
   checkSnapshots(unmaskedResult, unmaskedReference, true,
                  "runPasswordMaskDelayTest(): committed string should be unmasked for a while");
   checkSnapshots(maskedResult, maskedReference, true,
@@ -9074,11 +9187,14 @@ async function runPasswordMaskDelayTest() {
 
 async function runTest()
 {
-  window.addEventListener("unload", window.opener.wrappedJSObject.SimpleTest.finish, {once: true, capture: true});
+  window.addEventListener("unload", window.arguments[0].SimpleTest.finish, {once: true, capture: true});
 
   contenteditable = document.getElementById("iframe4").contentDocument.getElementById("contenteditable");
   windowOfContenteditable = document.getElementById("iframe4").contentWindow;
   textareaInFrame = iframe.contentDocument.getElementById("textarea");
+
+  contenteditableBySpan = document.getElementById("iframe7").contentDocument.getElementById("contenteditable");
+  windowOfContenteditableBySpan = document.getElementById("iframe7").contentWindow;
 
   await runIMEContentObserverTest();
   await runEditorReframeTests();
@@ -9086,6 +9202,7 @@ async function runTest()
   await runRemoveContentTest();
   await runPanelTest();
   await runPasswordMaskDelayTest();
+  await runBug1584901Test();
 
   runUndoRedoTest();
   runCompositionCommitAsIsTest();
@@ -9105,6 +9222,7 @@ async function runTest()
   runBug722639Test();
   runBug1375825Test();
   runBug1530649Test();
+  runBug1571375Test();
   runForceCommitTest();
   runNestedSettingValue();
   runBug811755Test();
@@ -9119,7 +9237,7 @@ async function runTest()
   window.close();
 }
 
-window.opener.wrappedJSObject.SimpleTest.waitForFocus(runTest, window);
+window.arguments[0].SimpleTest.waitForFocus(runTest, window);
 
 ]]>
 </script>

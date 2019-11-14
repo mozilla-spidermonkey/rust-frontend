@@ -1,3 +1,4 @@
+use cranelift_codegen_shared::constants;
 use cranelift_entity::{entity_impl, EntityRef, PrimaryMap};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -11,6 +12,7 @@ pub struct RegBank {
     pub names: Vec<&'static str>,
     pub prefix: &'static str,
     pub pressure_tracking: bool,
+    pub pinned_reg: Option<u16>,
     pub toprcs: Vec<RegClassIndex>,
     pub classes: Vec<RegClassIndex>,
 }
@@ -23,6 +25,7 @@ impl RegBank {
         names: Vec<&'static str>,
         prefix: &'static str,
         pressure_tracking: bool,
+        pinned_reg: Option<u16>,
     ) -> Self {
         RegBank {
             name,
@@ -31,13 +34,45 @@ impl RegBank {
             names,
             prefix,
             pressure_tracking,
+            pinned_reg,
             toprcs: Vec::new(),
             classes: Vec::new(),
         }
     }
+
+    fn unit_by_name(&self, name: &'static str) -> u8 {
+        let unit = if let Some(found) = self.names.iter().position(|&reg_name| reg_name == name) {
+            found
+        } else {
+            // Try to match without the bank prefix.
+            assert!(name.starts_with(self.prefix));
+            let name_without_prefix = &name[self.prefix.len()..];
+            if let Some(found) = self
+                .names
+                .iter()
+                .position(|&reg_name| reg_name == name_without_prefix)
+            {
+                found
+            } else {
+                // Ultimate try: try to parse a number and use this in the array, eg r15 on x86.
+                if let Ok(as_num) = name_without_prefix.parse::<u8>() {
+                    assert!(
+                        (as_num - self.first_unit) < self.units,
+                        "trying to get {}, but bank only has {} registers!",
+                        name,
+                        self.units
+                    );
+                    (as_num - self.first_unit) as usize
+                } else {
+                    panic!("invalid register name {}", name);
+                }
+            }
+        };
+        self.first_unit + (unit as u8)
+    }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct RegClassIndex(u32);
 entity_impl!(RegClassIndex);
 
@@ -152,6 +187,7 @@ pub struct RegBankBuilder {
     pub names: Vec<&'static str>,
     pub prefix: &'static str,
     pub pressure_tracking: Option<bool>,
+    pub pinned_reg: Option<u16>,
 }
 
 impl RegBankBuilder {
@@ -162,6 +198,7 @@ impl RegBankBuilder {
             names: vec![],
             prefix,
             pressure_tracking: None,
+            pinned_reg: None,
         }
     }
     pub fn units(mut self, units: u8) -> Self {
@@ -174,6 +211,11 @@ impl RegBankBuilder {
     }
     pub fn track_pressure(mut self, track: bool) -> Self {
         self.pressure_tracking = Some(track);
+        self
+    }
+    pub fn pinned_reg(mut self, unit: u16) -> Self {
+        assert!(unit < (self.units as u16));
+        self.pinned_reg = Some(unit);
         self
     }
 }
@@ -215,6 +257,7 @@ impl IsaRegsBuilder {
             builder
                 .pressure_tracking
                 .expect("Pressure tracking must be explicitly set"),
+            builder.pinned_reg,
         ))
     }
 
@@ -322,19 +365,21 @@ impl IsaRegsBuilder {
             }
         }
 
-        // This limit should be coordinated with the `RegClassMask` and `RegClassIndex` types in
-        // isa/registers.rs of the non-meta code.
-        assert!(self.classes.len() <= 32, "Too many register classes");
+        assert!(
+            self.classes.len() <= constants::MAX_NUM_REG_CLASSES,
+            "Too many register classes"
+        );
 
-        // The maximum number of top-level register classes which have pressure tracking should be
-        // kept in sync with the MAX_TRACKED_TOPRCS constant in isa/registers.rs of the non-meta
-        // code.
         let num_toplevel = self
             .classes
             .values()
             .filter(|x| x.toprc == x.index && self.banks.get(x.bank).unwrap().pressure_tracking)
             .count();
-        assert!(num_toplevel <= 4, "Too many top-level register classes");
+
+        assert!(
+            num_toplevel <= constants::MAX_TRACKED_TOP_RCS,
+            "Too many top-level register classes"
+        );
 
         IsaRegs::new(self.banks, self.classes)
     }
@@ -351,5 +396,18 @@ impl IsaRegs {
         classes: PrimaryMap<RegClassIndex, RegClass>,
     ) -> Self {
         Self { banks, classes }
+    }
+
+    pub fn class_by_name(&self, name: &str) -> RegClassIndex {
+        self.classes
+            .values()
+            .find(|&class| class.name == name)
+            .expect(&format!("register class {} not found", name))
+            .index
+    }
+
+    pub fn regunit_by_name(&self, class_index: RegClassIndex, name: &'static str) -> u8 {
+        let bank_index = self.classes.get(class_index).unwrap().bank;
+        self.banks.get(bank_index).unwrap().unit_by_name(name)
     }
 }

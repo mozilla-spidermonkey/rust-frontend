@@ -3,6 +3,7 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import re
+from counted_unknown_properties import COUNTED_UNKNOWN_PROPERTIES
 
 PHYSICAL_SIDES = ["top", "right", "bottom", "left"]
 LOGICAL_SIDES = ["block-start", "block-end", "inline-start", "inline-end"]
@@ -574,6 +575,7 @@ class PropertiesData(object):
         self.shorthands = []
         self.shorthands_by_name = {}
         self.shorthand_aliases = []
+        self.counted_unknown_properties = [CountedUnknownProperty(p) for p in COUNTED_UNKNOWN_PROPERTIES]
 
     def new_style_struct(self, *args, **kwargs):
         style_struct = StyleStruct(*args, **kwargs)
@@ -652,9 +654,6 @@ def _remove_common_first_line_and_first_letter_properties(props, engine):
         props.remove("text-emphasis-position")
         props.remove("text-emphasis-style")
         props.remove("text-emphasis-color")
-        props.remove("text-decoration-skip-ink")
-        props.remove("text-decoration-thickness")
-        props.remove("text-underline-offset")
 
     props.remove("overflow-wrap")
     props.remove("text-align")
@@ -797,3 +796,10 @@ class PropertyRestrictions:
           + PropertyRestrictions.shorthand(data, "background")
           + PropertyRestrictions.shorthand(data, "outline")
           + PropertyRestrictions.shorthand(data, "font"))
+
+
+class CountedUnknownProperty:
+    def __init__(self, name):
+        self.name = name
+        self.ident = to_rust_ident(name)
+        self.camel_case = to_camel_case(self.ident)

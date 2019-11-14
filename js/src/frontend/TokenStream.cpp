@@ -38,6 +38,7 @@
 #include "js/UniquePtr.h"
 #include "util/StringBuffer.h"
 #include "util/Unicode.h"
+#include "vm/FrameIter.h"  // js::{,NonBuiltin}FrameIter
 #include "vm/HelperThreads.h"
 #include "vm/JSAtom.h"
 #include "vm/JSContext.h"
@@ -1763,11 +1764,13 @@ bool TokenStreamCharsBase<Unit>::addLineOfContext(ErrorMetadata* err,
                "should only see UTF-8 here");
 
     bool simple = utf16WindowLength == encodedWindowLength;
+#ifdef DEBUG
+    auto isAscii = [](Unit u) { return IsAscii(u); };
     MOZ_ASSERT(std::all_of(encodedWindow, encodedWindow + encodedWindowLength,
-                           IsAscii<Unit>) == simple,
+                           isAscii) == simple,
                "equal window lengths in UTF-8 should correspond only to "
                "wholly-ASCII text");
-
+#endif
     if (simple) {
       err->tokenOffset = encodedTokenOffset;
       err->lineLength = encodedWindowLength;
@@ -2324,8 +2327,8 @@ enum FirstCharKind {
   LastCharKind = Other
 };
 
-// OneChar: 40,  41,  44,  58,  59,  63,  91,  93,  123, 125, 126:
-//          '(', ')', ',', ':', ';', '?', '[', ']', '{', '}', '~'
+// OneChar: 40,  41,  44,  58,  59,  91,  93,  123, 125, 126:
+//          '(', ')', ',', ':', ';', '[', ']', '{', '}', '~'
 // Ident:   36, 65..90, 95, 97..122: '$', 'A'..'Z', '_', 'a'..'z'
 // Dot:     46: '.'
 // Equals:  61: '='
@@ -2342,7 +2345,6 @@ enum FirstCharKind {
 #define T_LP size_t(TokenKind::LeftParen)
 #define T_RP size_t(TokenKind::RightParen)
 #define T_SEMI size_t(TokenKind::Semi)
-#define T_HOOK size_t(TokenKind::Hook)
 #define T_LB size_t(TokenKind::LeftBracket)
 #define T_RB size_t(TokenKind::RightBracket)
 #define T_LC size_t(TokenKind::LeftCurly)
@@ -2357,7 +2359,7 @@ static const uint8_t firstCharKinds[] = {
 /*  30+ */ _______, _______,   Space, _______,  String, _______,   Ident, _______, _______,  String,
 /*  40+ */    T_LP,    T_RP, _______, _______, T_COMMA, _______, _______, _______,ZeroDigit,    Dec,
 /*  50+ */     Dec,     Dec,     Dec,     Dec,     Dec,     Dec,     Dec,     Dec, T_COLON,  T_SEMI,
-/*  60+ */ _______, _______, _______,  T_HOOK, _______,   Ident,   Ident,   Ident,   Ident,   Ident,
+/*  60+ */ _______, _______, _______, _______, _______,   Ident,   Ident,   Ident,   Ident,   Ident,
 /*  70+ */   Ident,   Ident,   Ident,   Ident,   Ident,   Ident,   Ident,   Ident,   Ident,   Ident,
 /*  80+ */   Ident,   Ident,   Ident,   Ident,   Ident,   Ident,   Ident,   Ident,   Ident,   Ident,
 /*  90+ */   Ident,    T_LB, _______,    T_RB, _______,   Ident,  String,   Ident,   Ident,   Ident,
@@ -2372,7 +2374,6 @@ static const uint8_t firstCharKinds[] = {
 #undef T_LP
 #undef T_RP
 #undef T_SEMI
-#undef T_HOOK
 #undef T_LB
 #undef T_RB
 #undef T_LC
@@ -2437,7 +2438,11 @@ TokenStreamSpecific<Unit, AnyCharsAccess>::matchInteger(
     }
     unit = getCodeUnit();
     if (!isIntegerUnit(unit)) {
-      error(JSMSG_MISSING_DIGIT_AFTER_SEPARATOR);
+      if (unit == '_') {
+        error(JSMSG_NUMBER_MULTIPLE_ADJACENT_UNDERSCORES);
+      } else {
+        error(JSMSG_NUMBER_END_WITH_UNDERSCORE);
+      }
       return false;
     }
   }
@@ -2475,7 +2480,7 @@ MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::decimalNumber(
                            this->sourceUnits.addressOfNextCodeUnit(), &dval)) {
       return false;
     }
-  } else if (unit == 'n' && anyCharsAccess().options().bigIntEnabledOption) {
+  } else if (unit == 'n') {
     isBigInt = true;
     unit = peekCodeUnit();
   } else {
@@ -2677,7 +2682,6 @@ MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::regexpLiteral(
 template <typename Unit, class AnyCharsAccess>
 MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::bigIntLiteral(
     TokenStart start, Modifier modifier, TokenKind* out) {
-  MOZ_ASSERT(anyCharsAccess().options().bigIntEnabledOption);
   MOZ_ASSERT(this->sourceUnits.previousCodeUnit() == toUnit('n'));
   MOZ_ASSERT(this->sourceUnits.offset() > start.offset());
   uint32_t length = this->sourceUnits.offset() - start.offset();
@@ -2962,7 +2966,7 @@ MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::getTokenInternal(
           return badToken();
         }
 
-        if (unit == 'n' && anyCharsAccess().options().bigIntEnabledOption) {
+        if (unit == 'n') {
           error(JSMSG_BIGINT_INVALID_SYNTAX);
           return badToken();
         }
@@ -2984,7 +2988,7 @@ MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::getTokenInternal(
         return decimalNumber(unit, start, numStart, modifier, ttp);
       }
 
-      if (unit == 'n' && anyCharsAccess().options().bigIntEnabledOption) {
+      if (unit == 'n') {
         isBigInt = true;
         unit = peekCodeUnit();
       } else {
@@ -3142,6 +3146,10 @@ MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::getTokenInternal(
           simpleKind =
               matchCodeUnit('=') ? TokenKind::BitAndAssign : TokenKind::BitAnd;
         }
+        break;
+
+      case '?':
+        simpleKind = matchCodeUnit('?') ? TokenKind::Coalesce : TokenKind::Hook;
         break;
 
       case '!':

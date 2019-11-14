@@ -15,8 +15,8 @@ use crate::isa::enc_tables::{self as shared_enc_tables, lookup_enclist, Encoding
 use crate::isa::Builder as IsaBuilder;
 use crate::isa::{EncInfo, RegClass, RegInfo, TargetIsa};
 use crate::regalloc;
+use alloc::boxed::Box;
 use core::fmt;
-use std::boxed::Box;
 use target_lexicon::{Architecture, Triple};
 
 #[allow(dead_code)]
@@ -42,14 +42,13 @@ fn isa_constructor(
     builder: shared_settings::Builder,
 ) -> Box<dyn TargetIsa> {
     let level1 = match triple.architecture {
-        Architecture::Thumbv6m | Architecture::Thumbv7em | Architecture::Thumbv7m => {
-            &enc_tables::LEVEL1_T32[..]
+        Architecture::Arm(arm) => {
+            if arm.is_thumb() {
+                &enc_tables::LEVEL1_T32[..]
+            } else {
+                &enc_tables::LEVEL1_A32[..]
+            }
         }
-        Architecture::Arm
-        | Architecture::Armv4t
-        | Architecture::Armv5te
-        | Architecture::Armv7
-        | Architecture::Armv7s => &enc_tables::LEVEL1_A32[..],
         _ => panic!(),
     };
     Box::new(Isa {
@@ -121,11 +120,19 @@ impl TargetIsa for Isa {
         divert: &mut regalloc::RegDiversions,
         sink: &mut dyn CodeSink,
     ) {
-        binemit::emit_inst(func, inst, divert, sink)
+        binemit::emit_inst(func, inst, divert, sink, self)
     }
 
     fn emit_function_to_memory(&self, func: &ir::Function, sink: &mut MemoryCodeSink) {
-        emit_function(func, binemit::emit_inst, sink)
+        emit_function(func, binemit::emit_inst, sink, self)
+    }
+
+    fn unsigned_add_overflow_condition(&self) -> ir::condcodes::IntCC {
+        ir::condcodes::IntCC::UnsignedLessThan
+    }
+
+    fn unsigned_sub_overflow_condition(&self) -> ir::condcodes::IntCC {
+        ir::condcodes::IntCC::UnsignedGreaterThanOrEqual
     }
 }
 

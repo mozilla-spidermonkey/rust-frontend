@@ -323,12 +323,13 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
 
   void jump(JitCode* code) { branch(code); }
 
-  void jump(TrampolinePtr code) {
-    auto target = ImmPtr(code.value);
+  void jump(ImmPtr ptr) {
     BufferOffset bo = m_buffer.nextOffset();
-    addPendingJump(bo, target, RelocationKind::HARDCODED);
-    ma_jump(target);
+    addPendingJump(bo, ptr, RelocationKind::HARDCODED);
+    ma_jump(ptr);
   }
+
+  void jump(TrampolinePtr code) { jump(ImmPtr(code.value)); }
 
   void splitTag(Register src, Register dest) {
     ma_dsrl(dest, src, Imm32(JSVAL_TAG_SHIFT));
@@ -478,8 +479,6 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
   // higher level tag testing code
   Address ToPayload(Address value) { return value; }
 
-  CodeOffsetJump jumpWithPatch(RepatchLabel* label);
-
   template <typename T>
   void loadUnboxedValue(const T& address, MIRType type, AnyRegister dest) {
     if (dest.isFloat()) {
@@ -624,6 +623,9 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
   void load64(const Address& address, Register64 dest) {
     loadPtr(address, dest.reg);
   }
+  void load64(const BaseIndex& address, Register64 dest) {
+    loadPtr(address, dest.reg);
+  }
 
   void loadPtr(const Address& address, Register dest);
   void loadPtr(const BaseIndex& src, Register dest);
@@ -664,8 +666,12 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
   void store64(Imm64 imm, Address address) {
     storePtr(ImmWord(imm.value), address);
   }
+  void store64(Imm64 imm, const BaseIndex& address) {
+    storePtr(ImmWord(imm.value), address);
+  }
 
   void store64(Register64 src, Address address) { storePtr(src.reg, address); }
+  void store64(Register64 src, const BaseIndex& address) { storePtr(src.reg, address); }
 
   template <typename T>
   void storePtr(ImmWord imm, T address);
@@ -725,8 +731,6 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
                         Register tmp);
 
  public:
-  CodeOffset labelForPatch() { return CodeOffset(nextOffset().getOffset()); }
-
   void lea(Operand addr, Register dest) {
     ma_daddu(dest, addr.baseReg(), Imm32(addr.disp()));
   }

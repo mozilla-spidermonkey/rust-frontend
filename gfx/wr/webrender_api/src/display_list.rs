@@ -329,6 +329,9 @@ impl<'a> BuiltDisplayListIter<'a> {
         self.cur_stops = ItemRange::default();
         self.cur_complex_clip = ItemRange::default();
         self.cur_clip_chain_items = ItemRange::default();
+        self.cur_filters = ItemRange::default();
+        self.cur_filter_primitives = ItemRange::default();
+        self.cur_filter_data.clear();
 
         loop {
             self.next_raw()?;
@@ -620,6 +623,7 @@ impl Serialize for BuiltDisplayList {
                 Real::HitTest(v) => Debug::HitTest(v),
                 Real::Line(v) => Debug::Line(v),
                 Real::Image(v) => Debug::Image(v),
+                Real::RepeatingImage(v) => Debug::RepeatingImage(v),
                 Real::YuvImage(v) => Debug::YuvImage(v),
                 Real::Border(v) => Debug::Border(v),
                 Real::BoxShadow(v) => Debug::BoxShadow(v),
@@ -629,6 +633,7 @@ impl Serialize for BuiltDisplayList {
                 Real::PushReferenceFrame(v) => Debug::PushReferenceFrame(v),
                 Real::PushStackingContext(v) => Debug::PushStackingContext(v),
                 Real::PushShadow(v) => Debug::PushShadow(v),
+                Real::BackdropFilter(v) => Debug::BackdropFilter(v),
 
                 Real::PopReferenceFrame => Debug::PopReferenceFrame,
                 Real::PopStackingContext => Debug::PopStackingContext,
@@ -723,6 +728,7 @@ impl<'de> Deserialize<'de> for BuiltDisplayList {
                 Debug::HitTest(v) => Real::HitTest(v),
                 Debug::Line(v) => Real::Line(v),
                 Debug::Image(v) => Real::Image(v),
+                Debug::RepeatingImage(v) => Real::RepeatingImage(v),
                 Debug::YuvImage(v) => Real::YuvImage(v),
                 Debug::Border(v) => Real::Border(v),
                 Debug::BoxShadow(v) => Real::BoxShadow(v),
@@ -730,6 +736,7 @@ impl<'de> Deserialize<'de> for BuiltDisplayList {
                 Debug::RadialGradient(v) => Real::RadialGradient(v),
                 Debug::PushStackingContext(v) => Real::PushStackingContext(v),
                 Debug::PushShadow(v) => Real::PushShadow(v),
+                Debug::BackdropFilter(v) => Real::BackdropFilter(v),
 
                 Debug::PopStackingContext => Real::PopStackingContext,
                 Debug::PopReferenceFrame => Real::PopReferenceFrame,
@@ -999,6 +1006,27 @@ impl DisplayListBuilder {
         &mut self,
         common: &di::CommonItemProperties,
         bounds: LayoutRect,
+        image_rendering: di::ImageRendering,
+        alpha_type: di::AlphaType,
+        key: ImageKey,
+        color: ColorF,
+    ) {
+        let item = di::DisplayItem::Image(di::ImageDisplayItem {
+            common: *common,
+            bounds,
+            image_key: key,
+            image_rendering,
+            alpha_type,
+            color,
+        });
+
+        self.push_item(&item);
+    }
+
+    pub fn push_repeating_image(
+        &mut self,
+        common: &di::CommonItemProperties,
+        bounds: LayoutRect,
         stretch_size: LayoutSize,
         tile_spacing: LayoutSize,
         image_rendering: di::ImageRendering,
@@ -1006,7 +1034,7 @@ impl DisplayListBuilder {
         key: ImageKey,
         color: ColorF,
     ) {
-        let item = di::DisplayItem::Image(di::ImageDisplayItem {
+        let item = di::DisplayItem::RepeatingImage(di::RepeatingImageDisplayItem {
             common: *common,
             bounds,
             image_key: key,
@@ -1226,7 +1254,7 @@ impl DisplayListBuilder {
         &mut self,
         origin: LayoutPoint,
         spatial_id: di::SpatialId,
-        is_backface_visible: bool,
+        prim_flags: di::PrimitiveFlags,
         clip_id: Option<di::ClipId>,
         transform_style: di::TransformStyle,
         mix_blend_mode: di::MixBlendMode,
@@ -1235,6 +1263,102 @@ impl DisplayListBuilder {
         filter_primitives: &[di::FilterPrimitive],
         raster_space: di::RasterSpace,
         cache_tiles: bool,
+        is_backdrop_root: bool,
+    ) {
+        self.push_filters(filters, filter_datas, filter_primitives);
+
+        let item = di::DisplayItem::PushStackingContext(di::PushStackingContextDisplayItem {
+            origin,
+            spatial_id,
+            prim_flags,
+            stacking_context: di::StackingContext {
+                transform_style,
+                mix_blend_mode,
+                clip_id,
+                raster_space,
+                cache_tiles,
+                is_backdrop_root,
+            },
+        });
+
+        self.push_item(&item);
+    }
+
+    /// Helper for examples/ code.
+    pub fn push_simple_stacking_context(
+        &mut self,
+        origin: LayoutPoint,
+        spatial_id: di::SpatialId,
+        prim_flags: di::PrimitiveFlags,
+    ) {
+        self.push_simple_stacking_context_with_filters(
+            origin,
+            spatial_id,
+            prim_flags,
+            &[],
+            &[],
+            &[],
+        );
+    }
+
+    /// Helper for examples/ code.
+    pub fn push_simple_stacking_context_with_filters(
+        &mut self,
+        origin: LayoutPoint,
+        spatial_id: di::SpatialId,
+        prim_flags: di::PrimitiveFlags,
+        filters: &[di::FilterOp],
+        filter_datas: &[di::FilterData],
+        filter_primitives: &[di::FilterPrimitive],
+    ) {
+        self.push_stacking_context(
+            origin,
+            spatial_id,
+            prim_flags,
+            None,
+            di::TransformStyle::Flat,
+            di::MixBlendMode::Normal,
+            filters,
+            filter_datas,
+            filter_primitives,
+            di::RasterSpace::Screen,
+            /* cache_tiles = */ false,
+            /* is_backdrop_root = */ false,
+        );
+    }
+
+    pub fn pop_stacking_context(&mut self) {
+        self.push_item(&di::DisplayItem::PopStackingContext);
+    }
+
+    pub fn push_stops(&mut self, stops: &[di::GradientStop]) {
+        if stops.is_empty() {
+            return;
+        }
+        self.push_item(&di::DisplayItem::SetGradientStops);
+        self.push_iter(stops);
+    }
+
+    pub fn push_backdrop_filter(
+        &mut self,
+        common: &di::CommonItemProperties,
+        filters: &[di::FilterOp],
+        filter_datas: &[di::FilterData],
+        filter_primitives: &[di::FilterPrimitive],
+    ) {
+        self.push_filters(filters, filter_datas, filter_primitives);
+
+        let item = di::DisplayItem::BackdropFilter(di::BackdropFilterDisplayItem {
+            common: *common,
+        });
+        self.push_item(&item);
+    }
+
+    pub fn push_filters(
+        &mut self,
+        filters: &[di::FilterOp],
+        filter_datas: &[di::FilterData],
+        filter_primitives: &[di::FilterPrimitive],
     ) {
         if filters.len() > 0 {
             self.push_item(&di::DisplayItem::SetFilterOps);
@@ -1257,68 +1381,6 @@ impl DisplayListBuilder {
             self.push_item(&di::DisplayItem::SetFilterPrimitives);
             self.push_iter(filter_primitives);
         }
-
-        let item = di::DisplayItem::PushStackingContext(di::PushStackingContextDisplayItem {
-            origin,
-            spatial_id,
-            is_backface_visible,
-            stacking_context: di::StackingContext {
-                transform_style,
-                mix_blend_mode,
-                clip_id,
-                raster_space,
-                cache_tiles,
-            },
-        });
-
-        self.push_item(&item);
-    }
-
-    /// Helper for examples/ code.
-    pub fn push_simple_stacking_context(
-        &mut self,
-        origin: LayoutPoint,
-        spatial_id: di::SpatialId,
-        is_backface_visible: bool,
-    ) {
-        self.push_simple_stacking_context_with_filters(origin, spatial_id, is_backface_visible, &[], &[], &[]);
-    }
-
-    /// Helper for examples/ code.
-    pub fn push_simple_stacking_context_with_filters(
-        &mut self,
-        origin: LayoutPoint,
-        spatial_id: di::SpatialId,
-        is_backface_visible: bool,
-        filters: &[di::FilterOp],
-        filter_datas: &[di::FilterData],
-        filter_primitives: &[di::FilterPrimitive],
-    ) {
-        self.push_stacking_context(
-            origin,
-            spatial_id,
-            is_backface_visible,
-            None,
-            di::TransformStyle::Flat,
-            di::MixBlendMode::Normal,
-            filters,
-            filter_datas,
-            filter_primitives,
-            di::RasterSpace::Screen,
-            /* cache_tiles = */ false,
-        );
-    }
-
-    pub fn pop_stacking_context(&mut self) {
-        self.push_item(&di::DisplayItem::PopStackingContext);
-    }
-
-    pub fn push_stops(&mut self, stops: &[di::GradientStop]) {
-        if stops.is_empty() {
-            return;
-        }
-        self.push_item(&di::DisplayItem::SetGradientStops);
-        self.push_iter(stops);
     }
 
     fn generate_clip_index(&mut self) -> di::ClipId {

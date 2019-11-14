@@ -93,3 +93,77 @@ function runMetricsTest({ filterString, loaders, panelName }) {
     "Successfully recorded char count for " + panelName
   );
 }
+
+function getDuplicatedModules(loaders) {
+  const allModules = getFilteredModules("", loaders);
+
+  const uniqueModules = new Set();
+  const duplicatedModules = new Set();
+  for (const mod of allModules) {
+    if (uniqueModules.has(mod)) {
+      duplicatedModules.add(mod);
+    }
+
+    uniqueModules.add(mod);
+  }
+
+  return duplicatedModules;
+}
+
+/**
+ * Check that modules are only loaded once in a given set of loaders.
+ * Panels might load the same module twice by mistake if they are both using
+ * a BrowserLoader and the regular DevTools Loader.
+ *
+ * @param {Array} loaders
+ *        Array of Loader instances.
+ * @param {Array} whitelist
+ *        Array of Strings which are paths to known duplicated modules.
+ *        The test will also fail if a whitelisted module is not found in the
+ *        duplicated modules.
+ */
+function runDuplicatedModulesTest(loaders, whitelist) {
+  const { AppConstants } = require("resource://gre/modules/AppConstants.jsm");
+  if (AppConstants.DEBUG_JS_MODULES) {
+    // DevTools load different modules when DEBUG_JS_MODULES is true, which
+    // makes the hardcoded whitelists incorrect. Fail the test early and return.
+    // See https://bugzilla.mozilla.org/show_bug.cgi?id=1590630.
+    ok(
+      false,
+      "The DevTools metrics tests should not run with " +
+        "`--enable-debug-js-modules`. Please disable this option " +
+        "and run the test again."
+    );
+    // early return to avoid polluting the logs with irrelevant errors.
+    return;
+  }
+
+  const duplicatedModules = getDuplicatedModules(loaders);
+
+  // Remove whitelisted entries, and fail if a whitelisted entry is not found.
+  for (const whitelistedModule of whitelist) {
+    const deleted = duplicatedModules.delete(whitelistedModule);
+    if (!deleted) {
+      ok(
+        false,
+        "Whitelisted module not found in the duplicated modules: [" +
+          whitelistedModule +
+          "]. Whitelist should be updated."
+      );
+    }
+  }
+
+  // Prepare a log string with the paths of all duplicated modules.
+  let duplicatedModulesLog = "";
+  for (const mod of duplicatedModules) {
+    duplicatedModulesLog += `  [duplicated module] ${mod}\n`;
+  }
+
+  // Check that duplicatedModules Set is empty.
+  is(
+    duplicatedModules.size,
+    0,
+    "Duplicated module load detected. List of duplicated modules:\n" +
+      duplicatedModulesLog
+  );
+}

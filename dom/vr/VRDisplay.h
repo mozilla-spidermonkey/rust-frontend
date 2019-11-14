@@ -155,8 +155,7 @@ class VRFrameData final : public nsWrapperCache {
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_NATIVE_CLASS(VRFrameData)
 
   explicit VRFrameData(nsISupports* aParent);
-  static already_AddRefed<VRFrameData> Constructor(const GlobalObject& aGlobal,
-                                                   ErrorResult& aRv);
+  static already_AddRefed<VRFrameData> Constructor(const GlobalObject& aGlobal);
 
   void Update(const VRFrameInfo& aFrameInfo);
 
@@ -276,10 +275,12 @@ class VRDisplay final : public DOMEventTargetHelper, public nsIObserver {
   VRDisplayCapabilities* Capabilities();
   VRStageParameters* GetStageParameters();
 
-  uint32_t DisplayId() const { return mDisplayId; }
-  void GetDisplayName(nsAString& aDisplayName) const {
-    aDisplayName = mDisplayName;
-  }
+  uint32_t DisplayId() const;
+  void GetDisplayName(nsAString& aDisplayName) const;
+  // Replacing the old VRDisplayClient with the newest one to avoid
+  // JS needs to reload to recover VRDisplay when VRService is shutdown at the
+  // backend.
+  void UpdateDisplayClient(already_AddRefed<gfx::VRDisplayClient> aClient);
 
   static bool RefreshVRDisplays(uint64_t aWindowId);
   static void UpdateVRDisplays(nsTArray<RefPtr<VRDisplay> >& aDisplays,
@@ -335,9 +336,6 @@ class VRDisplay final : public DOMEventTargetHelper, public nsIObserver {
   void UpdateFrameInfo();
 
   RefPtr<gfx::VRDisplayClient> mClient;
-
-  uint32_t mDisplayId;
-  nsString mDisplayName;
 
   RefPtr<VRDisplayCapabilities> mCapabilities;
   RefPtr<VRStageParameters> mStageParameters;

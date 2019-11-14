@@ -148,15 +148,30 @@ class EditorDOMPointBase final {
   nsINode* GetContainer() const { return mParent; }
 
   nsIContent* GetContainerAsContent() const {
-    return mParent && mParent->IsContent() ? mParent->AsContent() : nullptr;
+    return nsIContent::FromNodeOrNull(mParent);
   }
 
   dom::Element* GetContainerAsElement() const {
-    return Element::FromNodeOrNull(mParent);
+    return dom::Element::FromNodeOrNull(mParent);
   }
 
   dom::Text* GetContainerAsText() const {
-    return mParent ? mParent->GetAsText() : nullptr;
+    return dom::Text::FromNodeOrNull(mParent);
+  }
+
+  /**
+   * GetContainerParent() returns parent of the container node at the point.
+   */
+  nsINode* GetContainerParent() const {
+    return mParent ? mParent->GetParent() : nullptr;
+  }
+
+  nsIContent* GetContainerParentAsContent() const {
+    return nsIContent::FromNodeOrNull(GetContainerParent());
+  }
+
+  dom::Element* GetContainerParentAsElement() const {
+    return dom::Element::FromNodeOrNull(GetContainerParent());
   }
 
   /**
@@ -335,6 +350,11 @@ class EditorDOMPointBase final {
     mOffset = mozilla::Some(mParent->Length());
     mIsChildInitialized = true;
   }
+  static SelfType AtEndOf(const nsINode& aContainer) {
+    SelfType point;
+    point.SetToEndOf(&aContainer);
+    return point;
+  }
 
   /**
    * SetAfter() sets mChild to next sibling of aChild.
@@ -475,7 +495,7 @@ class EditorDOMPointBase final {
     nsINode* parent;
     for (parent = mParent->GetParentNode();
          parent && parent->IsInNativeAnonymousSubtree();
-         parent = mParent->GetParentNode()) {
+         parent = parent->GetParentNode()) {
     }
     if (!parent) {
       return EditorRawDOMPoint();
@@ -666,6 +686,7 @@ class EditorDOMPointBase final {
       return RawRangeBoundary();
     }
     if (!mParent->IsContainerNode()) {
+      MOZ_ASSERT(mOffset.value() <= mParent->Length());
       // If the container is a data node like a text node, we need to create
       // RangeBoundaryBase instance only with mOffset because mChild is always
       // nullptr.

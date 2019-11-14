@@ -157,7 +157,6 @@ reftest.Runner = class {
       browser = reftestWin.document.createElementNS(XUL_NS, "xul:browser");
       browser.permanentKey = {};
       browser.setAttribute("id", "browser");
-      browser.setAttribute("anonid", "initialBrowser");
       browser.setAttribute("type", "content");
       browser.setAttribute("primary", "true");
       if (this.remote) {
@@ -359,7 +358,7 @@ max-width: ${width}px; max-height: ${height}px`;
         if (references.length) {
           for (let i = references.length - 1; i >= 0; i--) {
             let item = references[i];
-            stack.push([rhsUrl, item[0], item[1], item[2]]);
+            stack.push([rhsUrl, ...item]);
           }
         } else {
           // Reached a leaf node so all of one reference chain passed
@@ -520,6 +519,12 @@ max-width: ${width}px; max-height: ${height}px`;
       }
       reuseCanvas = !cache;
 
+      let ctxInterface = win.CanvasRenderingContext2D;
+      let flags =
+        ctxInterface.DRAWWINDOW_DRAW_CARET |
+        ctxInterface.DRAWWINDOW_DRAW_VIEW |
+        ctxInterface.DRAWWINDOW_USE_WIDGET_LAYERS;
+
       if (
         !(
           0 <= browserRect.left &&
@@ -557,13 +562,14 @@ browserRect.height: ${browserRect.height}`);
       this.ensureFocus(win);
       await this.driver.listener.reftestWait(url, this.remote);
 
-      canvas = capture.canvas(
+      canvas = await capture.canvas(
         win,
+        win.docShell.browsingContext,
         0, // left
         0, // top
         browserRect.width,
         browserRect.height,
-        { canvas }
+        { canvas, flags, readback: true }
       );
     }
     if (

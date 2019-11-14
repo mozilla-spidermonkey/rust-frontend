@@ -899,12 +899,14 @@ void gfxUserFontEntry::FontDataDownloadComplete(
     return;
   }
 
-  // download failed
-  mFontSet->LogMessage(
-      this,
-      (mFontDataLoadingState != LOADING_TIMED_OUT ? "download failed"
-                                                  : "download timed out"),
-      nsIScriptError::errorFlag, aDownloadStatus);
+  // download failed or font-display timeout passed
+  if (mFontDataLoadingState == LOADING_TIMED_OUT) {
+    mFontSet->LogMessage(this, "font-display timeout, webfont not used",
+                         nsIScriptError::infoFlag, aDownloadStatus);
+  } else {
+    mFontSet->LogMessage(this, "download failed", nsIScriptError::errorFlag,
+                         aDownloadStatus);
+  }
 
   if (aFontData) {
     free((void*)aFontData);
@@ -1138,6 +1140,24 @@ gfxUserFontFamily* gfxUserFontSet::GetFamily(const nsACString& aFamilyName) {
   return family;
 }
 
+void gfxUserFontSet::ForgetLocalFaces() {
+  for (auto iter = mFontFamilies.Iter(); !iter.Done(); iter.Next()) {
+    const auto fam = iter.Data();
+    const auto& fonts = fam->GetFontList();
+    for (const auto& f : fonts) {
+      auto ufe = static_cast<gfxUserFontEntry*>(f.get());
+      // If the user font entry has loaded an entry using src:local(),
+      // discard it as no longer valid, and reset the load state so that
+      // the load will be re-done based on the updated font list.
+      if (ufe->GetPlatformFontEntry() &&
+          ufe->GetPlatformFontEntry()->IsLocalUserFont()) {
+        ufe->mPlatformFontEntry = nullptr;
+        ufe->LoadCanceled();
+      }
+    }
+  }
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // gfxUserFontSet::UserFontCache - re-use platform font entries for user fonts
 // across pages/fontsets rather than instantiating new platform fonts.
@@ -1349,27 +1369,22 @@ void gfxUserFontSet::UserFontCache::Entry::ReportMemory(
       spec.ReplaceChar('/', '\\');
       // Some fonts are loaded using horrendously-long data: URIs;
       // truncate those before reporting them.
-      bool isData;
-      if (NS_SUCCEEDED(mURI->get()->SchemeIs("data", &isData)) && isData &&
-          spec.Length() > 255) {
+      if (mURI->get()->SchemeIs("data") && spec.Length() > 255) {
         spec.Truncate(252);
         spec.AppendLiteral("...");
       }
       path.AppendPrintf(", url=%s", spec.get());
     }
     if (mPrincipal) {
-      nsCOMPtr<nsIURI> uri;
-      mPrincipal->get()->GetURI(getter_AddRefs(uri));
-      if (uri) {
-        nsCString spec = uri->GetSpecOrDefault();
-        if (!spec.IsEmpty()) {
-          // Include a clue as to who loaded this resource. (Note
-          // that because of font entry sharing, other pages may now
-          // be using this resource, and the original page may not
-          // even be loaded any longer.)
-          spec.ReplaceChar('/', '\\');
-          path.AppendPrintf(", principal=%s", spec.get());
-        }
+      nsAutoCString spec;
+      mPrincipal->get()->GetAsciiSpec(spec);
+      if (!spec.IsEmpty()) {
+        // Include a clue as to who loaded this resource. (Note
+        // that because of font entry sharing, other pages may now
+        // be using this resource, and the original page may not
+        // even be loaded any longer.)
+        spec.ReplaceChar('/', '\\');
+        path.AppendPrintf(", principal=%s", spec.get());
       }
     }
   }

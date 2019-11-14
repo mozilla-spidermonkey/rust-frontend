@@ -49,6 +49,18 @@ DEFAULT_CXX_14 = {
     '__cplusplus': '201402L',
 }
 
+DRAFT_CXX17_201500 = {
+    '__cplusplus': '201500L',
+}
+
+DRAFT_CXX17_201406 = {
+    '__cplusplus': '201406L',
+}
+
+DEFAULT_CXX_17 = {
+    '__cplusplus': '201703L',
+}
+
 SUPPORTS_GNU99 = {
     '-std=gnu99': DEFAULT_C99,
 }
@@ -63,6 +75,14 @@ SUPPORTS_GNUXX14 = {
 
 SUPPORTS_CXX14 = {
     '-std=c++14': DEFAULT_CXX_14,
+}
+
+SUPPORTS_GNUXX17 = {
+    '-std=gnu++17': DEFAULT_CXX_17,
+}
+
+SUPPORTS_CXX17 = {
+    '-std=c++17': DEFAULT_CXX_17,
 }
 
 
@@ -91,14 +111,22 @@ SUPPORTS_DRAFT_CXX14_VERSION = {
     '-std=gnu++14': DRAFT_CXX_14,
 }
 
+SUPPORTS_GNUXX1Z = {
+    '-std=gnu++1z': DRAFT_CXX17_201406,
+}
+
+SUPPORTS_DRAFT_CXX17_201500_VERSION = {
+    '-std=gnu++17': DRAFT_CXX17_201500,
+}
+
 GCC_4_9 = GCC('4.9.3')
 GXX_4_9 = GXX('4.9.3') + SUPPORTS_DRAFT_CXX14_VERSION
 GCC_5 = GCC('5.2.1') + DEFAULT_C11
 GXX_5 = GXX('5.2.1') + SUPPORTS_GNUXX14
 GCC_6 = GCC('6.4.0') + DEFAULT_C11
-GXX_6 = GXX('6.4.0') + DEFAULT_CXX_14
+GXX_6 = GXX('6.4.0') + DEFAULT_CXX_14 + SUPPORTS_GNUXX17 + SUPPORTS_DRAFT_CXX17_201500_VERSION
 GCC_7 = GCC('7.3.0') + DEFAULT_C11
-GXX_7 = GXX('7.3.0') + DEFAULT_CXX_14
+GXX_7 = GXX('7.3.0') + DEFAULT_CXX_14 + SUPPORTS_GNUXX17 + SUPPORTS_CXX17
 
 DEFAULT_GCC = GCC_6
 DEFAULT_GXX = GXX_6
@@ -194,14 +222,14 @@ CLANGXX_3_3 = CLANGXX('3.3.0')
 CLANG_4_0 = CLANG('4.0.2') + DEFAULT_C11 + {
     '__has_attribute(diagnose_if)': '1',
 }
-CLANGXX_4_0 = CLANGXX('4.0.2') + {
+CLANGXX_4_0 = CLANGXX('4.0.2') + SUPPORTS_GNUXX1Z + {
     '__has_attribute(diagnose_if)': '1',
 }
 CLANG_5_0 = CLANG('5.0.1') + DEFAULT_C11 + {
     '__has_attribute(diagnose_if)': '1',
     '__has_warning("-Wunguarded-availability")': '1',
 }
-CLANGXX_5_0 = CLANGXX('5.0.1') + {
+CLANGXX_5_0 = CLANGXX('5.0.1') + SUPPORTS_GNUXX17 + {
     '__has_attribute(diagnose_if)': '1',
     '__has_warning("-Wunguarded-availability")': '1',
 }
@@ -269,7 +297,8 @@ CLANG_CL_3_9 = (CLANG_BASE('3.9.0') + VS('18.00.00000') + DEFAULT_C11 +
     },
 }
 CLANG_CL_8_0 = (CLANG_BASE('8.0.0') + VS('18.00.00000') + DEFAULT_C11 +
-                SUPPORTS_GNU99 + SUPPORTS_GNUXX11 + SUPPORTS_CXX14) + {
+                SUPPORTS_GNU99 + SUPPORTS_GNUXX11 + SUPPORTS_CXX14 +
+                SUPPORTS_CXX17) + {
     '*.cpp': {
         '__STDC_VERSION__': False,
         '__cplusplus': '201103L',
@@ -1564,6 +1593,56 @@ def gen_invoke_rustc(version, rustup_wrapper=False):
                     'thumbv8m.main-none-eabi',
                     'thumbv8m.main-none-eabihf',
                 ]
+            # Additional targets from 1.34
+            if Version(version) >= '1.34.0':
+                rust_targets += [
+                    'nvptx64-nvidia-cuda',
+                    'powerpc64-unknown-freebsd',
+                    'riscv64gc-unknown-none-elf',
+                    'riscv64imac-unknown-none-elf',
+                ]
+            # Additional targets from 1.35
+            if Version(version) >= '1.35.0':
+                rust_targets += [
+                    'armv6-unknown-freebsd',
+                    'armv7-unknown-freebsd',
+                    'mipsisa32r6-unknown-linux-gnu',
+                    'mipsisa32r6el-unknown-linux-gnu',
+                    'mipsisa64r6-unknown-linux-gnuabi64',
+                    'mipsisa64r6el-unknown-linux-gnuabi64',
+                    'wasm32-unknown-wasi',
+                ]
+            # Additional targets from 1.36
+            if Version(version) >= '1.36.0':
+                rust_targets += [
+                    'wasm32-wasi',
+                ]
+                rust_targets.remove('wasm32-unknown-wasi')
+                rust_targets.remove('x86_64-unknown-bitrig')
+            # Additional targets from 1.37
+            if Version(version) >= '1.37.0':
+                rust_targets += [
+                    'x86_64-pc-solaris',
+                ]
+            # Additional targets from 1.38
+            if Version(version) >= '1.38.0':
+                rust_targets += [
+                    'aarch64-unknown-redox',
+                    'aarch64-wrs-vxworks',
+                    'armv7-unknown-linux-gnueabi',
+                    'armv7-unknown-linux-musleabi',
+                    'armv7-wrs-vxworks',
+                    'hexagon-unknown-linux-musl',
+                    'i586-wrs-vxworks',
+                    'i686-uwp-windows-gnu',
+                    'i686-wrs-vxworks',
+                    'powerpc-wrs-vxworks',
+                    'powerpc-wrs-vxworks-spe',
+                    'powerpc64-wrs-vxworks',
+                    'riscv32i-unknown-none-elf',
+                    'x86_64-uwp-windows-gnu',
+                    'x86_64-wrs-vxworks',
+                ]
             return 0, '\n'.join(sorted(rust_targets)), ''
         if (len(args) == 6 and args[:2] == ('--crate-type', 'staticlib') and
             args[2].startswith('--target=') and args[3] == '-o'):
@@ -1575,7 +1654,7 @@ def gen_invoke_rustc(version, rustup_wrapper=False):
 
 
 class RustTest(BaseConfigureTest):
-    def get_rust_target(self, target, compiler_type='gcc', version='1.33.0',
+    def get_rust_target(self, target, compiler_type='gcc', version='1.38.0',
                         arm_target=None):
         environ = {
             'PATH': os.pathsep.join(
@@ -1600,7 +1679,8 @@ class RustTest(BaseConfigureTest):
         # Same for the arm_target checks.
         dep = sandbox._depends[sandbox['arm_target']]
         getattr(sandbox, '__value_for_depends')[(dep,)] = \
-            arm_target or ReadOnlyNamespace(arm_arch=7, thumb2=False, fpu='vfpv2')
+            arm_target or ReadOnlyNamespace(arm_arch=7, thumb2=False,
+                                            fpu='vfpv2', float_abi='softfp')
         return sandbox._value_for(sandbox['rust_target_triple'])
 
     def test_rust_target(self):
@@ -1616,7 +1696,6 @@ class RustTest(BaseConfigureTest):
             'i686-unknown-openbsd',
             'x86_64-unknown-openbsd',
             'aarch64-unknown-linux-gnu',
-            'armv7-unknown-linux-gnueabihf',
             'sparc64-unknown-linux-gnu',
             'i686-unknown-linux-gnu',
             'i686-apple-darwin',
@@ -1641,6 +1720,7 @@ class RustTest(BaseConfigureTest):
             ('armv7-unknown-linux-androideabi', 'armv7-linux-androideabi'),
             ('i386-unknown-linux-android', 'i686-linux-android'),
             ('i686-unknown-linux-android', 'i686-linux-android'),
+            ('i686-pc-linux-gnu', 'i686-unknown-linux-gnu'),
             ('x86_64-unknown-linux-android', 'x86_64-linux-android'),
             ('x86_64-pc-linux-gnu', 'x86_64-unknown-linux-gnu'),
             ('sparcv9-sun-solaris2', 'sparcv9-sun-solaris'),
@@ -1656,6 +1736,8 @@ class RustTest(BaseConfigureTest):
             ('x86_64-pc-mingw32', 'gcc', 'x86_64-pc-windows-gnu'),
             ('i686-pc-mingw32', 'clang', 'i686-pc-windows-gnu'),
             ('x86_64-pc-mingw32', 'clang', 'x86_64-pc-windows-gnu'),
+            ('i686-w64-mingw32', 'clang', 'i686-pc-windows-gnu'),
+            ('x86_64-w64-mingw32', 'clang', 'x86_64-pc-windows-gnu'),
         ):
             self.assertEqual(self.get_rust_target(autoconf, building_with_gcc), rust)
 
@@ -1663,52 +1745,70 @@ class RustTest(BaseConfigureTest):
         self.assertEqual(
             self.get_rust_target('arm-unknown-linux-androideabi',
                                  arm_target=ReadOnlyNamespace(
-                                     arm_arch=7, fpu='neon', thumb2=True)),
+                                     arm_arch=7, fpu='neon', thumb2=True, float_abi='softfp')),
             'thumbv7neon-linux-androideabi')
 
         self.assertEqual(
             self.get_rust_target('arm-unknown-linux-androideabi',
                                  version='1.32.0',
                                  arm_target=ReadOnlyNamespace(
-                                     arm_arch=7, fpu='neon', thumb2=True)),
+                                     arm_arch=7, fpu='neon', thumb2=True, float_abi='softfp')),
             'armv7-linux-androideabi')
 
         self.assertEqual(
             self.get_rust_target('arm-unknown-linux-androideabi',
                                  arm_target=ReadOnlyNamespace(
-                                     arm_arch=7, fpu='neon', thumb2=False)),
+                                     arm_arch=7, fpu='neon', thumb2=False, float_abi='softfp')),
             'armv7-linux-androideabi')
 
         self.assertEqual(
             self.get_rust_target('arm-unknown-linux-androideabi',
                                  arm_target=ReadOnlyNamespace(
-                                     arm_arch=7, fpu='vfpv2', thumb2=True)),
+                                     arm_arch=7, fpu='vfpv2', thumb2=True, float_abi='softfp')),
             'armv7-linux-androideabi')
 
         self.assertEqual(
             self.get_rust_target('armv7-unknown-linux-gnueabihf',
                                  arm_target=ReadOnlyNamespace(
-                                     arm_arch=7, fpu='neon', thumb2=True)),
+                                     arm_arch=7, fpu='neon', thumb2=True, float_abi='hard')),
             'thumbv7neon-unknown-linux-gnueabihf')
 
         self.assertEqual(
             self.get_rust_target('armv7-unknown-linux-gnueabihf',
                                  version='1.32.0',
                                  arm_target=ReadOnlyNamespace(
-                                     arm_arch=7, fpu='neon', thumb2=True)),
+                                     arm_arch=7, fpu='neon', thumb2=True, float_abi='hard')),
             'armv7-unknown-linux-gnueabihf')
 
         self.assertEqual(
             self.get_rust_target('armv7-unknown-linux-gnueabihf',
                                  arm_target=ReadOnlyNamespace(
-                                     arm_arch=7, fpu='neon', thumb2=False)),
+                                     arm_arch=7, fpu='neon', thumb2=False, float_abi='hard')),
             'armv7-unknown-linux-gnueabihf')
 
         self.assertEqual(
             self.get_rust_target('armv7-unknown-linux-gnueabihf',
                                  arm_target=ReadOnlyNamespace(
-                                     arm_arch=7, fpu='vfpv2', thumb2=True)),
+                                     arm_arch=7, fpu='vfpv2', thumb2=True, float_abi='hard')),
             'armv7-unknown-linux-gnueabihf')
+
+        self.assertEqual(
+            self.get_rust_target('arm-unknown-freebsd13.0-gnueabihf',
+                                 arm_target=ReadOnlyNamespace(
+                                     arm_arch=7, fpu='vfpv2', thumb2=True, float_abi='hard')),
+            'armv7-unknown-freebsd')
+
+        self.assertEqual(
+            self.get_rust_target('arm-unknown-freebsd13.0-gnueabihf',
+                                 arm_target=ReadOnlyNamespace(
+                                     arm_arch=6, fpu=None, thumb2=False, float_abi='hard')),
+            'armv6-unknown-freebsd')
+
+        self.assertEqual(
+            self.get_rust_target('arm-unknown-linux-gnueabi',
+                                 arm_target=ReadOnlyNamespace(
+                                     arm_arch=4, fpu=None, thumb2=False, float_abi='softfp')),
+            'armv4t-unknown-linux-gnueabi')
 
 
 if __name__ == '__main__':

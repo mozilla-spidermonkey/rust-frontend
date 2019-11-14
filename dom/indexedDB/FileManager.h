@@ -52,12 +52,12 @@ class FileManager final {
                                                        int64_t aId);
 
   static nsresult InitDirectory(nsIFile* aDirectory, nsIFile* aDatabaseFile,
-                                PersistenceType aPersistenceType,
-                                const nsACString& aGroup,
                                 const nsACString& aOrigin,
                                 uint32_t aTelemetryId);
 
-  static nsresult GetUsage(nsIFile* aDirectory, uint64_t* aUsage);
+  static nsresult GetUsage(nsIFile* aDirectory, Maybe<uint64_t>& aUsage);
+
+  static nsresult GetUsage(nsIFile* aDirectory, uint64_t& aUsage);
 
   FileManager(PersistenceType aPersistenceType, const nsACString& aGroup,
               const nsACString& aOrigin, const nsAString& aDatabaseName,

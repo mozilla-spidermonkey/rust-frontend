@@ -25,21 +25,19 @@ function setText(id, value) {
   element.appendChild(document.createTextNode(value));
 }
 
-function viewCertHelper(parent, cert) {
+function viewCertHelper(parent, cert, openingOption = "tab") {
   if (!cert) {
     return;
   }
 
   if (Services.prefs.getBoolPref("security.aboutcertificate.enabled")) {
-    let ownerGlobal = window.docShell.chromeEventHandler.ownerGlobal;
-    let derb64 = encodeURIComponent(btoa(getDERString(cert)));
+    let win = Services.wm.getMostRecentWindow("navigator:browser");
+    let derb64 = encodeURIComponent(cert.getBase64DERString());
     let url = `about:certificate?cert=${derb64}`;
-    ownerGlobal.openTrustedLinkIn(url, "tab", {
-      triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
-    });
+    win.openTrustedLinkIn(url, openingOption);
   } else {
     Services.ww.openWindow(
-      parent,
+      parent && parent.docShell.rootTreeItem.domWindow,
       "chrome://pippki/content/certViewer.xul",
       "_blank",
       "centerscreen,chrome",
@@ -48,27 +46,20 @@ function viewCertHelper(parent, cert) {
   }
 }
 
-function getDERString(cert) {
-  var derArray = cert.getRawDER();
-  var derString = "";
-  for (var i = 0; i < derArray.length; i++) {
-    derString += String.fromCharCode(derArray[i]);
-  }
-  return derString;
-}
-
-function getPKCS7String(certArray) {
-  let certList = Cc["@mozilla.org/security/x509certlist;1"].createInstance(
-    Ci.nsIX509CertList
+function getPKCS7Array(certArray) {
+  let certdb = Cc["@mozilla.org/security/x509certdb;1"].getService(
+    Ci.nsIX509CertDB
   );
-  for (let cert of certArray) {
-    certList.addCert(cert);
+  let pkcs7String = certdb.asPKCS7Blob(certArray);
+  let pkcs7Array = new Uint8Array(pkcs7String.length);
+  for (let i = 0; i < pkcs7Array.length; i++) {
+    pkcs7Array[i] = pkcs7String.charCodeAt(i);
   }
-  return certList.asPKCS7Blob();
+  return pkcs7Array;
 }
 
 function getPEMString(cert) {
-  var derb64 = btoa(getDERString(cert));
+  var derb64 = cert.getBase64DERString();
   // Wrap the Base64 string into lines of 64 characters with CRLF line breaks
   // (as specified in RFC 1421).
   var wrapped = derb64.replace(/(\S{64}(?!$))/g, "$1\r\n");
@@ -169,13 +160,18 @@ async function exportToFile(parent, cert) {
       }
       break;
     case 2:
-      content = getDERString(cert);
+      // OS.File.writeAtomic requires a utf-8 string or a typed array.
+      // nsIX509Cert.getRawDER() returns an array (not a typed array), so we
+      // convert it here.
+      content = Uint8Array.from(cert.getRawDER());
       break;
     case 3:
-      content = getPKCS7String([cert]);
+      // getPKCS7Array returns a typed array already, so no conversion is
+      // necessary.
+      content = getPKCS7Array([cert]);
       break;
     case 4:
-      content = getPKCS7String(chain);
+      content = getPKCS7Array(chain);
       break;
     case 0:
     default:
@@ -302,7 +298,7 @@ function getChainForUsage(results, usage) {
       certificateUsages[result.usageString] == usage &&
       result.errorCode == PRErrorCodeSuccess
     ) {
-      return Array.from(result.chain.getEnumerator());
+      return result.chain;
     }
   }
   return null;

@@ -13,6 +13,7 @@
 #include "mozilla/Components.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/dom/Document.h"
+#include "mozilla/dom/MutationObservers.h"
 #include "mozilla/css/Loader.h"
 #include "mozilla/dom/SRILogHelper.h"
 #include "nsStyleLinkElement.h"
@@ -702,8 +703,8 @@ nsresult nsContentSink::ProcessStyleLinkFromHeader(
 
   // Link header is working like a <link> node, so referrerPolicy attr should
   // have higher priority than referrer policy from document.
-  net::ReferrerPolicy policy =
-      net::AttributeReferrerPolicyFromString(aReferrerPolicy);
+  ReferrerPolicy policy =
+      ReferrerInfo::ReferrerPolicyAttributeFromString(aReferrerPolicy);
   nsCOMPtr<nsIReferrerInfo> referrerInfo =
       ReferrerInfo::CreateFromDocumentAndPolicyOverride(mDocument, policy);
 
@@ -727,7 +728,7 @@ nsresult nsContentSink::ProcessStyleLinkFromHeader(
     return loadResultOrErr.unwrapErr();
   }
 
-  if (loadResultOrErr.unwrap().ShouldBlock() && !mRunsToCompletion) {
+  if (loadResultOrErr.inspect().ShouldBlock() && !mRunsToCompletion) {
     ++mPendingSheetCount;
     mScriptLoader->AddParserBlockingScriptExecutionBlocker();
   }
@@ -800,8 +801,8 @@ void nsContentSink::PrefetchPreloadHref(const nsAString& aHref,
 
       if (preload) {
         nsAttrValue asAttr;
-        Link::ParseAsValue(aAs, asAttr);
-        policyType = Link::AsValueToContentPolicy(asAttr);
+        HTMLLinkElement::ParseAsValue(aAs, asAttr);
+        policyType = HTMLLinkElement::AsValueToContentPolicy(asAttr);
 
         if (policyType == nsIContentPolicy::TYPE_INVALID) {
           // Ignore preload with a wrong or empty as attribute.
@@ -998,6 +999,11 @@ void nsContentSink::ProcessOfflineManifest(const nsAString& aManifestSpec) {
     return;
   }
 
+  // If offline storage is disabled skip processing
+  if (!StaticPrefs::browser_cache_offline_storage_enable()) {
+    return;
+  }
+
   // If this document has been interecepted, let's skip the processing of the
   // manifest.
   if (mDocument->GetController().isSome()) {
@@ -1058,13 +1064,16 @@ void nsContentSink::ProcessOfflineManifest(const nsAString& aManifestSpec) {
     if (NS_FAILED(rv)) {
       action = CACHE_SELECTION_RESELECT_WITHOUT_MANIFEST;
     } else {
-      // Only continue if the document has permission to use offline APIs or
-      // when preferences indicate to permit it automatically.
-      if (!nsContentUtils::OfflineAppAllowed(mDocument->NodePrincipal()) &&
-          !nsContentUtils::MaybeAllowOfflineAppByDefault(
-              mDocument->NodePrincipal()) &&
-          !nsContentUtils::OfflineAppAllowed(mDocument->NodePrincipal())) {
-        return;
+      if (!nsContentUtils::OfflineAppAllowed(mDocument->NodePrincipal())) {
+        nsCOMPtr<nsIOfflineCacheUpdateService> updateService =
+            components::OfflineCacheUpdate::Service();
+        if (!updateService) {
+          return;
+        }
+        rv = updateService->AllowOfflineApp(mDocument->NodePrincipal());
+        if (NS_FAILED(rv)) {
+          return;
+        }
       }
 
       bool fetchedWithHTTPGetOrEquiv = false;
@@ -1192,7 +1201,7 @@ void nsContentSink::NotifyAppend(nsIContent* aContainer, uint32_t aStartIndex) {
     //
     // Note that aContainer->OwnerDoc() may not be mDocument.
     MOZ_AUTO_DOC_UPDATE(aContainer->OwnerDoc(), true);
-    nsNodeUtils::ContentAppended(
+    MutationObservers::NotifyContentAppended(
         aContainer, aContainer->GetChildAt_Deprecated(aStartIndex));
     mLastNotificationTime = PR_Now();
   }
@@ -1483,12 +1492,11 @@ nsresult nsContentSink::WillParseImpl(void) {
     uint32_t lastEventTime;
     vm->GetLastUserEventTime(lastEventTime);
 
-    bool newDynLower =
-        mDocument->IsInBackgroundWindow() ||
-        ((currentTime - mBeginLoadTime) >
-             StaticPrefs::content_sink_initial_perf_time() &&
-         (currentTime - lastEventTime) <
-             StaticPrefs::content_sink_interactive_time());
+    bool newDynLower = mDocument->IsInBackgroundWindow() ||
+                       ((currentTime - mBeginLoadTime) >
+                            StaticPrefs::content_sink_initial_perf_time() &&
+                        (currentTime - lastEventTime) <
+                            StaticPrefs::content_sink_interactive_time());
 
     if (mDynamicLowerValue != newDynLower) {
       FavorPerformanceHint(!newDynLower, 0);

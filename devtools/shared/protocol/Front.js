@@ -12,37 +12,33 @@ var {
   getStack,
   callFunctionWithAsyncStack,
 } = require("devtools/shared/platform/stack");
-// Bug 1454373: devtools/shared/defer still uses Promise.jsm which is slower
-// than DOM Promises. So implement our own copy of `defer` based on DOM Promises.
-function defer() {
-  let resolve, reject;
-  const promise = new Promise(function() {
-    resolve = arguments[0];
-    reject = arguments[1];
-  });
-  return {
-    resolve: resolve,
-    reject: reject,
-    promise: promise,
-  };
-}
+const defer = require("devtools/shared/defer");
 
 /**
  * Base class for client-side actor fronts.
  *
- * @param optional conn
- *   Either a DebuggerServerConnection or a DebuggerClient.  Must have
+ * @param [DebuggerClient|null] conn
+ *   The conn must either be DebuggerClient or null. Must have
  *   addActorPool, removeActorPool, and poolFor.
  *   conn can be null if the subclass provides a conn property.
+ * @param [Target|null] target
+ *   If we are instantiating a target-scoped front, this is a reference to the front's
+ *   Target instance, otherwise this is null.
+ * @param [Front|null] parentFront
+ *   The parent front. This is only available if the Front being initialized is a child
+ *   of a parent front.
  * @constructor
  */
 class Front extends Pool {
-  constructor(conn = null) {
+  constructor(conn = null, targetFront = null, parentFront = null) {
     super(conn);
     this.actorID = null;
     // The targetFront attribute represents the debuggable context. Only target-scoped
     // fronts and their children fronts will have the targetFront attribute set.
-    this.targetFront = null;
+    this.targetFront = targetFront;
+    // The parentFront attribute points to its parent front. Only children of
+    // target-scoped fronts will have the parentFront attribute set.
+    this.parentFront = parentFront;
     this._requests = [];
 
     // Front listener functions registered via `onFront` get notified
@@ -75,11 +71,12 @@ class Front extends Pool {
     this.clearEvents();
     this.actorID = null;
     this.targetFront = null;
+    this.parentFront = null;
     this._frontListeners = null;
     this._beforeListeners = null;
   }
 
-  manage(front) {
+  async manage(front, form, ctx) {
     if (!front.actorID) {
       throw new Error(
         "Can't manage front without an actor ID.\n" +
@@ -90,12 +87,43 @@ class Front extends Pool {
     }
     super.manage(front);
 
+    if (typeof front.initialize == "function") {
+      await front.initialize();
+    }
+
+    // Ensure calling form() *before* notifying about this front being just created.
+    // We exprect the front to be fully initialized, especially via its form attributes.
+    // But do that *after* calling manage() so that the front is already registered
+    // in Pools and can be fetched by its ID, in case a child actor, created in form()
+    // tries to get a reference to its parent via the actor ID.
+    if (form) {
+      front.form(form, ctx);
+    }
+
     // Call listeners registered via `onFront` method
     this._frontListeners.emit(front.typeName, front);
   }
 
-  // Run callback on every front of this type that currently exists, and on every
-  // instantiation of front type in the future.
+  async unmanage(front) {
+    super.unmanage(front);
+
+    // Call listeners registered via `onFrontDestroyed` method
+    // TODO: to be implemented differently in bug 1590401.
+    this._frontListeners.emit(front.typeName + ":destroyed", front);
+  }
+
+  /**
+   * Register an event listener that will be called on every front of this type
+   * that currently exists, and on every instantiation of front type in the future.
+   *
+   * TODO: A special typeName is use to implement onFrontDestroyed:
+   * `${typeName}:destroyed`. This should be cleaned up by bug 1590401.
+   *
+   * @param String typeName
+   *   Actor type to watch.
+   * @param Function callback
+   *   Function that will process the event.
+   */
   onFront(typeName, callback) {
     // First fire the callback on already instantiated fronts
     for (const front of this.poolChildren()) {
@@ -105,6 +133,44 @@ class Front extends Pool {
     }
     // Then register the callback for fronts instantiated in the future
     this._frontListeners.on(typeName, callback);
+  }
+
+  /**
+   * Unregister an event listener which was set via `Front.onFront`.
+   *
+   * @param String typeName
+   *   Actor type to stop watching.
+   * @param Function callback
+   *   Function that was processing the event.
+   */
+  offFront(typeName, callback) {
+    this._frontListeners.off(typeName, callback);
+  }
+
+  /**
+   * Register an event listener that will be called evertype a front of this type
+   * is destroyed.
+   *
+   * @param String typeName
+   *   Actor type to watch.
+   * @param Function callback
+   *   Function that will process the event.
+   */
+  onFrontDestroyed(typeName, callback) {
+    // TODO: to be implemented differently in bug 1590401.
+    this.onFront(typeName + ":destroyed", callback);
+  }
+
+  /**
+   * Unregister an event listener which was set via `Front.onFrontDestroyed`.
+   *
+   * @param String typeName
+   *   Actor type to stop watching.
+   * @param Function callback
+   *   Function that was processing the event.
+   */
+  offFrontDestroyed(typeName, callback) {
+    this.offFront(typeName + ":destroyed", callback);
   }
 
   /**

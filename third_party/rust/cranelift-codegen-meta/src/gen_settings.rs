@@ -1,12 +1,14 @@
+use std::collections::HashMap;
+
+use cranelift_codegen_shared::constant_hash::{generate_table, simple_hash};
+
 use crate::cdsl::camel_case;
 use crate::cdsl::settings::{
     BoolSetting, Predicate, Preset, Setting, SettingGroup, SpecificSetting,
 };
-use crate::constant_hash::{generate_table, simple_hash};
 use crate::error;
 use crate::srcgen::{Formatter, Match};
 use crate::unique_table::UniqueSeqTable;
-use std::collections::HashMap;
 
 pub enum ParentGroup {
     None,
@@ -308,7 +310,9 @@ fn gen_descriptors(group: &SettingGroup, fmt: &mut Formatter) {
     hash_entries.extend(group.settings.iter().map(|x| SettingOrPreset::Setting(x)));
     hash_entries.extend(group.presets.iter().map(|x| SettingOrPreset::Preset(x)));
 
-    let hash_table = generate_table(&hash_entries, |entry| simple_hash(entry.name()));
+    let hash_table = generate_table(hash_entries.iter(), hash_entries.len(), |entry| {
+        simple_hash(entry.name())
+    });
     fmtln!(fmt, "static HASH_TABLE: [u16; {}] = [", hash_table.len());
     fmt.indent(|fmt| {
         for h in &hash_table {
@@ -429,7 +433,7 @@ fn gen_group(group: &SettingGroup, parent: ParentGroup, fmt: &mut Formatter) {
     gen_display(group, fmt);
 }
 
-pub fn generate(
+pub(crate) fn generate(
     settings: &SettingGroup,
     parent_group: ParentGroup,
     filename: &str,

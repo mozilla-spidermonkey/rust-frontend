@@ -728,11 +728,12 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM {
 
   void jump(Label* label) { as_b(label); }
   void jump(JitCode* code) { branch(code); }
-  void jump(TrampolinePtr code) {
+  void jump(ImmPtr ptr) {
     ScratchRegisterScope scratch(asMasm());
-    movePtr(ImmPtr(code.value), scratch);
+    movePtr(ptr, scratch);
     ma_bx(scratch);
   }
+  void jump(TrampolinePtr code) { jump(ImmPtr(code.value)); }
   void jump(Register reg) { ma_bx(reg); }
   void jump(const Address& addr) {
     ScratchRegisterScope scratch(asMasm());
@@ -922,8 +923,6 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM {
   void boolValueToFloat32(const ValueOperand& operand, FloatRegister dest);
   void int32ValueToFloat32(const ValueOperand& operand, FloatRegister dest);
   void loadConstantFloat32(float f, FloatRegister dest);
-
-  CodeOffsetJump jumpWithPatch(RepatchLabel* label);
 
   void loadUnboxedValue(Address address, MIRType type, AnyRegister dest) {
     if (dest.isFloat()) {
@@ -1128,6 +1127,10 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM {
     load32(LowWord(address), dest.low);
     load32(HighWord(address), dest.high);
   }
+  void load64(const BaseIndex& address, Register64 dest) {
+    load32(LowWord(address), dest.low);
+    load32(HighWord(address), dest.high);
+  }
 
   void loadPtr(const Address& address, Register dest);
   void loadPtr(const BaseIndex& src, Register dest);
@@ -1167,7 +1170,17 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM {
     store32(src.high, HighWord(address));
   }
 
+  void store64(Register64 src, const BaseIndex& address) {
+    store32(src.low, LowWord(address));
+    store32(src.high, HighWord(address));
+  }
+
   void store64(Imm64 imm, Address address) {
+    store32(imm.low(), LowWord(address));
+    store32(imm.hi(), HighWord(address));
+  }
+
+  void store64(Imm64 imm, const BaseIndex& address) {
     store32(imm.low(), LowWord(address));
     store32(imm.hi(), HighWord(address));
   }
@@ -1259,8 +1272,6 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM {
   bool buildOOLFakeExitFrame(void* fakeReturnAddr);
 
  public:
-  CodeOffset labelForPatch() { return CodeOffset(nextOffset().getOffset()); }
-
   void computeEffectiveAddress(const Address& address, Register dest) {
     ScratchRegisterScope scratch(asMasm());
     ma_add(address.base, Imm32(address.offset), dest, scratch, LeaveCC);

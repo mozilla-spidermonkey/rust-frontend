@@ -199,70 +199,31 @@
   }
 }
 
-/**
- * In the classic themes, the titlebar has a horizontal gradient, which is
- * problematic for reading the text of background tabs when they're in the
- * titlebar. We side-step this issue by layering our own background underneath
- * the tabs. Unfortunately, this requires a bunch of positioning in order to get
- * text and icons to not appear fuzzy.
- */
 @media (-moz-windows-classic) {
   /**
-   * We need to bump up the z-index of the tabbrowser-tabs so that they appear
-   * over top of the fog we're applying for classic themes, as well as the nav-bar.
+   * In the classic themes, the titlebar has a horizontal gradient, which is
+   * problematic for reading the text of background tabs when they're in the
+   * titlebar. We side-step this issue by layering our own background underneath
+   * the tabs.
    */
-  #main-window[tabsintitlebar]:not([sizemode=fullscreen]) #tabbrowser-tabs {
-    position: relative;
-    z-index: 2;
+  :root[tabsintitlebar]:not([sizemode=fullscreen]) #TabsToolbar:not(:-moz-lwtheme) {
+    background-image: linear-gradient(transparent, ActiveCaption);
+    background-size: auto 200%;
   }
 
-  #main-window[tabsintitlebar] #TabsToolbar:not(:-moz-lwtheme) {
-    position: relative;
+  :root[tabsintitlebar]:not([sizemode=fullscreen]) #TabsToolbar:not(:-moz-lwtheme):-moz-window-inactive {
+    background-image: linear-gradient(transparent, InactiveCaption);
   }
 
-  #main-window[tabsintitlebar]:not([sizemode=fullscreen]) #TabsToolbar:not(:-moz-lwtheme)::after {
-    /* Because we use placeholders for window controls etc. in the tabstrip,
-     * and position those with ordinal attributes, and because our layout code
-     * expects :before/:after nodes to come first/last in the frame list,
-     * we have to reorder this element to come last, hence the
-     * ordinal group value (see bug 853415). */
-    -moz-box-ordinal-group: 1001;
-    box-shadow: 0 0 50px 8px ActiveCaption;
-    content: "";
-    display: -moz-box;
-    height: 0;
-    margin: 0 50px;
-    position: absolute;
-    pointer-events: none;
-    top: 100%;
-    width: -moz-available;
-  }
-
-  #main-window[tabsintitlebar]:not([sizemode=fullscreen]) #TabsToolbar:not(:-moz-lwtheme):-moz-window-inactive::after {
-    box-shadow: 0 0 50px 8px InactiveCaption;
-  }
-
-  #main-window[tabsintitlebar]:not([sizemode=fullscreen]) toolbar[customindex]:not(:-moz-lwtheme),
-  #main-window[tabsintitlebar]:not([sizemode=fullscreen]) #PersonalToolbar:not(:-moz-lwtheme) {
-    position: relative;
-  }
-
-  /* Need to constrain the box shadow fade to avoid overlapping layers, see bug 886281. */
-  #main-window[tabsintitlebar]:not([sizemode=fullscreen]) #navigator-toolbox:not(:-moz-lwtheme) {
-    overflow: -moz-hidden-unscrollable;
-  }
-
-  #main-window[tabsintitlebar][sizemode="normal"] > #navigator-toolbox:-moz-lwtheme {
-    /* Render a window top border: */
+  /* Add a window top border for webextension themes */
+  :root[tabsintitlebar][sizemode="normal"] #navigator-toolbox:-moz-lwtheme {
     background-image: linear-gradient(to bottom,
           ThreeDLightShadow 0, ThreeDLightShadow 1px,
           ThreeDHighlight 1px, ThreeDHighlight 2px,
           ActiveBorder 2px, ActiveBorder 4px, transparent 4px);
   }
 
-  /* End classic titlebar gradient */
-
-  #main-window[tabsintitlebar]:not([inFullscreen]) :-moz-any(#TabsToolbar, #toolbar-menubar) toolbarbutton:not(:-moz-lwtheme) {
+  :root[tabsintitlebar]:not([inFullscreen]) :-moz-any(#TabsToolbar, #toolbar-menubar) toolbarbutton:not(:-moz-lwtheme) {
     color: inherit;
   }
 }
@@ -291,11 +252,11 @@
 
 /* ::::: titlebar ::::: */
 
-#main-window[tabsintitlebar][sizemode="normal"] > #navigator-toolbox > #titlebar {
+#main-window[tabsintitlebar][sizemode="normal"] #navigator-toolbox > #titlebar {
   -moz-appearance: -moz-window-titlebar;
 }
 
-#main-window[tabsintitlebar][sizemode="maximized"] > #navigator-toolbox > #titlebar {
+#main-window[tabsintitlebar][sizemode="maximized"] #navigator-toolbox > #titlebar {
   -moz-appearance: -moz-window-titlebar-maximized;
 }
 
@@ -317,7 +278,7 @@
 }
 
 @media (-moz-windows-classic) {
-  #main-window[tabsintitlebar][sizemode="normal"] > #navigator-toolbox > #titlebar > #toolbar-menubar {
+  #main-window[tabsintitlebar][sizemode="normal"] #navigator-toolbox > #titlebar > #toolbar-menubar {
     margin-top: 4px;
   }
 }
@@ -553,51 +514,16 @@ menuitem.bookmark-item {
 }
 
 @media (-moz-windows-default-theme: 0) {
-  #urlbar:not(:-moz-lwtheme):not([focused="true"]),
-  #urlbar:not(:-moz-lwtheme).hidden-focus,
+  #urlbar:not(.megabar):not(:-moz-lwtheme):not([focused="true"]),
+  #urlbar.megabar:not(:-moz-lwtheme):not([focused="true"]) > #urlbar-background,
   #searchbar:not(:-moz-lwtheme):not(:focus-within) {
     border-color: ThreeDShadow;
   }
 }
 
-#urlbar-input:-moz-lwtheme::placeholder,
-.searchbar-textbox:-moz-lwtheme > moz-input-box > html|*.textbox-input::placeholder {
-  opacity: 1.0;
-  color: #777;
-}
-
-/* ::::: URL Bar Zoom Reset Button ::::: */
-@keyframes urlbar-zoom-reset-pulse {
-  0% {
-    transform: scale(0);
-  }
-  75% {
-    transform: scale(1.5);
-  }
-  100% {
-    transform: scale(1.0);
-  }
-}
-
-#urlbar-zoom-button {
-  -moz-appearance: none;
-  color: inherit;
-}
-
-.urlbar-display {
-  margin-top: 0;
-  margin-bottom: 0;
-  margin-inline-start: 0;
-  color: GrayText;
-}
-
 #pageAction-urlbar-shareURL,
 #pageAction-panel-shareURL {
   list-style-image: url("chrome://browser/skin/share.svg");
-}
-
-#search-container {
-  min-width: calc(54px + 11ch);
 }
 
 /* identity box */
@@ -607,15 +533,12 @@ menuitem.bookmark-item {
 /* autocomplete */
 
 %include ../shared/autocomplete.inc.css
-%include ../shared/urlbar-autocomplete.inc.css
-
-#urlbarView-results {
-  font-size: 1.15em;
-}
 
 #PopupAutoComplete > richlistbox > richlistitem[originaltype~="datalist-first"] {
   border-top: 1px solid ThreeDShadow;
 }
+
+%include ../shared/urlbar-autocomplete.inc.css
 
 @media (-moz-windows-default-theme) {
   :root {
@@ -684,7 +607,9 @@ menuitem.bookmark-item {
 .tab-drop-indicator {
   list-style-image: url(chrome://browser/skin/tabbrowser/tabDragIndicator.png);
   margin-bottom: -9px;
-  z-index: 3;
+  /* The z-index needs to be big enough to trump other positioned UI pieces
+     that we want to overlay. The expanded urlbar uses 3. */
+  z-index: 4;
 }
 
 /* All tabs menupopup */
@@ -702,21 +627,6 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
   -moz-appearance: none;
   background: Highlight !important;
   color: HighlightText !important;
-}
-
-/* rules for menupopup drop indicators */
-.menupopup-drop-indicator-bar {
-  position: relative;
-  /* these two margins must together compensate the indicator's height */
-  margin-top: -1px;
-  margin-bottom: -1px;
-}
-
-.menupopup-drop-indicator {
-  list-style-image: none;
-  height: 2px;
-  margin-inline-end: -4em;
-  background-color: Highlight;
 }
 
 %include ../shared/notification-icons.inc.css
@@ -951,6 +861,9 @@ panel[touchmode] .PanelUI-subView #appMenu-zoom-controls > .subviewbutton-iconic
 #ContentSelectDropdown > menupopup > menuitem {
   padding: 0 6px;
   border-width: 0;
+}
+
+#ContentSelectDropdown > menupopup {
   font: -moz-list;
 }
 

@@ -1,4 +1,3 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -10,13 +9,11 @@ const {
   FrontClassWithSpec,
   registerFront,
 } = require("devtools/shared/protocol");
+
 const { threadSpec } = require("devtools/shared/specs/thread");
 
-loader.lazyRequireGetter(
-  this,
-  "ObjectClient",
-  "devtools/shared/client/object-client"
-);
+loader.lazyRequireGetter(this, "ObjectFront", "devtools/shared/fronts/object");
+loader.lazyRequireGetter(this, "FrameFront", "devtools/shared/fronts/frame");
 loader.lazyRequireGetter(
   this,
   "SourceFront",
@@ -34,8 +31,8 @@ loader.lazyRequireGetter(
  *        The actor ID for this thread.
  */
 class ThreadFront extends FrontClassWithSpec(threadSpec) {
-  constructor(client) {
-    super(client);
+  constructor(client, targetFront, parentFront) {
+    super(client, targetFront, parentFront);
     this.client = client;
     this._pauseGrips = {};
     this._threadGrips = {};
@@ -68,6 +65,10 @@ class ThreadFront extends FrontClassWithSpec(threadSpec) {
         command + " command sent while not paused. Currently " + this._state
       );
     }
+  }
+
+  getFrames(start, count) {
+    return super.frames(start, count);
   }
 
   /**
@@ -126,7 +127,12 @@ class ThreadFront extends FrontClassWithSpec(threadSpec) {
   /**
    * Rewind a thread until a breakpoint is hit.
    */
-  rewind() {
+  async rewind() {
+    if (!this.paused) {
+      this.interrupt();
+      await this.once("paused");
+    }
+
     this._doResume(null, true);
   }
 
@@ -185,7 +191,9 @@ class ThreadFront extends FrontClassWithSpec(threadSpec) {
     if (this.paused) {
       return warp();
     }
-    return this.interrupt().then(warp);
+
+    this.interrupt();
+    return this.once("paused", warp);
   }
 
   /**
@@ -209,19 +217,6 @@ class ThreadFront extends FrontClassWithSpec(threadSpec) {
     return { sources };
   }
 
-  /**
-   * Request frames from the callstack for the current thread.
-   *
-   * @param start integer
-   *        The number of the youngest stack frame to return (the youngest
-   *        frame is 0).
-   * @param count integer
-   *        The maximum number of frames to return, or null to return all
-   *        frames.
-   */
-  getFrames(start, count) {
-    return super.frames(start, count);
-  }
   /**
    * attach to the thread actor.
    */
@@ -248,16 +243,7 @@ class ThreadFront extends FrontClassWithSpec(threadSpec) {
   }
 
   /**
-   * Request the frame environment.
-   *
-   * @param frameId string
-   */
-  getEnvironment(frameId) {
-    return this.client.request({ to: frameId, type: "getEnvironment" });
-  }
-
-  /**
-   * Return a ObjectClient object for the given object grip.
+   * Return a ObjectFront object for the given object grip.
    *
    * @param grip object
    *        A pause-lifetime object grip returned by the protocol.
@@ -267,22 +253,30 @@ class ThreadFront extends FrontClassWithSpec(threadSpec) {
       return this._pauseGrips[grip.actor];
     }
 
-    const client = new ObjectClient(this.client, grip);
-    this._pauseGrips[grip.actor] = client;
-    return client;
+    const objectFront = new ObjectFront(this.client, grip);
+    this._pauseGrips[grip.actor] = objectFront;
+    return objectFront;
   }
 
   /**
-   * Clear and invalidate all the grip clients from the given cache.
+   * Clear and invalidate all the grip fronts from the given cache.
    *
    * @param gripCacheName
    *        The property name of the grip cache we want to clear.
    */
-  _clearObjectClients(gripCacheName) {
+  _clearObjectFronts(gripCacheName) {
     for (const id in this[gripCacheName]) {
       this[gripCacheName][id].valid = false;
     }
     this[gripCacheName] = {};
+  }
+
+  _clearFrameFronts() {
+    for (const front of this.poolChildren()) {
+      if (front instanceof FrameFront) {
+        this.unmanage(front);
+      }
+    }
   }
 
   /**
@@ -290,7 +284,7 @@ class ThreadFront extends FrontClassWithSpec(threadSpec) {
    * clients.
    */
   _clearPauseGrips() {
-    this._clearObjectClients("_pauseGrips");
+    this._clearObjectFronts("_pauseGrips");
   }
 
   /**
@@ -298,7 +292,7 @@ class ThreadFront extends FrontClassWithSpec(threadSpec) {
    * clients.
    */
   _clearThreadGrips() {
-    this._clearObjectClients("_threadGrips");
+    this._clearObjectFronts("_threadGrips");
   }
 
   _beforePaused(packet) {
@@ -326,6 +320,7 @@ class ThreadFront extends FrontClassWithSpec(threadSpec) {
     // when it's initialized
     this._lastPausePacket = packet;
     this._clearPauseGrips();
+    this._clearFrameFronts();
   }
 
   getLastPausePacket() {
@@ -340,8 +335,10 @@ class ThreadFront extends FrontClassWithSpec(threadSpec) {
       return this._threadGrips[form.actor];
     }
 
-    this._threadGrips[form.actor] = new SourceFront(this.client, form);
-    return this._threadGrips[form.actor];
+    const sourceFront = new SourceFront(this.client, form);
+    this.manage(sourceFront);
+    this._threadGrips[form.actor] = sourceFront;
+    return sourceFront;
   }
 }
 

@@ -12,13 +12,14 @@
 #define gc_ArenaList_h
 
 #include "gc/AllocKind.h"
+#include "js/GCAPI.h"
+#include "js/HeapAPI.h"
 #include "js/SliceBudget.h"
 #include "js/TypeDecls.h"
 #include "threading/ProtectedData.h"
 
 namespace js {
 
-class FreeOp;
 class Nursery;
 class TenuringTracer;
 
@@ -330,23 +331,23 @@ class ArenaLists {
   void adoptArenas(ArenaLists* fromArenaLists, bool targetZoneIsCollecting);
 
   inline void checkEmptyFreeLists();
-  inline bool checkEmptyArenaLists();
+  inline void checkEmptyArenaLists();
   inline void checkEmptyFreeList(AllocKind kind);
 
-  bool checkEmptyArenaList(AllocKind kind);
+  void checkEmptyArenaList(AllocKind kind);
 
   bool relocateArenas(Arena*& relocatedListOut, JS::GCReason reason,
                       js::SliceBudget& sliceBudget, gcstats::Statistics& stats);
 
-  void queueForegroundObjectsForSweep(FreeOp* fop);
+  void queueForegroundObjectsForSweep(JSFreeOp* fop);
   void queueForegroundThingsForSweep();
 
   void releaseForegroundSweptEmptyArenas();
 
-  bool foregroundFinalize(FreeOp* fop, AllocKind thingKind,
+  bool foregroundFinalize(JSFreeOp* fop, AllocKind thingKind,
                           js::SliceBudget& sliceBudget,
                           SortedArenaList& sweepList);
-  static void backgroundFinalize(FreeOp* fop, Arena* listHead, Arena** empty);
+  static void backgroundFinalize(JSFreeOp* fop, Arena* listHead, Arena** empty);
 
   void setParallelAllocEnabled(bool enabled);
 
@@ -354,8 +355,10 @@ class ArenaLists {
   inline JSRuntime* runtime();
   inline JSRuntime* runtimeFromAnyThread();
 
-  inline void queueForForegroundSweep(FreeOp* fop, const FinalizePhase& phase);
-  inline void queueForBackgroundSweep(FreeOp* fop, const FinalizePhase& phase);
+  inline void queueForForegroundSweep(JSFreeOp* fop,
+                                      const FinalizePhase& phase);
+  inline void queueForBackgroundSweep(JSFreeOp* fop,
+                                      const FinalizePhase& phase);
   inline void queueForForegroundSweep(AllocKind thingKind);
   inline void queueForBackgroundSweep(AllocKind thingKind);
 

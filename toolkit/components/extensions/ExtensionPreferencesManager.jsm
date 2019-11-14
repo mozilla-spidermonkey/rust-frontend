@@ -79,7 +79,35 @@ let settingsMap = new Map();
 function initialValueCallback() {
   let initialValue = {};
   for (let pref of this.prefNames) {
-    initialValue[pref] = Preferences.get(pref);
+    // If there is a prior user-set value, get it.
+    if (Preferences.isSet(pref)) {
+      initialValue[pref] = Preferences.get(pref);
+    }
+  }
+  return initialValue;
+}
+
+/**
+ * Updates the initialValue stored to exclude any values that match
+ * default preference values.
+ *
+ * @param {Object} initialValue Initial Value data from settings store.
+ * @returns {Object}
+ *          The initialValue object after updating the values.
+ */
+function settingsUpdate(initialValue) {
+  for (let pref of this.prefNames) {
+    try {
+      if (
+        initialValue[pref] !== undefined &&
+        initialValue[pref] === defaultPreferences.get(pref)
+      ) {
+        initialValue[pref] = undefined;
+      }
+    } catch (e) {
+      // Exception thrown if a default value doesn't exist.  We
+      // presume that this pref had a user-set value initially.
+    }
   }
   return initialValue;
 }
@@ -98,7 +126,7 @@ function initialValueCallback() {
 function setPrefs(setting, item) {
   let prefs = item.initialValue || setting.setCallback(item.value);
   let changed = false;
-  for (let pref in prefs) {
+  for (let pref of setting.prefNames) {
     if (prefs[pref] === undefined) {
       if (Preferences.isSet(pref)) {
         changed = true;
@@ -210,7 +238,9 @@ this.ExtensionPreferencesManager = {
       STORE_TYPE,
       name,
       value,
-      initialValueCallback.bind(setting)
+      initialValueCallback.bind(setting),
+      name,
+      settingsUpdate.bind(setting)
     );
     if (item) {
       setPrefs(setting, item);

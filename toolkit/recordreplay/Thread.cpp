@@ -430,7 +430,7 @@ void Thread::NotifyUnrecordedWait(
   }
 }
 
-bool Thread::MaybeWaitForCheckpointSave(
+bool Thread::MaybeWaitForSnapshot(
     const std::function<void()>& aReleaseCallback) {
   MOZ_RELEASE_ASSERT(!PassThroughEvents());
   if (IsMainThread()) {
@@ -524,6 +524,20 @@ void Thread::WaitForeverNoIdle() {
 void Thread::Notify(size_t aId) {
   uint8_t data = 0;
   DirectWrite(GetById(aId)->mNotifyfd, &data, 1);
+}
+
+/* static */
+size_t Thread::TotalEventProgress() {
+  size_t result = 0;
+  for (size_t id = MainThreadId; id <= MaxRecordedThreadId; id++) {
+    Thread* thread = GetById(id);
+
+    // Accessing the stream position here is racy. The returned value is used to
+    // determine if a process is making progress over a long period of time
+    // (several seconds) and absolute accuracy is not necessary.
+    result += thread->mEvents->StreamPosition();
+  }
+  return result;
 }
 
 }  // namespace recordreplay

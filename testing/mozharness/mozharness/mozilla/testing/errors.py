@@ -65,7 +65,6 @@ TinderBoxPrintRe = {
         'fail_group': "Unexpected",
         'known_fail_group': "Known problems",
     },
-    "robocop_summary": _mochitest_summary,
     "instrumentation_summary": _mochitest_summary,
     "cppunittest_summary": {
         'regex': re.compile(r'''cppunittests INFO \| (Passed|Failed): (\d+)'''),
@@ -111,7 +110,7 @@ TinderBoxPrintRe = {
     },
 
     "harness_error": {
-        'full_regex': re.compile(r"(?:TEST-UNEXPECTED-FAIL|PROCESS-CRASH) \| .* \| (application crashed|missing output line for total leaks!|negative leaks caught!|\d+ bytes leaked)"),  # NOQA: E501
+        'full_regex': re.compile(r"(?:TEST-UNEXPECTED-FAIL|PROCESS-CRASH) \| .* \|[^\|]* (application crashed|missing output line for total leaks!|negative leaks caught!|\d+ bytes leaked)"),  # NOQA: E501
         'minimum_regex': re.compile(r'''(TEST-UNEXPECTED|PROCESS-CRASH)'''),
         'retry_regex': re.compile(r'''(FAIL-SHOULD-RETRY|No space left on device|ADBError|ADBProcessError|ADBTimeoutError|program finished with exit code 80|INFRA-ERROR)''')  # NOQA: E501
     },

@@ -37,6 +37,7 @@ include protocol PJavaScript;
 include protocol PRemoteSpellcheckEngine;
 include protocol PWebBrowserPersistDocument;
 include protocol PWebrtcGlobal;
+include protocol PWindowGlobal;
 include protocol PPresentation;
 include protocol PURLClassifier;
 include protocol PURLClassifierLocal;
@@ -45,6 +46,9 @@ include protocol PRemoteDecoderManager;
 include protocol PProfiler;
 include protocol PScriptCache;
 include protocol PSessionStorageObserver;
+include protocol PSHEntry;
+include protocol PSHistory;
+include protocol PBenchmarkStorage;
 include DOMTypes;
 include JavaScriptTypes;
 include IPCBlob;
@@ -62,6 +66,10 @@ include ClientIPCTypes;
 include HangTypes;
 include PrefsTypes;
 include NeckoChannelParams;
+
+#if defined(MOZ_SANDBOX) && defined(MOZ_DEBUG) && defined(ENABLE_TESTS)
+include protocol PSandboxTesting;
+#endif
 
 using refcounted class nsIDOMGeoPosition from "nsGeoPositionIPCSerialiser.h";
 using refcounted class nsIAlertNotification from "mozilla/AlertNotificationIPCSerializer.h";
@@ -95,15 +103,14 @@ using mozilla::Telemetry::DynamicScalarDefinition from "mozilla/TelemetryComms.h
 using mozilla::Telemetry::ChildEventData from "mozilla/TelemetryComms.h";
 using mozilla::Telemetry::DiscardedData from "mozilla/TelemetryComms.h";
 using mozilla::CrossProcessMutexHandle from "mozilla/ipc/CrossProcessMutex.h";
-using refcounted class nsIInputStream from "mozilla/ipc/IPCStreamUtils.h";
 using refcounted class mozilla::dom::BrowsingContext from "mozilla/dom/BrowsingContext.h";
 using mozilla::dom::BrowsingContextTransaction from "mozilla/dom/BrowsingContext.h";
-using mozilla::dom::BrowsingContextFieldEpochs from "mozilla/dom/BrowsingContext.h";
 using mozilla::dom::BrowsingContextInitializer from "mozilla/dom/BrowsingContext.h";
 using base::SharedMemoryHandle from "base/shared_memory.h";
 using mozilla::ipc::SharedMemoryBasic::Handle from "mozilla/ipc/SharedMemoryBasic.h";
 using mozilla::fontlist::Pointer from "SharedFontList.h";
 using gfxSparseBitSet from "gfxFontUtils.h";
+using mozilla::dom::MediaControlActions from "ipc/MediaControlIPC.h";
 
 union ChromeRegistryItem
 {
@@ -274,6 +281,12 @@ struct XPCOMInitData
     DynamicScalarDefinition[] dynamicScalarDefs;
 };
 
+struct VisitedQueryResult
+{
+    URIParams uri;
+    bool visited;
+};
+
 struct StringBundleDescriptor
 {
     nsCString bundleURL;
@@ -318,6 +331,12 @@ struct PostMessageData
     bool isFromPrivateWindow;
 };
 
+union PSHEntryOrSharedID
+{
+  PSHEntry;
+  uint64_t;
+};
+
 /**
  * The PContent protocol is a top-level protocol between the UI process
  * and a content process. There is exactly one PContentParent/PContentChild pair
@@ -354,6 +373,9 @@ nested(upto inside_cpow) sync protocol PContent
     manages PScriptCache;
     manages PLoginReputation;
     manages PSessionStorageObserver;
+    manages PSHEntry;
+    manages PSHistory;
+    manages PBenchmarkStorage;
 
     // Depending on exactly how the new browser is being created, it might be
     // created from either the child or parent process!
@@ -382,15 +404,17 @@ nested(upto inside_cpow) sync protocol PContent
     // Keep the last 3 attributes in sync with GetProcessAttributes!
 parent:
     async ConstructPopupBrowser(ManagedEndpoint<PBrowserParent> browserEp,
+                                ManagedEndpoint<PWindowGlobalParent> windowEp,
                                 TabId tabId, IPCTabContext context,
-                                BrowsingContext browsingContext,
+                                WindowGlobalInit windowInit,
                                 uint32_t chromeFlags);
 
 child:
     async ConstructBrowser(ManagedEndpoint<PBrowserChild> browserEp,
+                           ManagedEndpoint<PWindowGlobalChild> windowEp,
                            TabId tabId, TabId sameTabGroupAs,
                            IPCTabContext context,
-                           BrowsingContext browsingContext,
+                           WindowGlobalInit windowInit,
                            uint32_t chromeFlags, ContentParentId cpId,
                            bool isForBrowser, bool isTopLevel);
 
@@ -477,7 +501,7 @@ child:
     async SetConnectivity(bool connectivity);
     async SetCaptivePortalState(int32_t aState);
 
-    async NotifyVisited(URIParams[] uri);
+    async NotifyVisited(VisitedQueryResult[] uri);
 
     async PreferenceUpdate(Pref pref);
     async VarUpdate(GfxVarUpdate var);
@@ -787,14 +811,18 @@ child:
     // new HttpChannelChild that will be connected to the parent channel
     // represented by registrarId.
     // This is on PContent not PNecko, as PNecko may not be initialized yet.
+    // The returned loadInfo needs to be set on the channel - since the channel
+    // moved to a new process it now has different properties.
+
     async CrossProcessRedirect(uint32_t aRegistrarId,
                                nsIURI aURI,
-                               uint32_t aNewLoadFlags,
+                               ReplacementChannelConfigInit? config,
                                LoadInfoArgs? aLoadInfo,
                                uint64_t aChannelId,
                                nsIURI aOriginalURI,
                                uint64_t aIdentifier,
-                               uint32_t aRedirectMode);
+                               uint32_t aRedirectMode)
+        returns (nsresult rv, LoadInfoArgs? arg);
 
     /**
     * This method is used to notifty content process to start delayed autoplay
@@ -803,13 +831,23 @@ child:
     async StartDelayedAutoplayMediaComponents(BrowsingContext aContext);
 
     /**
-    * This method is used to notifty content process to mute or unmute media.
-    */
-    async SetMediaMuted(BrowsingContext aContext, bool aMuted);
+     * This method is used to apply the media action to outer window in the
+     * content process, such as play, pause, stop ..e.t.c.
+     */
+    async UpdateMediaAction(BrowsingContext aContext, MediaControlActions aAction);
 
     // Begin subscribing to a new BrowsingContextGroup, sending down the current
     // value for every individual BrowsingContext.
     async RegisterBrowsingContextGroup(BrowsingContextInitializer[] aInits);
+
+#if defined(MOZ_SANDBOX) && defined(MOZ_DEBUG) && defined(ENABLE_TESTS)
+    // Initialize top-level actor for testing content process sandbox.
+    async InitSandboxTesting(Endpoint<PSandboxTestingChild> aEndpoint);
+#endif
+
+    async DestroySHEntrySharedState(uint64_t aID);
+
+    async EvictContentViewers(uint64_t[] aToEvictSharedStateIDs);
 
 parent:
     async InitBackground(Endpoint<PBackgroundParent> aEndpoint);
@@ -887,9 +925,16 @@ parent:
 
     async PSessionStorageObserver();
 
+    async PSHistory(BrowsingContext aContext);
+
+    // Clone from entry or use shared id.
+    sync PSHEntry(nullable PSHistory shistory, PSHEntryOrSharedID entryOrSharedID);
+
+    async PBenchmarkStorage();
+
     // Services remoting
 
-    async StartVisitedQuery(URIParams uri);
+    async StartVisitedQueries(URIParams[] uri);
     async SetURITitle(URIParams uri, nsString title);
 
     async LoadURIExternal(URIParams uri, PBrowser windowContext);
@@ -934,6 +979,24 @@ parent:
 
     async PPSMContentDownloader(uint32_t aCertType);
 
+    // Creates a helper for forwarding data from an nsExternalAppHandler
+    // running in the content process, to one running in the parent
+    // process.
+    // Bug 1574372 aims to run nsExternalAppHandler entirely in the
+    // parent so that we can remove this.
+    //
+    // Serializes the uri, loadInfo, contentType, referrer, contentDisposition
+    // headers and contentLength of the channel so that we can make them
+    // available to the parent instance via a nsIChannel helper. Also
+    // passes whether the original channel was an instance of nsIFileChannel.
+    //
+    // aContext is the BrowsingContext that initiated the load, and created the
+    // channel.
+    //
+    // Pass true for aForceSave to always save this content to disk, regardless of
+    // nsIMIMEInfo and other such influences.
+    // Pass true for aShouldCloseWindow to specify that aContext was opened specifically
+    // for this load, and should be closed once we've handled it.
     async PExternalHelperApp(URIParams? uri,
                              LoadInfoArgs? loadInfoArgs,
                              nsCString aMimeContentType,
@@ -944,7 +1007,8 @@ parent:
                              int64_t aContentLength,
                              bool aWasFileChannel,
                              URIParams? aReferrer,
-                             nullable PBrowser aBrowser);
+                             BrowsingContext aContext,
+                             bool aShouldCloseWindow);
 
     async PHandlerService();
 
@@ -953,10 +1017,6 @@ parent:
     async SetGeolocationHigherAccuracy(bool enable);
 
     async ConsoleMessage(nsString message);
-    async ScriptError(nsString message, nsString sourceName, nsString sourceLine,
-                      uint32_t lineNumber, uint32_t colNumber, uint32_t flags,
-                      nsCString category, bool privateWindow,
-                      bool fromChromeContext);
     async ScriptErrorWithStack(nsString message, nsString sourceName, nsString sourceLine,
                                uint32_t lineNumber, uint32_t colNumber, uint32_t flags,
                                nsCString category, bool privateWindow,
@@ -1004,7 +1064,7 @@ parent:
 
     async DeviceReset();
 
-    sync KeywordToURI(nsCString keyword)
+    sync KeywordToURI(nsCString keyword, bool isPrivateContext)
         returns (nsString providerName, nsIInputStream postData, URIParams? uri);
 
     sync NotifyKeywordSearchLoading(nsString providerName, nsString keyword);
@@ -1048,16 +1108,6 @@ parent:
 
     async RequestAnonymousTemporaryFile(uint64_t aID);
 
-    /** Clear RemoteFrameInfo of the given tab id. */
-    async UnregisterRemoteFrame(TabId tabId,
-                                ContentParentId cpId,
-                                bool aMarkedDestroying);
-
-    /**
-     * Tell the chrome process there is a destruction of PBrowser(Tab)
-     */
-    async NotifyTabDestroying(TabId tabId,
-                              ContentParentId cpId);
     /**
      * Starts an offline application cache update.
      * @param manifestURI
@@ -1085,12 +1135,12 @@ parent:
      *   To identify which tab owns the app.
      */
     async POfflineCacheUpdate(URIParams manifestURI, URIParams documentURI,
-                              PrincipalInfo loadingPrincipal, bool stickDocument);
+                              PrincipalInfo loadingPrincipal, bool stickDocument,
+                              CookieSettingsArgs cookieSettings);
 
     /**
      * Sets "offline-app" permission for the principal.  Called when we hit
-     * a web app with the manifest attribute in <html> and
-     * offline-apps.allow_by_default is set to true.
+     * a web app with the manifest attribute in <html>
      */
     async SetOfflinePermission(Principal principal);
 
@@ -1371,6 +1421,13 @@ parent:
     async AddPerformanceMetrics(nsID aID, PerformanceInfo[] aMetrics);
 
     /*
+     * Determines whether storage access can be granted automatically by the
+     * storage access API without showing a user prompt.
+     */
+    async AutomaticStorageAccessCanBeGranted(Principal aPrincipal)
+          returns (bool success);
+
+    /*
      * A 3rd party tracking origin (aTrackingOrigin) has received the permission
      * granted to have access to aGrantedOrigin when loaded by aParentPrincipal.
      */
@@ -1383,10 +1440,27 @@ parent:
 
     async StoreUserInteractionAsPermission(Principal aPrincipal);
 
+   /**
+    * When media started or stopped in content process, we have to notify the
+    * chrome process in order to know which tab is playing media.
+    */
+    async NotifyMediaActiveChanged(BrowsingContext aContext, bool aActive);
+
+   /**
+    * When media became audible or inaudible in content process, we have to
+    * notify chrome process in order to which tab is audible.
+    */
+    async NotifyMediaAudibleChanged(BrowsingContext aContext, bool aAudible);
+
 both:
+    async ScriptError(nsString message, nsString sourceName, nsString sourceLine,
+                      uint32_t lineNumber, uint32_t colNumber, uint32_t flags,
+                      nsCString category, bool privateWindow, uint64_t innerWindowId,
+                      bool fromChromeContext);
+
     async CommitBrowsingContextTransaction(BrowsingContext aContext,
                                            BrowsingContextTransaction aTransaction,
-                                           BrowsingContextFieldEpochs aEpochs);
+                                           uint64_t aEpoch);
 
     async AsyncMessage(nsString aMessage, CpowEntry[] aCpows,
                        Principal aPrincipal, ClonedMessageData aData);

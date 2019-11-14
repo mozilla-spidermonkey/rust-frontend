@@ -39,7 +39,10 @@ var JsonSchemaValidator = {
 };
 
 function validateAndParseParamRecursive(param, properties) {
-  if (properties.enum) {
+  // If the param is a boolean, don't check the enum values.
+  // This allows for values that are both a string with enums
+  // and a boolean.
+  if (properties.enum && typeof param !== "boolean") {
     if (properties.enum.includes(param)) {
       return [true, param];
     }
@@ -266,6 +269,11 @@ function validateAndParseSimpleParam(param, type) {
         parsedParam = new URL(param);
         valid = true;
       } catch (ex) {
+        if (!param.startsWith("http")) {
+          log.error(
+            `Ignoring parameter "${param}" - scheme (http or https) must be specified.`
+          );
+        }
         valid = false;
       }
       break;

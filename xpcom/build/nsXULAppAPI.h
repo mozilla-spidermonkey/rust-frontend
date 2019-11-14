@@ -58,16 +58,6 @@
 #define XRE_USER_APP_DATA_DIR "UAppData"
 
 /**
- * A directory service key which provides a list of all enabled extension
- * directories and files (packed XPIs).  The list includes compatible
- * platform-specific extension subdirectories.
- *
- * @note The directory list will have no members when the application is
- *       launched in safe mode.
- */
-#define XRE_EXTENSIONS_DIR_LIST "XREExtDL"
-
-/**
  * A directory service key which provides the executable file used to
  * launch the current process.  This is the same value returned by the
  * XRE_GetBinaryPath function defined below.
@@ -150,6 +140,13 @@
  * Should be a synonym for XCurProcD everywhere except in tests.
  */
 #define XRE_ADDON_APP_DIR "XREAddonAppDir"
+
+/**
+ * A directory service key which specifies the distribution specific files for
+ * the application unique for each user.
+ * It's located at /run/user/$UID/<product name>/
+ */
+#define XRE_USER_RUNTIME_DIR "XREUserRunTimeDir"
 
 /**
  * A directory service key which provides the update directory. Callers should
@@ -384,6 +381,8 @@ static_assert(MOZ_ARRAY_LENGTH(kGeckoProcessTypeString) == GeckoProcessType_End,
               "Array length mismatch");
 
 XRE_API(const char*, XRE_ChildProcessTypeToString,
+        (GeckoProcessType aProcessType))
+XRE_API(const char*, XRE_ChildProcessTypeToAnnotation,
         (GeckoProcessType aProcessType))
 
 #if defined(MOZ_WIDGET_ANDROID)

@@ -41,13 +41,26 @@ cargo_build_flags += --color=always
 endif
 endif
 
+rustflags_lto = -Clto
+# Disable LTO when linking gkrust_gtest.
+ifneq (,$(findstring gkrust_gtest,$(RUST_LIBRARY_FILE)))
+rustflags_lto =
+endif
+# Disable LTO when linking for macOS with fuzzing for now,
+# see https://github.com/rust-lang/rust/issues/66285
+ifdef FUZZING_INTERFACES
+ifeq ($(OS_ARCH), Darwin)
+rustflags_lto =
+endif
+endif
+
 # These flags are passed via `cargo rustc` and only apply to the final rustc
 # invocation (i.e., only the top-level crate, not its dependencies).
 cargo_rustc_flags = $(CARGO_RUSTCFLAGS)
 ifndef DEVELOPER_OPTIONS
 ifndef MOZ_DEBUG_RUST
-# Enable link-time optimization for release builds.
-cargo_rustc_flags += -C lto
+# Enable link-time optimization for release builds
+cargo_rustc_flags += $(rustflags_lto)
 endif
 endif
 
@@ -60,6 +73,22 @@ ifeq (neon,$(MOZ_FPU))
 # Enable neon and disable restriction to 16 FPU registers
 # (CPUs with neon have 32 FPU registers available)
 rustflags_neon += -C target_feature=+neon,-d16
+endif
+
+rustflags_sancov =
+ifdef FUZZING_INTERFACES
+ifndef MOZ_TSAN
+# These options should match what is implicitly enabled for `clang -fsanitize=fuzzer`
+#   here: https://github.com/llvm/llvm-project/blob/release/8.x/clang/lib/Driver/SanitizerArgs.cpp#L354
+#
+#  -sanitizer-coverage-inline-8bit-counters      Increments 8-bit counter for every edge.
+#  -sanitizer-coverage-level=4                   Enable coverage for all blocks, critical edges, and indirect calls.
+#  -sanitizer-coverage-trace-compares            Tracing of CMP and similar instructions.
+#  -sanitizer-coverage-pc-table                  Create a static PC table.
+#
+# In TSan builds, we must not pass any of these, because sanitizer coverage is incompatible with TSan.
+rustflags_sancov += -Cpasses=sancov -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-level=4 -Cllvm-args=-sanitizer-coverage-trace-compares -Cllvm-args=-sanitizer-coverage-pc-table
+endif
 endif
 
 rustflags_override = $(MOZ_RUST_DEFAULT_FLAGS) $(rustflags_neon)
@@ -129,15 +158,22 @@ export PKG_CONFIG_ALLOW_CROSS=1
 export RUST_BACKTRACE=full
 export MOZ_TOPOBJDIR=$(topobjdir)
 
+# Set COREAUDIO_SDK_PATH for third_party/rust/coreaudio-sys/build.rs
+ifeq ($(OS_ARCH), Darwin)
+ifdef MACOS_SDK_DIR
+export COREAUDIO_SDK_PATH=$(MACOS_SDK_DIR)
+endif
+endif
+
 target_rust_ltoable := force-cargo-library-build
 target_rust_nonltoable := force-cargo-test-run force-cargo-library-check $(foreach b,build check,force-cargo-program-$(b))
 
 ifdef MOZ_PGO_RUST
-rust_pgo_flags := $(if $(MOZ_PROFILE_GENERATE),-C profile-generate=$(topobjdir)) $(if $(MOZ_PROFILE_USE),-C profile-use=$(topobjdir)/merged.profdata)
+rust_pgo_flags := $(if $(MOZ_PROFILE_GENERATE),-C profile-generate=$(topobjdir)) $(if $(MOZ_PROFILE_USE),-C profile-use=$(PGO_PROFILE_PATH))
 endif
 
-$(target_rust_ltoable): RUSTFLAGS:=$(rustflags_override) $(RUSTFLAGS) $(if $(MOZ_LTO_RUST),-Clinker-plugin-lto) $(rust_pgo_flags)
-$(target_rust_nonltoable): RUSTFLAGS:=$(rustflags_override) $(RUSTFLAGS)
+$(target_rust_ltoable): RUSTFLAGS:=$(rustflags_override) $(rustflags_sancov) $(RUSTFLAGS) $(if $(MOZ_LTO_RUST),-Clinker-plugin-lto) $(rust_pgo_flags)
+$(target_rust_nonltoable): RUSTFLAGS:=$(rustflags_override) $(rustflags_sancov) $(RUSTFLAGS)
 
 TARGET_RECIPES := $(target_rust_ltoable) $(target_rust_nonltoable)
 
@@ -248,11 +284,15 @@ $(RUST_LIBRARY_FILE): force-cargo-library-build
 # When we are building in --enable-release mode; we add an additional check to confirm
 # that we are not importing any networking-related functions in rust code. This reduces
 # the chance of proxy bypasses originating from rust code.
+# The check only works when rust code is built with -Clto.
+# Enabling sancov or TSan also causes this to fail.
 ifndef MOZ_PROFILE_GENERATE
-ifndef DEVELOPER_OPTIONS
-ifndef MOZ_DEBUG_RUST
+ifndef MOZ_TSAN
 ifeq ($(OS_ARCH), Linux)
+ifeq (,$(rustflags_sancov))
+ifneq (,$(filter -Clto,$(cargo_rustc_flags)))
 	$(call py_action,check_binary,--target --networking $@)
+endif
 endif
 endif
 endif

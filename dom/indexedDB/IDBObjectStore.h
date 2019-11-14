@@ -54,6 +54,8 @@ class IDBObjectStore final : public nsISupports, public nsWrapperCache {
 
   static const JSClass sDummyPropJSClass;
 
+  // TODO: This could be made const if Bug 1575173 is resolved. It is
+  // initialized in the constructor and never modified/cleared.
   RefPtr<IDBTransaction> mTransaction;
   JS::Heap<JS::Value> mCachedKeyPath;
 
@@ -95,14 +97,13 @@ class IDBObjectStore final : public nsISupports, public nsWrapperCache {
                                                  const ObjectStoreSpec& aSpec);
 
   static void AppendIndexUpdateInfo(int64_t aIndexID, const KeyPath& aKeyPath,
-                                    bool aUnique, bool aMultiEntry,
-                                    const nsCString& aLocale, JSContext* aCx,
-                                    JS::Handle<JS::Value> aVal,
-                                    nsTArray<IndexUpdateInfo>& aUpdateInfoArray,
-                                    ErrorResult& aRv);
+                                    bool aMultiEntry, const nsCString& aLocale,
+                                    JSContext* aCx, JS::Handle<JS::Value> aVal,
+                                    nsTArray<IndexUpdateInfo>* aUpdateInfoArray,
+                                    ErrorResult* aRv);
 
   static void DeserializeIndexValueToUpdateInfos(
-      int64_t aIndexID, const KeyPath& aKeyPath, bool aUnique, bool aMultiEntry,
+      int64_t aIndexID, const KeyPath& aKeyPath, bool aMultiEntry,
       const nsCString& aLocale, StructuredCloneReadInfo& aCloneReadInfo,
       nsTArray<IndexUpdateInfo>& aUpdateInfoArray, ErrorResult& aRv);
 
@@ -213,7 +214,7 @@ class IDBObjectStore final : public nsISupports, public nsWrapperCache {
 
   already_AddRefed<IDBIndex> Index(const nsAString& aName, ErrorResult& aRv);
 
-  void DeleteIndex(const nsAString& aIndexName, ErrorResult& aRv);
+  void DeleteIndex(const nsAString& aName, ErrorResult& aRv);
 
   already_AddRefed<IDBRequest> Count(JSContext* aCx, JS::Handle<JS::Value> aKey,
                                      ErrorResult& aRv);

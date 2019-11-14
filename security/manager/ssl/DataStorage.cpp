@@ -72,13 +72,13 @@ class DataStorageSharedThread final {
   nsCOMPtr<nsIThread> mThread;
 };
 
-StaticMutex sDataStorageSharedThreadMutex;
-static StaticAutoPtr<DataStorageSharedThread> gDataStorageSharedThread;
+mozilla::StaticMutex sDataStorageSharedThreadMutex;
+static mozilla::StaticAutoPtr<DataStorageSharedThread> gDataStorageSharedThread;
 static bool gDataStorageSharedThreadShutDown = false;
 
 nsresult DataStorageSharedThread::Initialize() {
   MOZ_ASSERT(XRE_IsParentProcess());
-  StaticMutexAutoLock lock(sDataStorageSharedThreadMutex);
+  mozilla::StaticMutexAutoLock lock(sDataStorageSharedThreadMutex);
 
   // If this happens, we initialized a DataStorage after shutdown notifications
   // were sent, so don't re-initialize the shared thread.
@@ -101,7 +101,7 @@ nsresult DataStorageSharedThread::Initialize() {
 
 nsresult DataStorageSharedThread::Shutdown() {
   MOZ_ASSERT(XRE_IsParentProcess());
-  StaticMutexAutoLock lock(sDataStorageSharedThreadMutex);
+  mozilla::StaticMutexAutoLock lock(sDataStorageSharedThreadMutex);
 
   if (!gDataStorageSharedThread || gDataStorageSharedThreadShutDown) {
     return NS_OK;
@@ -122,7 +122,7 @@ nsresult DataStorageSharedThread::Shutdown() {
   nsCOMPtr<nsIThread> threadHandle = gDataStorageSharedThread->mThread;
   nsresult rv;
   {
-    StaticMutexAutoUnlock unlock(sDataStorageSharedThreadMutex);
+    mozilla::StaticMutexAutoUnlock unlock(sDataStorageSharedThreadMutex);
     rv = threadHandle->Shutdown();
   }
   gDataStorageSharedThread->mThread = nullptr;
@@ -133,7 +133,7 @@ nsresult DataStorageSharedThread::Shutdown() {
 
 nsresult DataStorageSharedThread::Dispatch(nsIRunnable* event) {
   MOZ_ASSERT(XRE_IsParentProcess());
-  StaticMutexAutoLock lock(sDataStorageSharedThreadMutex);
+  mozilla::StaticMutexAutoLock lock(sDataStorageSharedThreadMutex);
   if (gDataStorageSharedThreadShutDown || !gDataStorageSharedThread ||
       !gDataStorageSharedThread->mThread) {
     return NS_ERROR_FAILURE;
@@ -173,7 +173,7 @@ NS_IMPL_ISUPPORTS(DataStorageMemoryReporter, nsIMemoryReporter)
 
 NS_IMPL_ISUPPORTS(DataStorage, nsIObserver)
 
-StaticAutoPtr<DataStorage::DataStorages> DataStorage::sDataStorages;
+mozilla::StaticAutoPtr<DataStorage::DataStorages> DataStorage::sDataStorages;
 
 DataStorage::DataStorage(const nsString& aFilename)
     : mMutex("DataStorage::mMutex"),
@@ -186,7 +186,7 @@ DataStorage::DataStorage(const nsString& aFilename)
       mFilename(aFilename) {}
 
 DataStorage::~DataStorage() {
-  Preferences::UnregisterCallback(PREF_CHANGE_METHOD(DataStorage::PrefChanged),
+  Preferences::UnregisterCallback(DataStorage::PrefChanged,
                                   "test.datastorage.write_timer_ms", this);
 }
 
@@ -378,7 +378,7 @@ nsresult DataStorage::Init(
   // For test purposes, we can set the write timer to be very fast.
   mTimerDelay = Preferences::GetInt("test.datastorage.write_timer_ms",
                                     sDataStorageDefaultTimerDelay);
-  Preferences::RegisterCallback(PREF_CHANGE_METHOD(DataStorage::PrefChanged),
+  Preferences::RegisterCallback(DataStorage::PrefChanged,
                                 "test.datastorage.write_timer_ms", this);
 
   return NS_OK;
@@ -1071,6 +1071,11 @@ DataStorage::Observe(nsISupports* /*aSubject*/, const char* aTopic,
   }
 
   return NS_OK;
+}
+
+// static
+void DataStorage::PrefChanged(const char* aPref, void* aSelf) {
+  static_cast<DataStorage*>(aSelf)->PrefChanged(aPref);
 }
 
 void DataStorage::PrefChanged(const char* aPref) {

@@ -24,7 +24,10 @@ from mozversioncontrol import (
     InvalidRepoPath,
 )
 
-from .backend.configenvironment import ConfigEnvironment
+from .backend.configenvironment import (
+    ConfigEnvironment,
+    ConfigStatusFailure,
+)
 from .configure import ConfigureSandbox
 from .controller.clobber import Clobberer
 from .mozconfig import (
@@ -61,7 +64,7 @@ class BadEnvironmentException(Exception):
     """Base class for errors raised when the build environment is not sane."""
 
 
-class BuildEnvironmentNotFoundException(BadEnvironmentException):
+class BuildEnvironmentNotFoundException(BadEnvironmentException, AttributeError):
     """Raised when we could not find a build environment."""
 
 
@@ -106,7 +109,7 @@ class MozbuildObject(ProcessExecutionMixin):
         self._virtualenv_manager = None
 
     @classmethod
-    def from_environment(cls, cwd=None, detect_virtualenv_mozinfo=True):
+    def from_environment(cls, cwd=None, detect_virtualenv_mozinfo=True, **kwargs):
         """Create a MozbuildObject by detecting the proper one from the env.
 
         This examines environment state like the current working directory and
@@ -183,7 +186,7 @@ class MozbuildObject(ProcessExecutionMixin):
         # If we can't resolve topobjdir, oh well. We'll figure out when we need
         # one.
         return cls(topsrcdir, None, None, topobjdir=topobjdir,
-                   mozconfig=mozconfig)
+                   mozconfig=mozconfig, **kwargs)
 
     def resolve_mozconfig_topobjdir(self, default=None):
         topobjdir = self.mozconfig['topobjdir'] or default
@@ -253,10 +256,13 @@ class MozbuildObject(ProcessExecutionMixin):
     @property
     def virtualenv_manager(self):
         if self._virtualenv_manager is None:
+            name = "init"
+            if six.PY3:
+                name += "_py3"
             self._virtualenv_manager = VirtualenvManager(
                 self.topsrcdir,
                 self.topobjdir,
-                os.path.join(self.topobjdir, '_virtualenvs', 'init'),
+                os.path.join(self.topobjdir, '_virtualenvs', name),
                 sys.stdout,
                 os.path.join(self.topsrcdir, 'build', 'virtualenv_packages.txt')
                 )
@@ -270,7 +276,7 @@ class MozbuildObject(ProcessExecutionMixin):
         # the environment variable, which has an impact on autodetection (when
         # path is MozconfigLoader.AUTODETECT), and memoization wouldn't account
         # for it without the explicit (unused) argument.
-        out = six.StringIO()
+        out = six.BytesIO()
         env = os.environ
         if path and path != MozconfigLoader.AUTODETECT:
             env = dict(env)
@@ -336,8 +342,12 @@ class MozbuildObject(ProcessExecutionMixin):
         if not os.path.exists(config_status) or not os.path.getsize(config_status):
             raise BuildEnvironmentNotFoundException('config.status not available. Run configure.')
 
-        self._config_environment = \
-            ConfigEnvironment.from_config_status(config_status)
+        try:
+            self._config_environment = \
+                ConfigEnvironment.from_config_status(config_status)
+        except ConfigStatusFailure as e:
+            six.raise_from(BuildEnvironmentNotFoundException(
+                'config.status is outdated or broken. Run configure.'), e)
 
         return self._config_environment
 
@@ -383,23 +393,6 @@ class MozbuildObject(ProcessExecutionMixin):
             platform_name = "macosx" + bits
 
         return platform_name, bits + 'bit'
-
-    @memoized_property
-    def extra_environment_variables(self):
-        '''Some extra environment variables are stored in .mozconfig.mk.
-        This functions extracts and returns them.'''
-        from mozbuild import shellutil
-        mozconfig_mk = os.path.join(self.topobjdir, '.mozconfig.mk')
-        env = {}
-        with open(mozconfig_mk) as fh:
-            for line in fh:
-                if line.startswith('export '):
-                    exports = shellutil.split(line)[1:]
-                    for e in exports:
-                        if '=' in e:
-                            key, value = e.split('=')
-                            env[key] = value
-        return env
 
     @memoized_property
     def repository(self):
@@ -620,7 +613,7 @@ class MozbuildObject(ProcessExecutionMixin):
                                   'Mozilla Build System', msg], ensure_exit_code=False)
         except Exception as e:
             self.log(logging.WARNING, 'notifier-failed',
-                     {'error': e.message}, 'Notification center failed: {error}')
+                     {'error': str(e)}, 'Notification center failed: {error}')
 
     def _ensure_objdir_exists(self):
         if os.path.isdir(self.statedir):
@@ -890,16 +883,7 @@ class MachCommandBase(MozbuildObject):
             sys.exit(1)
 
         except MozconfigLoadException as e:
-            print('Error loading mozconfig: ' + e.path)
-            print('')
-            print(e.message)
-            if e.output:
-                print('')
-                print('mozconfig output:')
-                print('')
-                for line in e.output:
-                    print(line)
-
+            print(e)
             sys.exit(1)
 
         MozbuildObject.__init__(self, topsrcdir, context.settings,
@@ -914,20 +898,11 @@ class MachCommandBase(MozbuildObject):
             self.mozconfig
 
         except MozconfigFindException as e:
-            print(e.message)
+            print(e)
             sys.exit(1)
 
         except MozconfigLoadException as e:
-            print('Error loading mozconfig: ' + e.path)
-            print('')
-            print(e.message)
-            if e.output:
-                print('')
-                print('mozconfig output:')
-                print('')
-                for line in e.output:
-                    print(line)
-
+            print(e)
             sys.exit(1)
 
         # Always keep a log of the last command, but don't do that for mach
@@ -941,7 +916,7 @@ class MachCommandBase(MozbuildObject):
                 fd = open(logfile, "wb")
                 self.log_manager.add_json_handler(fd)
             except Exception as e:
-                self.log(logging.WARNING, 'mach', {'error': e},
+                self.log(logging.WARNING, 'mach', {'error': str(e)},
                          'Log will not be kept for this command: {error}.')
 
 
@@ -981,6 +956,12 @@ class MachCommandConditions(object):
     def is_firefox_or_android(cls):
         """Must have a Firefox or Android build."""
         return MachCommandConditions.is_firefox(cls) or MachCommandConditions.is_android(cls)
+
+    @staticmethod
+    def has_build(cls):
+        """Must have a build."""
+        return (MachCommandConditions.is_firefox_or_android(cls) or
+                MachCommandConditions.is_thunderbird(cls))
 
     @staticmethod
     def is_hg(cls):

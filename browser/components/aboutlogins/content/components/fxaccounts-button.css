@@ -9,41 +9,61 @@
 }
 
 .fxaccounts-extra-text {
+  /* Only show at most 3 lines of text to limit the
+     text from overflowing the header. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+
   color: var(--in-content-deemphasized-text);
-  font-size: smaller;
-  width: 250px;
   text-align: end;
-  margin-inline-start: 36px;
 }
 
-.fxaccounts-avatar-button,
+.fxaccounts-extra-text,
+.fxaccount-email,
+.fxaccounts-enable-button {
+  font-size: 13px;
+}
+
+.fxaccount-avatar,
 .fxaccounts-enable-button {
   margin-inline-start: 9px;
 }
 
-.fxaccount-email {
-  font-weight: bold;
-  font-size: .9em;
+.fxaccounts-enable-button {
+  min-width: 120px;
+  padding-inline: 16px;
 }
 
 .fxaccounts-avatar-button {
+  cursor: pointer;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.fxaccount-email {
+  vertical-align: middle;
+}
+
+.fxaccount-avatar {
+  display: inline-block;
+  vertical-align: middle;
   background-image: var(--avatar-url),
     url(chrome://browser/skin/fxa/avatar-color.svg);
-  background-color: transparent;
   background-position: center;
   background-repeat: no-repeat;
   background-size: cover;
-  border: 1px solid var(--in-content-border-color);
   border-radius: 1000px;
   width: 32px;
-  min-width: auto;
-  cursor: pointer;
+  height: 32px;
 }
 
 .fxaccounts-avatar-button:hover {
-  border-color: var(--in-content-border-hover);
+  background-color: transparent !important;
 }
 
-.fxaccounts-avatar-button:hover:active {
-  border-color: var(--in-content-border-active);
+.fxaccounts-avatar-button:hover > .fxaccount-email {
+  text-decoration: underline;
 }

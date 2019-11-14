@@ -2092,9 +2092,9 @@ void FrameLayerBuilder::Init(nsDisplayListBuilder* aBuilder,
 }
 
 void FrameLayerBuilder::FlashPaint(gfxContext* aContext) {
-  float r = float(rand()) / RAND_MAX;
-  float g = float(rand()) / RAND_MAX;
-  float b = float(rand()) / RAND_MAX;
+  float r = float(rand()) / float(RAND_MAX);
+  float g = float(rand()) / float(RAND_MAX);
+  float b = float(rand()) / float(RAND_MAX);
   aContext->SetColor(Color(r, g, b, 0.4f));
   aContext->Paint();
 }
@@ -4012,9 +4012,7 @@ void PaintedLayerData::AccumulateHitTestItem(ContainerState* aState,
                                              nsDisplayItem* aItem,
                                              const DisplayItemClip& aClip,
                                              TransformClipNode* aTransform) {
-  MOZ_ASSERT(aItem->HasHitTestInfo());
   auto* item = static_cast<nsDisplayHitTestInfoItem*>(aItem);
-
   const HitTestInfo& info = item->GetHitTestInfo();
 
   nsRect area = info.mArea;
@@ -4556,6 +4554,7 @@ void ContainerState::ProcessDisplayItems(nsDisplayList* aList) {
     nsRect itemContent;
 
     if (marker == DisplayItemEntryType::HitTestInfo) {
+      MOZ_ASSERT(item->IsHitTestItem());
       const auto& hitTestInfo =
           static_cast<nsDisplayHitTestInfoItem*>(item)->GetHitTestInfo();
 
@@ -5077,13 +5076,6 @@ void ContainerState::ProcessDisplayItems(nsDisplayList* aList) {
         newLayerEntry->mOpaqueForAnimatedGeometryRootParent = false;
         newLayerEntry->mBaseScrollMetadata =
             scrollItem->ComputeScrollMetadata(ownLayer->Manager(), mParameters);
-      } else if ((itemType == DisplayItemType::TYPE_SUBDOCUMENT ||
-                  itemType == DisplayItemType::TYPE_ZOOM ||
-                  itemType == DisplayItemType::TYPE_RESOLUTION) &&
-                 StaticPrefs::layout_scroll_root_frame_containers()) {
-        newLayerEntry->mBaseScrollMetadata =
-            static_cast<nsDisplaySubDocument*>(item)->ComputeScrollMetadata(
-                ownLayer->Manager(), mParameters);
       }
 
       /**
@@ -5968,12 +5960,8 @@ void ContainerState::Finish(uint32_t* aTextContentFlags,
                             nsDisplayList* aChildItems) {
   mPaintedLayerDataTree.Finish();
 
-  if (!StaticPrefs::layout_scroll_root_frame_containers()) {
-    // Bug 1336544 tracks re-enabling this assertion in the
-    // StaticPrefs::layout_scroll_root_frame_containers() case.
-    NS_ASSERTION(mContainerBounds.IsEqualInterior(mAccumulatedChildBounds),
-                 "Bounds computation mismatch");
-  }
+  NS_ASSERTION(mContainerBounds.IsEqualInterior(mAccumulatedChildBounds),
+               "Bounds computation mismatch");
 
   if (mLayerBuilder->IsBuildingRetainedLayers()) {
     nsIntRegion containerOpaqueRegion;
@@ -6306,12 +6294,6 @@ already_AddRefed<ContainerLayer> FrameLayerBuilder::BuildContainerLayerFor(
   const ActiveScrolledRoot* containerScrollMetadataASR =
       aParameters.mScrollMetadataASR;
   const ActiveScrolledRoot* containerCompositorASR = aParameters.mCompositorASR;
-
-  if (!aContainerItem && StaticPrefs::layout_scroll_root_frame_containers()) {
-    containerASR = aBuilder->ActiveScrolledRootForRootScrollframe();
-    containerScrollMetadataASR = containerASR;
-    containerCompositorASR = containerASR;
-  }
 
   ContainerLayerParameters scaleParameters;
   nsRect bounds =

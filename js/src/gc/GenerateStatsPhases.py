@@ -97,6 +97,7 @@ PhaseKindGraphRoots = [
         PhaseKind("RELAZIFY_FUNCTIONS", "Relazify Functions", 4),
         PhaseKind("PURGE", "Purge", 5),
         PhaseKind("PURGE_SHAPE_CACHES", "Purge ShapeCaches", 60),
+        PhaseKind("PURGE_SOURCE_URLS", "Purge Source URLs", 73),
         JoinParallelTasksPhaseKind
     ]),
     PhaseKind("MARK", "Mark", 6, [
@@ -132,12 +133,12 @@ PhaseKindGraphRoots = [
             PhaseKind("SWEEP_BASE_SHAPE", "Sweep Base Shapes", 24),
             PhaseKind("SWEEP_INITIAL_SHAPE", "Sweep Initial Shapes", 25),
             PhaseKind("SWEEP_TYPE_OBJECT", "Sweep Type Objects", 26),
-            PhaseKind("SWEEP_BREAKPOINT", "Sweep Breakpoints", 27),
             PhaseKind("SWEEP_REGEXP", "Sweep Regexps", 28),
             PhaseKind("SWEEP_COMPRESSION", "Sweep Compression Tasks", 62),
             PhaseKind("SWEEP_LAZYSCRIPTS", "Sweep LazyScripts", 71),
             PhaseKind("SWEEP_WEAKMAPS", "Sweep WeakMaps", 63),
             PhaseKind("SWEEP_UNIQUEIDS", "Sweep Unique IDs", 64),
+            PhaseKind("SWEEP_FINALIZATION_GROUPS", "Sweep FinalizationGroups", 74),
             PhaseKind("SWEEP_JIT_DATA", "Sweep JIT Data", 65),
             PhaseKind("SWEEP_WEAK_CACHES", "Sweep Weak Caches", 66),
             PhaseKind("SWEEP_MISC", "Sweep Miscellaneous", 29),

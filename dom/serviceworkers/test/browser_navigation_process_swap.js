@@ -47,6 +47,7 @@ async function runTest() {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.tabs.remote.useHTTPResponseProcessSelection", true],
+      ["browser.tabs.documentchannel", true],
       ["dom.serviceWorkers.enabled", true],
       ["dom.serviceWorkers.exemptFromPerDomainMax", true],
       ["dom.serviceWorkers.testing.enabled", true],
@@ -113,9 +114,8 @@ async function runTest() {
   info("Waiting for the browser to stop");
   await BrowserTestUtils.browserStopped(tab.linkedBrowser);
 
-  Assert.equal(
-    tab.linkedBrowser.remoteType,
-    E10SUtils.WEB_REMOTE_TYPE,
+  Assert.ok(
+    E10SUtils.isWebRemoteType(tab.linkedBrowser.remoteType),
     `${CROSS_ORIGIN_URL} should load in a web-content process`
   );
 

@@ -46,7 +46,6 @@ It is augmented as it progresses through the system, with various information:
              // RESULT_SOURCE.*, that can be returned by the model.
 
     // Properties added by the Model.
-    preselected; // {boolean} whether the first result should be preselected.
     results; // {array} list of UrlbarResult objects.
     tokens; // {array} tokens extracted from the searchString, each token is an
             // object in the form {type, value, lowerCaseValue}.
@@ -269,7 +268,7 @@ Implements an input box *View*, owns an *UrlbarView*.
 .. code::
 
   UrlbarInput {
-    constructor(options = { textbox, panel, controller });
+    constructor(options = { textbox, panel });
     // Used to trim urls when necessary (e.g. removing "http://")
     trimValue();
     // Uses UrlbarValueFormatter to highlight the base host, search aliases
@@ -365,6 +364,8 @@ properties, supported by all of the results.
     autofill.selectionStart: {integer} The first index in the autofill
                              selection.
     autofill.selectionEnd: {integer} The last index in the autofill selection.
+    suggestedIndex: {integer} Suggest a preferred position for this result
+                    within the result set.
   }
 
 The following RESULT_TYPEs are supported:
@@ -374,7 +375,7 @@ The following RESULT_TYPEs are supported:
 
     // Payload: { icon, url, userContextId }
     TAB_SWITCH: 1,
-    // Payload: { icon, suggestion, keyword, query, isKeywordOffer }
+    // Payload: { icon, suggestion, keyword, query, keywordOffer, inPrivateWindow, isPrivateEngine }
     SEARCH: 2,
     // Payload: { icon, url, title, tags }
     URL: 3,

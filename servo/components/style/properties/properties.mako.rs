@@ -38,6 +38,7 @@ use style_traits::{CssWriter, KeywordsCollectFn, ParseError, ParsingMode};
 use style_traits::{SpecifiedValueInfo, StyleParseErrorKind, ToCss};
 use to_shmem::impl_trivial_to_shmem;
 use crate::stylesheets::{CssRuleType, Origin, UrlExtraData};
+use crate::use_counters::UseCounters;
 use crate::values::generics::text::LineHeight;
 use crate::values::{computed, resolved};
 use crate::values::computed::NonNegativeLength;
@@ -427,6 +428,9 @@ pub struct NonCustomPropertyId(usize);
 pub const NON_CUSTOM_PROPERTY_ID_COUNT: usize =
     ${len(data.longhands) + len(data.shorthands) + len(data.all_aliases())};
 
+/// The length of all counted unknown properties.
+pub const COUNTED_UNKNOWN_PROPERTY_COUNT: usize = ${len(data.counted_unknown_properties)};
+
 % if engine == "gecko":
 #[allow(dead_code)]
 unsafe fn static_assert_nscsspropertyid() {
@@ -505,8 +509,10 @@ impl NonCustomPropertyId {
             % if engine == "gecko":
                 unsafe { structs::nsCSSProps_gPropertyEnabled[self.0] }
             % else:
-                static PREF_NAME: [Option< &str>; ${len(data.longhands) + len(data.shorthands)}] = [
-                    % for property in data.longhands + data.shorthands:
+                static PREF_NAME: [Option< &str>; ${
+                    len(data.longhands) + len(data.shorthands) + len(data.all_aliases())
+                }] = [
+                    % for property in data.longhands + data.shorthands + data.all_aliases():
                         <%
                             attrs = {"servo-2013": "servo_2013_pref", "servo-2020": "servo_2020_pref"}
                             pref = getattr(property, attrs[engine])
@@ -1786,6 +1792,35 @@ impl ToCss for PropertyId {
     }
 }
 
+/// The counted unknown property list which is used for css use counters.
+#[derive(Clone, Copy, Debug, Eq, FromPrimitive, Hash, PartialEq)]
+#[repr(u8)]
+pub enum CountedUnknownProperty {
+    % for prop in data.counted_unknown_properties:
+    /// ${prop.name}
+    ${prop.camel_case},
+    % endfor
+}
+
+impl CountedUnknownProperty {
+    /// Parse the counted unknown property.
+    pub fn parse_for_test(property_name: &str) -> Option<Self> {
+        ascii_case_insensitive_phf_map! {
+            unknown_id -> CountedUnknownProperty = {
+                % for property in data.counted_unknown_properties:
+                "${property.name}" => CountedUnknownProperty::${property.camel_case},
+                % endfor
+            }
+        }
+        unknown_id(property_name).cloned()
+    }
+
+    /// Returns the underlying index, used for use counter.
+    pub fn bit(self) -> usize {
+        self as usize
+    }
+}
+
 impl PropertyId {
     /// Return the longhand id that this property id represents.
     #[inline]
@@ -1799,16 +1834,30 @@ impl PropertyId {
 
     /// Returns a given property from the string `s`.
     ///
-    /// Returns Err(()) for unknown non-custom properties.
-    fn parse_unchecked(property_name: &str) -> Result<Self, ()> {
+    /// Returns Err(()) for unknown properties.
+    fn parse_unchecked(
+        property_name: &str,
+        use_counters: Option< &UseCounters>,
+    ) -> Result<Self, ()> {
+        // A special id for css use counters.
+        // ShorthandAlias is not used in the Servo build.
+        // That's why we need to allow dead_code.
+        #[allow(dead_code)]
+        pub enum StaticId {
+            Longhand(LonghandId),
+            Shorthand(ShorthandId),
+            LonghandAlias(LonghandId, AliasId),
+            ShorthandAlias(ShorthandId, AliasId),
+            CountedUnknown(CountedUnknownProperty),
+        }
         ascii_case_insensitive_phf_map! {
-            property_id -> PropertyId = {
+            static_id -> StaticId = {
                 % for (kind, properties) in [("Longhand", data.longhands), ("Shorthand", data.shorthands)]:
                 % for property in properties:
-                "${property.name}" => PropertyId::${kind}(${kind}Id::${property.camel_case}),
+                "${property.name}" => StaticId::${kind}(${kind}Id::${property.camel_case}),
                 % for alias in property.alias:
                 "${alias.name}" => {
-                    PropertyId::${kind}Alias(
+                    StaticId::${kind}Alias(
                         ${kind}Id::${property.camel_case},
                         AliasId::${alias.camel_case},
                     )
@@ -1816,11 +1865,41 @@ impl PropertyId {
                 % endfor
                 % endfor
                 % endfor
+                % for property in data.counted_unknown_properties:
+                "${property.name}" => {
+                    StaticId::CountedUnknown(CountedUnknownProperty::${property.camel_case})
+                },
+                % endfor
             }
         }
 
-        if let Some(id) = property_id(property_name) {
-            return Ok(id.clone())
+        if let Some(id) = static_id(property_name) {
+            return Ok(match *id {
+                StaticId::Longhand(id) => PropertyId::Longhand(id),
+                StaticId::Shorthand(id) => {
+                    #[cfg(feature = "gecko")]
+                    {
+                        // We want to count `zoom` even if disabled.
+                        if matches!(id, ShorthandId::Zoom) {
+                            if let Some(counters) = use_counters {
+                                counters.non_custom_properties.record(id.into());
+                            }
+                        }
+                    }
+
+                    PropertyId::Shorthand(id)
+                },
+                StaticId::LonghandAlias(id, alias) => PropertyId::LonghandAlias(id, alias),
+                StaticId::ShorthandAlias(id, alias) => PropertyId::ShorthandAlias(id, alias),
+                StaticId::CountedUnknown(unknown_prop) => {
+                    if let Some(counters) = use_counters {
+                        counters.counted_unknown_properties.record(unknown_prop);
+                    }
+
+                    // Always return Err(()) because these aren't valid custom property names.
+                    return Err(());
+                }
+            });
         }
 
         let name = crate::custom_properties::parse_name(property_name)?;
@@ -1831,7 +1910,7 @@ impl PropertyId {
     /// enabled for all content.
     #[inline]
     pub fn parse_enabled_for_all_content(name: &str) -> Result<Self, ()> {
-        let id = Self::parse_unchecked(name)?;
+        let id = Self::parse_unchecked(name, None)?;
 
         if !id.enabled_for_all_content() {
             return Err(());
@@ -1845,7 +1924,7 @@ impl PropertyId {
     /// allowed in this context.
     #[inline]
     pub fn parse(name: &str, context: &ParserContext) -> Result<Self, ()> {
-        let id = Self::parse_unchecked(name)?;
+        let id = Self::parse_unchecked(name, context.use_counters)?;
 
         if !id.allowed_in(context) {
             return Err(());
@@ -1863,7 +1942,7 @@ impl PropertyId {
         name: &str,
         context: &ParserContext,
     ) -> Result<Self, ()> {
-        let id = Self::parse_unchecked(name)?;
+        let id = Self::parse_unchecked(name, None)?;
 
         if !id.allowed_in_ignoring_rule_type(context) {
             return Err(());
@@ -2998,10 +3077,6 @@ impl ComputedValuesInner {
         self.rules.as_ref().unwrap()
     }
 
-    /// Whether this style has a -moz-binding value. This is always false for
-    /// Servo for obvious reasons.
-    pub fn has_moz_binding(&self) -> bool { false }
-
     #[inline]
     /// Returns whether the "content" property for the given style is completely
     /// ineffective, and would yield an empty `::before` or `::after`
@@ -3615,16 +3690,14 @@ impl<'a> StyleBuilder<'a> {
     <% del style_struct %>
 
     /// Returns whether this computed style represents a floated object.
-    pub fn floated(&self) -> bool {
-        self.get_box().clone_float() != longhands::float::computed_value::T::None
+    pub fn is_floating(&self) -> bool {
+        self.get_box().clone_float().is_floating()
     }
 
-    /// Returns whether this computed style represents an out of flow-positioned
+    /// Returns whether this computed style represents an absolutely-positioned
     /// object.
-    pub fn out_of_flow_positioned(&self) -> bool {
-        use crate::properties::longhands::position::computed_value::T as Position;
-        matches!(self.get_box().clone_position(),
-                 Position::Absolute | Position::Fixed)
+    pub fn is_absolutely_positioned(&self) -> bool {
+        self.get_box().clone_position().is_absolutely_positioned()
     }
 
     /// Whether this style has a top-layer style.

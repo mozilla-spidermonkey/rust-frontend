@@ -23,12 +23,17 @@
 
 @namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"); /* set default namespace to XUL */
 @namespace html url("http://www.w3.org/1999/xhtml"); /* namespace for HTML elements */
-@namespace xbl url("http://www.mozilla.org/xbl"); /* namespace for XBL elements */
+
+/* TODO: investigate unifying these two root selectors
+ * https://bugzilla.mozilla.org/show_bug.cgi?id=1592344
+ */
+*|*:root {
+  --animation-easing-function: cubic-bezier(.07, .95, 0, 1);
+}
 
 :root {
   text-rendering: optimizeLegibility;
   -moz-control-character-visibility: visible;
-  --animation-easing-function: cubic-bezier(.07, .95, 0, 1);
 }
 
 :root:-moz-locale-dir(rtl) {
@@ -40,13 +45,13 @@
    :: kinds of windows (not JUST browser windows) with toolbars
    ::::: */
 
-window[chromehidden~="menubar"] .chromeclass-menubar,
-window[chromehidden~="directories"] .chromeclass-directories,
-window[chromehidden~="status"] .chromeclass-status,
-window[chromehidden~="extrachrome"] .chromeclass-extrachrome,
-window[chromehidden~="location"] .chromeclass-location,
-window[chromehidden~="location"][chromehidden~="toolbar"] .chromeclass-toolbar,
-window[chromehidden~="toolbar"] .chromeclass-toolbar-additional {
+*|*:root[chromehidden~="menubar"] .chromeclass-menubar,
+*|*:root[chromehidden~="directories"] .chromeclass-directories,
+*|*:root[chromehidden~="status"] .chromeclass-status,
+*|*:root[chromehidden~="extrachrome"] .chromeclass-extrachrome,
+*|*:root[chromehidden~="location"] .chromeclass-location,
+*|*:root[chromehidden~="location"][chromehidden~="toolbar"] .chromeclass-toolbar,
+*|*:root[chromehidden~="toolbar"] .chromeclass-toolbar-additional {
   display: none;
 }
 
@@ -61,18 +66,11 @@ window[chromehidden~="toolbar"] .chromeclass-toolbar-additional {
 
 /****** elements that have no visual representation ******/
 
-script, data,
-commands, commandset, command,
+script, commandset, command,
 broadcasterset, broadcaster, observes,
-keyset, key, toolbarpalette, toolbarset,
-template, rule, conditions, action,
-bindings, binding, content, member, triple,
+keyset, key, toolbarpalette, template,
 treeitem, treeseparator, treerow, treecell {
   display: none;
-}
-
-xbl|children {
-  display: none !important;
 }
 
 /********** focus rules **********/
@@ -90,8 +88,7 @@ iframe {
 
 /******** window & page ******/
 
-window,
-page {
+window {
   overflow: -moz-hidden-unscrollable;
   -moz-box-orient: vertical;
 }
@@ -125,7 +122,6 @@ toolbar[mode="text"] .toolbarbutton-icon,
 .toolbarbutton-multiline-text:not([wrap="true"]),
 .toolbarbutton-text[wrap="true"] {
   display: none;
-  -moz-binding: none;
 }
 
 /******** browser, editor, iframe ********/
@@ -193,18 +189,6 @@ toolbox {
   -moz-box-orient: vertical;
 }
 
-toolbar[customizing="true"][collapsed="true"] {
-  /* Some apps, e.g. Firefox, use 'collapsed' to hide toolbars.
-     Override it while customizing. */
-  visibility: visible;
-}
-
-toolbar[customizing="true"][hidden="true"] {
-  /* Some apps, e.g. SeaMonkey, use 'hidden' to hide toolbars.
-     Override it while customizing. */
-  display: -moz-box;
-}
-
 %ifdef XP_MACOSX
 toolbar[type="menubar"] {
   min-height: 0 !important;
@@ -228,13 +212,8 @@ menubar > menu:empty {
 
 /********* menupopup, panel, & tooltip ***********/
 
-menupopup {
-  -moz-binding: url("chrome://global/content/bindings/popup.xml#popup");
-  -moz-box-orient: vertical;
-}
-
+menupopup,
 panel {
-  -moz-binding: url("chrome://global/content/bindings/popup.xml#panel");
   -moz-box-orient: vertical;
 }
 
@@ -250,10 +229,6 @@ tooltip {
   -moz-box-orient: vertical;
   white-space: pre-wrap;
   margin-top: 21px;
-}
-
-panel[type="arrow"] {
-  -moz-binding: url("chrome://global/content/bindings/popup.xml#arrowpanel");
 }
 
 @supports -moz-bool-pref("xul.panel-animations.enabled") {
@@ -342,10 +317,7 @@ column {
   display: -moz-grid-line;
 }
 
-rows {
-  -moz-box-orient: vertical;
-}
-
+rows,
 column {
   -moz-box-orient: vertical;
 }
@@ -363,7 +335,6 @@ treechildren {
 }
 
 tree {
-  -moz-binding: none;
   -moz-box-orient: vertical;
   width: 10px;
   height: 10px;
@@ -398,7 +369,13 @@ deck {
 }
 
 stack {
-  display: -moz-stack;
+  display: grid;
+  position: relative;
+}
+
+stack > *|* {
+  grid-area: 1 / 1;
+  z-index: 0;
 }
 
 /********** tabbox *********/
@@ -443,14 +420,9 @@ tooltip[titletip="true"] {
 
 /********** textbox **********/
 
-textbox {
-  -moz-binding: url("chrome://global/content/bindings/textbox.xml#textbox");
+search-textbox {
   -moz-user-select: text;
   text-shadow: none;
-}
-
-textbox[is="search-textbox"] {
-  -moz-binding: none;
 }
 
 /* Prefix with (xul|*):root to workaround HTML tests loading xul.css */
@@ -466,22 +438,10 @@ textbox[is="search-textbox"] {
   }
 }
 
-.textbox-contextmenu:-moz-locale-dir(rtl) {
-  direction: rtl;
-}
-
 /********** autocomplete textbox **********/
 
 /* SeaMonkey uses its own autocomplete and the toolkit's autocomplete widget */
 %ifndef MOZ_SUITE
-
-textbox[type="autocomplete"] {
-  -moz-binding: url("chrome://global/content/bindings/autocomplete.xml#autocomplete");
-}
-
-panel[type="autocomplete-richlistbox"] {
-  -moz-binding: none;
-}
 
 .autocomplete-richlistbox {
   -moz-user-focus: ignore;
@@ -489,7 +449,6 @@ panel[type="autocomplete-richlistbox"] {
 }
 
 .autocomplete-richlistitem {
-  -moz-binding: none;
   -moz-box-orient: vertical;
   -moz-box-align: center;
   overflow: -moz-hidden-unscrollable;
@@ -517,17 +476,6 @@ menulist[popuponly="true"] {
   height: 0 !important;
   min-height: 0 !important;
   border: 0 !important;
-}
-
-menulist > menupopup > .popup-internal-box > .scrollbutton-up,
-menulist > menupopup > .popup-internal-box > .arrowscrollbox-overflow-start-indicator,
-menulist > menupopup > .popup-internal-box > .arrowscrollbox-overflow-end-indicator,
-menulist > menupopup > .popup-internal-box > .scrollbutton-down {
-  display: none;
-}
-
-menulist > menupopup > .popup-internal-box > .arrowscrollbox-scrollbox {
-  overflow: auto;
 }
 
 /********** splitter **********/
@@ -559,10 +507,6 @@ scrollbox[smoothscroll=true] {
   scroll-behavior: smooth;
 }
 
-arrowscrollbox {
-  -moz-binding: url("chrome://global/content/bindings/scrollbox.xml#arrowscrollbox");
-}
-
 /********** stringbundle **********/
 
 stringbundle,
@@ -572,21 +516,14 @@ stringbundleset {
 
 /********** dialog **********/
 
-dialog,
-dialog:root /* override :root from above */ {
-  -moz-box-orient: vertical;
-}
-
-/********* page ************/
-
-page {
+dialog {
   -moz-box-orient: vertical;
 }
 
 /********** wizard **********/
 
-wizard,
-wizard:root /* override :root from above */ {
+wizard {
+  -moz-box-flex: 1;
   -moz-box-orient: vertical;
   width: 40em;
   height: 30em;

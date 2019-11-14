@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include rect,render_task,gpu_cache,snap,transform
+#include rect,render_task,gpu_cache,transform
 
 #define EXTEND_MODE_CLAMP  0
 #define EXTEND_MODE_REPEAT 1
@@ -47,13 +47,35 @@ uniform HIGHP_SAMPLER_FLOAT isampler2D sPrimitiveHeadersI;
 // Instanced attributes
 in ivec4 aData;
 
-#define VECS_PER_PRIM_HEADER_F 3U
+#define VECS_PER_PRIM_HEADER_F 2U
 #define VECS_PER_PRIM_HEADER_I 2U
+
+struct Instance
+{
+    int prim_header_address;
+    int picture_task_address;
+    int clip_address;
+    int segment_index;
+    int flags;
+    int user_data;
+};
+
+Instance decode_instance_attributes() {
+    Instance instance;
+
+    instance.prim_header_address = aData.x;
+    instance.picture_task_address = aData.y >> 16;
+    instance.clip_address = aData.y & 0xffff;
+    instance.segment_index = aData.z & 0xffff;
+    instance.flags = aData.z & 0xffff0000;
+    instance.user_data = aData.w;
+
+    return instance;
+}
 
 struct PrimitiveHeader {
     RectWithSize local_rect;
     RectWithSize local_clip_rect;
-    vec4 snap_offsets;
     float z;
     int specific_prim_address;
     int transform_id;
@@ -66,7 +88,6 @@ PrimitiveHeader fetch_prim_header(int index) {
     ivec2 uv_f = get_fetch_uv(index, VECS_PER_PRIM_HEADER_F);
     vec4 local_rect = TEXEL_FETCH(sPrimitiveHeadersF, uv_f, 0, ivec2(0, 0));
     vec4 local_clip_rect = TEXEL_FETCH(sPrimitiveHeadersF, uv_f, 0, ivec2(1, 0));
-    ph.snap_offsets = TEXEL_FETCH(sPrimitiveHeadersF, uv_f, 0, ivec2(2, 0));
     ph.local_rect = RectWithSize(local_rect.xy, local_rect.zw);
     ph.local_clip_rect = RectWithSize(local_clip_rect.xy, local_clip_rect.zw);
 
@@ -91,22 +112,13 @@ VertexInfo write_vertex(RectWithSize instance_rect,
                         RectWithSize local_clip_rect,
                         float z,
                         Transform transform,
-                        PictureTask task,
-                        RectWithSize snap_rect,
-                        vec4 snap_offsets) {
+                        PictureTask task) {
 
     // Select the corner of the local rect that we are processing.
     vec2 local_pos = instance_rect.p0 + instance_rect.size * aPosition.xy;
 
     // Clamp to the two local clip rects.
     vec2 clamped_local_pos = clamp_rect(local_pos, local_clip_rect);
-
-    /// Compute the snapping offset.
-    vec2 snap_offset = compute_snap_offset(
-        clamped_local_pos,
-        snap_rect,
-        snap_offsets
-    );
 
     // Transform the current vertex to world space.
     vec4 world_pos = transform.m * vec4(clamped_local_pos, 0.0, 1.0);
@@ -115,13 +127,13 @@ VertexInfo write_vertex(RectWithSize instance_rect,
     vec2 device_pos = world_pos.xy * task.device_pixel_scale;
 
     // Apply offsets for the render task to get correct screen location.
-    vec2 final_offset = snap_offset - task.content_origin + task.common_data.task_rect.p0;
+    vec2 final_offset = -task.content_origin + task.common_data.task_rect.p0;
 
     gl_Position = uTransform * vec4(device_pos + final_offset * world_pos.w, z * world_pos.w, world_pos.w);
 
     VertexInfo vi = VertexInfo(
         clamped_local_pos,
-        snap_offset,
+        vec2(0.0, 0.0),
         world_pos
     );
 

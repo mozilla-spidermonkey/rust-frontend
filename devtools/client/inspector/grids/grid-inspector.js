@@ -68,7 +68,7 @@ class GridInspector {
     this.inspector = inspector;
     this.store = inspector.store;
     this.telemetry = inspector.telemetry;
-    this.walker = this.inspector.walker;
+
     // Maximum number of grid highlighters that can be displayed.
     this.maxHighlighters = Services.prefs.getIntPref(
       "devtools.gridinspector.maxHighlighters"
@@ -112,7 +112,8 @@ class GridInspector {
     }
 
     try {
-      this.layoutInspector = await this.inspector.walker.getLayoutInspector();
+      // TODO: Call this again whenever targets are added or removed.
+      this.layoutFronts = await this.getLayoutFronts();
     } catch (e) {
       // This call might fail if called asynchrously after the toolbox is finished
       // closing.
@@ -147,6 +148,23 @@ class GridInspector {
   }
 
   /**
+   * Get the LayoutActor fronts for all interesting targets where we have inspectors.
+   *
+   * @return {Array} The list of LayoutActor fronts
+   */
+  async getLayoutFronts() {
+    const inspectorFronts = await this.inspector.inspectorFront.getAllInspectorFronts();
+
+    const layoutFronts = [];
+    for (const { walker } of inspectorFronts) {
+      const layoutFront = await walker.getLayoutInspector();
+      layoutFronts.push(layoutFront);
+    }
+
+    return layoutFronts;
+  }
+
+  /**
    * Destruction function called when the inspector is destroyed. Removes event listeners
    * and cleans up references.
    */
@@ -167,9 +185,8 @@ class GridInspector {
     this._highlighters = null;
     this.document = null;
     this.inspector = null;
-    this.layoutInspector = null;
+    this.layoutFronts = null;
     this.store = null;
-    this.walker = null;
   }
 
   getComponentProps() {
@@ -292,27 +309,24 @@ class GridInspector {
    * Updates the grid panel by dispatching the new grid data. This is called when the
    * layout view becomes visible or the view needs to be updated with new grid data.
    */
-  // eslint-disable-next-line complexity
   async updateGridPanel() {
     // Stop refreshing if the inspector or store is already destroyed.
     if (!this.inspector || !this.store) {
       return;
     }
 
-    // Get all the GridFront from the server if no gridFronts were provided.
-    let gridFronts;
     try {
-      gridFronts = await this.layoutInspector.getGrids(this.walker.rootNode);
+      await this._updateGridPanel();
     } catch (e) {
-      // This call might fail if called asynchrously after the toolbox is finished
-      // closing.
-      return;
+      this._throwUnlessDestroyed(
+        e,
+        "Inspector destroyed while executing updateGridPanel"
+      );
     }
+  }
 
-    // Stop if the panel has been destroyed during the call to getGrids
-    if (!this.inspector) {
-      return;
-    }
+  async _updateGridPanel() {
+    const gridFronts = await this.getGrids();
 
     if (!gridFronts.length) {
       try {
@@ -326,7 +340,7 @@ class GridInspector {
       }
     }
 
-    const currentUrl = this.inspector.target.url;
+    const currentUrl = this.inspector.currentTarget.url;
 
     // Log how many CSS Grid elements DevTools sees.
     if (currentUrl != this.inspector.previousURL) {
@@ -353,16 +367,12 @@ class GridInspector {
       // particular DOM Node in the tree yet, or when we are connected to an older server.
       if (!nodeFront) {
         try {
-          nodeFront = await this.walker.getNodeFromActor(grid.actorID, [
+          nodeFront = await grid.walkerFront.getNodeFromActor(grid.actorID, [
             "containerEl",
           ]);
         } catch (e) {
           // This call might fail if called asynchrously after the toolbox is finished
           // closing.
-          return;
-        }
-        // Stop if the panel has been destroyed during the call getNodeFromActor
-        if (!this.inspector) {
           return;
         }
       }
@@ -399,7 +409,7 @@ class GridInspector {
 
       if (
         isSubgrid &&
-        (await this.inspector.target.actorHasMethod(
+        (await this.inspector.currentTarget.actorHasMethod(
           "domwalker",
           "getParentGridNode"
         ))
@@ -407,7 +417,9 @@ class GridInspector {
         let parentGridNodeFront;
 
         try {
-          parentGridNodeFront = await this.walker.getParentGridNode(nodeFront);
+          parentGridNodeFront = await nodeFront.walkerFront.getParentGridNode(
+            nodeFront
+          );
         } catch (e) {
           // This call might fail if called asynchrously after the toolbox is finished
           // closing.
@@ -428,8 +440,34 @@ class GridInspector {
       grids.push(gridData);
     }
 
+    // We need to make sure that nested subgrids are displayed above their parent grid
+    // containers, so update the z-index of each grid before rendering them.
+    for (const root of grids.filter(g => !g.parentNodeActorID)) {
+      this._updateZOrder(grids, root);
+    }
+
     this.store.dispatch(updateGrids(grids));
     this.inspector.emit("grid-panel-updated");
+  }
+
+  /**
+   * Get all GridFront instances from the server(s).
+   *
+   *
+   * @return {Array} The list of GridFronts
+   */
+  async getGrids() {
+    let gridFronts = [];
+
+    try {
+      for (const layoutFront of this.layoutFronts) {
+        gridFronts = gridFronts.concat(await layoutFront.getAllGrids());
+      }
+    } catch (e) {
+      // This call might fail if called asynchrously after the toolbox is finished closing
+    }
+
+    return gridFronts;
   }
 
   /**
@@ -507,53 +545,49 @@ class GridInspector {
    * grid.
    */
   async onReflow() {
-    if (!this.isPanelVisible()) {
-      return;
-    }
-
-    // The list of grids currently displayed.
-    const { grids } = this.store.getState();
-
-    // The new list of grids from the server.
-    let newGridFronts;
     try {
-      newGridFronts = await this.layoutInspector.getGrids(this.walker.rootNode);
+      if (!this.isPanelVisible()) {
+        return;
+      }
+
+      // The list of grids currently displayed.
+      const { grids } = this.store.getState();
+
+      // The new list of grids from the server.
+      const newGridFronts = await this.getGrids();
+
+      // In some cases, the nodes for current grids may have been removed from the DOM in
+      // which case we need to update.
+      if (grids.length && grids.some(grid => !grid.nodeFront.actorID)) {
+        await this.updateGridPanel(newGridFronts);
+        return;
+      }
+
+      // Get the node front(s) from the current grid(s) so we can compare them to them to
+      // the node(s) of the new grids.
+      const oldNodeFronts = grids.map(grid => grid.nodeFront.actorID);
+      const newNodeFronts = newGridFronts
+        .filter(grid => grid.containerNode)
+        .map(grid => grid.containerNodeFront.actorID);
+
+      if (
+        grids.length === newGridFronts.length &&
+        oldNodeFronts.sort().join(",") == newNodeFronts.sort().join(",") &&
+        !this.haveCurrentFragmentsChanged(newGridFronts)
+      ) {
+        // Same list of containers and the geometry of all the displayed grids remained the
+        // same, we can safely abort.
+        return;
+      }
+
+      // Either the list of containers or the current fragments have changed, do update.
+      await this.updateGridPanel(newGridFronts);
     } catch (e) {
-      // This call might fail if called asynchrously after the toolbox is finished
-      // closing.
-      return;
+      this._throwUnlessDestroyed(
+        e,
+        "Inspector destroyed while executing onReflow callback"
+      );
     }
-    // Stop if the panel has been destroyed during the call to getGrids
-    if (!this.inspector) {
-      return;
-    }
-
-    // In some cases, the nodes for current grids may have been removed from the DOM in
-    // which case we need to update.
-    if (grids.length && grids.some(grid => !grid.nodeFront.actorID)) {
-      this.updateGridPanel(newGridFronts);
-      return;
-    }
-
-    // Get the node front(s) from the current grid(s) so we can compare them to them to
-    // the node(s) of the new grids.
-    const oldNodeFronts = grids.map(grid => grid.nodeFront.actorID);
-    const newNodeFronts = newGridFronts
-      .filter(grid => grid.containerNode)
-      .map(grid => grid.containerNodeFront.actorID);
-
-    if (
-      grids.length === newGridFronts.length &&
-      oldNodeFronts.sort().join(",") == newNodeFronts.sort().join(",") &&
-      !this.haveCurrentFragmentsChanged(newGridFronts)
-    ) {
-      // Same list of containers and the geometry of all the displayed grids remained the
-      // same, we can safely abort.
-      return;
-    }
-
-    // Either the list of containers or the current fragments have changed, do update.
-    this.updateGridPanel(newGridFronts);
   }
 
   /**
@@ -569,7 +603,7 @@ class GridInspector {
     this.store.dispatch(updateGridColor(node, color));
 
     const { grids } = this.store.getState();
-    const currentUrl = this.inspector.target.url;
+    const currentUrl = this.inspector.currentTarget.url;
     // Get the hostname, if there is no hostname, fall back on protocol
     // ex: `data:` uri, and `about:` pages
     const hostname =
@@ -731,6 +765,46 @@ class GridInspector {
       if (grid.highlighted) {
         this.highlighters.showGridHighlighter(grid.nodeFront);
       }
+    }
+  }
+
+  /**
+   * Some grid-inspector methods are highly asynchronous and might still run
+   * after the inspector was destroyed. Swallow errors if the grid inspector is
+   * already destroyed, throw otherwise.
+   *
+   * @param {Error} error
+   *        The original error object.
+   * @param {String} message
+   *        The message to log in case the inspector is already destroyed and
+   *        the error is swallowed.
+   */
+  _throwUnlessDestroyed(error, message) {
+    if (!this.inspector) {
+      console.warn(message);
+    } else {
+      // If the grid inspector was not destroyed, this is an unexpected error.
+      throw error;
+    }
+  }
+
+  /**
+   * Set z-index of each grids so that nested subgrids are always above their parent grid
+   * container.
+   *
+   * @param {Array} grids
+   *        A list of grid data.
+   * @param {Object} parent
+   *        A grid data of parent.
+   * @param {Number} zIndex
+   *        z-index for the parent.
+   */
+  _updateZOrder(grids, parent, zIndex = 0) {
+    parent.zIndex = zIndex;
+
+    for (const childIndex of parent.subgrids) {
+      // Recurse into children grids.
+      this._updateZOrder(grids, grids[childIndex], zIndex + 1);
     }
   }
 }

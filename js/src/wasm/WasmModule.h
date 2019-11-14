@@ -214,7 +214,6 @@ class Module : public JS::WasmModule {
   // about:memory reporting:
 
   void addSizeOfMisc(MallocSizeOf mallocSizeOf, Metadata::SeenSet* seenMetadata,
-                     ShareableBytes::SeenSet* seenBytes,
                      Code::SeenSet* seenCode, size_t* code, size_t* data) const;
 
   // GC malloc memory tracking:
@@ -235,9 +234,6 @@ typedef RefPtr<const Module> SharedModule;
 // JS API implementations:
 
 MOZ_MUST_USE bool GetOptimizedEncodingBuildId(JS::BuildIdCharVector* buildId);
-
-RefPtr<JS::WasmModule> DeserializeModule(const uint8_t* bytecode,
-                                         size_t bytecodeLength);
 
 }  // namespace wasm
 }  // namespace js

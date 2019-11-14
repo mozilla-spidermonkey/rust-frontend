@@ -190,7 +190,7 @@ JitCode* BaselineCacheIRCompiler::compile() {
     EmitStubGuardFailure(masm);
   }
 
-  Linker linker(masm, "getStubCode");
+  Linker linker(masm);
   Rooted<JitCode*> newStubCode(cx_, linker.newCode(cx_, CodeKind::Baseline));
   if (!newStubCode) {
     cx_->recoverFromOutOfMemory();
@@ -664,29 +664,6 @@ bool BaselineCacheIRCompiler::emitLoadFrameNumActualArgsResult() {
   return true;
 }
 
-bool BaselineCacheIRCompiler::emitLoadTypedObjectResult() {
-  JitSpew(JitSpew_Codegen, __FUNCTION__);
-  AutoOutputRegister output(*this);
-  Register obj = allocator.useRegister(masm, reader.objOperandId());
-  AutoScratchRegister scratch1(allocator, masm);
-  AutoScratchRegister scratch2(allocator, masm);
-
-  TypedThingLayout layout = reader.typedThingLayout();
-  uint32_t typeDescr = reader.typeDescrKey();
-  Address fieldOffset(stubAddress(reader.stubOffset()));
-
-  // Get the object's data pointer.
-  LoadTypedThingData(masm, layout, obj, scratch1);
-
-  // Get the address being written to.
-  masm.load32(fieldOffset, scratch2);
-  masm.addPtr(scratch2, scratch1);
-
-  Address fieldAddr(scratch1, 0);
-  emitLoadTypedObjectResultShared(fieldAddr, scratch2, typeDescr, output);
-  return true;
-}
-
 bool BaselineCacheIRCompiler::emitLoadFrameArgumentResult() {
   JitSpew(JitSpew_Codegen, __FUNCTION__);
   AutoOutputRegister output(*this);
@@ -777,11 +754,6 @@ bool BaselineCacheIRCompiler::emitCompareStringResult() {
   JSOp op = reader.jsop();
 
   AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
-
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
 
   allocator.discardStack(masm);
 
@@ -1083,30 +1055,6 @@ bool BaselineCacheIRCompiler::emitStoreTypedObjectReferenceProperty() {
   emitStoreTypedObjectReferenceProp(val, type, dest, scratch2);
   emitPostBarrierSlot(obj, val, scratch1);
 
-  return true;
-}
-
-bool BaselineCacheIRCompiler::emitStoreTypedObjectScalarProperty() {
-  JitSpew(JitSpew_Codegen, __FUNCTION__);
-  Register obj = allocator.useRegister(masm, reader.objOperandId());
-  Address offsetAddr = stubAddress(reader.stubOffset());
-  TypedThingLayout layout = reader.typedThingLayout();
-  Scalar::Type type = reader.scalarType();
-  ValueOperand val = allocator.useValueRegister(masm, reader.valOperandId());
-  AutoScratchRegister scratch1(allocator, masm);
-  AutoScratchRegister scratch2(allocator, masm);
-
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-
-  // Compute the address being written to.
-  LoadTypedThingData(masm, layout, obj, scratch1);
-  masm.addPtr(offsetAddr, scratch1);
-  Address dest(scratch1, 0);
-
-  StoreToTypedArray(cx_, masm, type, val, dest, scratch2, failure->label());
   return true;
 }
 
@@ -1447,57 +1395,6 @@ bool BaselineCacheIRCompiler::emitArrayPush() {
   masm.add32(Imm32(1), scratchLength);
   masm.tagValue(JSVAL_TYPE_INT32, scratchLength, val);
 
-  return true;
-}
-
-bool BaselineCacheIRCompiler::emitStoreTypedElement() {
-  JitSpew(JitSpew_Codegen, __FUNCTION__);
-  Register obj = allocator.useRegister(masm, reader.objOperandId());
-  Register index = allocator.useRegister(masm, reader.int32OperandId());
-  ValueOperand val = allocator.useValueRegister(masm, reader.valOperandId());
-
-  TypedThingLayout layout = reader.typedThingLayout();
-  Scalar::Type type = reader.scalarType();
-  bool handleOOB = reader.readBool();
-
-  AutoScratchRegister scratch1(allocator, masm);
-
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-
-  // Bounds check.
-  Label done;
-  LoadTypedThingLength(masm, layout, obj, scratch1);
-
-  // Unfortunately we don't have more registers available on x86, so use
-  // InvalidReg and emit slightly slower code on x86.
-  Register spectreTemp = InvalidReg;
-  masm.spectreBoundsCheck32(index, scratch1, spectreTemp,
-                            handleOOB ? &done : failure->label());
-
-  // Load the elements vector.
-  LoadTypedThingData(masm, layout, obj, scratch1);
-
-  BaseIndex dest(scratch1, index, ScaleFromElemWidth(Scalar::byteSize(type)));
-
-  // Use ICStubReg as second scratch register. TODO: consider doing the RHS
-  // type check/conversion as a separate IR instruction so we can simplify
-  // this.
-  Register scratch2 = ICStubReg;
-  masm.push(scratch2);
-
-  Label fail;
-  StoreToTypedArray(cx_, masm, type, val, dest, scratch2, &fail);
-  masm.pop(scratch2);
-  masm.jump(&done);
-
-  masm.bind(&fail);
-  masm.pop(scratch2);
-  masm.jump(failure->label());
-
-  masm.bind(&done);
   return true;
 }
 
@@ -1978,8 +1875,6 @@ bool BaselineCacheIRCompiler::init(CacheKind kind) {
   return true;
 }
 
-static const size_t MaxOptimizedCacheIRStubs = 16;
-
 static void ResetEnteredCounts(ICFallbackStub* stub) {
   for (ICStubIterator iter = stub->beginChain(); !iter.atEnd(); iter++) {
     switch (iter->kind()) {
@@ -2015,7 +1910,10 @@ ICStub* js::jit::AttachBaselineCacheIRStub(
 
   // Just a sanity check: the caller should ensure we don't attach an
   // unlimited number of stubs.
+#ifdef DEBUG
+  static const size_t MaxOptimizedCacheIRStubs = 16;
   MOZ_ASSERT(stub->numOptimizedStubs() < MaxOptimizedCacheIRStubs);
+#endif
 
   uint32_t stubDataOffset = 0;
   switch (stubKind) {
@@ -2204,30 +2102,6 @@ uint8_t* ICCacheIR_Updated::stubDataStart() {
   return reinterpret_cast<uint8_t*>(this) + stubInfo_->stubDataOffset();
 }
 
-bool BaselineCacheIRCompiler::emitCallStringConcatResult() {
-  JitSpew(JitSpew_Codegen, __FUNCTION__);
-  AutoOutputRegister output(*this);
-  Register lhs = allocator.useRegister(masm, reader.stringOperandId());
-  Register rhs = allocator.useRegister(masm, reader.stringOperandId());
-  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
-
-  allocator.discardStack(masm);
-
-  AutoStubFrame stubFrame(*this);
-  stubFrame.enter(masm, scratch);
-
-  masm.push(rhs);
-  masm.push(lhs);
-
-  using Fn = JSString* (*)(JSContext*, HandleString, HandleString);
-  callVM<Fn, ConcatStrings<CanGC>>(masm);
-
-  masm.tagValue(JSVAL_TYPE_STRING, ReturnReg, output.valueReg());
-
-  stubFrame.leave(masm);
-  return true;
-}
-
 bool BaselineCacheIRCompiler::emitCallStringObjectConcatResult() {
   JitSpew(JitSpew_Codegen, __FUNCTION__);
   ValueOperand lhs = allocator.useValueRegister(masm, reader.valOperandId());
@@ -2357,7 +2231,7 @@ bool BaselineCacheIRCompiler::emitGuardFunApply() {
       // Ensure that args is an array object.
       masm.branchTestObject(Assembler::NotEqual, argsAddr, failure->label());
       masm.unboxObject(argsAddr, scratch);
-      const Class* clasp = &ArrayObject::class_;
+      const JSClass* clasp = &ArrayObject::class_;
       masm.branchTestObjClass(Assembler::NotEqual, scratch, clasp, scratch2,
                               scratch, failure->label());
 
@@ -2466,14 +2340,13 @@ void BaselineCacheIRCompiler::pushStandardArguments(Register argcReg,
 
   // Push all values, starting at the last one.
   Label loop, done;
-  masm.bind(&loop);
   masm.branchTest32(Assembler::Zero, countReg, countReg, &done);
+  masm.bind(&loop);
   {
     masm.pushValue(Address(argPtr, 0));
     masm.addPtr(Imm32(sizeof(Value)), argPtr);
 
-    masm.sub32(Imm32(1), countReg);
-    masm.jump(&loop);
+    masm.branchSub32(Assembler::NonZero, Imm32(1), countReg, &loop);
   }
   masm.bind(&done);
 }

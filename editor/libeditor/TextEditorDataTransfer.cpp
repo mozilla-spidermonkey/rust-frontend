@@ -73,9 +73,6 @@ nsresult TextEditor::PrepareToInsertContent(
   if (aDoDeleteSelection) {
     AutoTrackDOMPoint tracker(RangeUpdaterRef(), &pointToInsert);
     nsresult rv = DeleteSelectionAsSubAction(eNone, eStrip);
-    if (NS_WARN_IF(Destroyed())) {
-      return NS_ERROR_EDITOR_DESTROYED;
-    }
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
@@ -148,9 +145,10 @@ nsresult TextEditor::InsertTextFromTransferable(
   }
 
   // Try to scroll the selection into view if the paste/drop succeeded
-  ScrollSelectionIntoView(false);
-
-  return NS_OK;
+  nsresult rv = ScrollSelectionFocusIntoView();
+  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                       "ScrollSelectionFocusIntoView() failed");
+  return rv;
 }
 
 nsresult TextEditor::OnDrop(DragEvent* aDropEvent) {
@@ -353,9 +351,10 @@ nsresult TextEditor::OnDrop(DragEvent* aDropEvent) {
     }
   }
 
-  ScrollSelectionIntoView(false);
-
-  return NS_OK;
+  nsresult rv = ScrollSelectionFocusIntoView();
+  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                       "ScrollSelectionFocusIntoView() failed");
+  return rv;
 }
 
 nsresult TextEditor::PasteAsAction(int32_t aClipboardType,
@@ -505,7 +504,7 @@ bool TextEditor::IsSafeToInsertData(Document* aSourceDoc) {
   nsCOMPtr<nsIDocShellTreeItem> dsti = destdoc->GetDocShell();
   nsCOMPtr<nsIDocShellTreeItem> root;
   if (dsti) {
-    dsti->GetRootTreeItem(getter_AddRefs(root));
+    dsti->GetInProcessRootTreeItem(getter_AddRefs(root));
   }
   nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(root);
 

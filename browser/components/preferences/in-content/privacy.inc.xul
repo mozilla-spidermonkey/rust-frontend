@@ -5,7 +5,6 @@
 <!-- Privacy panel -->
 
 <script src="chrome://browser/content/preferences/in-content/privacy.js"/>
-<stringbundle id="bundlePreferences" src="chrome://browser/locale/preferences/preferences.properties"/>
 <stringbundle id="signonBundle" src="chrome://passwordmgr/locale/passwordmgr.properties"/>
 <html:template id="template-panePrivacy">
 <hbox id="browserPrivacyCategory"
@@ -17,13 +16,13 @@
 
 <!-- Tracking / Content Blocking -->
 <groupbox id="trackingGroup" data-category="panePrivacy" hidden="true" aria-describedby="contentBlockingDescription">
-  <label id="contentBlockingHeader"><html:h2 data-l10n-id="content-blocking-header"/></label>
+  <label id="contentBlockingHeader"><html:h2 data-l10n-id="content-blocking-enhanced-tracking-protection"/></label>
   <vbox data-subcategory="trackingprotection">
     <hbox align="start">
       <image id="trackingProtectionShield"/>
       <vbox flex="1">
         <description class="description-with-side-element">
-          <html:span id="contentBlockingDescription" class="tail-with-learn-more" data-l10n-id="content-blocking-section-description"></html:span>
+          <html:span id="contentBlockingDescription" class="tail-with-learn-more" data-l10n-id="content-blocking-section-top-level-description"></html:span>
           <label id="contentBlockingLearnMore" class="learnMore" data-l10n-id="content-blocking-learn-more" is="text-link"/>
         </description>
       </vbox>
@@ -41,8 +40,8 @@
                     permissions-remove-all.label,
                     permissions-button-cancel.label,
                     permissions-button-ok.label,
-                    permissions-exceptions-content-blocking-window.title,
-                    permissions-exceptions-content-blocking-desc,
+                    permissions-exceptions-etp-window.title,
+                    permissions-exceptions-etp-desc,
                   "/>
         </hbox>
       </vbox>
@@ -55,7 +54,7 @@
             <hbox>
               <radio id="standardRadio"
                      value="standard"
-                     data-l10n-id="content-blocking-setting-standard"
+                     data-l10n-id="enhanced-tracking-protection-setting-standard"
                      flex="1"/>
               <button id="standardArrow"
                       is="highlightable-button"
@@ -64,16 +63,24 @@
                       aria-expanded="false"/>
             </hbox>
             <vbox class="indent default-content-blocking-ui">
-              <description data-l10n-id="content-blocking-standard-desc"></description>
+              <description data-l10n-id="content-blocking-etp-standard-desc"></description>
               <vbox class="content-blocking-extra-information">
                 <vbox class="indent">
+                  <hbox class="extra-information-label social-media-option" hidden="true">
+                    <image class="content-blocking-social-media-image"/>
+                    <label data-l10n-id="content-blocking-social-media-trackers"/>
+                  </hbox>
+                  <hbox class="extra-information-label third-party-tracking-cookies-option" hidden="true">
+                    <image class="content-blocking-cookies-image"/>
+                    <label data-l10n-id="content-blocking-cross-site-tracking-cookies"/>
+                  </hbox>
                   <hbox class="extra-information-label pb-trackers-option" hidden="true">
                     <image class="content-blocking-trackers-image"/>
-                    <label data-l10n-id="content-blocking-private-trackers"/>
+                    <label data-l10n-id="content-blocking-private-windows"/>
                   </hbox>
                   <hbox class="extra-information-label trackers-option" hidden="true">
                     <image class="content-blocking-trackers-image"/>
-                    <label data-l10n-id="content-blocking-all-windows-trackers"/>
+                    <label data-l10n-id="content-blocking-all-windows-tracking-content"/>
                   </hbox>
                   <hbox class="extra-information-label all-third-party-cookies-option" hidden="true">
                     <image class="content-blocking-cookies-image"/>
@@ -83,13 +90,10 @@
                     <image class="content-blocking-cookies-image"/>
                     <label data-l10n-id="content-blocking-all-cookies"/>
                   </hbox>
+
                   <hbox class="extra-information-label unvisited-cookies-option" hidden="true">
                     <image class="content-blocking-cookies-image"/>
                     <label data-l10n-id="content-blocking-unvisited-cookies"/>
-                  </hbox>
-                  <hbox class="extra-information-label third-party-tracking-cookies-option" hidden="true">
-                    <image class="content-blocking-cookies-image"/>
-                    <label data-l10n-id="content-blocking-third-party-cookies"/>
                   </hbox>
                   <hbox class="extra-information-label cryptominers-option" hidden="true">
                     <image class="content-blocking-cryptominers-image"/>
@@ -131,7 +135,7 @@
             <hbox>
               <radio id="strictRadio"
                      value="strict"
-                     data-l10n-id="content-blocking-setting-strict"
+                     data-l10n-id="enhanced-tracking-protection-setting-strict"
                      flex="1"/>
               <button id="strictArrow"
                       is="highlightable-button"
@@ -140,16 +144,24 @@
                       aria-expanded="false"/>
             </hbox>
             <vbox class="indent">
-              <label data-l10n-id="content-blocking-strict-description"></label>
+              <label data-l10n-id="content-blocking-etp-strict-desc"></label>
               <vbox class="content-blocking-extra-information">
                 <vbox class="indent">
+                  <hbox class="extra-information-label social-media-option" hidden="true">
+                    <image class="content-blocking-social-media-image"/>
+                    <label data-l10n-id="content-blocking-social-media-trackers"/>
+                  </hbox>
+                  <hbox class="extra-information-label third-party-tracking-cookies-option" hidden="true">
+                    <image class="content-blocking-cookies-image"/>
+                    <label data-l10n-id="content-blocking-cross-site-tracking-cookies"/>
+                  </hbox>
                   <hbox class="extra-information-label pb-trackers-option" hidden="true">
                     <image class="content-blocking-trackers-image"/>
-                    <label data-l10n-id="content-blocking-private-trackers"/>
+                    <label data-l10n-id="content-blocking-private-windows"/>
                   </hbox>
                   <hbox class="extra-information-label trackers-option" hidden="true">
                     <image class="content-blocking-trackers-image"/>
-                    <label data-l10n-id="content-blocking-all-windows-trackers"/>
+                    <label data-l10n-id="content-blocking-all-windows-tracking-content"/>
                   </hbox>
                   <hbox class="extra-information-label all-third-party-cookies-option" hidden="true">
                     <image class="content-blocking-cookies-image"/>
@@ -165,7 +177,7 @@
                   </hbox>
                   <hbox class="extra-information-label third-party-tracking-cookies-option" hidden="true">
                     <image class="content-blocking-cookies-image"/>
-                    <label data-l10n-id="content-blocking-third-party-cookies"/>
+                    <label data-l10n-id="content-blocking-cross-site-tracking-cookies"/>
                   </hbox>
                   <hbox class="extra-information-label cryptominers-option" hidden="true">
                     <image class="content-blocking-cryptominers-image"/>
@@ -207,7 +219,8 @@
                       <label class="content-blocking-warning-title" data-l10n-id="content-blocking-warning-title"/>
                     </hbox>
                     <description class="indent">
-                      <html:span class="tail-with-learn-more" data-l10n-id="content-blocking-warning-description"></html:span>
+                      <html:span class="tail-with-learn-more" data-l10n-id="content-blocking-etp-warning-description"></html:span>
+                      <label id="" class="learnMore contentBlockWarningLink" data-l10n-id="content-blocking-warning-learn-how" is="text-link"/>
                     </description>
                   </vbox>
                 </vbox>
@@ -218,7 +231,7 @@
           <hbox>
             <radio id="customRadio"
                    value="custom"
-                   data-l10n-id="content-blocking-setting-custom"
+                   data-l10n-id="enhanced-tracking-protection-setting-custom"
                    flex="1"/>
             <button id="customArrow"
                     is="highlightable-button"
@@ -227,34 +240,8 @@
                     aria-expanded="false"/>
           </hbox>
           <vbox class="indent">
-            <description id="contentBlockingCustomDesc" data-l10n-id="content-blocking-custom-desc"></description>
+            <description id="contentBlockingCustomDesc" data-l10n-id="content-blocking-etp-custom-desc"></description>
             <vbox class="content-blocking-extra-information">
-              <hbox id="contentBlockingTrackingProtectionExtensionContentLabel"
-                    align="center" hidden="true" class="extension-controlled">
-                <description control="contentBlockingDisableTrackingProtectionExtension" flex="1"/>
-                <button id="contentBlockingDisableTrackingProtectionExtension"
-                        is="highlightable-button"
-                        class="extension-controlled-button accessory-button"
-                        data-l10n-id="disable-extension" hidden="true"/>
-              </hbox>
-                <hbox class="custom-option">
-                  <checkbox id="contentBlockingTrackingProtectionCheckbox"
-                            class="content-blocking-checkbox" flex="1"
-                            data-l10n-id="content-blocking-trackers-label"
-                            aria-describedby="contentBlockingCustomDesc"/>
-                  <vbox>
-                    <menulist id="trackingProtectionMenu">
-                      <menupopup>
-                        <menuitem data-l10n-id="content-blocking-option-private" value="private"/>
-                        <menuitem data-l10n-id="content-blocking-tracking-protection-option-all-windows" value="always"/>
-                      </menupopup>
-                    </menulist>
-                  </vbox>
-                </hbox>
-                <label id="changeBlockListLink"
-                       data-l10n-id="content-blocking-tracking-protection-change-block-list"
-                       is="text-link"
-                       search-l10n-ids="blocklist-window.title, blocklist-description, blocklist-button-cancel.label, blocklist-button-ok.label"/>
                 <hbox class="reject-trackers-ui custom-option">
                   <checkbox id="contentBlockingBlockCookiesCheckbox"
                             class="content-blocking-checkbox" flex="1"
@@ -267,7 +254,7 @@
                       <menulist id="blockCookiesMenu"
                                 preference="network.cookie.cookieBehavior">
                         <menupopup>
-                          <menuitem data-l10n-id="sitedata-option-block-trackers" value="trackers"/>
+                          <menuitem id="blockCookiesSocialMedia" data-l10n-id="sitedata-option-block-cross-site-trackers" value="trackers"/>
                           <menuitem data-l10n-id="sitedata-option-block-unvisited" value="unvisited"/>
                           <menuitem data-l10n-id="sitedata-option-block-all-third-party" value="all-third-parties"/>
                           <menuitem data-l10n-id="sitedata-option-block-all" value="always"/>
@@ -276,6 +263,33 @@
                     </hbox>
                   </vbox>
                 </hbox>
+                <hbox id="contentBlockingTrackingProtectionExtensionContentLabel"
+                      align="center" hidden="true" class="extension-controlled">
+                  <description control="contentBlockingDisableTrackingProtectionExtension" flex="1"/>
+                  <button id="contentBlockingDisableTrackingProtectionExtension"
+                          is="highlightable-button"
+                          class="extension-controlled-button accessory-button"
+                          data-l10n-id="disable-extension" hidden="true"/>
+                </hbox>
+                  <hbox class="custom-option">
+                    <checkbox id="contentBlockingTrackingProtectionCheckbox"
+                              class="content-blocking-checkbox" flex="1"
+                              data-l10n-id="content-blocking-tracking-content-label"
+                              aria-describedby="contentBlockingCustomDesc"/>
+                    <vbox>
+                      <menulist id="trackingProtectionMenu">
+                        <menupopup>
+                          <menuitem data-l10n-id="content-blocking-option-private" value="private"/>
+                          <menuitem data-l10n-id="content-blocking-tracking-protection-option-all-windows" value="always"/>
+                        </menupopup>
+                      </menulist>
+                    </vbox>
+                  </hbox>
+                  <label id="changeBlockListLink"
+                         data-l10n-id="content-blocking-tracking-protection-change-block-list"
+                         is="text-link"
+                         search-l10n-ids="blocklist-window.title, blocklist-description, blocklist-button-cancel.label, blocklist-button-ok.label"/>
+
                 <hbox class="custom-option" id="contentBlockingCryptominersOption">
                   <checkbox id="contentBlockingCryptominersCheckbox"
                             class="content-blocking-checkbox" flex="1"
@@ -321,7 +335,8 @@
                     <label class="content-blocking-warning-title" data-l10n-id="content-blocking-warning-title"/>
                   </hbox>
                   <description class="indent">
-                    <html:span class="tail-with-learn-more" data-l10n-id="content-blocking-warning-description"></html:span>
+                    <html:span class="tail-with-learn-more" data-l10n-id="content-blocking-etp-warning-description"></html:span>
+                    <label id="" class="learnMore contentBlockWarningLink" data-l10n-id="content-blocking-warning-learn-how" is="text-link"/>
                   </description>
                 </vbox>
               </vbox>
@@ -462,6 +477,19 @@
         </hbox>
       </vbox>
     </hbox>
+    <hbox>
+      <vbox flex="1">
+        <hbox class="indent" id="breachAlertsBox" flex="1" align="center">
+          <checkbox id="breachAlerts"
+                    class="tail-with-learn-more"
+                    data-l10n-id="forms-breach-alerts"
+                    search-l10n-ids="breach-alerts.label"
+                    preference="signon.management.page.breach-alerts.enabled"/>
+          <label id="breachAlertsLearnMoreLink" class="learnMore" is="text-link"
+                 data-l10n-id="forms-breach-alerts-learn-more-link"/>
+        </hbox>
+      </vbox>
+    </hbox>
   </vbox>
   <hbox id="masterPasswordRow">
     <checkbox id="useMasterPassword"
@@ -475,6 +503,12 @@
               data-l10n-id="forms-master-pw-change"/>
     </hbox>
   </hbox>
+  <!--
+    Those two strings are meant to be invisible and will be used exclusively to provide
+    localization for an alert window.
+  -->
+  <label id="fips-title" hidden="true" data-l10n-id="forms-master-pw-fips-title"></label>
+  <label id="fips-desc" hidden="true" data-l10n-id="forms-master-pw-fips-desc"></label>
 </groupbox>
 
 <!-- The form autofill section is inserted in to this box
@@ -587,7 +621,8 @@
 <!-- Address Bar -->
 <groupbox id="locationBarGroup"
           data-category="panePrivacy"
-          hidden="true">
+          hidden="true"
+          data-subcategory="locationBar">
   <label><html:h2 data-l10n-id="addressbar-header"/></label>
   <label id="locationBarSuggestionLabel" data-l10n-id="addressbar-suggest"/>
   <checkbox id="historySuggestion" data-l10n-id="addressbar-locbar-history-option"
@@ -792,8 +827,7 @@
   <vbox id="a11yPermissionsBox">
     <hbox flex="1" align="center">
       <checkbox id="a11yPrivacyCheckbox" class="tail-with-learn-more"
-                data-l10n-id="permissions-a11y-privacy-checkbox"
-                oncommand="return gPrivacyPane.updateA11yPrefs(this.checked)"/>
+                data-l10n-id="permissions-a11y-privacy-checkbox"/>
       <label id="a11yLearnMoreLink" class="learnMore" is="text-link"
              data-l10n-id="permissions-a11y-privacy-link"/>
     </hbox>
@@ -829,17 +863,6 @@
              data-l10n-id="collection-health-report-link"/>
       <vbox class="indent">
         <hbox align="center">
-          <checkbox id="optOutStudiesEnabled"
-                    class="tail-with-learn-more"
-                    data-l10n-id="collection-studies"/>
-          <label id="viewShieldStudies"
-                 href="about:studies"
-                 useoriginprincipal="true"
-                 class="learnMore" is="text-link"
-                 data-l10n-id="collection-studies-link"/>
-        </hbox>
-
-        <hbox align="center">
           <checkbox id="addonRecommendationEnabled"
                     class="tail-with-learn-more"
                     data-l10n-id="addon-recommendations"/>
@@ -853,6 +876,19 @@
   <description id="TelemetryDisabledDesc"
     class="indent tip-caption" control="telemetryGroup"
     data-l10n-id="collection-health-report-disabled"/>
+#endif
+
+#ifdef MOZ_NORMANDY
+    <hbox align="center">
+      <checkbox id="optOutStudiesEnabled"
+                class="tail-with-learn-more"
+                data-l10n-id="collection-studies"/>
+      <label id="viewShieldStudies"
+              href="about:studies"
+              useoriginprincipal="true"
+              class="learnMore" is="text-link"
+              data-l10n-id="collection-studies-link"/>
+    </hbox>
 #endif
 
 #ifdef MOZ_CRASHREPORTER

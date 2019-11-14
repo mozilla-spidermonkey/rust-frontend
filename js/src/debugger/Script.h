@@ -7,29 +7,28 @@
 #ifndef debugger_Script_h
 #define debugger_Script_h
 
-#include "mozilla/Variant.h"
+#include "jsapi.h"  // for Handle, JSFunctionSpec, JSPropertySpec
 
-#include "jsapi.h"
+#include "jstypes.h"            // for JS_PUBLIC_API
+#include "NamespaceImports.h"   // for Value, HandleObject, CallArgs
+#include "debugger/Debugger.h"  // for DebuggerScriptReferent
+#include "gc/Rooting.h"         // for HandleNativeObject
+#include "vm/NativeObject.h"    // for NativeObject
 
-#include "debugger/Debugger.h"
-#include "gc/Cell.h"
-#include "gc/Rooting.h"
-#include "js/CallArgs.h"
-#include "js/Class.h"
-#include "js/PropertySpec.h"
-#include "js/RootingAPI.h"
-#include "js/TracingAPI.h"
-#include "js/TypeDecls.h"
-#include "vm/GlobalObject.h"
-#include "vm/JSScript.h"
-#include "vm/NativeObject.h"
-#include "wasm/WasmJS.h"
+class JS_PUBLIC_API JSObject;
 
 namespace js {
 
+class BaseScript;
+class GlobalObject;
+
+namespace gc {
+struct Cell;
+}
+
 class DebuggerScript : public NativeObject {
  public:
-  static const Class class_;
+  static const JSClass class_;
 
   enum {
     OWNER_SLOT,
@@ -46,54 +45,23 @@ class DebuggerScript : public NativeObject {
                                 Handle<DebuggerScriptReferent> referent,
                                 HandleNativeObject debugger);
 
-  static void trace(JSTracer* trc, JSObject* obj);
+  void trace(JSTracer* trc);
+
+  using ReferentVariant = DebuggerScriptReferent;
 
   inline gc::Cell* getReferentCell() const;
   inline js::BaseScript* getReferentScript() const;
   inline DebuggerScriptReferent getReferent() const;
 
-  static DebuggerScript* check(JSContext* cx, HandleValue v,
-                               const char* fnname);
-  static DebuggerScript* checkThis(JSContext* cx, const CallArgs& args,
-                                   const char* fnname);
+  static DebuggerScript* check(JSContext* cx, HandleValue v);
 
-  // JS methods
-  static bool getIsGeneratorFunction(JSContext* cx, unsigned argc, Value* vp);
-  static bool getIsAsyncFunction(JSContext* cx, unsigned argc, Value* vp);
-  static bool getIsModule(JSContext* cx, unsigned argc, Value* vp);
-  static bool getDisplayName(JSContext* cx, unsigned argc, Value* vp);
-  static bool getUrl(JSContext* cx, unsigned argc, Value* vp);
-  static bool getStartLine(JSContext* cx, unsigned argc, Value* vp);
-  static bool getStartColumn(JSContext* cx, unsigned argc, Value* vp);
-  static bool getLineCount(JSContext* cx, unsigned argc, Value* vp);
-  static bool getSource(JSContext* cx, unsigned argc, Value* vp);
-  static bool getSourceStart(JSContext* cx, unsigned argc, Value* vp);
-  static bool getSourceLength(JSContext* cx, unsigned argc, Value* vp);
-  static bool getMainOffset(JSContext* cx, unsigned argc, Value* vp);
-  static bool getGlobal(JSContext* cx, unsigned argc, Value* vp);
-  static bool getFormat(JSContext* cx, unsigned argc, Value* vp);
-  static bool getChildScripts(JSContext* cx, unsigned argc, Value* vp);
-  static bool getPossibleBreakpoints(JSContext* cx, unsigned argc, Value* vp);
-  static bool getPossibleBreakpointOffsets(JSContext* cx, unsigned argc,
-                                           Value* vp);
-  static bool getOffsetMetadata(JSContext* cx, unsigned argc, Value* vp);
-  static bool getOffsetLocation(JSContext* cx, unsigned argc, Value* vp);
-  static bool getSuccessorOffsets(JSContext* cx, unsigned argc, Value* vp);
-  static bool getPredecessorOffsets(JSContext* cx, unsigned argc, Value* vp);
-  static bool getAllOffsets(JSContext* cx, unsigned argc, Value* vp);
-  static bool getAllColumnOffsets(JSContext* cx, unsigned argc, Value* vp);
-  static bool getLineOffsets(JSContext* cx, unsigned argc, Value* vp);
-  static bool setBreakpoint(JSContext* cx, unsigned argc, Value* vp);
-  static bool getBreakpoints(JSContext* cx, unsigned argc, Value* vp);
-  static bool clearBreakpoint(JSContext* cx, unsigned argc, Value* vp);
-  static bool clearAllBreakpoints(JSContext* cx, unsigned argc, Value* vp);
-  static bool isInCatchScope(JSContext* cx, unsigned argc, Value* vp);
-  static bool getOffsetsCoverage(JSContext* cx, unsigned argc, Value* vp);
-  static bool setInstrumentationId(JSContext* cx, unsigned argc, Value* vp);
   static bool construct(JSContext* cx, unsigned argc, Value* vp);
 
+  struct CallData;
+
   template <typename T>
-  static bool getUrlImpl(JSContext* cx, CallArgs& args, Handle<T*> script);
+  static bool getUrlImpl(JSContext* cx, const CallArgs& args,
+                         Handle<T*> script);
 
   static bool getSuccessorOrPredecessorOffsets(JSContext* cx, unsigned argc,
                                                Value* vp, const char* name,
@@ -104,17 +72,13 @@ class DebuggerScript : public NativeObject {
   }
 
  private:
-  static const ClassOps classOps_;
+  static const JSClassOps classOps_;
 
   static const JSPropertySpec properties_[];
   static const JSFunctionSpec methods_[];
 
-  class SetPrivateMatcher;
-  struct GetStartLineMatcher;
-  struct GetStartColumnMatcher;
   struct GetLineCountMatcher;
   class GetSourceMatcher;
-  class GetFormatMatcher;
   template <bool OnlyOffsets>
   class GetPossibleBreakpointsMatcher;
   class GetOffsetMetadataMatcher;

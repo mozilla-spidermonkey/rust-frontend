@@ -131,9 +131,6 @@
       // Ensure the button state is up to date:
       this.searchButton = this.searchButton;
 
-      // Set is attribute for styling
-      this.setAttribute("is", "search-textbox");
-
       this.initializeAttributeInheritance();
     }
 
@@ -151,6 +148,9 @@
         this.setAttribute("searchbutton", "true");
         this.removeAttribute("aria-autocomplete");
         // Hack for the button to get the right accessible:
+        // If you update the 'onclick' event handler code within the
+        // _searchButtonIcon you also have to update the sha512 hash in the
+        // CSP of about:addons within extensions.xul.
         this._searchButtonIcon.setAttribute("onclick", "true");
       } else {
         this.removeAttribute("searchbutton");
@@ -248,7 +248,5 @@
     }
   }
 
-  customElements.define("search-textbox", MozSearchTextbox, {
-    extends: "textbox",
-  });
+  customElements.define("search-textbox", MozSearchTextbox);
 }

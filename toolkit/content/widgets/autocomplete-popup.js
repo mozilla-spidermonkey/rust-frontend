@@ -96,9 +96,9 @@
             }
           },
         };
-        this.richlistbox.addEventListener("mouseup", this.listEvents);
-        this.richlistbox.addEventListener("mousemove", this.listEvents);
       }
+      this.richlistbox.addEventListener("mouseup", this.listEvents);
+      this.richlistbox.addEventListener("mousemove", this.listEvents);
     }
 
     get richlistbox() {
@@ -110,7 +110,7 @@
 
     get _markup() {
       return `
-      <richlistbox class="autocomplete-richlistbox" flex="1"></richlistbox>
+      <richlistbox class="autocomplete-richlistbox" flex="1"/>
     `;
     }
 
@@ -238,9 +238,8 @@
     }
 
     _openAutocompletePopup(aInput, aElement) {
-      if (!this._initialized) {
+      if (!this._richlistbox) {
         this.initialize();
-        this._initialized = true;
       }
 
       if (!this.mPopupOpen) {
@@ -464,11 +463,9 @@
             this.mousedOverIndex === this._currentIndex)
         ) {
           // try to re-use the existing item
-          let reused = item._reuseAcItem();
-          if (reused) {
-            this._currentIndex++;
-            continue;
-          }
+          item._reuseAcItem();
+          this._currentIndex++;
+          continue;
         } else {
           if (typeof item._cleanup == "function") {
             item._cleanup();

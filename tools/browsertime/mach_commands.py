@@ -33,6 +33,7 @@ from __future__ import absolute_import, print_function, unicode_literals
 import argparse
 import logging
 import os
+import stat
 import sys
 
 from mach.decorators import CommandArgument, CommandProvider, Command
@@ -102,7 +103,7 @@ host_fetches = {
     'darwin': {
         'ffmpeg': {
             'type': 'static-url',
-            'url': 'https://ffmpeg.zeranoe.com/builds/macos64/static/ffmpeg-4.1.1-macos64-static.zip',  # noqa
+            'url': 'https://github.com/ncalexan/geckodriver/releases/download/v0.24.0-android/ffmpeg-4.1.1-macos64-static.zip',  # noqa
             # An extension to `fetch` syntax.
             'path': 'ffmpeg-4.1.1-macos64-static',
         },
@@ -111,7 +112,7 @@ host_fetches = {
             # It's sad that the macOS URLs don't include version numbers.  If
             # ImageMagick is released frequently, we'll need to be more
             # accommodating of multiple versions here.
-            'url': 'https://imagemagick.org/download/binaries/ImageMagick-x86_64-apple-darwin17.7.0.tar.gz',  # noqa
+            'url': 'https://ftp.icm.edu.pl/packages/ImageMagick/binaries/ImageMagick-x86_64-apple-darwin18.7.0.tar.gz',  # noqa
             # An extension to `fetch` syntax.
             'path': 'ImageMagick-7.0.8',
         },
@@ -119,9 +120,9 @@ host_fetches = {
     'linux64': {
         'ffmpeg': {
             'type': 'static-url',
-            'url': 'https://www.johnvansickle.com/ffmpeg/old-releases/ffmpeg-4.0.3-64bit-static.tar.xz',  # noqa
+            'url': 'https://github.com/ncalexan/geckodriver/releases/download/v0.24.0-android/ffmpeg-4.1.4-i686-static.tar.xz',  # noqa
             # An extension to `fetch` syntax.
-            'path': 'ffmpeg-4.0.3-64bit-static',
+            'path': 'ffmpeg-4.1.4-i686-static',
         },
         # TODO: install a static ImageMagick.  All easily available binaries are
         # not statically linked, so they will (mostly) fail at runtime due to
@@ -131,7 +132,7 @@ host_fetches = {
     'win64': {
         'ffmpeg': {
             'type': 'static-url',
-            'url': 'https://ffmpeg.zeranoe.com/builds/win64/static/ffmpeg-4.1.1-win64-static.zip',  # noqa
+            'url': 'https://github.com/ncalexan/geckodriver/releases/download/v0.24.0-android/ffmpeg-4.1.1-win64-static.zip',  # noqa
             # An extension to `fetch` syntax.
             'path': 'ffmpeg-4.1.1-win64-static',
         },
@@ -163,6 +164,8 @@ class MachBrowsertime(MachCommandBase):
 
     def setup(self, should_clobber=False):
         r'''Install browsertime and visualmetrics.py requirements.'''
+
+        automation = bool(os.environ.get('MOZ_AUTOMATION'))
 
         from mozbuild.action.tooltool import unpack_file
         from mozbuild.artifact_cache import ArtifactCache
@@ -208,6 +211,28 @@ class MachBrowsertime(MachCommandBase):
                         {'path': archive},
                         'Unpacking temporary location {path}')
                     unpack_file(archive)
+
+                    # Make sure the expected path exists after extraction
+                    path = os.path.join(self.state_path, fetch.get('path'))
+                    if not os.path.exists(path):
+                        raise Exception("Cannot find an extracted directory: %s" % path)
+
+                    try:
+                        # Some archives provide binaries that don't have the
+                        # executable bit set so we need to set it here
+                        for root, dirs, files in os.walk(path):
+                            for edir in dirs:
+                                loc_to_change = os.path.join(root, edir)
+                                st = os.stat(loc_to_change)
+                                os.chmod(loc_to_change, st.st_mode | stat.S_IEXEC)
+                            for efile in files:
+                                loc_to_change = os.path.join(root, efile)
+                                st = os.stat(loc_to_change)
+                                os.chmod(loc_to_change, st.st_mode | stat.S_IEXEC)
+                    except Exception as e:
+                        raise Exception(
+                            "Could not set executable bit in %s, error: %s" % (path, str(e))
+                        )
                 finally:
                     os.chdir(cwd)
 
@@ -229,10 +254,13 @@ class MachBrowsertime(MachCommandBase):
             BROWSERTIME_ROOT,
             'browsertime',
             should_clobber=should_clobber,
-            no_optional=bool(os.environ.get('MOZ_AUTOMATION')))
+            no_optional=automation)
 
         if status:
             return status
+
+        if automation:
+            return 0
 
         return self.check()
 

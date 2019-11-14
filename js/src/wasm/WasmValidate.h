@@ -21,6 +21,8 @@
 
 #include "mozilla/TypeTraits.h"
 
+#include "ds/Bitmap.h"
+
 #include "wasm/WasmTypes.h"
 
 namespace js {
@@ -69,6 +71,8 @@ struct CompilerEnvironment {
       DebugEnabled debug_;
       bool refTypes_;
       bool gcTypes_;
+      bool multiValues_;
+      bool hugeMemory_;
     };
   };
 
@@ -83,7 +87,7 @@ struct CompilerEnvironment {
   CompilerEnvironment(CompileMode mode, Tier tier,
                       OptimizedBackend optimizedBackend,
                       DebugEnabled debugEnabled, bool refTypesConfigured,
-                      bool gcTypesConfigured);
+                      bool gcTypesConfigured, bool hugeMemory);
 
   // Compute any remaining compilation parameters.
   void computeParameters(Decoder& d, bool gcFeatureOptIn);
@@ -117,6 +121,14 @@ struct CompilerEnvironment {
   bool refTypes() const {
     MOZ_ASSERT(isComputed());
     return refTypes_;
+  }
+  bool multiValues() const {
+    MOZ_ASSERT(isComputed());
+    return multiValues_;
+  }
+  bool hugeMemory() const {
+    MOZ_ASSERT(isComputed());
+    return hugeMemory_;
   }
 };
 
@@ -164,6 +176,7 @@ struct ModuleEnvironment {
   Maybe<uint32_t> startFuncIndex;
   ElemSegmentVector elemSegments;
   MaybeSectionRange codeSection;
+  SparseBitmap validForRefFunc;
 
   // Fields decoded as part of the wasm module tail:
   DataSegmentEnvVector dataSegments;
@@ -201,11 +214,15 @@ struct ModuleEnvironment {
   }
   bool gcTypesEnabled() const { return compilerEnv->gcTypes(); }
   bool refTypesEnabled() const { return compilerEnv->refTypes(); }
+  bool multiValuesEnabled() const { return compilerEnv->multiValues(); }
   bool usesMemory() const { return memoryUsage != MemoryUsage::None; }
   bool usesSharedMemory() const { return memoryUsage == MemoryUsage::Shared; }
   bool isAsmJS() const { return kind == ModuleKind::AsmJS; }
   bool debugEnabled() const {
     return compilerEnv->debug() == DebugEnabled::True;
+  }
+  bool hugeMemoryEnabled() const {
+    return !isAsmJS() && compilerEnv->hugeMemory();
   }
   bool funcIsImport(uint32_t funcIndex) const {
     return funcIndex < funcImportGlobalDataOffsets.length();
@@ -230,6 +247,47 @@ struct ModuleEnvironment {
   bool isStructPrefixOf(ValType a, ValType b) const {
     const StructType& other = types[a.refTypeIndex()].structType();
     return types[b.refTypeIndex()].structType().hasPrefix(other);
+  }
+};
+
+// ElemSegmentFlags provides methods for decoding and encoding the flags field
+// of an element segment. This is needed as the flags field has a non-trivial
+// encoding that is effectively split into independent `kind` and `payload`
+// enums.
+class ElemSegmentFlags {
+  enum class Flags : uint32_t {
+    Passive = 0x1,
+    WithIndexOrDeclared = 0x2,
+    ElemExpression = 0x4,
+    // Below this line are convenient combinations of flags
+    KindMask = Passive | WithIndexOrDeclared,
+    PayloadMask = ElemExpression,
+    AllFlags = Passive | WithIndexOrDeclared | ElemExpression,
+  };
+  uint32_t encoded_;
+
+  explicit ElemSegmentFlags(uint32_t encoded) : encoded_(encoded) {}
+
+ public:
+  ElemSegmentFlags(ElemSegmentKind kind, ElemSegmentPayload payload) {
+    encoded_ = uint32_t(kind) | uint32_t(payload);
+  }
+
+  static Maybe<ElemSegmentFlags> construct(uint32_t encoded) {
+    if (encoded > uint32_t(Flags::AllFlags)) {
+      return Nothing();
+    }
+    return Some(ElemSegmentFlags(encoded));
+  }
+
+  uint32_t encoded() const { return encoded_; }
+
+  ElemSegmentKind kind() const {
+    return static_cast<ElemSegmentKind>(encoded_ & uint32_t(Flags::KindMask));
+  }
+  ElemSegmentPayload payload() const {
+    return static_cast<ElemSegmentPayload>(encoded_ &
+                                           uint32_t(Flags::PayloadMask));
   }
 };
 
@@ -340,15 +398,6 @@ class Encoder {
     MOZ_ASSERT(size_t(type.code()) < size_t(TypeCode::Limit));
     if (type.isRef()) {
       return writeFixedU8(uint8_t(TypeCode::Ref)) &&
-             writeVarU32(type.refTypeIndex());
-    }
-    return writeFixedU8(uint8_t(type.code()));
-  }
-  MOZ_MUST_USE bool writeBlockType(ExprType type) {
-    static_assert(size_t(TypeCode::Limit) <= UINT8_MAX, "fits");
-    MOZ_ASSERT(size_t(type.code()) < size_t(TypeCode::Limit));
-    if (type.isRef()) {
-      return writeFixedU8(uint8_t(ExprType::Ref)) &&
              writeVarU32(type.refTypeIndex());
     }
     return writeFixedU8(uint8_t(type.code()));
@@ -574,6 +623,16 @@ class Decoder {
   const uint8_t* begin() const { return beg_; }
   const uint8_t* end() const { return end_; }
 
+  // Peek at the next byte, if it exists, without advancing the position.
+
+  bool peekByte(uint8_t* byte) {
+    if (done()) {
+      return false;
+    }
+    *byte = *cur_;
+    return true;
+  }
+
   // Fixed-size encoding operations simply copy the literal bytes (without
   // attempting to align).
 
@@ -653,20 +712,6 @@ class Decoder {
     }
     if (type->isRef() && !types[type->refTypeIndex()].isStructType()) {
       return fail("ref does not reference a struct type");
-    }
-    return true;
-  }
-  MOZ_MUST_USE bool readBlockType(uint8_t* code, uint32_t* refTypeIndex) {
-    static_assert(size_t(TypeCode::Limit) <= UINT8_MAX, "fits");
-    if (!readFixedU8(code)) {
-      return false;
-    }
-    if (*code == uint8_t(TypeCode::Ref)) {
-      if (!readVarU32(refTypeIndex)) {
-        return false;
-      }
-    } else {
-      *refTypeIndex = NoRefTypeIndex;
     }
     return true;
   }

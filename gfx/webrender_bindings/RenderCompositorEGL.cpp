@@ -81,6 +81,9 @@ bool RenderCompositorEGL::BeginFrame() {
         << "We don't have EGLSurface to draw into. Called too early?";
     return false;
   }
+  if (mWidget->AsX11()) {
+    mWidget->AsX11()->SetEGLNativeWindowSize(GetBufferSize());
+  }
 #endif
   if (!MakeCurrent()) {
     gfxCriticalNote << "Failed to make render context current, can't draw.";
@@ -108,10 +111,13 @@ bool RenderCompositorEGL::BeginFrame() {
   return true;
 }
 
-void RenderCompositorEGL::EndFrame() {
+RenderedFrameId RenderCompositorEGL::EndFrame(
+    const FfiVec<DeviceIntRect>& aDirtyRects) {
+  RenderedFrameId frameId = GetNextRenderFrameId();
   if (mEGLSurface != EGL_NO_SURFACE) {
     gl()->SwapBuffers();
   }
+  return frameId;
 }
 
 void RenderCompositorEGL::Pause() {

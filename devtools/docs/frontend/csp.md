@@ -5,7 +5,7 @@ The DevTools toolbox is loaded in an iframe pointing to about:devtools-toolbox. 
 
 The current policy for about:devtools-toolbox is:
 ```
-default-src chrome: resource:; img-src chrome: resource: data:;
+default-src chrome: resource:; img-src chrome: resource: data:; object-src 'none'
 ```
 
 This means:
@@ -44,7 +44,7 @@ In general once a support file is added you can access it via:
 - `https://example.com/browser/[path_to_file]`
 - or `chrome://mochitests/content/browser/[path_to_file]`
 
-For instance [devtools/client/aboutdebugging-new/test/browser/resources/service-workers/controlled-sw.html](https://searchfox.org/mozilla-central/source/devtools/client/aboutdebugging-new/test/browser/resources/service-workers/controlled-sw.html) is accessed in tests via `http://example.com/browser/devtools/client/aboutdebugging-new/test/browser/resources/service-workers/controlled-sw.html`.
+For instance [devtools/client/aboutdebugging/test/browser/resources/service-workers/controlled-sw.html](https://searchfox.org/mozilla-central/source/devtools/client/aboutdebugging/test/browser/resources/service-workers/controlled-sw.html) is accessed in tests via `http://example.com/browser/devtools/client/aboutdebugging/test/browser/resources/service-workers/controlled-sw.html`.
 
 If you absolutely have to use an unsupported scheme, you can turn off CSPs for the test only. To do so, you need to temporarily update two preferences:
 

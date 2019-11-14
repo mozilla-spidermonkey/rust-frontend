@@ -176,7 +176,7 @@
       this.selectItem(val);
     }
     get selectedItem() {
-      return this.selectedItems.length > 0 ? this.selectedItems[0] : null;
+      return this.selectedItems.length ? this.selectedItems[0] : null;
     }
 
     // nsIDOMXULSelectControlElement
@@ -197,7 +197,7 @@
       }
     }
     get selectedIndex() {
-      if (this.selectedItems.length > 0) {
+      if (this.selectedItems.length) {
         return this.getIndexOfItem(this.selectedItems[0]);
       }
       return -1;
@@ -212,7 +212,7 @@
       return val;
     }
     get value() {
-      if (this.selectedItems.length > 0) {
+      if (this.selectedItems.length) {
         return this.selectedItem.value;
       }
       return null;
@@ -550,30 +550,9 @@
     }
 
     // nsIDOMXULMultiSelectControlElement
-    invertSelection() {
-      this._selectionStart = null;
-
-      var suppress = this._suppressOnSelect;
-      this._suppressOnSelect = true;
-
-      var item = this.getItemAtIndex(0);
-      while (item) {
-        if (item.selected) {
-          this.removeItemFromSelection(item);
-        } else {
-          this.addItemToSelection(item);
-        }
-        item = this.getNextItem(item, 1);
-      }
-
-      this._suppressOnSelect = suppress;
-      this._fireOnSelect();
-    }
-
-    // nsIDOMXULMultiSelectControlElement
     clearSelection() {
       if (this.selectedItems) {
-        while (this.selectedItems.length > 0) {
+        while (this.selectedItems.length) {
           let item = this.selectedItems[0];
           item.selected = false;
           this.selectedItems.remove(item);
@@ -642,7 +621,7 @@
     scrollOnePage(aDirection) {
       var children = this.itemChildren;
 
-      if (children.length == 0) {
+      if (!children.length) {
         return 0;
       }
 

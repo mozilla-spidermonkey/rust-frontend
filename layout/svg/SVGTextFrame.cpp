@@ -2690,22 +2690,26 @@ void SVGTextDrawPathCallbacks::FillAndStrokeGeometry() {
   }
 
   uint32_t paintOrder = mFrame->StyleSVG()->mPaintOrder;
-  if (paintOrder == NS_STYLE_PAINT_ORDER_NORMAL) {
+  if (!paintOrder) {
     FillGeometry();
     StrokeGeometry();
   } else {
     while (paintOrder) {
-      uint32_t component =
-          paintOrder & ((1 << NS_STYLE_PAINT_ORDER_BITWIDTH) - 1);
+      auto component = StylePaintOrder(paintOrder & kPaintOrderMask);
       switch (component) {
-        case NS_STYLE_PAINT_ORDER_FILL:
+        case StylePaintOrder::Fill:
           FillGeometry();
           break;
-        case NS_STYLE_PAINT_ORDER_STROKE:
+        case StylePaintOrder::Stroke:
           StrokeGeometry();
           break;
+        default:
+          MOZ_FALLTHROUGH_ASSERT("Unknown paint-order value");
+        case StylePaintOrder::Markers:
+        case StylePaintOrder::Normal:
+          break;
       }
-      paintOrder >>= NS_STYLE_PAINT_ORDER_BITWIDTH;
+      paintOrder >>= kPaintOrderShift;
     }
   }
 
@@ -2918,32 +2922,6 @@ nsresult SVGTextFrame::AttributeChanged(int32_t aNameSpaceID,
   }
 
   return NS_OK;
-}
-
-void SVGTextFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle) {
-  if (mState & NS_FRAME_IS_NONDISPLAY) {
-    // We need this DidSetComputedStyle override to handle cases like this:
-    //
-    //   <defs>
-    //     <g>
-    //       <mask>
-    //         <text>...</text>
-    //       </mask>
-    //     </g>
-    //   </defs>
-    //
-    // where the <text> is non-display, and a style change occurs on the <defs>,
-    // the <g>, the <mask>, or the <text> itself.  If the style change happened
-    // on the parent of the <defs>, then in
-    // nsSVGDisplayContainerFrame::ReflowSVG, we would find the non-display
-    // <defs> container and then call ReflowSVGNonDisplayText on it.  If we do
-    // not actually reflow the parent of the <defs>, then without this
-    // DidSetComputedStyle we would (a) not cause the <text>'s anonymous block
-    // child to be reflowed when it is next painted, and (b) not cause the
-    // <text> to be repainted anyway since the user of the <mask> would not
-    // know it needs to be repainted.
-    ScheduleReflowSVGNonDisplayText(IntrinsicDirty::StyleChange);
-  }
 }
 
 void SVGTextFrame::ReflowSVGNonDisplayText() {

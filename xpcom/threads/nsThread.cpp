@@ -564,7 +564,8 @@ void nsThread::InitCommon() {
 
     pthread_attr_destroy(&attr);
 #elif defined(XP_WIN)
-    static const DynamicallyLinkedFunctionPtr<GetCurrentThreadStackLimitsFn>
+    static const StaticDynamicallyLinkedFunctionPtr<
+        GetCurrentThreadStackLimitsFn>
         sGetStackLimits(L"kernel32.dll", "GetCurrentThreadStackLimits");
 
     if (sGetStackLimits) {
@@ -600,6 +601,7 @@ nsThread::nsThread(NotNull<SynchronizedEventQueue*> aQueue,
       mShutdownRequired(false),
       mPriority(PRIORITY_NORMAL),
       mIsMainThread(aMainThread == MAIN_THREAD),
+      mIsAPoolThreadFree(nullptr),
       mCanInvokeJS(false),
       mCurrentEvent(nullptr),
       mCurrentEventStart(TimeStamp::Now()),
@@ -728,6 +730,27 @@ nsThread::DelayedDispatch(already_AddRefed<nsIRunnable> aEvent,
   NS_ENSURE_TRUE(mEventTarget, NS_ERROR_NOT_IMPLEMENTED);
 
   return mEventTarget->DelayedDispatch(std::move(aEvent), aDelayMs);
+}
+
+NS_IMETHODIMP
+nsThread::GetRunningEventDelay(TimeDuration* aDelay, TimeStamp* aStart) {
+  if (mIsAPoolThreadFree && *mIsAPoolThreadFree) {
+    // if there are unstarted threads in the pool, a new event to the
+    // pool would not be delayed at all (beyond thread start time)
+    *aDelay = TimeDuration();
+    *aStart = TimeStamp();
+  } else {
+    *aDelay = mLastEventDelay;
+    *aStart = mLastEventStart;
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsThread::SetRunningEventDelay(TimeDuration aDelay, TimeStamp aStart) {
+  mLastEventDelay = aDelay;
+  mLastEventStart = aStart;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -1130,7 +1153,8 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
     // mNestedEventLoopDepth has been incremented, since that destructor can
     // also do work.
     EventQueuePriority priority;
-    nsCOMPtr<nsIRunnable> event = mEvents->GetEvent(reallyWait, &priority);
+    nsCOMPtr<nsIRunnable> event =
+        mEvents->GetEvent(reallyWait, &priority, &mLastEventDelay);
 
     *aResult = (event.get() != nullptr);
 
@@ -1165,6 +1189,8 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
       // to run.
       DelayForChaosMode(ChaosFeature::TaskRunning, 1000);
 
+      mozilla::TimeStamp now = mozilla::TimeStamp::Now();
+
       if (mIsMainThread) {
         BackgroundHangMonitor().NotifyActivity();
       }
@@ -1173,7 +1199,7 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
           mCurrentPerformanceCounter) {
         // This is a recursive call, we're saving the time
         // spent in the parent event if the runnable is linked to a DocGroup.
-        mozilla::TimeDuration duration = TimeStamp::Now() - mCurrentEventStart;
+        mozilla::TimeDuration duration = now - mCurrentEventStart;
         mCurrentPerformanceCounter->IncrementExecutionDuration(
             duration.ToMicroseconds());
       }
@@ -1213,15 +1239,16 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
       bool recursiveEvent = mNestedEventLoopDepth > mCurrentEventLoopDepth;
       mCurrentEventLoopDepth = mNestedEventLoopDepth;
       if (mIsMainThread && !recursiveEvent) {
-        mCurrentEventStart = mozilla::TimeStamp::Now();
+        mCurrentEventStart = now;
       }
       RefPtr<mozilla::PerformanceCounter> currentPerformanceCounter;
-      mCurrentEventStart = mozilla::TimeStamp::Now();
+      mLastEventStart = now;
       mCurrentEvent = event;
       mCurrentPerformanceCounter = GetPerformanceCounter(event);
       currentPerformanceCounter = mCurrentPerformanceCounter;
 
       event->Run();
+      mEvents->DidRunEvent();
 
       mozilla::TimeDuration duration;
       // Remember the last 50ms+ task on mainthread for Long Task.
@@ -1236,11 +1263,10 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
           mLastLongTaskEnd = now;
 #ifdef MOZ_GECKO_PROFILER
           if (profiler_thread_is_being_profiled()) {
-            profiler_add_marker(
+            PROFILER_ADD_MARKER_WITH_PAYLOAD(
                 (priority != EventQueuePriority::Idle) ? "LongTask"
                                                        : "LongIdleTask",
-                JS::ProfilingCategoryPair::OTHER,
-                MakeUnique<LongTaskMarkerPayload>(mCurrentEventStart, now));
+                OTHER, LongTaskMarkerPayload, (mCurrentEventStart, now));
           }
 #endif
         }
@@ -1264,9 +1290,14 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
         mCurrentEventLoopDepth = MaxValue<uint32_t>::value;
         mCurrentPerformanceCounter = nullptr;
       }
-    } else if (aMayWait) {
-      MOZ_ASSERT(ShuttingDown(), "This should only happen when shutting down");
-      rv = NS_ERROR_UNEXPECTED;
+    } else {
+      mLastEventDelay = TimeDuration();
+      mLastEventStart = TimeStamp();
+      if (aMayWait) {
+        MOZ_ASSERT(ShuttingDown(),
+                   "This should only happen when shutting down");
+        rv = NS_ERROR_UNEXPECTED;
+      }
     }
   }
 

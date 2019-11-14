@@ -1,14 +1,18 @@
+use crate::android::{AndroidHandler};
 use crate::command::{
     AddonInstallParameters, AddonUninstallParameters, GeckoContextParameters,
     GeckoExtensionCommand, GeckoExtensionRoute, XblLocatorParameters, CHROME_ELEMENT_KEY,
 };
 use marionette_rs::common::{
-    Cookie as MarionetteCookie, Date as MarionetteDate, Timeouts as MarionetteTimeouts,
+    Cookie as MarionetteCookie, Date as MarionetteDate, Frame as MarionetteFrame,
+    Timeouts as MarionetteTimeouts, WebElement as MarionetteWebElement, Window,
 };
+use marionette_rs::marionette::AppStatus;
 use marionette_rs::message::{Command, Message, MessageId, Request};
 use marionette_rs::webdriver::{
-    Command as MarionetteWebDriverCommand, Keys as MarionetteKeys, Locator as MarionetteLocator,
-    NewWindow as MarionetteNewWindow, Script as MarionetteScript, Selector as MarionetteSelector,
+    Command as MarionetteWebDriverCommand, Keys as MarionetteKeys, LegacyWebElement,
+    Locator as MarionetteLocator, NewWindow as MarionetteNewWindow, ScreenshotOptions,
+    Script as MarionetteScript, Selector as MarionetteSelector, Url as MarionetteUrl,
     WindowRect as MarionetteWindowRect,
 };
 use mozprofile::preferences::Pref;
@@ -17,7 +21,6 @@ use mozrunner::runner::{FirefoxProcess, FirefoxRunner, Runner, RunnerProcess};
 use serde::de::{self, Deserialize, Deserializer};
 use serde::ser::{Serialize, Serializer};
 use serde_json::{self, Map, Value};
-use std::error::Error;
 use std::io::prelude::*;
 use std::io::Error as IoError;
 use std::io::ErrorKind;
@@ -57,10 +60,20 @@ use webdriver::response::{
 };
 use webdriver::server::{Session, WebDriverHandler};
 
-use crate::build::BuildInfo;
+use crate::build;
 use crate::capabilities::{FirefoxCapabilities, FirefoxOptions};
 use crate::logging;
 use crate::prefs;
+
+/// A running Gecko instance.
+#[derive(Debug)]
+pub enum Browser {
+    /// A local Firefox process, running on this (host) device.
+    Host(FirefoxProcess),
+
+    /// A remote instance, running on a (target) Android device.
+    Target(AndroidHandler),
+}
 
 #[derive(Debug, PartialEq, Deserialize)]
 pub struct MarionetteHandshake {
@@ -86,7 +99,7 @@ pub struct MarionetteSettings {
 pub struct MarionetteHandler {
     pub connection: Mutex<Option<MarionetteConnection>>,
     pub settings: MarionetteSettings,
-    pub browser: Option<FirefoxProcess>,
+    pub browser: Option<Browser>,
 }
 
 impl MarionetteHandler {
@@ -107,7 +120,7 @@ impl MarionetteHandler {
             let mut fx_capabilities = FirefoxCapabilities::new(self.settings.binary.as_ref());
             let mut capabilities = new_session_parameters
                 .match_browser(&mut fx_capabilities)?
-                .ok_or(WebDriverError::new(
+                .ok_or_else(|| WebDriverError::new(
                     ErrorStatus::SessionNotCreated,
                     "Unable to find a matching set of capabilities",
                 ))?;
@@ -125,23 +138,92 @@ impl MarionetteHandler {
 
         let host = self.settings.host.to_owned();
         let port = self.settings.port.unwrap_or(get_free_port(&host)?);
-        if !self.settings.connect_existing {
-            self.start_browser(port, options)?;
+
+        match options.android {
+            Some(_) => {
+                // TODO: support connecting to running Apps.  There's no real obstruction here,
+                // just some details about port forwarding to work through.  We can't follow
+                // `chromedriver` here since it uses an abstract socket rather than a TCP socket:
+                // see bug 1240830 for thoughts on doing that for Marionette.
+                if self.settings.connect_existing {
+                    return Err(WebDriverError::new(
+                        ErrorStatus::SessionNotCreated,
+                        "Cannot connect to an existing Android App yet",
+                   ));
+                }
+
+                self.start_android(port, options)?;
+            },
+            None => {
+                if !self.settings.connect_existing {
+                    self.start_browser(port, options)?;
+                }
+            }
         }
 
         let mut connection = MarionetteConnection::new(host, port, session_id.clone());
         connection.connect(&mut self.browser).or_else(|e| {
-            if let Some(ref mut runner) = self.browser {
-                runner.kill()?;
+            match self.browser {
+                Some(Browser::Host(ref mut runner)) => {
+                    runner.kill()?;
+                },
+                Some(Browser::Target(ref mut handler)) => {
+                    handler.force_stop().map_err(|e| WebDriverError::new(
+                        ErrorStatus::UnknownError,
+                        e.to_string()
+                    ))?;
+                },
+                _ => {}
             }
+
             Err(e)
         })?;
         self.connection = Mutex::new(Some(connection));
         Ok(capabilities)
     }
 
+    fn start_android(&mut self, port: u16, options: FirefoxOptions) -> WebDriverResult<()> {
+        let android_options = options.android.unwrap();
+
+        let mut handler = AndroidHandler::new(&android_options);
+        handler.connect(port).map_err(|e| WebDriverError::new(
+            ErrorStatus::UnknownError,
+            e.to_string()
+        ))?;
+
+        // Profile management.
+        let is_custom_profile = options.profile.is_some();
+
+        let mut profile = options.profile
+            .unwrap_or(Profile::new()?);
+
+        self.set_prefs(
+            handler.target_port,
+            &mut profile,
+            is_custom_profile,
+            options.prefs
+        ).map_err(|e| WebDriverError::new(
+            ErrorStatus::SessionNotCreated,
+            format!("Failed to set preferences: {}", e),
+        ))?;
+
+        handler.prepare(&profile).map_err(|e| WebDriverError::new(
+            ErrorStatus::UnknownError,
+            e.to_string()
+        ))?;
+
+        handler.launch().map_err(|e| WebDriverError::new(
+            ErrorStatus::UnknownError,
+            e.to_string()
+        ))?;
+
+        self.browser = Some(Browser::Target(handler));
+
+        Ok(())
+    }
+
     fn start_browser(&mut self, port: u16, options: FirefoxOptions) -> WebDriverResult<()> {
-        let binary = options.binary.ok_or(WebDriverError::new(
+        let binary = options.binary.ok_or_else(|| WebDriverError::new(
             ErrorStatus::SessionNotCreated,
             "Expected browser binary location, but unable to find \
              binary in default location, no \
@@ -187,7 +269,7 @@ impl MarionetteHandler {
                 format!("Failed to start browser {}: {}", binary.display(), e),
             )
         })?;
-        self.browser = Some(browser_proc);
+        self.browser = Some(Browser::Host(browser_proc));
 
         Ok(())
     }
@@ -208,7 +290,7 @@ impl MarionetteHandler {
 
         for &(ref name, ref value) in prefs::DEFAULT.iter() {
             if !custom_profile || !prefs.contains_key(name) {
-                prefs.insert((*name).clone(), (*value).clone());
+                prefs.insert((*name).to_string(), (*value).clone());
             }
         }
 
@@ -332,13 +414,23 @@ impl WebDriverHandler<GeckoExtensionRoute> for MarionetteHandler {
             }
         }
 
-        if let Some(ref mut runner) = self.browser {
-            // TODO(https://bugzil.la/1443922):
-            // Use toolkit.asyncshutdown.crash_timout pref
-            match runner.wait(time::Duration::from_secs(70)) {
-                Ok(x) => debug!("Browser process stopped: {}", x),
-                Err(e) => error!("Failed to stop browser process: {}", e),
+        match self.browser {
+            Some(Browser::Host(ref mut runner)) => {
+                // TODO(https://bugzil.la/1443922):
+                // Use toolkit.asyncshutdown.crash_timout pref
+                match runner.wait(time::Duration::from_secs(70)) {
+                    Ok(x) => debug!("Browser process stopped: {}", x),
+                    Err(e) => error!("Failed to stop browser process: {}", e),
+                }
+            },
+            Some(Browser::Target(ref mut handler)) => {
+                // Try to force-stop the process on the target device
+                match handler.force_stop() {
+                    Ok(_) => debug!("Android package force-stopped"),
+                    Err(e) => error!("Failed to force-stop Android package: {}", e),
+                }
             }
+            None => {},
         }
 
         self.connection = Mutex::new(None);
@@ -355,7 +447,7 @@ pub struct MarionetteSession {
 
 impl MarionetteSession {
     pub fn new(session_id: Option<String>) -> MarionetteSession {
-        let initital_id = session_id.unwrap_or("".to_string());
+        let initital_id = session_id.unwrap_or_else(|| "".to_string());
         MarionetteSession {
             session_id: initital_id,
             protocol: None,
@@ -369,22 +461,19 @@ impl MarionetteSession {
         msg: &WebDriverMessage<GeckoExtensionRoute>,
         resp: &MarionetteResponse,
     ) -> WebDriverResult<()> {
-        match msg.command {
-            NewSession(_) => {
-                let session_id = try_opt!(
-                    try_opt!(
-                        resp.result.get("sessionId"),
-                        ErrorStatus::SessionNotCreated,
-                        "Unable to get session id"
-                    )
-                    .as_str(),
+        if let NewSession(_) = msg.command {
+            let session_id = try_opt!(
+                try_opt!(
+                    resp.result.get("sessionId"),
                     ErrorStatus::SessionNotCreated,
-                    "Unable to convert session id to string"
-                );
-                self.session_id = session_id.to_string().clone();
-            }
-            _ => {}
-        }
+                    "Unable to get session id"
+                )
+                .as_str(),
+                ErrorStatus::SessionNotCreated,
+                "Unable to convert session id to string"
+            );
+            self.session_id = session_id.to_string().clone();
+        };
         Ok(())
     }
 
@@ -419,7 +508,7 @@ impl MarionetteSession {
     }
 
     pub fn next_command_id(&mut self) -> MessageId {
-        self.command_id = self.command_id + 1;
+        self.command_id += 1;
         self.command_id
     }
 
@@ -484,7 +573,7 @@ impl MarionetteSession {
             | ExecuteAsyncScript(_)
             | GetAlertText
             | TakeScreenshot
-            | TakeElementScreenshot(_) => WebDriverResponse::Generic(resp.to_value_response(true)?),
+            | TakeElementScreenshot(_) => WebDriverResponse::Generic(resp.into_value_response(true)?),
             GetTimeouts => {
                 let script = match try_opt!(
                     resp.result.get("script"),
@@ -502,7 +591,7 @@ impl MarionetteSession {
                 // which was sent by Firefox 52 and earlier.
                 let page_load = try_opt!(
                     try_opt!(
-                        resp.result.get("pageLoad").or(resp.result.get("page load")),
+                        resp.result.get("pageLoad").or_else(|| resp.result.get("page load")),
                         ErrorStatus::UnknownError,
                         "Missing field: pageLoad"
                     )
@@ -522,13 +611,13 @@ impl MarionetteSession {
                 );
 
                 WebDriverResponse::Timeouts(TimeoutsResponse {
-                    script: script,
-                    page_load: page_load,
-                    implicit: implicit,
+                    script,
+                    page_load,
+                    implicit,
                 })
             }
             Status => panic!("Got status command that should already have been handled"),
-            GetWindowHandles => WebDriverResponse::Generic(resp.to_value_response(false)?),
+            GetWindowHandles => WebDriverResponse::Generic(resp.into_value_response(false)?),
             NewWindow(_) => {
                 let handle: String = try_opt!(
                     try_opt!(
@@ -754,7 +843,7 @@ impl MarionetteSession {
                 )
                 .clone();
 
-                capabilities.insert("moz:geckodriverVersion".into(), BuildInfo.into());
+                capabilities.insert("moz:geckodriverVersion".into(), build::build_info().into());
 
                 WebDriverResponse::NewSession(NewSessionResponse::new(
                     session_id.to_string(),
@@ -763,7 +852,7 @@ impl MarionetteSession {
             }
             DeleteSession => WebDriverResponse::DeleteSession,
             Extension(ref extension) => match extension {
-                GetContext => WebDriverResponse::Generic(resp.to_value_response(true)?),
+                GetContext => WebDriverResponse::Generic(resp.into_value_response(true)?),
                 SetContext(_) => WebDriverResponse::Void,
                 XblAnonymousChildren(_) => {
                     let els_vec = try_opt!(
@@ -786,9 +875,9 @@ impl MarionetteSession {
                     ))?;
                     WebDriverResponse::Generic(ValueResponse(serde_json::to_value(el)?))
                 }
-                InstallAddon(_) => WebDriverResponse::Generic(resp.to_value_response(true)?),
+                InstallAddon(_) => WebDriverResponse::Generic(resp.into_value_response(true)?),
                 UninstallAddon(_) => WebDriverResponse::Void,
-                TakeFullScreenshot => WebDriverResponse::Generic(resp.to_value_response(true)?),
+                TakeFullScreenshot => WebDriverResponse::Generic(resp.into_value_response(true)?),
             },
         })
     }
@@ -797,7 +886,9 @@ impl MarionetteSession {
 fn try_convert_to_marionette_message(
     msg: &WebDriverMessage<GeckoExtensionRoute>,
 ) -> WebDriverResult<Option<Command>> {
+    use self::GeckoExtensionCommand::*;
     use self::WebDriverCommand::*;
+
     Ok(match msg.command {
         AcceptAlert => Some(Command::WebDriver(MarionetteWebDriverCommand::AcceptAlert)),
         AddCookie(ref x) => Some(Command::WebDriver(MarionetteWebDriverCommand::AddCookie(
@@ -810,7 +901,28 @@ fn try_convert_to_marionette_message(
         DeleteCookies => Some(Command::WebDriver(
             MarionetteWebDriverCommand::DeleteCookies,
         )),
+        DeleteSession => Some(Command::Marionette(
+            marionette_rs::marionette::Command::DeleteSession {
+                flags: vec![AppStatus::eForceQuit],
+            },
+        )),
         DismissAlert => Some(Command::WebDriver(MarionetteWebDriverCommand::DismissAlert)),
+        ElementClear(ref e) => Some(Command::WebDriver(
+            MarionetteWebDriverCommand::ElementClear(e.to_marionette()?),
+        )),
+        ElementClick(ref e) => Some(Command::WebDriver(
+            MarionetteWebDriverCommand::ElementClick(e.to_marionette()?),
+        )),
+        ElementSendKeys(ref e, ref x) => {
+            let keys = x.to_marionette()?;
+            Some(Command::WebDriver(
+                MarionetteWebDriverCommand::ElementSendKeys {
+                    id: e.clone().to_string(),
+                    text: keys.text.clone(),
+                    value: keys.value.clone(),
+                },
+            ))
+        }
         ExecuteAsyncScript(ref x) => Some(Command::WebDriver(
             MarionetteWebDriverCommand::ExecuteAsyncScript(x.to_marionette()?),
         )),
@@ -823,13 +935,73 @@ fn try_convert_to_marionette_message(
         FindElements(ref x) => Some(Command::WebDriver(
             MarionetteWebDriverCommand::FindElements(x.to_marionette()?),
         )),
+        FindElementElement(ref e, ref x) => {
+            let locator = x.to_marionette()?;
+            Some(Command::WebDriver(
+                MarionetteWebDriverCommand::FindElementElement {
+                    element: e.clone().to_string(),
+                    using: locator.using.clone(),
+                    value: locator.value.clone(),
+                },
+            ))
+        }
+        FindElementElements(ref e, ref x) => {
+            let locator = x.to_marionette()?;
+            Some(Command::WebDriver(
+                MarionetteWebDriverCommand::FindElementElements {
+                    element: e.clone().to_string(),
+                    using: locator.using.clone(),
+                    value: locator.value.clone(),
+                },
+            ))
+        }
         FullscreenWindow => Some(Command::WebDriver(
             MarionetteWebDriverCommand::FullscreenWindow,
+        )),
+        Get(ref x) => Some(Command::WebDriver(MarionetteWebDriverCommand::Get(
+            x.to_marionette()?,
+        ))),
+        GetActiveElement => Some(Command::WebDriver(
+            MarionetteWebDriverCommand::GetActiveElement,
         )),
         GetAlertText => Some(Command::WebDriver(MarionetteWebDriverCommand::GetAlertText)),
         GetCookies | GetNamedCookie(_) => {
             Some(Command::WebDriver(MarionetteWebDriverCommand::GetCookies))
         }
+        GetCSSValue(ref e, ref x) => Some(Command::WebDriver(
+            MarionetteWebDriverCommand::GetCSSValue {
+                id: e.clone().to_string(),
+                property: x.clone(),
+            },
+        )),
+        GetCurrentUrl => Some(Command::WebDriver(
+            MarionetteWebDriverCommand::GetCurrentUrl,
+        )),
+        GetElementAttribute(ref e, ref x) => Some(Command::WebDriver(
+            MarionetteWebDriverCommand::GetElementAttribute {
+                id: e.clone().to_string(),
+                name: x.clone(),
+            },
+        )),
+        GetElementProperty(ref e, ref x) => Some(Command::WebDriver(
+            MarionetteWebDriverCommand::GetElementProperty {
+                id: e.clone().to_string(),
+                name: x.clone(),
+            },
+        )),
+        GetElementRect(ref x) => Some(Command::WebDriver(
+            MarionetteWebDriverCommand::GetElementRect(x.to_marionette()?),
+        )),
+        GetElementTagName(ref x) => Some(Command::WebDriver(
+            MarionetteWebDriverCommand::GetElementTagName(x.to_marionette()?),
+        )),
+        GetElementText(ref x) => Some(Command::WebDriver(
+            MarionetteWebDriverCommand::GetElementText(x.to_marionette()?),
+        )),
+        GetPageSource => Some(Command::WebDriver(
+            MarionetteWebDriverCommand::GetPageSource,
+        )),
+        GetTitle => Some(Command::WebDriver(MarionetteWebDriverCommand::GetTitle)),
         GetWindowHandle => Some(Command::WebDriver(
             MarionetteWebDriverCommand::GetWindowHandle,
         )),
@@ -840,6 +1012,17 @@ fn try_convert_to_marionette_message(
             MarionetteWebDriverCommand::GetWindowRect,
         )),
         GetTimeouts => Some(Command::WebDriver(MarionetteWebDriverCommand::GetTimeouts)),
+        GoBack => Some(Command::WebDriver(MarionetteWebDriverCommand::GoBack)),
+        GoForward => Some(Command::WebDriver(MarionetteWebDriverCommand::GoForward)),
+        IsDisplayed(ref x) => Some(Command::WebDriver(MarionetteWebDriverCommand::IsDisplayed(
+            x.to_marionette()?,
+        ))),
+        IsEnabled(ref x) => Some(Command::WebDriver(MarionetteWebDriverCommand::IsEnabled(
+            x.to_marionette()?,
+        ))),
+        IsSelected(ref x) => Some(Command::WebDriver(MarionetteWebDriverCommand::IsSelected(
+            x.to_marionette()?,
+        ))),
         MaximizeWindow => Some(Command::WebDriver(
             MarionetteWebDriverCommand::MaximizeWindow,
         )),
@@ -849,6 +1032,10 @@ fn try_convert_to_marionette_message(
         NewWindow(ref x) => Some(Command::WebDriver(MarionetteWebDriverCommand::NewWindow(
             x.to_marionette()?,
         ))),
+        Refresh => Some(Command::WebDriver(MarionetteWebDriverCommand::Refresh)),
+        ReleaseActions => Some(Command::WebDriver(
+            MarionetteWebDriverCommand::ReleaseActions,
+        )),
         SendAlertText(ref x) => Some(Command::WebDriver(
             MarionetteWebDriverCommand::SendAlertText(x.to_marionette()?),
         )),
@@ -858,6 +1045,48 @@ fn try_convert_to_marionette_message(
         SetWindowRect(ref x) => Some(Command::WebDriver(
             MarionetteWebDriverCommand::SetWindowRect(x.to_marionette()?),
         )),
+        SwitchToFrame(ref x) => Some(Command::WebDriver(
+            MarionetteWebDriverCommand::SwitchToFrame(x.to_marionette()?)
+        )),
+        SwitchToParentFrame => Some(Command::WebDriver(
+            MarionetteWebDriverCommand::SwitchToParentFrame,
+        )),
+        SwitchToWindow(ref x) => Some(Command::WebDriver(
+            MarionetteWebDriverCommand::SwitchToWindow(x.to_marionette()?),
+        )),
+        TakeElementScreenshot(ref e) => {
+            let screenshot = ScreenshotOptions {
+                id: Some(e.clone().to_string()),
+                highlights: vec![],
+                full: false,
+            };
+            Some(Command::WebDriver(
+                MarionetteWebDriverCommand::TakeElementScreenshot(screenshot),
+            ))
+        }
+        TakeScreenshot => {
+            let screenshot = ScreenshotOptions {
+                id: None,
+                highlights: vec![],
+                full: false,
+            };
+            Some(Command::WebDriver(
+                MarionetteWebDriverCommand::TakeScreenshot(screenshot),
+            ))
+        }
+        Extension(ref extension) => match extension {
+            TakeFullScreenshot => {
+                let screenshot = ScreenshotOptions {
+                    id: None,
+                    highlights: vec![],
+                    full: true,
+                };
+                Some(Command::WebDriver(
+                    MarionetteWebDriverCommand::TakeFullScreenshot(screenshot),
+                ))
+            }
+            _ => None,
+        },
         _ => None,
     })
 }
@@ -882,9 +1111,9 @@ impl Serialize for MarionetteCommand {
 impl MarionetteCommand {
     fn new(id: MessageId, name: String, params: Map<String, Value>) -> MarionetteCommand {
         MarionetteCommand {
-            id: id,
-            name: name,
-            params: params,
+            id,
+            name,
+            params,
         }
     }
 
@@ -910,91 +1139,6 @@ impl MarionetteCommand {
         } else {
             let (opt_name, opt_parameters) = match msg.command {
                 Status => panic!("Got status command that should already have been handled"),
-                DeleteSession => {
-                    let mut body = Map::new();
-                    body.insert(
-                        "flags".to_owned(),
-                        serde_json::to_value(vec!["eForceQuit".to_string()])?,
-                    );
-                    (Some("Marionette:Quit"), Some(Ok(body)))
-                }
-                ElementClear(ref x) => (Some("WebDriver:ElementClear"), Some(x.to_marionette())),
-                ElementClick(ref x) => (Some("WebDriver:ElementClick"), Some(x.to_marionette())),
-                ElementSendKeys(ref e, ref x) => {
-                    let mut data = Map::new();
-                    data.insert("id".to_string(), Value::String(e.to_string()));
-                    data.insert("text".to_string(), Value::String(x.text.clone()));
-                    data.insert(
-                        "value".to_string(),
-                        serde_json::to_value(
-                            x.text
-                                .chars()
-                                .map(|x| x.to_string())
-                                .collect::<Vec<String>>(),
-                        )?,
-                    );
-                    (Some("WebDriver:ElementSendKeys"), Some(Ok(data)))
-                }
-                FindElementElement(ref e, ref x) => {
-                    let mut data = try_opt!(
-                        serde_json::to_value(x)?.as_object(),
-                        ErrorStatus::UnknownError,
-                        "Expected an object"
-                    )
-                    .clone();
-                    data.insert("element".to_string(), Value::String(e.to_string()));
-                    (Some("WebDriver:FindElement"), Some(Ok(data)))
-                }
-                FindElementElements(ref e, ref x) => {
-                    let mut data = try_opt!(
-                        serde_json::to_value(x)?.as_object(),
-                        ErrorStatus::UnknownError,
-                        "Expected an object"
-                    )
-                    .clone();
-                    data.insert("element".to_string(), Value::String(e.to_string()));
-                    (Some("WebDriver:FindElements"), Some(Ok(data)))
-                }
-                Get(ref x) => (Some("WebDriver:Navigate"), Some(x.to_marionette())),
-                GetActiveElement => (Some("WebDriver:GetActiveElement"), None),
-                GetCurrentUrl => (Some("WebDriver:GetCurrentURL"), None),
-                GetCSSValue(ref e, ref x) => {
-                    let mut data = Map::new();
-                    data.insert("id".to_string(), Value::String(e.to_string()));
-                    data.insert("propertyName".to_string(), Value::String(x.clone()));
-                    (Some("WebDriver:GetElementCSSValue"), Some(Ok(data)))
-                }
-                GetElementAttribute(ref e, ref x) => {
-                    let mut data = Map::new();
-                    data.insert("id".to_string(), Value::String(e.to_string()));
-                    data.insert("name".to_string(), Value::String(x.clone()));
-                    (Some("WebDriver:GetElementAttribute"), Some(Ok(data)))
-                }
-                GetElementProperty(ref e, ref x) => {
-                    let mut data = Map::new();
-                    data.insert("id".to_string(), Value::String(e.to_string()));
-                    data.insert("name".to_string(), Value::String(x.clone()));
-                    (Some("WebDriver:GetElementProperty"), Some(Ok(data)))
-                }
-                GetElementRect(ref x) => {
-                    (Some("WebDriver:GetElementRect"), Some(x.to_marionette()))
-                }
-                GetElementTagName(ref x) => {
-                    (Some("WebDriver:GetElementTagName"), Some(x.to_marionette()))
-                }
-                GetElementText(ref x) => {
-                    (Some("WebDriver:GetElementText"), Some(x.to_marionette()))
-                }
-                GetPageSource => (Some("WebDriver:GetPageSource"), None),
-                GetTitle => (Some("WebDriver:GetTitle"), None),
-                GoBack => (Some("WebDriver:Back"), None),
-                GoForward => (Some("WebDriver:Forward"), None),
-                IsDisplayed(ref x) => (
-                    Some("WebDriver:IsElementDisplayed"),
-                    Some(x.to_marionette()),
-                ),
-                IsEnabled(ref x) => (Some("WebDriver:IsElementEnabled"), Some(x.to_marionette())),
-                IsSelected(ref x) => (Some("WebDriver:IsElementSelected"), Some(x.to_marionette())),
                 NewSession(_) => {
                     let caps = capabilities
                         .expect("Tried to create new session without processing capabilities");
@@ -1008,27 +1152,6 @@ impl MarionetteCommand {
                 }
                 PerformActions(ref x) => {
                     (Some("WebDriver:PerformActions"), Some(x.to_marionette()))
-                }
-                Refresh => (Some("WebDriver:Refresh"), None),
-                ReleaseActions => (Some("WebDriver:ReleaseActions"), None),
-                SwitchToFrame(ref x) => (Some("WebDriver:SwitchToFrame"), Some(x.to_marionette())),
-                SwitchToParentFrame => (Some("WebDriver:SwitchToParentFrame"), None),
-                SwitchToWindow(ref x) => {
-                    (Some("WebDriver:SwitchToWindow"), Some(x.to_marionette()))
-                }
-                TakeElementScreenshot(ref e) => {
-                    let mut data = Map::new();
-                    data.insert("id".to_string(), Value::String(e.to_string()));
-                    data.insert("highlights".to_string(), Value::Array(vec![]));
-                    data.insert("full".to_string(), Value::Bool(false));
-                    (Some("WebDriver:TakeScreenshot"), Some(Ok(data)))
-                }
-                TakeScreenshot => {
-                    let mut data = Map::new();
-                    data.insert("id".to_string(), Value::Null);
-                    data.insert("highlights".to_string(), Value::Array(vec![]));
-                    data.insert("full".to_string(), Value::Bool(false));
-                    (Some("WebDriver:TakeScreenshot"), Some(Ok(data)))
                 }
                 Extension(ref extension) => match extension {
                     GetContext => (Some("Marionette:GetContext"), None),
@@ -1047,13 +1170,7 @@ impl MarionetteCommand {
                         data.insert("element".to_string(), serde_json::to_value(e.to_string())?);
                         (Some("WebDriver:FindElements"), Some(Ok(data)))
                     }
-                    TakeFullScreenshot => {
-                        let mut data = Map::new();
-                        data.insert("id".to_string(), Value::Null);
-                        data.insert("highlights".to_string(), Value::Array(vec![]));
-                        data.insert("full".to_string(), Value::Bool(true));
-                        (Some("WebDriver:TakeScreenshot"), Some(Ok(data)))
-                    }
+                    _ => (None, None),
                 },
                 _ => (None, None),
             };
@@ -1063,7 +1180,7 @@ impl MarionetteCommand {
                 ErrorStatus::UnsupportedOperation,
                 "Operation not supported"
             );
-            let parameters = opt_parameters.unwrap_or(Ok(Map::new()))?;
+            let parameters = opt_parameters.unwrap_or_else(|| Ok(Map::new()))?;
 
             let req = MarionetteCommand::new(id, name.into(), parameters);
             MarionetteCommand::encode_msg(req)
@@ -1108,14 +1225,15 @@ impl<'de> Deserialize<'de> for MarionetteResponse {
 }
 
 impl MarionetteResponse {
-    fn to_value_response(self, value_required: bool) -> WebDriverResult<ValueResponse> {
-        let value: &Value = match value_required {
-            true => try_opt!(
+    fn into_value_response(self, value_required: bool) -> WebDriverResult<ValueResponse> {
+        let value: &Value = if value_required {
+            try_opt!(
                 self.result.get("value"),
                 ErrorStatus::UnknownError,
                 "Failed to find value field"
-            ),
-            false => &self.result,
+            )
+        } else {
+            &self.result
         };
 
         Ok(ValueResponse(value.clone()))
@@ -1167,7 +1285,7 @@ impl MarionetteConnection {
         }
     }
 
-    pub fn connect(&mut self, browser: &mut Option<FirefoxProcess>) -> WebDriverResult<()> {
+    pub fn connect(&mut self, browser: &mut Option<Browser>) -> WebDriverResult<()> {
         let timeout = time::Duration::from_secs(60);
         let poll_interval = time::Duration::from_millis(100);
         let now = time::Instant::now();
@@ -1178,15 +1296,16 @@ impl MarionetteConnection {
             self.host,
             self.port
         );
+
         loop {
             // immediately abort connection attempts if process disappears
-            if let &mut Some(ref mut runner) = browser {
+            if let Some(Browser::Host(ref mut runner)) = *browser {
                 let exit_status = match runner.try_wait() {
                     Ok(Some(status)) => Some(
                         status
                             .code()
                             .map(|c| c.to_string())
-                            .unwrap_or("signal".into()),
+                            .unwrap_or_else(|| "signal".into()),
                     ),
                     Ok(None) => None,
                     Err(_) => Some("{unknown}".into()),
@@ -1199,9 +1318,23 @@ impl MarionetteConnection {
                 }
             }
 
-            match TcpStream::connect((&self.host[..], self.port)) {
-                Ok(stream) => {
+            let try_connect = || -> WebDriverResult<(TcpStream, MarionetteHandshake)> {
+                let mut stream = TcpStream::connect((&self.host[..], self.port))?;
+                let data = MarionetteConnection::handshake(&mut stream)?;
+
+                Ok((stream, data))
+            };
+
+            match try_connect() {
+                Ok((stream, data)) => {
+                    debug!(
+                        "Connection to Marionette established on {}:{}.",
+                        self.host, self.port,
+                    );
+
                     self.stream = Some(stream);
+                    self.session.application_type = Some(data.application_type);
+                    self.session.protocol = Some(data.protocol);
                     break;
                 }
                 Err(e) => {
@@ -1209,50 +1342,36 @@ impl MarionetteConnection {
                         thread::sleep(poll_interval);
                     } else {
                         return Err(WebDriverError::new(
-                            ErrorStatus::UnknownError,
-                            e.description().to_owned(),
+                            ErrorStatus::Timeout,
+                            e.to_string(),
                         ));
                     }
                 }
             }
         }
 
-        debug!(
-            "Connection established on {}:{}. Waiting for Marionette handshake",
-            self.host, self.port,
-        );
-
-        let data = self.handshake()?;
-        self.session.application_type = Some(data.application_type);
-        self.session.protocol = Some(data.protocol);
-
-        debug!("Connected to Marionette");
         Ok(())
     }
 
-    fn handshake(&mut self) -> WebDriverResult<MarionetteHandshake> {
-        let resp = (match self.stream.as_mut().unwrap().read_timeout() {
+    fn handshake(stream: &mut TcpStream) -> WebDriverResult<MarionetteHandshake> {
+        let resp = (match stream.read_timeout() {
             Ok(timeout) => {
                 // If platform supports changing the read timeout of the stream,
                 // use a short one only for the handshake with Marionette.
-                self.stream
-                    .as_mut()
-                    .unwrap()
-                    .set_read_timeout(Some(time::Duration::from_secs(10)))
+                stream
+                    .set_read_timeout(Some(time::Duration::from_millis(100)))
                     .ok();
-                let data = self.read_resp();
-                self.stream.as_mut().unwrap().set_read_timeout(timeout).ok();
+                let data = MarionetteConnection::read_resp(stream);
+                stream.set_read_timeout(timeout).ok();
 
                 data
             }
-            _ => self.read_resp(),
+            _ => MarionetteConnection::read_resp(stream),
         })
-        .or_else(|e| {
-            Err(WebDriverError::new(
-                ErrorStatus::UnknownError,
-                format!("Socket timeout reading Marionette handshake data: {}", e),
-            ))
-        })?;
+        .map_err(|e| WebDriverError::new(
+            ErrorStatus::UnknownError,
+            format!("Socket timeout reading Marionette handshake data: {}", e),
+        ))?;
 
         let data = serde_json::from_str::<MarionetteHandshake>(&resp)?;
 
@@ -1292,16 +1411,18 @@ impl MarionetteConnection {
     }
 
     fn send(&mut self, data: String) -> WebDriverResult<String> {
-        match self.stream {
+        let stream = match self.stream {
             Some(ref mut stream) => {
                 if stream.write(&*data.as_bytes()).is_err() {
                     let mut err = WebDriverError::new(
                         ErrorStatus::UnknownError,
-                        "Failed to write response to stream",
+                        "Failed to write request to stream",
                     );
                     err.delete_session = true;
                     return Err(err);
                 }
+
+                stream
             }
             None => {
                 let mut err = WebDriverError::new(
@@ -1311,9 +1432,9 @@ impl MarionetteConnection {
                 err.delete_session = true;
                 return Err(err);
             }
-        }
+        };
 
-        match self.read_resp() {
+        match MarionetteConnection::read_resp(stream) {
             Ok(resp) => Ok(resp),
             Err(_) => {
                 let mut err = WebDriverError::new(
@@ -1326,11 +1447,9 @@ impl MarionetteConnection {
         }
     }
 
-    fn read_resp(&mut self) -> IoResult<String> {
+    fn read_resp(stream: &mut TcpStream) -> IoResult<String> {
         let mut bytes = 0usize;
 
-        // TODO(jgraham): Check before we unwrap?
-        let stream = self.stream.as_mut().unwrap();
         loop {
             let buf = &mut [0 as u8];
             let num_read = stream.read(buf)?;
@@ -1346,7 +1465,7 @@ impl MarionetteConnection {
             };
             match byte {
                 '0'..='9' => {
-                    bytes = bytes * 10;
+                    bytes *= 10;
                     bytes += byte as usize - '0' as usize;
                 }
                 ':' => break,
@@ -1446,8 +1565,8 @@ impl ToMarionette<MarionetteCookie> for AddCookieParameters {
             value: self.value.clone(),
             path: self.path.clone(),
             domain: self.domain.clone(),
-            secure: self.secure.clone(),
-            http_only: self.httpOnly.clone(),
+            secure: self.secure,
+            http_only: self.httpOnly,
             expiry: match &self.expiry {
                 Some(date) => Some(date.to_marionette()?),
                 None => None,
@@ -1462,19 +1581,6 @@ impl ToMarionette<MarionetteDate> for Date {
     }
 }
 
-impl ToMarionette<Map<String, Value>> for FrameId {
-    fn to_marionette(&self) -> WebDriverResult<Map<String, Value>> {
-        let mut data = Map::new();
-        match *self {
-            FrameId::Short(x) => data.insert("id".to_string(), serde_json::to_value(x)?),
-            FrameId::Element(ref x) => {
-                data.insert("element".to_string(), Value::Object(x.to_marionette()?))
-            }
-        };
-        Ok(data)
-    }
-}
-
 impl ToMarionette<Map<String, Value>> for GetNamedCookieParameters {
     fn to_marionette(&self) -> WebDriverResult<Map<String, Value>> {
         Ok(try_opt!(
@@ -1486,14 +1592,11 @@ impl ToMarionette<Map<String, Value>> for GetNamedCookieParameters {
     }
 }
 
-impl ToMarionette<Map<String, Value>> for GetParameters {
-    fn to_marionette(&self) -> WebDriverResult<Map<String, Value>> {
-        Ok(try_opt!(
-            serde_json::to_value(self)?.as_object(),
-            ErrorStatus::UnknownError,
-            "Expected an object"
-        )
-        .clone())
+impl ToMarionette<MarionetteUrl> for GetParameters {
+    fn to_marionette(&self) -> WebDriverResult<MarionetteUrl> {
+        Ok(MarionetteUrl {
+            url: self.url.clone(),
+        })
     }
 }
 
@@ -1549,63 +1652,60 @@ impl ToMarionette<MarionetteKeys> for SendKeysParameters {
     }
 }
 
-impl ToMarionette<Map<String, Value>> for SwitchToFrameParameters {
-    fn to_marionette(&self) -> WebDriverResult<Map<String, Value>> {
-        let mut data = Map::new();
-        match self.id {
-            None => None,
-            Some(FrameId::Short(_)) => {
-                data.insert("id".to_string(), serde_json::to_value(&self.id)?)
+impl ToMarionette<MarionetteFrame> for SwitchToFrameParameters {
+    fn to_marionette(&self) -> WebDriverResult<MarionetteFrame> {
+        Ok(match &self.id {
+            Some(x) => match x {
+                FrameId::Short(n) => MarionetteFrame::Index(n.clone()),
+                FrameId::Element(el) => MarionetteFrame::Element(el.0.clone()),
             }
-            Some(FrameId::Element(ref web_element)) => data.insert(
-                "element".to_string(),
-                serde_json::to_value(web_element.to_string())?,
-            ),
-        };
-        Ok(data)
+            None => MarionetteFrame::Parent,
+        })
     }
 }
 
-impl ToMarionette<Map<String, Value>> for SwitchToWindowParameters {
-    fn to_marionette(&self) -> WebDriverResult<Map<String, Value>> {
-        let mut data = Map::new();
-        data.insert(
-            "name".to_string(),
-            serde_json::to_value(self.handle.clone())?,
-        );
-        data.insert(
-            "handle".to_string(),
-            serde_json::to_value(self.handle.clone())?,
-        );
-        Ok(data)
+impl ToMarionette<Window> for SwitchToWindowParameters {
+    fn to_marionette(&self) -> WebDriverResult<Window> {
+        Ok(Window {
+            name: self.handle.clone(),
+            handle: self.handle.clone(),
+        })
     }
 }
 
 impl ToMarionette<MarionetteTimeouts> for TimeoutsParameters {
     fn to_marionette(&self) -> WebDriverResult<MarionetteTimeouts> {
         Ok(MarionetteTimeouts {
-            implicit: self.implicit.clone(),
-            page_load: self.page_load.clone(),
-            script: self.script.clone(),
+            implicit: self.implicit,
+            page_load: self.page_load,
+            script: self.script,
         })
     }
 }
 
-impl ToMarionette<Map<String, Value>> for WebElement {
-    fn to_marionette(&self) -> WebDriverResult<Map<String, Value>> {
-        let mut data = Map::new();
-        data.insert("id".to_string(), serde_json::to_value(self.to_string())?);
-        Ok(data)
+impl ToMarionette<LegacyWebElement> for WebElement {
+    fn to_marionette(&self) -> WebDriverResult<LegacyWebElement> {
+        Ok(LegacyWebElement {
+            id: self.to_string(),
+        })
+    }
+}
+
+impl ToMarionette<MarionetteWebElement> for WebElement {
+    fn to_marionette(&self) -> WebDriverResult<MarionetteWebElement> {
+        Ok(MarionetteWebElement {
+            element: self.to_string(),
+        })
     }
 }
 
 impl ToMarionette<MarionetteWindowRect> for WindowRectParameters {
     fn to_marionette(&self) -> WebDriverResult<MarionetteWindowRect> {
         Ok(MarionetteWindowRect {
-            x: self.x.clone(),
-            y: self.y.clone(),
-            width: self.width.clone(),
-            height: self.height.clone(),
+            x: self.x,
+            y: self.y,
+            width: self.width,
+            height: self.height,
         })
     }
 }

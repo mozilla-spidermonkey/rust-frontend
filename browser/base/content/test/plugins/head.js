@@ -19,7 +19,7 @@ XPCOMUtils.defineLazyServiceGetters(this, {
 
 // Various tests in this directory may define gTestBrowser, to use as the
 // default browser under test in some of the functions below.
-/* global gTestBrowser */
+/* global gTestBrowser:true */
 
 /**
  * Waits a specified number of miliseconds.
@@ -201,9 +201,7 @@ function promiseReloadPlugin(aId, aBrowser) {
 // after a test is done using the plugin doorhanger, we should just clear
 // any permissions that may have crept in
 function clearAllPluginPermissions() {
-  let perms = Services.perms.enumerator;
-  while (perms.hasMoreElements()) {
-    let perm = perms.getNext();
+  for (let perm of Services.perms.all) {
     if (perm.type.startsWith("plugin")) {
       info(
         "removing permission:" + perm.principal.origin + " " + perm.type + "\n"
@@ -471,7 +469,7 @@ function promiseUpdatePluginBindings(browser) {
     if (!elems || elems.length < 1) {
       elems = doc.getElementsByTagName("object");
     }
-    if (elems && elems.length > 0) {
+    if (elems && elems.length) {
       elems[0].clientTop;
     }
   });

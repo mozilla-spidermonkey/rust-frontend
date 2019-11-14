@@ -185,23 +185,9 @@ bool ElemOpEmitter::emitDelete() {
   return true;
 }
 
-bool ElemOpEmitter::emitAssignment(EmitSetFunctionName emitSetFunName) {
+bool ElemOpEmitter::emitAssignment() {
   MOZ_ASSERT(isSimpleAssignment() || isPropInit() || isCompoundAssignment());
   MOZ_ASSERT(state_ == State::Rhs);
-
-  if (emitSetFunName == EmitSetFunctionName::Yes) {
-    // JSOP_*SETELEM_SUPER has a different stack ordering.
-    MOZ_ASSERT(!isSuper());
-    //              [stack] obj, id, val
-    if (!bce_->emitDupAt(1)) {
-      //            [stack] obj, id, val, id
-      return false;
-    }
-    if (!bce_->emit2(JSOP_SETFUNNAME, uint8_t(FunctionPrefixKind::None))) {
-      //            [stack] obj, id, val
-      return false;
-    }
-  }
 
   MOZ_ASSERT_IF(isPropInit(), !isSuper());
 
@@ -239,51 +225,19 @@ bool ElemOpEmitter::emitIncDec() {
     return false;
   }
   if (isPostIncDec()) {
+    //              [stack] OBJ KEY SUPERBASE? N
     if (!bce_->emit1(JSOP_DUP)) {
-      //            [stack] ... N? N
+      //            [stack] ... N N
+      return false;
+    }
+    if (!bce_->emit2(JSOP_UNPICK, 3 + isSuper())) {
+      //            [stack] N OBJ KEY SUPERBASE? N
       return false;
     }
   }
   if (!bce_->emit1(incOp)) {
-    //              [stack] ... N? N+1
+    //              [stack] ... N+1
     return false;
-  }
-  if (isPostIncDec()) {
-    if (isSuper()) {
-      //            [stack] THIS KEY OBJ N N+1
-
-      if (!bce_->emit2(JSOP_PICK, 4)) {
-        //          [stack] KEY SUPERBASE N N+1 THIS
-        return false;
-      }
-      if (!bce_->emit2(JSOP_PICK, 4)) {
-        //          [stack] SUPERBASE N N+1 THIS KEY
-        return false;
-      }
-      if (!bce_->emit2(JSOP_PICK, 4)) {
-        //          [stack] N N+1 THIS KEY SUPERBASE
-        return false;
-      }
-      if (!bce_->emit2(JSOP_PICK, 3)) {
-        //          [stack] N THIS KEY SUPERBASE N+1
-        return false;
-      }
-    } else {
-      //            [stack] OBJ KEY N N+1
-
-      if (!bce_->emit2(JSOP_PICK, 3)) {
-        //          [stack] KEY N N+1 OBJ
-        return false;
-      }
-      if (!bce_->emit2(JSOP_PICK, 3)) {
-        //          [stack] N N+1 OBJ KEY
-        return false;
-      }
-      if (!bce_->emit2(JSOP_PICK, 2)) {
-        //          [stack] N OBJ KEY N+1
-        return false;
-      }
-    }
   }
 
   JSOp setOp =

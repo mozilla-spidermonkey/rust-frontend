@@ -213,7 +213,7 @@ void GetRequestURLFromWorker(const GlobalObject& aGlobal,
   }
 
   url->SetHash(EmptyString());
-  url->Stringify(aRequestURL);
+  url->GetHref(aRequestURL);
 }
 
 class ReferrerSameOriginChecker final : public WorkerMainThreadRunnable {
@@ -375,7 +375,7 @@ already_AddRefed<Request> Request::Constructor(const GlobalObject& aGlobal,
           aRv.ThrowTypeError<MSG_INVALID_REFERRER_URL>(referrer);
           return nullptr;
         }
-        url->Stringify(referrerURL);
+        url->GetHref(referrerURL);
         if (!referrerURL.EqualsLiteral(kFETCH_CLIENT_REFERRER_STR)) {
           WorkerPrivate* worker = GetCurrentThreadWorkerPrivate();
           nsresult rv = NS_OK;
@@ -428,8 +428,7 @@ already_AddRefed<Request> Request::Constructor(const GlobalObject& aGlobal,
     WorkerPrivate* worker = GetCurrentThreadWorkerPrivate();
     if (worker) {
       worker->AssertIsOnWorkerThread();
-      request->SetEnvironmentReferrerPolicy(
-          static_cast<net::ReferrerPolicy>(worker->GetReferrerPolicy()));
+      request->SetEnvironmentReferrerPolicy(worker->GetReferrerPolicy());
       principalInfo =
           MakeUnique<mozilla::ipc::PrincipalInfo>(worker->GetPrincipalInfo());
     }
@@ -438,12 +437,10 @@ already_AddRefed<Request> Request::Constructor(const GlobalObject& aGlobal,
   request->SetPrincipalInfo(std::move(principalInfo));
 
   if (mode != RequestMode::EndGuard_) {
-    request->ClearCreatedByFetchEvent();
     request->SetMode(mode);
   }
 
   if (credentials != RequestCredentials::EndGuard_) {
-    request->ClearCreatedByFetchEvent();
     request->SetCredentialsMode(credentials);
   }
 
@@ -452,13 +449,11 @@ already_AddRefed<Request> Request::Constructor(const GlobalObject& aGlobal,
   if (cache != RequestCache::EndGuard_) {
     if (cache == RequestCache::Only_if_cached &&
         request->Mode() != RequestMode::Same_origin) {
-      uint32_t t = static_cast<uint32_t>(request->Mode());
-      NS_ConvertASCIItoUTF16 modeString(RequestModeValues::strings[t].value,
-                                        RequestModeValues::strings[t].length);
+      NS_ConvertASCIItoUTF16 modeString(
+          RequestModeValues::GetString(request->Mode()));
       aRv.ThrowTypeError<MSG_ONLY_IF_CACHED_WITHOUT_SAME_ORIGIN>(modeString);
       return nullptr;
     }
-    request->ClearCreatedByFetchEvent();
     request->SetCacheMode(cache);
   }
 
@@ -490,7 +485,6 @@ already_AddRefed<Request> Request::Constructor(const GlobalObject& aGlobal,
     }
 
     // Step 14.2
-    request->ClearCreatedByFetchEvent();
     request->SetMethod(outMethod);
   }
 
@@ -503,7 +497,6 @@ already_AddRefed<Request> Request::Constructor(const GlobalObject& aGlobal,
     if (aRv.Failed()) {
       return nullptr;
     }
-    request->ClearCreatedByFetchEvent();
     headers = h->GetInternalHeaders();
   } else {
     headers = new InternalHeaders(*requestHeaders);
@@ -542,7 +535,7 @@ already_AddRefed<Request> Request::Constructor(const GlobalObject& aGlobal,
     request->GetMethod(method);
     // method is guaranteed to be uppercase due to step 14.2 above.
     if (method.EqualsLiteral("HEAD") || method.EqualsLiteral("GET")) {
-      aRv.ThrowTypeError<MSG_NO_BODY_ALLOWED_FOR_GET_AND_HEAD>();
+      aRv.ThrowTypeError(u"HEAD or GET Request cannot have a body.");
       return nullptr;
     }
   }
@@ -572,8 +565,6 @@ already_AddRefed<Request> Request::Constructor(const GlobalObject& aGlobal,
       if (NS_WARN_IF(aRv.Failed())) {
         return nullptr;
       }
-
-      request->ClearCreatedByFetchEvent();
 
       if (hasCopiedBody) {
         request->SetBody(nullptr, 0);

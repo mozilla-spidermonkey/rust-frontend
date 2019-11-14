@@ -79,7 +79,6 @@ const clearCookies = async function(options) {
           cookie.host,
           cookie.name,
           cookie.path,
-          false,
           cookie.originAttributes
         );
 
@@ -120,8 +119,11 @@ const clearIndexedDB = async function(options) {
         let principal = Services.scriptSecurityManager.createContentPrincipalFromOrigin(
           item.origin
         );
-        let scheme = principal.URI.scheme;
-        if (scheme == "http" || scheme == "https" || scheme == "file") {
+        if (
+          principal.schemeIs("http") ||
+          principal.schemeIs("https") ||
+          principal.schemeIs("file")
+        ) {
           promises.push(
             new Promise((resolve, reject) => {
               let clearRequest = quotaManagerService.clearStoragesForPrincipal(
@@ -189,24 +191,34 @@ const clearLocalStorage = async function(options) {
           let principal = Services.scriptSecurityManager.createContentPrincipalFromOrigin(
             item.origin
           );
-          let host = principal.URI.hostPort;
-          if (!options.hostnames || options.hostnames.includes(host)) {
-            promises.push(
-              new Promise((resolve, reject) => {
-                let clearRequest = quotaManagerService.clearStoragesForPrincipal(
-                  principal,
-                  "default",
-                  "ls"
-                );
-                clearRequest.callback = () => {
-                  if (clearRequest.resultCode == Cr.NS_OK) {
-                    resolve();
-                  } else {
-                    reject({ message: "Clear localStorage failed" });
-                  }
-                };
-              })
-            );
+          // Consistently to removeIndexedDB and the API documentation for
+          // removeLocalStorage, we should only clear the data stored by
+          // regular websites, on the contrary we shouldn't clear data stored
+          // by browser components (like about:newtab) or other extensions.
+          if (
+            principal.schemeIs("http") ||
+            principal.schemeIs("https") ||
+            principal.schemeIs("file")
+          ) {
+            let host = principal.URI.hostPort;
+            if (!options.hostnames || options.hostnames.includes(host)) {
+              promises.push(
+                new Promise((resolve, reject) => {
+                  let clearRequest = quotaManagerService.clearStoragesForPrincipal(
+                    principal,
+                    "default",
+                    "ls"
+                  );
+                  clearRequest.callback = () => {
+                    if (clearRequest.resultCode == Cr.NS_OK) {
+                      resolve();
+                    } else {
+                      reject({ message: "Clear localStorage failed" });
+                    }
+                  };
+                })
+              );
+            }
           }
         }
 

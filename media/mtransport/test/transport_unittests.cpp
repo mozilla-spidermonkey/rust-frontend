@@ -12,6 +12,12 @@
 #include <algorithm>
 #include <functional>
 
+#ifdef XP_MACOSX
+// ensure that Apple Security kit enum goes before "sslproto.h"
+#  include <CoreFoundation/CFAvailability.h>
+#  include <Security/CipherSuite.h>
+#endif
+
 #include "mozilla/UniquePtr.h"
 
 #include "sigslot.h"
@@ -634,7 +640,8 @@ class TransportTestPeer : public sigslot::has_slots<> {
 
   // New candidate
   void GotCandidate(NrIceMediaStream* stream, const std::string& candidate,
-                    const std::string& ufrag) {
+                    const std::string& ufrag, const std::string& mdns_addr,
+                    const std::string& actual_addr) {
     std::cerr << "Got candidate " << candidate << " (ufrag=" << ufrag << ")"
               << std::endl;
   }

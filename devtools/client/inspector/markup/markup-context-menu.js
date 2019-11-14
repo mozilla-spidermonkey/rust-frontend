@@ -1,5 +1,3 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -39,7 +37,7 @@ class MarkupContextMenu {
     this.markup = markup;
     this.inspector = markup.inspector;
     this.selection = this.inspector.selection;
-    this.target = this.inspector.target;
+    this.target = this.inspector.currentTarget;
     this.telemetry = this.inspector.telemetry;
     this.toolbox = this.inspector.toolbox;
     this.walker = this.inspector.walker;
@@ -169,13 +167,15 @@ class MarkupContextMenu {
       return;
     }
 
+    const nodeFront = this.selection.nodeFront;
+
     // If the markup panel is active, use the markup panel to delete
     // the node, making this an undoable action.
     if (this.markup) {
-      this.markup.deleteNode(this.selection.nodeFront);
+      this.markup.deleteNode(nodeFront);
     } else {
       // remove the node from content
-      this.walker.removeNode(this.selection.nodeFront);
+      nodeFront.walkerFront.removeNode(nodeFront);
     }
   }
 
@@ -192,7 +192,8 @@ class MarkupContextMenu {
       return;
     }
 
-    this.walker.duplicateNode(this.selection.nodeFront).catch(console.error);
+    const nodeFront = this.selection.nodeFront;
+    nodeFront.walkerFront.duplicateNode(nodeFront).catch(console.error);
   }
 
   /**
@@ -371,10 +372,7 @@ class MarkupContextMenu {
     const options = {
       selectedNodeActor: this.selection.nodeFront.actorID,
     };
-    const res = await hud.ui.webConsoleClient.evaluateJSAsync(
-      evalString,
-      options
-    );
+    const res = await hud.ui.evaluateJSAsync(evalString, options);
     hud.setInputValue(res.result);
     this.inspector.emit("console-var-ready");
   }
@@ -542,6 +540,7 @@ class MarkupContextMenu {
 
     menu.append(
       new MenuItem({
+        id: "node-menu-mutation-breakpoint-subtree",
         checked: mutationBreakpoints.subtree,
         click: () => this.markup.toggleMutationBreakpoint("subtree"),
         disabled: !isSelectionElement,
@@ -552,6 +551,7 @@ class MarkupContextMenu {
 
     menu.append(
       new MenuItem({
+        id: "node-menu-mutation-breakpoint-attribute",
         checked: mutationBreakpoints.attribute,
         click: () => this.markup.toggleMutationBreakpoint("attribute"),
         disabled: !isSelectionElement,
@@ -817,6 +817,7 @@ class MarkupContextMenu {
         new MenuItem({
           label: INSPECTOR_L10N.getStr("inspectorBreakpointSubmenu.label"),
           submenu: this._getDOMBreakpointSubmenu(isSelectionElement),
+          id: "node-menu-mutation-breakpoint",
         })
       );
     }

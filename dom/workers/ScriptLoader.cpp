@@ -768,8 +768,7 @@ class ScriptLoaderRunnable final : public nsIRunnable, public nsINamed {
     mozilla::dom::RequestOrUSVString request;
 
     MOZ_ASSERT(!loadInfo.mFullURL.IsEmpty());
-    request.SetAsUSVString().Rebind(loadInfo.mFullURL.Data(),
-                                    loadInfo.mFullURL.Length());
+    request.SetAsUSVString().ShareOrDependUpon(loadInfo.mFullURL);
 
     // This JSContext will not end up executing JS code because here there are
     // no ReadableStreams involved.
@@ -1028,7 +1027,7 @@ class ScriptLoaderRunnable final : public nsIRunnable, public nsINamed {
       MOZ_DIAGNOSTIC_ASSERT(loadInfo.mReservedClientInfo.isSome());
       rv = AddClientChannelHelper(
           channel, std::move(loadInfo.mReservedClientInfo), Maybe<ClientInfo>(),
-          mWorkerPrivate->HybridEventTarget());
+          mWorkerPrivate->HybridEventTarget(), false);
       if (NS_WARN_IF(NS_FAILED(rv))) {
         return rv;
       }
@@ -1665,8 +1664,7 @@ void CacheScriptLoader::Load(Cache* aCache) {
   CopyUTF8toUTF16(spec, mLoadInfo.mFullURL);
 
   mozilla::dom::RequestOrUSVString request;
-  request.SetAsUSVString().Rebind(mLoadInfo.mFullURL.Data(),
-                                  mLoadInfo.mFullURL.Length());
+  request.SetAsUSVString().ShareOrDependUpon(mLoadInfo.mFullURL);
 
   mozilla::dom::CacheQueryOptions params;
 
@@ -2157,10 +2155,10 @@ void ScriptExecutorRunnable::ShutdownScriptLoader(JSContext* aCx,
     if (mScriptLoader.mRv.Failed()) {
       if (aMutedError && mScriptLoader.mRv.IsJSException()) {
         LogExceptionToConsole(aCx, aWorkerPrivate);
-        mScriptLoader.mRv.ThrowWithCustomCleanup(NS_ERROR_DOM_NETWORK_ERR);
+        mScriptLoader.mRv.Throw(NS_ERROR_DOM_NETWORK_ERR);
       }
     } else {
-      mScriptLoader.mRv.ThrowWithCustomCleanup(NS_ERROR_DOM_INVALID_STATE_ERR);
+      mScriptLoader.mRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     }
   }
 

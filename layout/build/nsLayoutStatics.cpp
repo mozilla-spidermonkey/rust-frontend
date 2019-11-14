@@ -39,7 +39,6 @@
 #include "nsSprocketLayout.h"
 #include "nsStackLayout.h"
 #include "nsTextControlFrame.h"
-#include "nsXBLService.h"
 #include "txMozillaXSLTProcessor.h"
 #include "nsTreeSanitizer.h"
 #include "nsCellMap.h"
@@ -70,7 +69,6 @@
 
 #include "AudioChannelService.h"
 #include "mozilla/dom/PromiseDebugging.h"
-#include "mozilla/dom/WebCryptoThreadPool.h"
 
 #ifdef MOZ_XUL
 #  include "nsXULPopupManager.h"
@@ -108,6 +106,7 @@
 #include "DecoderDoctorLogger.h"
 #include "MediaDecoder.h"
 #include "mozilla/ClearSiteData.h"
+#include "mozilla/dom/DOMSecurityManager.h"
 #include "mozilla/EditorController.h"
 #include "mozilla/Fuzzyfox.h"
 #include "mozilla/HTMLEditorController.h"
@@ -167,7 +166,6 @@ nsresult nsLayoutStatics::Initialize() {
   nsGlobalWindowInner::Init();
   nsGlobalWindowOuter::Init();
   Navigator::Init();
-  nsXBLService::Init();
 
   rv = nsContentUtils::Init();
   if (NS_FAILED(rv)) {
@@ -251,12 +249,9 @@ nsresult nsLayoutStatics::Initialize() {
   PointerEventHandler::InitializeStatics();
   TouchManager::InitializeStatics();
 
-  nsCORSListenerProxy::Startup();
-
   nsWindowMemoryReporter::Init();
 
   SVGElementFactory::Init();
-  nsSVGUtils::Init();
 
   ProcessPriorityManager::Init();
 
@@ -280,8 +275,6 @@ nsresult nsLayoutStatics::Initialize() {
   MediaDecoder::InitStatics();
 
   PromiseDebugging::Init();
-
-  mozilla::dom::WebCryptoThreadPool::Initialize();
 
   if (XRE_IsParentProcess() || XRE_IsContentProcess()) {
     InitializeServo();
@@ -309,6 +302,8 @@ nsresult nsLayoutStatics::Initialize() {
   mozilla::Fuzzyfox::Start();
 
   ClearSiteData::Initialize();
+
+  DOMSecurityManager::Initialize();
 
   // Reporting API.
   ReportingHeader::Initialize();
@@ -388,7 +383,6 @@ void nsLayoutStatics::Shutdown() {
   nsGlobalWindowInner::ShutDown();
   nsGlobalWindowOuter::ShutDown();
   nsListControlFrame::Shutdown();
-  nsXBLService::Shutdown();
   FrameLayerBuilder::Shutdown();
 
   CubebUtils::ShutdownLibrary();

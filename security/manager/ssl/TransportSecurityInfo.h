@@ -14,13 +14,14 @@
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/ipc/TransportSecurityInfoUtils.h"
+#include "mozpkix/pkixtypes.h"
 #include "nsDataHashtable.h"
 #include "nsIClassInfo.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsITransportSecurityInfo.h"
 #include "nsNSSCertificate.h"
 #include "nsString.h"
-#include "mozpkix/pkixtypes.h"
 
 namespace mozilla {
 namespace psm {
@@ -83,12 +84,21 @@ class TransportSecurityInfo : public nsITransportSecurityInfo,
   void SetCertificateTransparencyInfo(
       const mozilla::psm::CertificateTransparencyInfo& info);
 
+  // Use errorCode == 0 to indicate success;
+  virtual void SetCertVerificationResult(PRErrorCode errorCode){};
+
+  void SetCertificateTransparencyStatus(
+      uint16_t aCertificateTransparencyStatus) {
+    mCertificateTransparencyStatus = aCertificateTransparencyStatus;
+  }
+
   uint16_t mCipherSuite;
   uint16_t mProtocolVersion;
   uint16_t mCertificateTransparencyStatus;
   nsCString mKeaGroup;
   nsCString mSignatureSchemeName;
 
+  bool mIsDelegatedCredential;
   bool mIsDomainMismatch;
   bool mIsNotValidAtThisTime;
   bool mIsUntrusted;
@@ -101,6 +111,9 @@ class TransportSecurityInfo : public nsITransportSecurityInfo,
      connection is eligible for joining in nsNSSSocketInfo::JoinConnection() */
   bool mHaveCertErrorBits;
 
+  static nsresult ConvertCertArrayToCertList(
+      const nsTArray<RefPtr<nsIX509Cert>>& aCertArray,
+      nsIX509CertList** aCertList);
  private:
   // True if SetCanceled has been called (or if this was deserialized with a
   // non-zero mErrorCode, which can only be the case if SetCanceled was called
@@ -111,6 +124,7 @@ class TransportSecurityInfo : public nsITransportSecurityInfo,
 
  protected:
   nsCOMPtr<nsIInterfaceRequestor> mCallbacks;
+  nsTArray<RefPtr<nsIX509Cert>> mSucceededCertChain;
 
  private:
   uint32_t mSecurityState;
@@ -122,12 +136,22 @@ class TransportSecurityInfo : public nsITransportSecurityInfo,
   OriginAttributes mOriginAttributes;
 
   nsCOMPtr<nsIX509Cert> mServerCert;
-  nsCOMPtr<nsIX509CertList> mSucceededCertChain;
 
   /* Peer cert chain for failed connections (for error reporting) */
-  nsCOMPtr<nsIX509CertList> mFailedCertChain;
+  nsTArray<RefPtr<nsIX509Cert>> mFailedCertChain;
 
   nsresult ReadSSLStatus(nsIObjectInputStream* aStream);
+  static nsresult ConvertCertListToCertArray(
+      const nsCOMPtr<nsIX509CertList>& aCertList,
+      nsTArray<RefPtr<nsIX509Cert>>& aCertArray);
+
+  // This function is used to read the binary that are serialized
+  // by using nsIX509CertList
+  nsresult ReadCertList(nsIObjectInputStream* aStream,
+                        nsTArray<RefPtr<nsIX509Cert>>& aCertList);
+  nsresult ReadCertificatesFromStream(nsIObjectInputStream* aStream,
+                                      uint32_t aSize,
+                                      nsTArray<RefPtr<nsIX509Cert>>& aCertList);
 };
 
 class RememberCertErrorsTable {

@@ -7,6 +7,7 @@
 #include "nsScriptSecurityManager.h"
 
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/StaticPrefs_extensions.h"
 #include "mozilla/StaticPrefs_security.h"
 #include "mozilla/StoragePrincipalHelper.h"
 
@@ -30,7 +31,7 @@
 #include "nsString.h"
 #include "nsCRT.h"
 #include "nsCRTGlue.h"
-#include "nsContentSecurityManager.h"
+#include "nsContentSecurityUtils.h"
 #include "nsDocShell.h"
 #include "nsError.h"
 #include "nsGlobalWindowInner.h"
@@ -271,6 +272,15 @@ nsScriptSecurityManager::GetChannelResultPrincipals(
     return rv;
   }
 
+  if (!(*aPrincipal)->GetIsContentPrincipal()) {
+    // If for some reason we don't have a content principal here, just reuse our
+    // principal for the storage principal too, since attempting to create a
+    // storage principal would fail anyway.
+    nsCOMPtr<nsIPrincipal> copy = *aPrincipal;
+    copy.forget(aStoragePrincipal);
+    return NS_OK;
+  }
+
   return StoragePrincipalHelper::Create(aChannel, *aPrincipal,
                                         aStoragePrincipal);
 }
@@ -362,7 +372,7 @@ nsScriptSecurityManager::GetChannelURIPrincipal(nsIChannel* aChannel,
   MOZ_ASSERT(aChannel, "Must have channel!");
 
   // Get the principal from the URI.  Make sure this does the same thing
-  // as Document::Reset and XULDocument::StartDocumentLoad.
+  // as Document::Reset and PrototypeDocumentContentSink::Init.
   nsCOMPtr<nsIURI> uri;
   nsresult rv = NS_GetFinalChannelURI(aChannel, getter_AddRefs(uri));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -407,8 +417,24 @@ bool nsScriptSecurityManager::ContentSecurityPolicyPermitsJSAction(
     csp = win->GetCsp();
   }
 
-  // don't do anything unless there's a CSP
-  if (!csp) return true;
+  nsCOMPtr<nsIPrincipal> subjectPrincipal = nsContentUtils::SubjectPrincipal();
+  if (!csp) {
+    if (!StaticPrefs::extensions_content_script_csp_enabled()) {
+      return true;
+    }
+    // Get the CSP for addon sandboxes.  If the principal is expanded and has a
+    // csp, we're probably in luck.
+    auto* basePrin = BasePrincipal::Cast(subjectPrincipal);
+    // ContentScriptAddonPolicy means it is also an expanded principal, thus
+    // this is in a sandbox used as a content script.
+    if (basePrin->ContentScriptAddonPolicy()) {
+      basePrin->As<ExpandedPrincipal>()->GetCsp(getter_AddRefs(csp));
+    }
+    // don't do anything unless there's a CSP
+    if (!csp) {
+      return true;
+    }
+  }
 
   nsCOMPtr<nsICSPEventListener> cspEventListener;
   if (!NS_IsMainThread()) {
@@ -424,11 +450,11 @@ bool nsScriptSecurityManager::ContentSecurityPolicyPermitsJSAction(
   nsresult rv = csp->GetAllowsEval(&reportViolation, &evalOK);
 
   // A little convoluted. We want the scriptSample for a) reporting a violation
-  // or b) passing it to AssertEvalNotUsingSystemPrincipal. So do the work to
-  // get it if either of those cases is true.
+  // or b) passing it to AssertEvalNotUsingSystemPrincipal or c) we're in the
+  // parent process. So do the work to get it if either of those cases is true.
   nsAutoJSString scriptSample;
-  nsCOMPtr<nsIPrincipal> subjectPrincipal = nsContentUtils::SubjectPrincipal();
-  if (reportViolation || subjectPrincipal->IsSystemPrincipal()) {
+  if (reportViolation || subjectPrincipal->IsSystemPrincipal() ||
+      XRE_IsE10sParentProcess()) {
     JS::Rooted<JSString*> jsString(cx, JS::ToString(cx, aValue));
     if (NS_WARN_IF(!jsString)) {
       JS_ClearPendingException(cx);
@@ -441,9 +467,11 @@ bool nsScriptSecurityManager::ContentSecurityPolicyPermitsJSAction(
     }
   }
 
-#if !defined(ANDROID) && (defined(NIGHTLY_BUILD) || defined(DEBUG))
-  nsContentSecurityManager::AssertEvalNotUsingSystemPrincipal(
-      cx, subjectPrincipal, scriptSample);
+#if !defined(ANDROID)
+  if (!nsContentSecurityUtils::IsEvalAllowed(
+          cx, subjectPrincipal->IsSystemPrincipal(), scriptSample)) {
+    return false;
+  }
 #endif
 
   if (NS_FAILED(rv)) {
@@ -675,30 +703,15 @@ nsScriptSecurityManager::CheckLoadURIWithPrincipal(nsIPrincipal* aPrincipal,
   rv = sourceBaseURI->GetScheme(sourceScheme);
   if (NS_FAILED(rv)) return rv;
 
-  // When comparing schemes, if the relevant pref is set, view-source URIs
-  // are reachable from same-protocol (so e.g. file: can link to
-  // view-source:file). This is required for reftests.
-  static bool sViewSourceReachableFromInner = false;
-  static bool sCachedViewSourcePref = false;
-  if (!sCachedViewSourcePref) {
-    sCachedViewSourcePref = true;
-    mozilla::Preferences::AddBoolVarCache(
-        &sViewSourceReachableFromInner,
-        "security.view-source.reachable-from-inner-protocol");
-  }
-
-  bool targetIsViewSource = false;
-
   if (sourceScheme.LowerCaseEqualsLiteral(NS_NULLPRINCIPAL_SCHEME)) {
     // A null principal can target its own URI.
     if (sourceURI == aTargetURI) {
       return NS_OK;
     }
-  } else if (sViewSourceReachableFromInner &&
+  } else if (StaticPrefs::
+                 security_view_source_reachable_from_inner_protocol() &&
              sourceScheme.EqualsIgnoreCase(targetScheme.get()) &&
-             NS_SUCCEEDED(
-                 aTargetURI->SchemeIs("view-source", &targetIsViewSource)) &&
-             targetIsViewSource) {
+             aTargetURI->SchemeIs("view-source")) {
     // exception for foo: linking to view-source:foo for reftests...
     return NS_OK;
   } else if (sourceScheme.EqualsIgnoreCase("file") &&
@@ -947,9 +960,7 @@ nsresult nsScriptSecurityManager::CheckLoadURIFlags(
     }
 
     // Allow chrome://
-    bool isChrome = false;
-    if (NS_SUCCEEDED(aSourceBaseURI->SchemeIs("chrome", &isChrome)) &&
-        isChrome) {
+    if (aSourceBaseURI->SchemeIs("chrome")) {
       return NS_OK;
     }
 
@@ -1073,7 +1084,11 @@ nsScriptSecurityManager::CheckLoadURIStrWithPrincipal(
                           nsIURIFixup::FIXUP_FLAGS_MAKE_ALTERNATE_URI};
 
   for (uint32_t i = 0; i < ArrayLength(flags); ++i) {
-    rv = fixup->CreateFixupURI(aTargetURIStr, flags[i], nullptr,
+    uint32_t fixupFlags = flags[i];
+    if (aPrincipal->OriginAttributesRef().mPrivateBrowsingId > 0) {
+      fixupFlags |= nsIURIFixup::FIXUP_FLAG_PRIVATE_CONTEXT;
+    }
+    rv = fixup->CreateFixupURI(aTargetURIStr, fixupFlags, nullptr,
                                getter_AddRefs(target));
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1378,8 +1393,7 @@ static StaticRefPtr<nsScriptSecurityManager> gScriptSecMan;
 
 nsScriptSecurityManager::~nsScriptSecurityManager(void) {
   Preferences::UnregisterPrefixCallbacks(
-      PREF_CHANGE_METHOD(nsScriptSecurityManager::ScriptSecurityPrefChanged),
-      kObservedPrefs, this);
+      nsScriptSecurityManager::ScriptSecurityPrefChanged, kObservedPrefs, this);
   if (mDomainPolicy) {
     mDomainPolicy->Deactivate();
   }
@@ -1452,6 +1466,13 @@ uint32_t SkipUntil(const nsCString& str, uint32_t base) {
   return base;
 }
 
+// static
+void nsScriptSecurityManager::ScriptSecurityPrefChanged(const char* aPref,
+                                                        void* aSelf) {
+  static_cast<nsScriptSecurityManager*>(aSelf)->ScriptSecurityPrefChanged(
+      aPref);
+}
+
 inline void nsScriptSecurityManager::ScriptSecurityPrefChanged(
     const char* aPref) {
   MOZ_ASSERT(mPrefInitialized);
@@ -1509,8 +1530,7 @@ nsresult nsScriptSecurityManager::InitPrefs() {
 
   // set observer callbacks in case the value of the prefs change
   Preferences::RegisterPrefixCallbacks(
-      PREF_CHANGE_METHOD(nsScriptSecurityManager::ScriptSecurityPrefChanged),
-      kObservedPrefs, this);
+      nsScriptSecurityManager::ScriptSecurityPrefChanged, kObservedPrefs, this);
 
   return NS_OK;
 }

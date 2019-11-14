@@ -15,9 +15,12 @@ dictionary PCErrorData
 
 [ChromeOnly,
  JSImplementation="@mozilla.org/dom/peerconnectionobserver;1",
- Constructor (RTCPeerConnection domPC)]
+ Exposed=Window]
 interface PeerConnectionObserver
 {
+  [Throws]
+  constructor(RTCPeerConnection domPC);
+
   /* JSEP callbacks */
   void onCreateOfferSuccess(DOMString offer);
   void onCreateOfferError(PCErrorData error);
@@ -30,10 +33,6 @@ interface PeerConnectionObserver
   void onAddIceCandidateSuccess();
   void onAddIceCandidateError(PCErrorData error);
   void onIceCandidate(unsigned short level, DOMString mid, DOMString candidate, DOMString ufrag);
-
-  /* Stats callbacks */
-  void onGetStatsSuccess(optional RTCStatsReportInternal report = {});
-  void onGetStatsError(DOMString message);
 
   /* Data channel callbacks */
   void notifyDataChannel(RTCDataChannel channel);

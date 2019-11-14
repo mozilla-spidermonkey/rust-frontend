@@ -42,8 +42,6 @@
 #  include "ScaledFontDWrite.h"
 #endif
 
-using namespace std;
-
 namespace mozilla {
 namespace gfx {
 
@@ -438,8 +436,7 @@ static void SetPaintPattern(SkPaint& aPaint, const Pattern& aPattern,
           !pat.mEnd.IsFinite() || pat.mBegin == pat.mEnd) {
         aPaint.setColor(SK_ColorTRANSPARENT);
       } else {
-        SkShader::TileMode mode =
-            ExtendModeToTileMode(stops->mExtendMode, Axis::BOTH);
+        SkTileMode mode = ExtendModeToTileMode(stops->mExtendMode, Axis::BOTH);
         SkPoint points[2];
         points[0] = SkPoint::Make(SkFloatToScalar(pat.mBegin.x),
                                   SkFloatToScalar(pat.mBegin.y));
@@ -473,8 +470,7 @@ static void SetPaintPattern(SkPaint& aPaint, const Pattern& aPattern,
           (pat.mCenter1 == pat.mCenter2 && pat.mRadius1 == pat.mRadius2)) {
         aPaint.setColor(SK_ColorTRANSPARENT);
       } else {
-        SkShader::TileMode mode =
-            ExtendModeToTileMode(stops->mExtendMode, Axis::BOTH);
+        SkTileMode mode = ExtendModeToTileMode(stops->mExtendMode, Axis::BOTH);
         SkPoint points[2];
         points[0] = SkPoint::Make(SkFloatToScalar(pat.mCenter1.x),
                                   SkFloatToScalar(pat.mCenter1.y));
@@ -518,12 +514,10 @@ static void SetPaintPattern(SkPaint& aPaint, const Pattern& aPattern,
         mat.preTranslate(pat.mSamplingRect.X(), pat.mSamplingRect.Y());
       }
 
-      SkShader::TileMode xTileMode =
-          ExtendModeToTileMode(pat.mExtendMode, Axis::X_AXIS);
-      SkShader::TileMode yTileMode =
-          ExtendModeToTileMode(pat.mExtendMode, Axis::Y_AXIS);
+      SkTileMode xTile = ExtendModeToTileMode(pat.mExtendMode, Axis::X_AXIS);
+      SkTileMode yTile = ExtendModeToTileMode(pat.mExtendMode, Axis::Y_AXIS);
 
-      aPaint.setShader(image->makeShader(xTileMode, yTileMode, &mat));
+      aPaint.setShader(image->makeShader(xTile, yTile, &mat));
 
       if (pat.mSamplingFilter == SamplingFilter::POINT) {
         aPaint.setFilterQuality(kNone_SkFilterQuality);
@@ -707,7 +701,7 @@ void DrawTargetSkia::DrawSurfaceWithShadow(SourceSurface* aSurface,
   } else {
     sk_sp<SkImageFilter> blurFilter(
         SkBlurImageFilter::Make(aSigma, aSigma, nullptr));
-    sk_sp<SkColorFilter> colorFilter(SkColorFilter::MakeModeFilter(
+    sk_sp<SkColorFilter> colorFilter(SkColorFilters::Blend(
         ColorToSkColor(aColor, 1.0f), SkBlendMode::kSrcIn));
 
     shadowPaint.setImageFilter(blurFilter);
@@ -911,29 +905,6 @@ void DrawTargetSkia::Fill(const Path* aPath, const Pattern& aPattern,
   }
 
   mCanvas->drawPath(skiaPath->GetPath(), paint.mPaint);
-}
-
-bool DrawTargetSkia::ShouldLCDRenderText(FontType aFontType,
-                                         AntialiasMode aAntialiasMode) {
-  // Only allow subpixel AA if explicitly permitted.
-  if (!GetPermitSubpixelAA()) {
-    return false;
-  }
-
-  if (aAntialiasMode == AntialiasMode::DEFAULT) {
-    switch (aFontType) {
-      case FontType::MAC:
-      case FontType::GDI:
-      case FontType::DWRITE:
-      case FontType::FONTCONFIG:
-        return true;
-      case FontType::FREETYPE:
-      default:
-        // TODO: Figure out what to do for the other platforms.
-        return false;
-    }
-  }
-  return (aAntialiasMode == AntialiasMode::SUBPIXEL);
 }
 
 #ifdef MOZ_WIDGET_COCOA
@@ -1323,56 +1294,14 @@ void DrawTargetSkia::DrawGlyphs(ScaledFont* aFont, const GlyphBuffer& aBuffer,
 
   SkFont font(sk_ref_sp(typeface), SkFloatToScalar(skiaFont->mSize));
 
-  bool useSubpixelAA = ShouldLCDRenderText(aFont->GetType(), aaMode);
+  bool useSubpixelAA =
+      GetPermitSubpixelAA() &&
+      (aaMode == AntialiasMode::DEFAULT || aaMode == AntialiasMode::SUBPIXEL);
   font.setEdging(useSubpixelAA ? SkFont::Edging::kSubpixelAntiAlias
                                : (aaEnabled ? SkFont::Edging::kAntiAlias
                                             : SkFont::Edging::kAlias));
 
-  bool useSubpixelText = true;
-  switch (aFont->GetType()) {
-    case FontType::FREETYPE:
-    case FontType::FONTCONFIG:
-      // SkFontHost_cairo does not support subpixel text positioning,
-      // so only enable it for other font hosts.
-      useSubpixelText = false;
-      break;
-    case FontType::MAC:
-      if (aaMode == AntialiasMode::GRAY) {
-        // Normally, Skia enables LCD FontSmoothing which creates thicker fonts
-        // and also enables subpixel AA. CoreGraphics without font smoothing
-        // explicitly creates thinner fonts and grayscale AA.
-        // CoreGraphics doesn't support a configuration that produces thicker
-        // fonts with grayscale AA as LCD Font Smoothing enables or disables
-        // both. However, Skia supports it by enabling font smoothing (producing
-        // subpixel AA) and converts it to grayscale AA. Since Skia doesn't
-        // support subpixel AA on transparent backgrounds, we still want font
-        // smoothing for the thicker fonts, even if it is grayscale AA.
-        //
-        // With explicit Grayscale AA (from -moz-osx-font-smoothing:grayscale),
-        // we want to have grayscale AA with no smoothing at all. This means
-        // disabling the LCD font smoothing behaviour.
-        // To accomplish this we have to explicitly disable hinting,
-        // and disable LCDRenderText.
-        font.setHinting(kNo_SkFontHinting);
-      }
-      break;
-#ifdef XP_WIN
-    case FontType::DWRITE: {
-      ScaledFontDWrite* dwriteFont = static_cast<ScaledFontDWrite*>(aFont);
-      if (dwriteFont->ForceGDIMode()) {
-        font.setEmbeddedBitmaps(true);
-        useSubpixelText = false;
-      } else {
-        font.setEmbeddedBitmaps(dwriteFont->UseEmbeddedBitmaps());
-      }
-      break;
-    }
-#endif
-    default:
-      break;
-  }
-
-  font.setSubpixel(useSubpixelText);
+  skiaFont->SetupSkFontDrawOptions(font);
 
   // Limit the amount of internal batch allocations Skia does.
   const uint32_t kMaxGlyphBatchSize = 8192;
@@ -1598,7 +1527,9 @@ already_AddRefed<DrawTarget> DrawTargetSkia::CreateSimilarDrawTarget(
 
 bool DrawTargetSkia::CanCreateSimilarDrawTarget(const IntSize& aSize,
                                                 SurfaceFormat aFormat) const {
-  return size_t(std::max(aSize.width, aSize.height)) < GetMaxSurfaceSize();
+  auto minmaxPair = std::minmax(aSize.width, aSize.height);
+  return minmaxPair.first >= 0 &&
+         size_t(minmaxPair.second) < GetMaxSurfaceSize();
 }
 
 RefPtr<DrawTarget> DrawTargetSkia::CreateClippedDrawTarget(

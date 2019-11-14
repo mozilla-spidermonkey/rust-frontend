@@ -10,8 +10,9 @@
 
 #include "frontend/BytecodeEmitter.h"
 
-#include "mozilla/Casting.h"    // mozilla::AssertedCast
-#include "mozilla/DebugOnly.h"  // mozilla::DebugOnly
+#include "mozilla/ArrayUtils.h"  // mozilla::ArrayLength
+#include "mozilla/Casting.h"     // mozilla::AssertedCast
+#include "mozilla/DebugOnly.h"   // mozilla::DebugOnly
 #include "mozilla/FloatingPoint.h"  // mozilla::NumberEqualsInt32, mozilla::NumberIsInt32
 #include "mozilla/Maybe.h"          // mozilla::{Maybe,Nothing,Some}
 #include "mozilla/PodOperations.h"  // mozilla::PodCopy
@@ -19,11 +20,11 @@
 #include "mozilla/Unused.h"         // mozilla::Unused
 #include "mozilla/Variant.h"        // mozilla::AsVariant
 
+#include <algorithm>
 #include <string.h>
 
 #include "jsnum.h"    // NumberToAtom
 #include "jstypes.h"  // JS_BIT
-#include "jsutil.h"   // Min
 
 #include "ds/Nestable.h"                         // Nestable
 #include "frontend/BytecodeControlStructures.h"  // NestableControl, BreakableControl, LabelControl, LoopControl, TryFinallyControl
@@ -63,12 +64,13 @@
 #include "vm/Opcodes.h"   // JSOP_*
 #include "wasm/AsmJS.h"   // IsAsmJSModule
 
-#include "debugger/DebugAPI-inl.h" // DebugAPI
-#include "vm/JSObject-inl.h"  // JSObject
+#include "debugger/DebugAPI-inl.h"  // DebugAPI
+#include "vm/JSObject-inl.h"        // JSObject
 
 using namespace js;
 using namespace js::frontend;
 
+using mozilla::ArrayLength;
 using mozilla::AssertedCast;
 using mozilla::AsVariant;
 using mozilla::DebugOnly;
@@ -95,7 +97,7 @@ static bool ParseNodeRequiresSpecialLineNumberNotes(ParseNode* pn) {
 BytecodeEmitter::BytecodeEmitter(
     BytecodeEmitter* parent, SharedContext* sc, HandleScript script,
     Handle<LazyScript*> lazyScript, uint32_t line, uint32_t column,
-    EmitterMode emitterMode,
+    ParseInfo& parseInfo, EmitterMode emitterMode,
     FieldInitializers fieldInitializers /* = FieldInitializers::Invalid() */)
     : sc(sc),
       cx(sc->cx_),
@@ -105,6 +107,7 @@ BytecodeEmitter::BytecodeEmitter(
       bytecodeSection_(cx, line),
       perScriptData_(cx),
       fieldInitializers_(fieldInitializers),
+      parseInfo(parseInfo),
       firstLine(line),
       firstColumn(column),
       emitterMode(emitterMode) {
@@ -120,10 +123,11 @@ BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent,
                                  BCEParserHandle* handle, SharedContext* sc,
                                  HandleScript script,
                                  Handle<LazyScript*> lazyScript, uint32_t line,
-                                 uint32_t column, EmitterMode emitterMode,
+                                 uint32_t column, ParseInfo& parseInfo,
+                                 EmitterMode emitterMode,
                                  FieldInitializers fieldInitializers)
-    : BytecodeEmitter(parent, sc, script, lazyScript, line, column, emitterMode,
-                      fieldInitializers) {
+    : BytecodeEmitter(parent, sc, script, lazyScript, line, column, parseInfo,
+                      emitterMode, fieldInitializers) {
   parser = handle;
   instrumentationKinds = parser->options().instrumentationKinds;
 }
@@ -132,10 +136,11 @@ BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent,
                                  const EitherParser& parser, SharedContext* sc,
                                  HandleScript script,
                                  Handle<LazyScript*> lazyScript, uint32_t line,
-                                 uint32_t column, EmitterMode emitterMode,
+                                 uint32_t column, ParseInfo& parseInfo,
+                                 EmitterMode emitterMode,
                                  FieldInitializers fieldInitializers)
-    : BytecodeEmitter(parent, sc, script, lazyScript, line, column, emitterMode,
-                      fieldInitializers) {
+    : BytecodeEmitter(parent, sc, script, lazyScript, line, column, parseInfo,
+                      emitterMode, fieldInitializers) {
   ep_.emplace(parser);
   this->parser = ep_.ptr();
   instrumentationKinds = this->parser->options().instrumentationKinds;
@@ -242,7 +247,7 @@ bool BytecodeEmitter::emitCheck(JSOp op, ptrdiff_t delta,
   if (!bytecodeSection().code().growByUninitialized(delta)) {
     return false;
   }
-  
+
   if (BytecodeOpHasTypeSet(op)) {
     bytecodeSection().incrementNumTypeSets();
   }
@@ -472,7 +477,7 @@ bool BytecodeEmitter::emitDupAt(unsigned slotFromTop, unsigned count) {
     return emit1(JSOP_DUP2);
   }
 
-  if (slotFromTop >= JS_BIT(24)) {
+  if (slotFromTop >= Bit(24)) {
     reportError(nullptr, JSMSG_TOO_MANY_LOCALS);
     return false;
   }
@@ -914,7 +919,8 @@ bool BytecodeEmitter::emitIndexOp(JSOp op, uint32_t index) {
   return true;
 }
 
-bool BytecodeEmitter::emitAtomOp(JSAtom* atom, JSOp op, ShouldInstrument shouldInstrument) {
+bool BytecodeEmitter::emitAtomOp(JSAtom* atom, JSOp op,
+                                 ShouldInstrument shouldInstrument) {
   MOZ_ASSERT(atom);
 
   // .generator lookups should be emitted as JSOP_GETALIASEDVAR instead of
@@ -1243,8 +1249,9 @@ restart:
       return true;
 
     case ParseNodeKind::StatementList:
-    // Strict equality operations and logical operators are well-behaved and
-    // perform no conversions.
+    // Strict equality operations and short circuit operators are well-behaved
+    // and perform no conversions.
+    case ParseNodeKind::CoalesceExpr:
     case ParseNodeKind::OrExpr:
     case ParseNodeKind::AndExpr:
     case ParseNodeKind::StrictEqExpr:
@@ -2062,11 +2069,11 @@ bool BytecodeEmitter::emitNumberOp(double dval) {
     }
 
     uint32_t u = uint32_t(ival);
-    if (u < JS_BIT(16)) {
+    if (u < Bit(16)) {
       if (!emitUint16Operand(JSOP_UINT16, u)) {
         return false;
       }
-    } else if (u < JS_BIT(24)) {
+    } else if (u < Bit(24)) {
       BytecodeOffset off;
       if (!emitN(JSOP_UINT24, 3, &off)) {
         return false;
@@ -2265,7 +2272,7 @@ bool BytecodeEmitter::isRunOnceLambda() {
 
 bool BytecodeEmitter::allocateResumeIndex(BytecodeOffset offset,
                                           uint32_t* resumeIndex) {
-  static constexpr uint32_t MaxResumeIndex = JS_BITMASK(24);
+  static constexpr uint32_t MaxResumeIndex = BitMask(24);
 
   static_assert(
       MaxResumeIndex < uint32_t(AbstractGeneratorObject::RESUME_INDEX_RUNNING),
@@ -2807,7 +2814,7 @@ bool BytecodeEmitter::emitSetOrInitializeDestructuring(
         if (!eoe.skipObjAndKeyAndRhs()) {
           return false;
         }
-        if (!eoe.emitAssignment(ElemOpEmitter::EmitSetFunctionName::No)) {
+        if (!eoe.emitAssignment()) {
           //        [stack] VAL
           return false;
         }
@@ -4087,16 +4094,12 @@ bool BytecodeEmitter::emitSingleDeclaration(ListNode* declList, NameNode* decl,
 }
 
 bool BytecodeEmitter::emitAssignmentRhs(ParseNode* rhs,
-                                        HandleAtom anonFunctionName,
-                                        bool* emitSetFunName) {
-  *emitSetFunName = false;
+                                        HandleAtom anonFunctionName) {
   if (rhs->isDirectRHSAnonFunction()) {
     if (anonFunctionName) {
       return emitAnonymousFunctionWithName(rhs, anonFunctionName);
     }
-    // If anonFunctionName is null, that means we don't have a compiletime
-    // name, and should emit JSOP_SETFUNNAME (which happens later).
-    *emitSetFunName = true;
+    return emitAnonymousFunctionWithComputedName(rhs, FunctionPrefixKind::None);
   }
   return emitTree(rhs);
 }
@@ -4153,8 +4156,6 @@ bool BytecodeEmitter::emitAssignmentOrInit(ParseNodeKind kind, ParseNode* lhs,
   JSOp compoundOp = CompoundAssignmentParseNodeKindToJSOp(kind);
   bool isCompound = compoundOp != JSOP_NOP;
   bool isInit = kind == ParseNodeKind::InitExpr;
-  ElemOpEmitter::EmitSetFunctionName emitSetFunName =
-      ElemOpEmitter::EmitSetFunctionName::No;
 
   MOZ_ASSERT_IF(isInit, lhs->isKind(ParseNodeKind::DotExpr) ||
                             lhs->isKind(ParseNodeKind::ElemExpr));
@@ -4173,14 +4174,10 @@ bool BytecodeEmitter::emitAssignmentOrInit(ParseNodeKind kind, ParseNode* lhs,
     }
 
     if (rhs) {
-      bool emitSetFunctionName;
-      if (!emitAssignmentRhs(rhs, name, &emitSetFunctionName)) {
+      if (!emitAssignmentRhs(rhs, name)) {
         //          [stack] ENV? VAL? RHS
         return false;
       }
-      // We should always have the name, so we should never need to emit
-      // JSOP_SETFUNNAME.
-      MOZ_ASSERT(!emitSetFunctionName);
     } else {
       uint8_t offset = noe.emittedBindOp() ? 2 : 1;
       // Assumption: Things with pre-emitted RHS values never need to be named.
@@ -4364,14 +4361,10 @@ bool BytecodeEmitter::emitAssignmentOrInit(ParseNodeKind kind, ParseNode* lhs,
   // rhs->isDirectRHSAnonFunction() is set - so we'll assign the name of the
   // function.
   if (rhs) {
-    bool emitSetFunctionName;
-    if (!emitAssignmentRhs(rhs, anonFunctionName, &emitSetFunctionName)) {
+    if (!emitAssignmentRhs(rhs, anonFunctionName)) {
       //            [stack] ... VAL? RHS
       return false;
     }
-    emitSetFunName = emitSetFunctionName
-                         ? ElemOpEmitter::EmitSetFunctionName::Yes
-                         : ElemOpEmitter::EmitSetFunctionName::No;
   } else {
     // Assumption: Things with pre-emitted RHS values never need to be named.
     if (!emitAssignmentRhs(offset)) {
@@ -4407,9 +4400,7 @@ bool BytecodeEmitter::emitAssignmentOrInit(ParseNodeKind kind, ParseNode* lhs,
       // We threw above, so nothing to do here.
       break;
     case ParseNodeKind::ElemExpr: {
-      MOZ_ASSERT((!anonFunctionName && rhs && rhs->isDirectRHSAnonFunction()) ==
-                 (emitSetFunName == ElemOpEmitter::EmitSetFunctionName::Yes));
-      if (!eoe->emitAssignment(emitSetFunName)) {
+      if (!eoe->emitAssignment()) {
         //          [stack] VAL
         return false;
       }
@@ -4441,7 +4432,7 @@ bool ParseNode::getConstantValue(JSContext* cx,
       vp.setNumber(as<NumericLiteral>().value());
       return true;
     case ParseNodeKind::BigIntExpr:
-      vp.setBigInt(as<BigIntLiteral>().box()->value());
+      vp.setBigInt(as<BigIntLiteral>().value());
       return true;
     case ParseNodeKind::TemplateStringExpr:
     case ParseNodeKind::StringExpr:
@@ -5030,7 +5021,7 @@ bool BytecodeEmitter::emitCopyDataProperties(CopyOption option) {
   return true;
 }
 
-bool BytecodeEmitter::emitBigIntOp(BigInt* bigint) {
+bool BytecodeEmitter::emitBigIntOp(BigIntLiteral* bigint) {
   uint32_t index;
   if (!perScriptData().gcThingList().append(bigint, &index)) {
     return false;
@@ -5698,7 +5689,6 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitFunction(
     FunctionNode* funNode, bool needsProto /* = false */,
     ListNode* classContentsIfConstructor /* = nullptr */) {
   FunctionBox* funbox = funNode->funbox();
-  RootedFunction fun(cx, funbox->function());
 
   MOZ_ASSERT((classContentsIfConstructor != nullptr) ==
              (funbox->kind() == FunctionFlags::FunctionKind::ClassConstructor));
@@ -5722,15 +5712,15 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitFunction(
     return true;
   }
 
-  if (fun->isInterpreted()) {
-    if (fun->isInterpretedLazy()) {
+  if (funbox->isInterpreted()) {
+    if (funbox->isInterpretedLazy()) {
       if (!fe.emitLazy()) {
         //          [stack] FUN?
         return false;
       }
 
       if (classContentsIfConstructor) {
-        fun->lazyScript()->setFieldInitializers(
+        funbox->setFieldInitializers(
             setupFieldInitializers(classContentsIfConstructor));
       }
 
@@ -5750,8 +5740,9 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitFunction(
     JS::CompileOptions options(cx, transitiveOptions);
 
     Rooted<ScriptSourceObject*> sourceObject(cx, script->sourceObject());
-    Rooted<JSScript*> innerScript(
-        cx, JSScript::Create(cx, options, sourceObject, funbox->bufStart,
+    RootedFunction fun(cx, funbox->function());
+    RootedScript innerScript(
+        cx, JSScript::Create(cx, fun, options, sourceObject, funbox->bufStart,
                              funbox->bufEnd, funbox->toStringStart,
                              funbox->toStringEnd));
     if (!innerScript) {
@@ -5769,13 +5760,10 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitFunction(
       fieldInitializers = setupFieldInitializers(classContentsIfConstructor);
     }
 
-    uint32_t innerScriptLine, innerScriptColumn;
-    parser->errorReporter().lineAndColumnAt(funNode->pn_pos.begin,
-                                            &innerScriptLine,
-                                            &innerScriptColumn);
     BytecodeEmitter bce2(this, parser, funbox, innerScript,
-                         /* lazyScript = */ nullptr, innerScriptLine,
-                         innerScriptColumn, nestedMode, fieldInitializers);
+                         /* lazyScript = */ nullptr, funbox->startLine,
+                         funbox->startColumn, parseInfo, nestedMode,
+                         fieldInitializers);
     if (!bce2.init(funNode->pn_pos)) {
       return false;
     }
@@ -6109,7 +6097,7 @@ bool BytecodeEmitter::emitReturn(UnaryNode* returnNode) {
       return false;
     }
   } else if (top + BytecodeOffsetDiff(JSOP_RETURN_LENGTH) !=
-             bytecodeSection().offset() ||
+                 bytecodeSection().offset() ||
              // If we are instrumenting, make sure we use RETRVAL and add any
              // instrumentation for the frame exit.
              instrumentationKinds) {
@@ -7497,11 +7485,13 @@ bool BytecodeEmitter::emitCallOrNew(
         break;
       case ParseNodeKind::Name: {
         // Use the start of callee name unless it is at a separator
+        // or has no args.
         //
         // 2 + obj()   // expression
         //     ^       // column coord
         //
-        if (!bytecodeSection().atSeparator(calleeNode->pn_pos.begin)) {
+        if (argsList->empty() ||
+            !bytecodeSection().atSeparator(calleeNode->pn_pos.begin)) {
           // Use the start of callee names.
           coordNode = calleeNode;
         }
@@ -7520,19 +7510,31 @@ bool BytecodeEmitter::emitCallOrNew(
   return true;
 }
 
+// This list must be kept in the same order in several places:
+//   - The binary operators in ParseNode.h ,
+//   - the binary operators in TokenKind.h
+//   - the precedence list in Parser.cpp
 static const JSOp ParseNodeKindToJSOp[] = {
     // JSOP_NOP is for pipeline operator which does not emit its own JSOp
     // but has highest precedence in binary operators
-    JSOP_NOP,    JSOP_OR,       JSOP_AND, JSOP_BITOR,    JSOP_BITXOR,
-    JSOP_BITAND, JSOP_STRICTEQ, JSOP_EQ,  JSOP_STRICTNE, JSOP_NE,
-    JSOP_LT,     JSOP_LE,       JSOP_GT,  JSOP_GE,       JSOP_INSTANCEOF,
-    JSOP_IN,     JSOP_LSH,      JSOP_RSH, JSOP_URSH,     JSOP_ADD,
-    JSOP_SUB,    JSOP_MUL,      JSOP_DIV, JSOP_MOD,      JSOP_POW};
+    JSOP_NOP,        JSOP_COALESCE, JSOP_OR,       JSOP_AND, JSOP_BITOR,
+    JSOP_BITXOR,     JSOP_BITAND,   JSOP_STRICTEQ, JSOP_EQ,  JSOP_STRICTNE,
+    JSOP_NE,         JSOP_LT,       JSOP_LE,       JSOP_GT,  JSOP_GE,
+    JSOP_INSTANCEOF, JSOP_IN,       JSOP_LSH,      JSOP_RSH, JSOP_URSH,
+    JSOP_ADD,        JSOP_SUB,      JSOP_MUL,      JSOP_DIV, JSOP_MOD,
+    JSOP_POW};
 
 static inline JSOp BinaryOpParseNodeKindToJSOp(ParseNodeKind pnk) {
   MOZ_ASSERT(pnk >= ParseNodeKind::BinOpFirst);
   MOZ_ASSERT(pnk <= ParseNodeKind::BinOpLast);
-  return ParseNodeKindToJSOp[size_t(pnk) - size_t(ParseNodeKind::BinOpFirst)];
+  int parseNodeFirst = size_t(ParseNodeKind::BinOpFirst);
+#ifdef DEBUG
+  int jsopArraySize = ArrayLength(ParseNodeKindToJSOp);
+  int parseNodeKindListSize =
+      size_t(ParseNodeKind::BinOpLast) - parseNodeFirst + 1;
+  MOZ_ASSERT(jsopArraySize == parseNodeKindListSize);
+#endif
+  return ParseNodeKindToJSOp[size_t(pnk) - parseNodeFirst];
 }
 
 bool BytecodeEmitter::emitRightAssociative(ListNode* node) {
@@ -7571,8 +7573,9 @@ bool BytecodeEmitter::emitLeftAssociative(ListNode* node) {
   return true;
 }
 
-bool BytecodeEmitter::emitLogical(ListNode* node) {
+bool BytecodeEmitter::emitShortCircuit(ListNode* node) {
   MOZ_ASSERT(node->isKind(ParseNodeKind::OrExpr) ||
+             node->isKind(ParseNodeKind::CoalesceExpr) ||
              node->isKind(ParseNodeKind::AndExpr));
 
   /*
@@ -7589,10 +7592,26 @@ bool BytecodeEmitter::emitLogical(ListNode* node) {
 
   /* Left-associative operator chain: avoid too much recursion. */
   ParseNode* expr = node->head();
+
   if (!emitTree(expr)) {
     return false;
   }
-  JSOp op = node->isKind(ParseNodeKind::OrExpr) ? JSOP_OR : JSOP_AND;
+
+  JSOp op;
+  switch (node->getKind()) {
+    case ParseNodeKind::OrExpr:
+      op = JSOP_OR;
+      break;
+    case ParseNodeKind::CoalesceExpr:
+      op = JSOP_COALESCE;
+      break;
+    case ParseNodeKind::AndExpr:
+      op = JSOP_AND;
+      break;
+    default:
+      MOZ_CRASH("Unexpected ParseNodeKind");
+  }
+
   JumpList jump;
   if (!emitJump(op, &jump)) {
     return false;
@@ -8913,7 +8932,7 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitInstrumentationSlow(
     const std::function<bool(uint32_t)>& pushOperandsCallback) {
   MOZ_ASSERT(instrumentationKinds);
 
-  if (!(instrumentationKinds & (uint32_t) kind)) {
+  if (!(instrumentationKinds & (uint32_t)kind)) {
     return true;
   }
 
@@ -9013,30 +9032,27 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitInstrumentationForOpcodeSlow(
     case JSOP_GETPROP:
     case JSOP_CALLPROP:
     case JSOP_LENGTH:
-      return emitInstrumentationSlow(InstrumentationKind::GetProperty,
-                                     [=](uint32_t pushed) {
-          return emitDupAt(pushed) && emitAtomOp(atomIndex, JSOP_STRING);
-        });
+      return emitInstrumentationSlow(
+          InstrumentationKind::GetProperty, [=](uint32_t pushed) {
+            return emitDupAt(pushed) && emitAtomOp(atomIndex, JSOP_STRING);
+          });
     case JSOP_SETPROP:
     case JSOP_STRICTSETPROP:
-      return emitInstrumentationSlow(InstrumentationKind::SetProperty,
-                                     [=](uint32_t pushed) {
-          return emitDupAt(pushed + 1) &&
-                 emitAtomOp(atomIndex, JSOP_STRING) &&
-                 emitDupAt(pushed + 2);
-        });
+      return emitInstrumentationSlow(
+          InstrumentationKind::SetProperty, [=](uint32_t pushed) {
+            return emitDupAt(pushed + 1) &&
+                   emitAtomOp(atomIndex, JSOP_STRING) && emitDupAt(pushed + 2);
+          });
     case JSOP_GETELEM:
     case JSOP_CALLELEM:
-      return emitInstrumentationSlow(InstrumentationKind::GetElement,
-                                     [=](uint32_t pushed) {
-          return emitDupAt(pushed + 1, 2);
-        });
+      return emitInstrumentationSlow(
+          InstrumentationKind::GetElement,
+          [=](uint32_t pushed) { return emitDupAt(pushed + 1, 2); });
     case JSOP_SETELEM:
     case JSOP_STRICTSETELEM:
-      return emitInstrumentationSlow(InstrumentationKind::SetElement,
-                                     [=](uint32_t pushed) {
-          return emitDupAt(pushed + 2, 3);
-        });
+      return emitInstrumentationSlow(
+          InstrumentationKind::SetElement,
+          [=](uint32_t pushed) { return emitDupAt(pushed + 2, 3); });
     default:
       return true;
   }
@@ -9246,8 +9262,9 @@ bool BytecodeEmitter::emitTree(
       break;
 
     case ParseNodeKind::OrExpr:
+    case ParseNodeKind::CoalesceExpr:
     case ParseNodeKind::AndExpr:
-      if (!emitLogical(&pn->as<ListNode>())) {
+      if (!emitShortCircuit(&pn->as<ListNode>())) {
         return false;
       }
       break;
@@ -9495,15 +9512,14 @@ bool BytecodeEmitter::emitTree(
       break;
 
     case ParseNodeKind::BigIntExpr:
-      if (!emitBigIntOp(pn->as<BigIntLiteral>().box()->value())) {
+      if (!emitBigIntOp(&pn->as<BigIntLiteral>())) {
         return false;
       }
       break;
 
     case ParseNodeKind::RegExpExpr: {
-      ObjectBox* obj = pn->as<RegExpLiteral>().objbox();
       uint32_t index;
-      if (!perScriptData().gcThingList().append(obj, &index)) {
+      if (!perScriptData().gcThingList().append(&pn->as<RegExpLiteral>(), &index)) {
         return false;
       }
       if (!emitRegExp(index)) {
@@ -9635,7 +9651,7 @@ bool BytecodeEmitter::newSrcNote(SrcNoteType type, unsigned* indexp) {
   bytecodeSection().setLastNoteOffset(offset);
   if (delta >= SN_DELTA_LIMIT) {
     do {
-      ptrdiff_t xdelta = Min(delta, SN_XDELTA_MASK);
+      ptrdiff_t xdelta = std::min(delta, SN_XDELTA_MASK);
       SN_MAKE_XDELTA(&notes[index], xdelta);
       delta -= xdelta;
       if (!AllocSrcNote(cx, notes, &index)) {

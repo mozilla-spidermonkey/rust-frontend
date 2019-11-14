@@ -812,8 +812,10 @@ SearchEngine.prototype = {
   _updateURL: null,
   // The url to check for a new icon
   _iconUpdateURL: null,
-  /* The extension ID if added by an extension. */
+  // The extension ID if added by an extension.
   _extensionID: null,
+  // The locale, or "DEFAULT", if required.
+  _locale: null,
   // Built in search engine extensions.
   _isBuiltin: false,
 
@@ -1207,12 +1209,6 @@ SearchEngine.prototype = {
     );
     // Only accept remote icons from http[s] or ftp
     switch (uri.scheme) {
-      case "resource":
-      case "chrome":
-        // We only allow chrome and resource icon URLs for built-in search engines
-        if (!this._isDefault) {
-          return;
-        }
       // Fall through to the data case
       case "moz-extension":
       case "data":
@@ -1403,6 +1399,7 @@ SearchEngine.prototype = {
    */
   _initFromMetadata(engineName, params) {
     this._extensionID = params.extensionID;
+    this._locale = params.locale;
     this._isBuiltin = !!params.isBuiltin;
 
     this._initEngineURLFromMetaData(SearchUtils.URL_TYPE.SEARCH, {
@@ -1645,7 +1642,7 @@ SearchEngine.prototype = {
           break;
       }
     }
-    if (!this.name || this._urls.length == 0) {
+    if (!this.name || !this._urls.length) {
       SearchUtils.fail("_parse: No name, or missing URL!", Cr.NS_ERROR_FAILURE);
     }
     if (!this.supportsResponseType(SearchUtils.URL_TYPE.SEARCH)) {

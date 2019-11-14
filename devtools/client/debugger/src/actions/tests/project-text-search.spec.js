@@ -39,8 +39,8 @@ const sources = {
 
 const threadFront = {
   sourceContents: async ({ source }) => sources[source],
-  getBreakpointPositions: async () => ({}),
-  getBreakableLines: async () => [],
+  getSourceActorBreakpointPositions: async () => ({}),
+  getSourceActorBreakableLines: async () => [],
 };
 
 describe("project text search", () => {
@@ -133,7 +133,7 @@ describe("project text search", () => {
 
   it("should set the status properly", () => {
     const { dispatch, getState, cx } = createStore();
-    const mockStatus = "Fetching";
+    const mockStatus = "FETCHING";
     dispatch(actions.updateSearchStatus(cx, mockStatus));
     expect(getTextSearchStatus(getState())).toEqual(mockStatus);
   });

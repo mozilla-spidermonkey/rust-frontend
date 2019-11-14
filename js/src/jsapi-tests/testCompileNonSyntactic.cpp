@@ -4,10 +4,10 @@
 
 #include "mozilla/Utf8.h"  // mozilla::Utf8Unit
 
-#include "gc/GCInternals.h"
 #include "js/CompilationAndEvaluation.h"  // JS::Compile{,ForNonSyntacticScope}{,DontInflate}
 #include "js/SourceText.h"                // JS::Source{Ownership,Text}
 #include "jsapi-tests/tests.h"
+#include "vm/HelperThreads.h"
 #include "vm/Monitor.h"
 #include "vm/MutexIDs.h"
 

@@ -8,7 +8,7 @@
 #include "mozilla/dom/MediaElementAudioSourceNodeBinding.h"
 #include "AudioDestinationNode.h"
 #include "nsIScriptError.h"
-#include "AudioNodeStream.h"
+#include "AudioNodeTrack.h"
 
 namespace mozilla {
 namespace dom {
@@ -54,7 +54,7 @@ MediaElementAudioSourceNode::Create(
       new MediaElementAudioSourceNode(&aAudioContext, aOptions.mMediaElement);
 
   RefPtr<DOMMediaStream> stream = aOptions.mMediaElement->CaptureAudio(
-      aRv, aAudioContext.Destination()->Stream()->Graph());
+      aRv, aAudioContext.Destination()->Track()->Graph());
   if (aRv.Failed()) {
     return nullptr;
   }
@@ -75,6 +75,11 @@ JSObject* MediaElementAudioSourceNode::WrapObject(
 
 void MediaElementAudioSourceNode::ListenForAllowedToPlay(
     const MediaElementAudioSourceOptions& aOptions) {
+  if (!GetAbstractMainThread()) {
+    // The AudioContext must have been closed. It won't be able to start anyway.
+    return;
+  }
+
   aOptions.mMediaElement->GetAllowedToPlayPromise()
       ->Then(
           GetAbstractMainThread(), __func__,

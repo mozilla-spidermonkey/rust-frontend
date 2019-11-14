@@ -97,7 +97,7 @@ class GlobalHelperThreadState {
   typedef mozilla::LinkedList<ParseTask> ParseTaskList;
   typedef Vector<UniquePtr<SourceCompressionTask>, 0, SystemAllocPolicy>
       SourceCompressionTaskVector;
-  typedef Vector<GCParallelTask*, 0, SystemAllocPolicy> GCParallelTaskVector;
+  typedef mozilla::LinkedList<GCParallelTask> GCParallelTaskList;
   typedef Vector<PromiseHelperTask*, 0, SystemAllocPolicy>
       PromiseHelperTaskVector;
   typedef Vector<JSContext*, 0, SystemAllocPolicy> ContextVector;
@@ -145,7 +145,7 @@ class GlobalHelperThreadState {
   SourceCompressionTaskVector compressionFinishedList_;
 
   // GC tasks needing to be done in parallel.
-  GCParallelTaskVector gcParallelWorklist_;
+  GCParallelTaskList gcParallelWorklist_;
 
   // Global list of JSContext for GlobalHelperThreadState to use.
   ContextVector helperContexts_;
@@ -274,7 +274,7 @@ class GlobalHelperThreadState {
     return compressionFinishedList_;
   }
 
-  GCParallelTaskVector& gcParallelWorklist(const AutoLockHelperThreadState&) {
+  GCParallelTaskList& gcParallelWorklist(const AutoLockHelperThreadState&) {
     return gcParallelWorklist_;
   }
 
@@ -548,7 +548,6 @@ bool StartOffThreadIonCompile(jit::IonBuilder* builder,
 bool StartOffThreadIonFree(jit::IonBuilder* builder,
                            const AutoLockHelperThreadState& lock);
 
-struct AllCompilations {};
 struct ZonesInState {
   JSRuntime* runtime;
   JS::shadow::Zone::GCState state;
@@ -559,39 +558,37 @@ struct CompilationsUsingNursery {
 
 using CompilationSelector =
     mozilla::Variant<JSScript*, JS::Realm*, Zone*, ZonesInState, JSRuntime*,
-                     CompilationsUsingNursery, AllCompilations>;
+                     CompilationsUsingNursery>;
 
 /*
  * Cancel scheduled or in progress Ion compilations.
  */
-void CancelOffThreadIonCompile(const CompilationSelector& selector,
-                               bool discardLazyLinkList);
+void CancelOffThreadIonCompile(const CompilationSelector& selector);
 
 inline void CancelOffThreadIonCompile(JSScript* script) {
-  CancelOffThreadIonCompile(CompilationSelector(script), true);
+  CancelOffThreadIonCompile(CompilationSelector(script));
 }
 
 inline void CancelOffThreadIonCompile(JS::Realm* realm) {
-  CancelOffThreadIonCompile(CompilationSelector(realm), true);
+  CancelOffThreadIonCompile(CompilationSelector(realm));
 }
 
 inline void CancelOffThreadIonCompile(Zone* zone) {
-  CancelOffThreadIonCompile(CompilationSelector(zone), true);
+  CancelOffThreadIonCompile(CompilationSelector(zone));
 }
 
 inline void CancelOffThreadIonCompile(JSRuntime* runtime,
                                       JS::shadow::Zone::GCState state) {
-  CancelOffThreadIonCompile(CompilationSelector(ZonesInState{runtime, state}),
-                            true);
+  CancelOffThreadIonCompile(CompilationSelector(ZonesInState{runtime, state}));
 }
 
 inline void CancelOffThreadIonCompile(JSRuntime* runtime) {
-  CancelOffThreadIonCompile(CompilationSelector(runtime), true);
+  CancelOffThreadIonCompile(CompilationSelector(runtime));
 }
 
 inline void CancelOffThreadIonCompilesUsingNurseryPointers(JSRuntime* runtime) {
   CancelOffThreadIonCompile(
-      CompilationSelector(CompilationsUsingNursery{runtime}), true);
+      CompilationSelector(CompilationsUsingNursery{runtime}));
 }
 
 #ifdef DEBUG

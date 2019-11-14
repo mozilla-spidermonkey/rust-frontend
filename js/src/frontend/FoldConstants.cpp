@@ -338,6 +338,7 @@ restart:
     case ParseNodeKind::PostIncrementExpr:
     case ParseNodeKind::PreDecrementExpr:
     case ParseNodeKind::PostDecrementExpr:
+    case ParseNodeKind::CoalesceExpr:
     case ParseNodeKind::OrExpr:
     case ParseNodeKind::AndExpr:
     case ParseNodeKind::BitOrExpr:
@@ -499,8 +500,7 @@ static Truthiness Boolish(ParseNode* pn) {
                  : Falsy;
 
     case ParseNodeKind::BigIntExpr:
-      return (pn->as<BigIntLiteral>().box()->value()->isZero()) ? Falsy
-                                                                : Truthy;
+      return (pn->as<BigIntLiteral>().isZero()) ? Falsy : Truthy;
 
     case ParseNodeKind::StringExpr:
     case ParseNodeKind::TemplateStringExpr:
@@ -698,9 +698,11 @@ static bool FoldAndOr(JSContext* cx, ParseNode** nodePtr) {
   ListNode* node = &(*nodePtr)->as<ListNode>();
 
   MOZ_ASSERT(node->isKind(ParseNodeKind::AndExpr) ||
+             node->isKind(ParseNodeKind::CoalesceExpr) ||
              node->isKind(ParseNodeKind::OrExpr));
 
-  bool isOrNode = node->isKind(ParseNodeKind::OrExpr);
+  bool isOrNode = node->isKind(ParseNodeKind::OrExpr) ||
+                  node->isKind(ParseNodeKind::CoalesceExpr);
   ParseNode** elem = node->unsafeHeadReference();
   do {
     Truthiness t = Boolish(*elem);

@@ -16,7 +16,6 @@ class nsDocShellLoadState;
 
 webidl BrowsingContext;
 interface mozIDOMWindowProxy;
-interface nsIDOMWindow;
 interface nsISimpleEnumerator;
 interface nsIWebBrowserChrome;
 interface nsIDocShellTreeItem;
@@ -56,7 +55,7 @@ interface nsPIWindowWatcher : nsISupports
              aUrl in it (if aUrl is not null) and return it.
       @param aFeatures window features from JS window.open. can be null.
       @param aCalledFromScript true if we were called from script.
-      @param aDialog use dialog defaults (see nsIDOMWindow::openDialog)
+      @param aDialog use dialog defaults (see nsGlobalWindowOuter::OpenInternal)
       @param aNavigate true if we should navigate the new window to the
              specified URL.
       @param aArgs Window argument
@@ -123,28 +122,5 @@ interface nsPIWindowWatcher : nsISupports
                                        in float aOpenerFullZoom,
                                        in unsigned long long aNextRemoteTabId,
                                        in boolean aForceNoOpener);
-
-  /**
-   * Find a named docshell tree item amongst all windows registered
-   * with the window watcher.  This may be a subframe in some window,
-   * for example.
-   *
-   * @param aName the name of the window.  Must not be null.
-   * @param aRequestor the tree item immediately making the request.
-   *        We should make sure to not recurse down into its findItemWithName
-   *        method.
-   * @param aOriginalRequestor the original treeitem that made the request.
-   *        Used for security checks.
-   * @return the tree item with aName as the name, or null if there
-   *         isn't one.  "Special" names, like _self, _top, etc, will be
-   *         treated specially only if aRequestor is null; in that case they
-   *         will be resolved relative to the first window the windowwatcher
-   *         knows about.
-   * @see findItemWithName methods on nsIDocShellTreeItem and
-   *      nsIDocShellTreeOwner
-   */
-  nsIDocShellTreeItem findItemWithName(in AString aName,
-                                       in nsIDocShellTreeItem aRequestor,
-                                       in nsIDocShellTreeItem aOriginalRequestor);
 };
 

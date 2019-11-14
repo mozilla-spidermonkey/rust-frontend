@@ -33,7 +33,7 @@ inline StackTypeSet* JitScript::thisTypes(const AutoSweepJitScript& sweep,
 
 inline StackTypeSet* JitScript::argTypes(const AutoSweepJitScript& sweep,
                                          JSScript* script, unsigned i) {
-  MOZ_ASSERT(i < script->functionNonDelazifying()->nargs());
+  MOZ_ASSERT(i < script->function()->nargs());
   return typeArray(sweep) + script->numBytecodeTypeSets() + 1 /* this */ + i;
 }
 
@@ -103,7 +103,10 @@ inline bool JitScript::typesNeedsSweep(Zone* zone) const {
 
 inline bool JSScript::ensureHasJitScript(JSContext* cx,
                                          js::jit::AutoKeepJitScripts&) {
-  return jitScript() || createJitScript(cx);
+  if (hasJitScript()) {
+    return true;
+  }
+  return createJitScript(cx);
 }
 
 #endif /* jit_JitScript_inl_h */

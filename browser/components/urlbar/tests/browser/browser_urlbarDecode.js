@@ -8,11 +8,6 @@
 // the urlbar also shows the URLs embedded in action URIs unescaped.  See bug
 // 1233672.
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  UrlbarResult: "resource:///modules/UrlbarResult.jsm",
-  UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
-});
-
 add_task(async function injectJSON() {
   let inputStrs = [
     'http://example.com/ ", "url": "bar',
@@ -59,11 +54,10 @@ add_task(async function actionURILosslessDecode() {
 
   // At this point the heuristic result is selected but the urlbar's value is
   // simply `url`.  Key down and back around until the heuristic result is
-  // selected again, and at that point the urlbar's value should be a visiturl
-  // moz-action.
+  // selected again.
   do {
     EventUtils.synthesizeKey("KEY_ArrowDown");
-  } while (UrlbarTestUtils.getSelectedIndex(window) != 0);
+  } while (UrlbarTestUtils.getSelectedRowIndex(window) != 0);
 
   let result = await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
 
@@ -94,7 +88,9 @@ add_task(async function test_resultsDisplayDecoded() {
   let result = await UrlbarTestUtils.getDetailsOfResultAt(window, 1);
   Assert.equal(
     result.displayed.url,
-    "example.com/\u9875",
+    UrlbarPrefs.get("view.stripHttps")
+      ? "http://example.com/\u9875"
+      : "example.com/\u9875",
     "Should be displayed the correctly unescaped URL"
   );
 });

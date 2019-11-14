@@ -70,16 +70,22 @@ class NewRenderer : public RendererEvent {
     *mUseDComp = compositor->UseDComp();
     *mUseTripleBuffering = compositor->UseTripleBuffering();
 
+    bool allow_texture_swizzling = gfx::gfxVars::UseGLSwizzle();
     bool isMainWindow = true;  // TODO!
     bool supportLowPriorityTransactions = isMainWindow;
     bool supportPictureCaching = isMainWindow;
     wr::Renderer* wrRenderer = nullptr;
     if (!wr_window_new(
             aWindowId, mSize.width, mSize.height,
-            supportLowPriorityTransactions,
+            supportLowPriorityTransactions, allow_texture_swizzling,
             StaticPrefs::gfx_webrender_picture_caching() &&
                 supportPictureCaching,
-            StaticPrefs::gfx_webrender_start_debug_server(), compositor->gl(),
+#ifdef NIGHTLY_BUILD
+            StaticPrefs::gfx_webrender_start_debug_server(),
+#else
+            false,
+#endif
+            compositor->gl(), compositor->SurfaceOriginIsTopLeft(),
             aRenderThread.GetProgramCache()
                 ? aRenderThread.GetProgramCache()->Raw()
                 : nullptr,
@@ -88,7 +94,12 @@ class NewRenderer : public RendererEvent {
                 : nullptr,
             aRenderThread.ThreadPool().Raw(), &WebRenderMallocSizeOf,
             &WebRenderMallocEnclosingSizeOf, (uint32_t)wr::RenderRoot::Default,
-            mDocHandle, &wrRenderer, mMaxTextureSize)) {
+            compositor->ShouldUseNativeCompositor() ? compositor.get()
+                                                    : nullptr,
+            compositor->GetMaxUpdateRects(),
+            compositor->GetMaxPartialPresentRects(), mDocHandle, &wrRenderer,
+            mMaxTextureSize,
+            StaticPrefs::gfx_webrender_enable_gpu_markers_AtStartup())) {
       // wr_window_new puts a message into gfxCriticalNote if it returns false
       return;
     }
@@ -578,6 +589,10 @@ void WebRenderAPI::Capture() {
   wr_api_capture(mDocHandle, path, bits);
 }
 
+void WebRenderAPI::SetTransactionLogging(bool aValue) {
+  wr_api_set_transaction_logging(mDocHandle, aValue);
+}
+
 void WebRenderAPI::SetCompositionRecorder(
     UniquePtr<layers::WebRenderCompositionRecorder> aRecorder) {
   class SetCompositionRecorderEvent final : public RendererEvent {
@@ -607,7 +622,8 @@ void WebRenderAPI::SetCompositionRecorder(
   RunOnRenderThread(std::move(event));
 }
 
-void WebRenderAPI::WriteCollectedFrames() {
+RefPtr<WebRenderAPI::WriteCollectedFramesPromise>
+WebRenderAPI::WriteCollectedFrames() {
   class WriteCollectedFramesEvent final : public RendererEvent {
    public:
     explicit WriteCollectedFramesEvent() {
@@ -618,11 +634,58 @@ void WebRenderAPI::WriteCollectedFrames() {
 
     void Run(RenderThread& aRenderThread, WindowId aWindowId) override {
       aRenderThread.WriteCollectedFramesForWindow(aWindowId);
+      mPromise.Resolve(true, __func__);
     }
+
+    RefPtr<WebRenderAPI::WriteCollectedFramesPromise> GetPromise() {
+      return mPromise.Ensure(__func__);
+    }
+
+   private:
+    MozPromiseHolder<WebRenderAPI::WriteCollectedFramesPromise> mPromise;
   };
 
   auto event = MakeUnique<WriteCollectedFramesEvent>();
+  auto promise = event->GetPromise();
+
   RunOnRenderThread(std::move(event));
+  return promise;
+}
+
+RefPtr<WebRenderAPI::GetCollectedFramesPromise>
+WebRenderAPI::GetCollectedFrames() {
+  class GetCollectedFramesEvent final : public RendererEvent {
+   public:
+    explicit GetCollectedFramesEvent() {
+      MOZ_COUNT_CTOR(GetCollectedFramesEvent);
+    }
+
+    ~GetCollectedFramesEvent() { MOZ_COUNT_DTOR(GetCollectedFramesEvent); };
+
+    void Run(RenderThread& aRenderThread, WindowId aWindowId) override {
+      Maybe<layers::CollectedFrames> frames =
+          aRenderThread.GetCollectedFramesForWindow(aWindowId);
+
+      if (frames) {
+        mPromise.Resolve(std::move(*frames), __func__);
+      } else {
+        mPromise.Reject(NS_ERROR_UNEXPECTED, __func__);
+      }
+    }
+
+    RefPtr<WebRenderAPI::GetCollectedFramesPromise> GetPromise() {
+      return mPromise.Ensure(__func__);
+    }
+
+   private:
+    MozPromiseHolder<WebRenderAPI::GetCollectedFramesPromise> mPromise;
+  };
+
+  auto event = MakeUnique<GetCollectedFramesEvent>();
+  auto promise = event->GetPromise();
+
+  RunOnRenderThread(std::move(event));
+  return promise;
 }
 
 void TransactionBuilder::Clear() { wr_resource_updates_clear(mTxn); }
@@ -1038,6 +1101,25 @@ void DisplayListBuilder::PushClearRectWithComplexRegion(
                                          &spaceAndClip);
 }
 
+void DisplayListBuilder::PushBackdropFilter(
+    const wr::LayoutRect& aBounds, const wr::ComplexClipRegion& aRegion,
+    const nsTArray<wr::FilterOp>& aFilters,
+    const nsTArray<wr::WrFilterData>& aFilterDatas, bool aIsBackfaceVisible) {
+  wr::LayoutRect clip = MergeClipLeaf(aBounds);
+  WRDL_LOG("PushBackdropFilter b=%s c=%s\n", mWrState,
+           Stringify(aBounds).c_str(), Stringify(clip).c_str());
+
+  AutoTArray<wr::ComplexClipRegion, 1> clips;
+  clips.AppendElement(aRegion);
+  auto clipId = DefineClip(Nothing(), aBounds, &clips, nullptr);
+  auto spaceAndClip = WrSpaceAndClip{mCurrentSpaceAndClipChain.space, clipId};
+
+  wr_dp_push_backdrop_filter_with_parent_clip(
+      mWrState, aBounds, clip, aIsBackfaceVisible, &spaceAndClip,
+      aFilters.Elements(), aFilters.Length(), aFilterDatas.Elements(),
+      aFilterDatas.Length());
+}
+
 void DisplayListBuilder::PushLinearGradient(
     const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
     bool aIsBackfaceVisible, const wr::LayoutPoint& aStartPoint,
@@ -1066,14 +1148,15 @@ void DisplayListBuilder::PushImage(
     const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
     bool aIsBackfaceVisible, wr::ImageRendering aFilter, wr::ImageKey aImage,
     bool aPremultipliedAlpha, const wr::ColorF& aColor) {
-  wr::LayoutSize size;
-  size.width = aBounds.size.width;
-  size.height = aBounds.size.height;
-  PushImage(aBounds, aClip, aIsBackfaceVisible, size, size, aFilter, aImage,
-            aPremultipliedAlpha, aColor);
+  wr::LayoutRect clip = MergeClipLeaf(aClip);
+  WRDL_LOG("PushImage b=%s cl=%s\n", mWrState, Stringify(aBounds).c_str(),
+           Stringify(clip).c_str());
+  wr_dp_push_image(mWrState, aBounds, clip, aIsBackfaceVisible,
+                   &mCurrentSpaceAndClipChain, aFilter, aImage,
+                   aPremultipliedAlpha, aColor);
 }
 
-void DisplayListBuilder::PushImage(
+void DisplayListBuilder::PushRepeatingImage(
     const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
     bool aIsBackfaceVisible, const wr::LayoutSize& aStretchSize,
     const wr::LayoutSize& aTileSpacing, wr::ImageRendering aFilter,
@@ -1082,9 +1165,9 @@ void DisplayListBuilder::PushImage(
   WRDL_LOG("PushImage b=%s cl=%s s=%s t=%s\n", mWrState,
            Stringify(aBounds).c_str(), Stringify(clip).c_str(),
            Stringify(aStretchSize).c_str(), Stringify(aTileSpacing).c_str());
-  wr_dp_push_image(mWrState, aBounds, clip, aIsBackfaceVisible,
-                   &mCurrentSpaceAndClipChain, aStretchSize, aTileSpacing,
-                   aFilter, aImage, aPremultipliedAlpha, aColor);
+  wr_dp_push_repeating_image(
+      mWrState, aBounds, clip, aIsBackfaceVisible, &mCurrentSpaceAndClipChain,
+      aStretchSize, aTileSpacing, aFilter, aImage, aPremultipliedAlpha, aColor);
 }
 
 void DisplayListBuilder::PushYCbCrPlanarImage(

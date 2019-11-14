@@ -150,16 +150,7 @@ function ciphertextHMAC(keyBundle, id, IV, ciphertext) {
  * @returns {string} sha256 of the user's kB as a hex string
  */
 const getKBHash = async function(fxaService) {
-  const signedInUser = await fxaService.getSignedInUser();
-  if (!signedInUser) {
-    throw new Error("User isn't signed in!");
-  }
-
-  if (!signedInUser.kExtKbHash) {
-    throw new Error("User doesn't have KbHash??");
-  }
-
-  return signedInUser.kExtKbHash;
+  return (await fxaService.keys.getKeys()).kExtKbHash;
 };
 
 /**
@@ -288,18 +279,12 @@ class KeyRingEncryptionRemoteTransformer extends EncryptionRemoteTransformer {
     throwIfNoFxA(this._fxaService, "encrypting chrome.storage.sync records");
     const self = this;
     return (async function() {
-      const user = await self._fxaService.getSignedInUser();
-      // FIXME: we should permit this if the user is self-hosting
-      // their storage
-      if (!user) {
-        throw new Error("user isn't signed in to FxA; can't sync");
-      }
-
-      if (!user.kExtSync) {
+      let keys = await self._fxaService.keys.getKeys();
+      if (!keys.kExtSync) {
         throw new Error("user doesn't have kExtSync");
       }
 
-      return BulkKeyBundle.fromHexKey(user.kExtSync);
+      return BulkKeyBundle.fromHexKey(keys.kExtSync);
     })();
   }
   // Pass through the kbHash field from the unencrypted record. If
@@ -819,7 +804,7 @@ class ExtensionStorageSync {
     const extensions = await this.getExtensions();
     const extIds = Array.from(extensions, extension => extension.id);
     log.debug(`Syncing extension settings for ${JSON.stringify(extIds)}`);
-    if (extIds.length == 0) {
+    if (!extIds.length) {
       // No extensions to sync. Get out.
       return;
     }
@@ -852,8 +837,8 @@ class ExtensionStorageSync {
 
   async sync(extension, collection) {
     throwIfNoFxA(this._fxaService, "syncing chrome.storage.sync");
-    const signedInUser = await this._fxaService.getSignedInUser();
-    if (!signedInUser) {
+    const isSignedIn = !!(await this._fxaService.getSignedInUser());
+    if (!isSignedIn) {
       // FIXME: this should support syncing to self-hosted
       log.info("User was not signed into FxA; cannot sync");
       throw new Error("Not signed in to FxA");
@@ -908,7 +893,7 @@ class ExtensionStorageSync {
         newValue: accepted.data,
       };
     }
-    if (Object.keys(changes).length > 0) {
+    if (Object.keys(changes).length) {
       this.notifyListeners(extension, changes);
     }
     log.info(`Successfully synced '${collection.name}'`);
@@ -1059,7 +1044,7 @@ class ExtensionStorageSync {
     };
     await this.cryptoCollection.upsert(newRecord);
     const result = await this._syncKeyRing(newRecord);
-    if (result.resolved.length != 0) {
+    if (result.resolved.length) {
       // We had a conflict which was automatically resolved. We now
       // have a new keyring which might have keys for the
       // collections. Recurse.
@@ -1075,8 +1060,8 @@ class ExtensionStorageSync {
    */
   async updateKeyRingKB() {
     throwIfNoFxA(this._fxaService, 'use of chrome.storage.sync "keyring"');
-    const signedInUser = await this._fxaService.getSignedInUser();
-    if (!signedInUser) {
+    const isSignedIn = !!(await this._fxaService.getSignedInUser());
+    if (!isSignedIn) {
       // Although this function is meant to be called on login,
       // it's not unreasonable to check any time, even if we aren't
       // logged in.
@@ -1142,7 +1127,7 @@ class ExtensionStorageSync {
       // UUID. If so, reset our sync status, so that we'll reupload
       // everything.
       const result = await this.cryptoCollection.sync(this);
-      if (result.resolved.length > 0) {
+      if (result.resolved.length) {
         // Automatically-resolved conflict. It should
         // be for the keys record.
         const resolutionIds = result.resolved.map(resolution => resolution.id);
@@ -1319,7 +1304,7 @@ class ExtensionStorageSync {
       },
       { preloadIds: ids }
     );
-    if (Object.keys(changes).length > 0) {
+    if (Object.keys(changes).length) {
       this.notifyListeners(extension, changes);
     }
     const histogram = this._telemetry.getKeyedHistogramById(

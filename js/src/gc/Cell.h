@@ -48,6 +48,10 @@ struct Chunk;
 class StoreBuffer;
 class TenuredCell;
 
+#ifdef DEBUG
+extern bool CurrentThreadIsGCMarking();
+#endif
+
 // [SMDOC] GC Cell
 //
 // A GC cell is the base class for all GC things. All types allocated on the GC
@@ -65,16 +69,16 @@ struct alignas(gc::CellAlignBytes) Cell {
  public:
   // The low bits of the first word of each Cell are reserved for GC flags.
   static constexpr int ReservedBits = 2;
-  static constexpr uintptr_t RESERVED_MASK = JS_BITMASK(ReservedBits);
+  static constexpr uintptr_t RESERVED_MASK = BitMask(ReservedBits);
 
   // Indicates if the cell is currently a RelocationOverlay
-  static constexpr uintptr_t FORWARD_BIT = JS_BIT(0);
+  static constexpr uintptr_t FORWARD_BIT = Bit(0);
 
   // When a Cell is in the nursery, this will indicate if it is a JSString (1)
   // or JSObject (0). When not in nursery, this bit is still reserved for
   // JSString to use as JSString::NON_ATOM bit. This may be removed by Bug
   // 1376646.
-  static constexpr uintptr_t JSSTRING_BIT = JS_BIT(1);
+  static constexpr uintptr_t JSSTRING_BIT = Bit(1);
 
   MOZ_ALWAYS_INLINE bool isTenured() const { return !IsInsideNursery(this); }
   MOZ_ALWAYS_INLINE const TenuredCell& asTenured() const;
@@ -181,10 +185,10 @@ class TenuredCell : public Cell {
   inline bool isInsideZone(JS::Zone* zone) const;
 
   MOZ_ALWAYS_INLINE JS::shadow::Zone* shadowZone() const {
-    return JS::shadow::Zone::asShadowZone(zone());
+    return JS::shadow::Zone::from(zone());
   }
   MOZ_ALWAYS_INLINE JS::shadow::Zone* shadowZoneFromAnyThread() const {
-    return JS::shadow::Zone::asShadowZone(zoneFromAnyThread());
+    return JS::shadow::Zone::from(zoneFromAnyThread());
   }
 
   template <class T>
@@ -292,7 +296,7 @@ inline JS::TraceKind Cell::getTraceKind() const {
 }
 
 /* static */ MOZ_ALWAYS_INLINE bool Cell::needWriteBarrierPre(JS::Zone* zone) {
-  return JS::shadow::Zone::asShadowZone(zone)->needsIncrementalBarrier();
+  return JS::shadow::Zone::from(zone)->needsIncrementalBarrier();
 }
 
 /* static */ MOZ_ALWAYS_INLINE TenuredCell* TenuredCell::fromPointer(
@@ -351,7 +355,7 @@ JS::TraceKind TenuredCell::getTraceKind() const {
 
 JS::Zone* TenuredCell::zone() const {
   JS::Zone* zone = arena()->zone;
-  MOZ_ASSERT(CurrentThreadCanAccessZone(zone));
+  MOZ_ASSERT(CurrentThreadIsGCMarking() || CurrentThreadCanAccessZone(zone));
   return zone;
 }
 
@@ -525,6 +529,11 @@ class CellWithLengthAndFlags : public BaseCell {
     uintptr_t data = flags_;
     setLengthAndFlags(len, flags);
     return data;
+  }
+
+  // Returns the offset of flags_. JIT code should use offsetOfFlags below.
+  static constexpr size_t offsetOfRawFlagsField() {
+    return offsetof(CellWithLengthAndFlags, flags_);
   }
 
   // Offsets for direct field from jit code. A number of places directly

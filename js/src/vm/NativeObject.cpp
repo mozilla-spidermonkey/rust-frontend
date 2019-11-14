@@ -10,17 +10,23 @@
 #include "mozilla/Casting.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/Maybe.h"
+
+#include <algorithm>
 
 #include "debugger/DebugAPI.h"
 #include "gc/Marking.h"
 #include "jit/BaselineIC.h"
 #include "js/CharacterEncoding.h"
+#include "js/Result.h"
 #include "js/Value.h"
+#include "util/Memory.h"
 #include "vm/EqualityOperations.h"  // js::SameValue
 #include "vm/TypedArrayObject.h"
 
 #include "gc/Nursery-inl.h"
 #include "vm/ArrayObject-inl.h"
+#include "vm/BytecodeLocation-inl.h"
 #include "vm/EnvironmentObject-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
@@ -531,7 +537,7 @@ DenseElementResult NativeObject::maybeDensifySparseElements(
       if (shape->attributes() == JSPROP_ENUMERATE &&
           shape->hasDefaultGetter() && shape->hasDefaultSetter()) {
         numDenseElements++;
-        newInitializedLength = Max(newInitializedLength, index + 1);
+        newInitializedLength = std::max(newInitializedLength, index + 1);
       } else {
         /*
          * For simplicity, only densify the object if all indexed
@@ -697,7 +703,7 @@ bool NativeObject::tryUnshiftDenseElements(uint32_t count) {
 
     // Move more elements than we need, so that other unshift calls will be
     // fast. We just have to make sure we don't exceed unusedCapacity.
-    toShift = Min(toShift + unusedCapacity / 2, unusedCapacity);
+    toShift = std::min(toShift + unusedCapacity / 2, unusedCapacity);
 
     // Ensure |numShifted + toShift| does not exceed MaxShiftedElements.
     if (numShifted + toShift > ObjectElements::MaxShiftedElements) {
@@ -1289,9 +1295,8 @@ static MOZ_ALWAYS_INLINE void UpdateShapeTypeAndValueForWritableDataProp(
 
 void js::AddPropertyTypesAfterProtoChange(JSContext* cx, NativeObject* obj,
                                           ObjectGroup* oldGroup) {
-  AutoSweepObjectGroup sweepObjGroup(obj->group());
   MOZ_ASSERT(obj->group() != oldGroup);
-  MOZ_ASSERT(!obj->group()->unknownProperties(sweepObjGroup));
+  MOZ_ASSERT(!obj->group()->unknownPropertiesDontCheckGeneration());
 
   AutoSweepObjectGroup sweepOldGroup(oldGroup);
   if (oldGroup->unknownProperties(sweepOldGroup)) {
@@ -1701,10 +1706,12 @@ bool js::NativeDefineProperty(JSContext* cx, HandleNativeObject obj,
     }
   } else if (obj->is<TypedArrayObject>()) {
     // 9.4.5.3 step 3. Indexed properties of typed arrays are special.
-    uint64_t index;
-    if (IsTypedArrayIndex(id, &index)) {
+    mozilla::Maybe<uint64_t> index;
+    JS_TRY_VAR_OR_RETURN_FALSE(cx, index, IsTypedArrayIndex(cx, id));
+
+    if (index) {
       MOZ_ASSERT(!cx->isHelperThreadContext());
-      return DefineTypedArrayElement(cx, obj, index, desc_, result);
+      return DefineTypedArrayElement(cx, obj, index.value(), desc_, result);
     }
   } else if (obj->is<ArgumentsObject>()) {
     Rooted<ArgumentsObject*> argsobj(cx, &obj->as<ArgumentsObject>());
@@ -1740,7 +1747,9 @@ bool js::NativeDefineProperty(JSContext* cx, HandleNativeObject obj,
     // We are being called from a resolve or enumerate hook to reify a
     // lazily-resolved property. To avoid reentering the resolve hook and
     // recursing forever, skip the resolve hook when doing this lookup.
-    NativeLookupOwnPropertyNoResolve(cx, obj, id, &prop);
+    if (!NativeLookupOwnPropertyNoResolve(cx, obj, id, &prop)) {
+      return false;
+    }
   } else {
     if (!NativeLookupOwnProperty<CanGC>(cx, obj, id, &prop)) {
       return false;
@@ -2022,11 +2031,13 @@ static bool DefineNonexistentProperty(JSContext* cx, HandleNativeObject obj,
     }
   } else if (obj->is<TypedArrayObject>()) {
     // 9.4.5.5 step 2. Indexed properties of typed arrays are special.
-    uint64_t index;
-    if (IsTypedArrayIndex(id, &index)) {
+    mozilla::Maybe<uint64_t> index;
+    JS_TRY_VAR_OR_RETURN_FALSE(cx, index, IsTypedArrayIndex(cx, id));
+
+    if (index) {
       // This method is only called for non-existent properties, which
       // means any absent indexed property must be out of range.
-      MOZ_ASSERT(index >= obj->as<TypedArrayObject>().length());
+      MOZ_ASSERT(index.value() >= obj->as<TypedArrayObject>().length());
 
       // Steps 1-2 are enforced by the caller.
 
@@ -2065,7 +2076,9 @@ static bool DefineNonexistentProperty(JSContext* cx, HandleNativeObject obj,
 
 #ifdef DEBUG
   Rooted<PropertyResult> prop(cx);
-  NativeLookupOwnPropertyNoResolve(cx, obj, id, &prop);
+  if (!NativeLookupOwnPropertyNoResolve(cx, obj, id, &prop)) {
+    return false;
+  }
   MOZ_ASSERT(!prop, "didn't expect to find an existing property");
 #endif
 
@@ -2333,56 +2346,67 @@ bool js::NativeGetExistingProperty(JSContext* cx, HandleObject receiver,
 
 /*
  * Given pc pointing after a property accessing bytecode, return true if the
- * access is "property-detecting" -- that is, if we shouldn't warn about it
- * even if no such property is found and strict warnings are enabled.
+ * access is "property-detecting". Caller will use this value to determine
+ * whether or not to warn that an undefined object property *may* be used in
+ * a way that the programmer does not expect. In other words, we do not want
+ * to warn the programmer if he/she/they are doing something like
+ *
+ * if (obj.property) { }
+ * or
+ * if (obj.property == undefined) {}
+ * or
+ * if (obj.property == null) {}
  */
 static bool Detecting(JSContext* cx, JSScript* script, jsbytecode* pc) {
   MOZ_ASSERT(script->containsPC(pc));
 
-  // Skip jump target and dup opcodes.
-  while (pc < script->codeEnd() &&
-         (BytecodeIsJumpTarget(JSOp(*pc)) || JSOp(*pc) == JSOP_DUP))
-    pc = GetNextPc(pc);
+  BytecodeIterator scriptIterator =
+      BytecodeIterator(BytecodeLocation(script, pc));
+  BytecodeIterator endIter = BytecodeIterator(script->endLocation());
 
-  MOZ_ASSERT(script->containsPC(pc));
-  if (pc >= script->codeEnd()) {
-    return false;
+  // Skip over jump targets and duplication operations.
+  while (scriptIterator->isJumpTarget() || scriptIterator->is(JSOP_DUP)) {
+    if (++scriptIterator == endIter) {
+      // If we are at the end of the script, we cannot be detecting
+      // the property.
+      return false;
+    }
   }
 
-  // General case: a branch or equality op follows the access.
-  JSOp op = JSOp(*pc);
-  if (CodeSpec[op].format & JOF_DETECTING) {
+  // General case: Do not warn if the operation branches on or tests
+  // the equality of the property.
+  if (scriptIterator->isDetectingOp()) {
     return true;
   }
 
-  jsbytecode* endpc = script->codeEnd();
-
-  if (op == JSOP_NULL) {
-    // Special case #1: don't warn about (obj.prop == null).
-    if (++pc < endpc) {
-      op = JSOp(*pc);
-      return op == JSOP_EQ || op == JSOP_NE;
+  // Special case: Do not warn if we are checking whether the property is null.
+  if (scriptIterator->is(JSOP_NULL)) {
+    if (++scriptIterator == endIter) {
+      return false;
     }
-    return false;
+    return scriptIterator->isEqualityOp() &&
+           !scriptIterator->isStrictEqualityOp();
   }
 
-  // Special case #2: don't warn about (obj.prop == undefined).
-  if (op == JSOP_GETGNAME || op == JSOP_GETNAME) {
-    JSAtom* atom = script->getAtom(GET_UINT32_INDEX(pc));
-    if (atom == cx->names().undefined && (pc += CodeSpec[op].length) < endpc) {
-      op = JSOp(*pc);
-      return op == JSOP_EQ || op == JSOP_NE || op == JSOP_STRICTEQ ||
-             op == JSOP_STRICTNE;
+  // Special case #2: Do not warn if we are checking whether the property is
+  // undefined.
+  if (scriptIterator->is(JSOP_GETGNAME) || scriptIterator->is(JSOP_GETNAME) ||
+      scriptIterator->is(JSOP_UNDEFINED)) {
+    // If we using the result of a variable lookup to use in the comparison
+    // against the property and that lookup does not result in 'undefined',
+    // the type of subsequent operations do not matter -- we always warn.
+    if (scriptIterator->isNameOp() &&
+        scriptIterator->getPropertyName(script) != cx->names().undefined) {
+      return false;
     }
-  }
-  if (op == JSOP_UNDEFINED) {
-    if ((pc += CodeSpec[op].length) < endpc) {
-      op = JSOp(*pc);
-      return op == JSOP_EQ || op == JSOP_NE || op == JSOP_STRICTEQ ||
-             op == JSOP_STRICTNE;
+    // Because we know that the top of the stack is 'undefined', if the next
+    // operation exists and it is a comparison operation (of any kind) we
+    // supress a warning.
+    if (++scriptIterator == endIter) {
+      return false;
     }
+    return scriptIterator->isEqualityOp();
   }
-
   return false;
 }
 

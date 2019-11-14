@@ -14,9 +14,6 @@ const {
 
 types.addDictType("console.traits", {
   evaluateJSAsync: "boolean",
-  transferredResponseSize: "boolean",
-  selectedObjectActor: "boolean",
-  fetchCacheDescriptor: "boolean",
 });
 
 types.addDictType("console.startlisteners", {
@@ -49,7 +46,6 @@ const webconsoleSpecPrototype = {
   events: {
     evaluationResult: {
       resultID: Option(0, "string"),
-      type: "evaluationResult",
       awaitResult: Option(0, "nullable:boolean"),
       errorMessageName: Option(0, "nullable:string"),
       exception: Option(0, "nullable:json"),
@@ -112,7 +108,7 @@ const webconsoleSpecPrototype = {
      */
     startListeners: {
       request: {
-        events: Arg(0, "array:string"),
+        listeners: Arg(0, "array:string"),
       },
       response: RetVal("console.startlisteners"),
     },
@@ -128,7 +124,7 @@ const webconsoleSpecPrototype = {
      */
     stopListeners: {
       request: {
-        events: Arg(0, "nullable:array:string"),
+        listeners: Arg(0, "nullable:array:string"),
       },
       response: RetVal("array:string"),
     },
@@ -149,17 +145,6 @@ const webconsoleSpecPrototype = {
       // response
       response: RetVal("console.cachedmessages"),
     },
-    evaluateJS: {
-      request: {
-        text: Option(0, "string"),
-        frameActor: Option(0, "string"),
-        url: Option(0, "string"),
-        selectedNodeActor: Option(0, "string"),
-        selectedObjectActor: Option(0, "string"),
-        mapped: Option(0, "nullable:json"),
-      },
-      response: RetVal("json"),
-    },
     evaluateJSAsync: {
       request: {
         text: Option(0, "string"),
@@ -168,9 +153,8 @@ const webconsoleSpecPrototype = {
         selectedNodeActor: Option(0, "string"),
         selectedObjectActor: Option(0, "string"),
         mapped: Option(0, "nullable:json"),
-        resultID: Option(0, "string"),
       },
-      oneway: true,
+      response: RetVal("console.evaluatejsasync"),
     },
     /**
      * Autocomplete a JavaScript expression.
@@ -191,7 +175,7 @@ const webconsoleSpecPrototype = {
       request: {
         text: Arg(0, "string"),
         cursor: Arg(1, "nullable:number"),
-        frameActorId: Arg(2, "nullable:string"),
+        frameActor: Arg(2, "nullable:string"),
         selectedNodeActor: Arg(3, "nullable:string"),
         authorizedEvaluations: Arg(4, "nullable:json"),
       },
@@ -249,6 +233,12 @@ const webconsoleSpecPrototype = {
     unblockRequest: {
       request: {
         filter: Arg(0, "json"),
+      },
+    },
+
+    setBlockedUrls: {
+      request: {
+        url: Arg(0, "json"),
       },
     },
   },

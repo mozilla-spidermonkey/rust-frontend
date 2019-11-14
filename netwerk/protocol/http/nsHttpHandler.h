@@ -29,6 +29,7 @@ class nsIHttpChannel;
 class nsIPrefBranch;
 class nsICancelable;
 class nsICookieService;
+class nsIProcessSwitchRequestor;
 class nsIIOService;
 class nsIRequestContextService;
 class nsISiteSecurityService;
@@ -157,6 +158,8 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
   bool CriticalRequestPrioritization() {
     return mCriticalRequestPrioritization;
   }
+
+  bool IsDocumentNosniffEnabled() { return mRespectDocumentNoSniff; }
   bool UseH2Deps() { return mUseH2Deps; }
   bool IsH2WebsocketsEnabled() { return mEnableH2Websockets; }
 
@@ -331,9 +334,10 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
 
   already_AddRefed<AltSvcMapping> GetAltServiceMapping(
       const nsACString& scheme, const nsACString& host, int32_t port, bool pb,
+      bool isolated, const nsACString& topWindowOrigin,
       const OriginAttributes& originAttributes) {
-    return mConnMgr->GetAltServiceMapping(scheme, host, port, pb,
-                                          originAttributes);
+    return mConnMgr->GetAltServiceMapping(scheme, host, port, pb, isolated,
+                                          topWindowOrigin, originAttributes);
   }
 
   //
@@ -358,6 +362,10 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
     NotifyObservers(chan, NS_HTTP_ON_OPENING_REQUEST_TOPIC);
   }
 
+  void OnOpeningDocumentRequest(nsIIdentChannel* chan) {
+    NotifyObservers(chan, NS_DOCUMENT_ON_OPENING_REQUEST_TOPIC);
+  }
+
   // Called by the channel before writing a request
   void OnModifyRequest(nsIHttpChannel* chan) {
     NotifyObservers(chan, NS_HTTP_ON_MODIFY_REQUEST_TOPIC);
@@ -366,11 +374,6 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
   // Called by the channel before writing a request
   void OnStopRequest(nsIHttpChannel* chan) {
     NotifyObservers(chan, NS_HTTP_ON_STOP_REQUEST_TOPIC);
-  }
-
-  // Called by the channel and cached in the loadGroup
-  void OnUserAgentRequest(nsIHttpChannel* chan) {
-    NotifyObservers(chan, NS_HTTP_ON_USERAGENT_REQUEST_TOPIC);
   }
 
   // Called by the channel before setting up the transaction
@@ -405,8 +408,8 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
     NotifyObservers(chan, NS_HTTP_ON_EXAMINE_CACHED_RESPONSE_TOPIC);
   }
 
-  void OnMayChangeProcess(nsIHttpChannel* chan) {
-    NotifyObservers(chan, NS_HTTP_ON_MAY_CHANGE_PROCESS_TOPIC);
+  void OnMayChangeProcess(nsIProcessSwitchRequestor* request) {
+    NotifyObservers(request, NS_HTTP_ON_MAY_CHANGE_PROCESS_TOPIC);
   }
 
   // Generates the host:port string for use in the Host: header as well as the
@@ -432,6 +435,15 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
   bool Bug1563538() const { return mBug1563538; }
   bool Bug1563695() const { return mBug1563695; }
   bool Bug1556491() const { return mBug1556491; }
+
+  bool IsHttp3VersionSupportedHex(const nsACString& version);
+  nsCString Http3Version() { return kHttp3Version; }
+
+  bool IsHttp3Enabled() const { return mHttp3Enabled; }
+  uint32_t DefaultQpackTableSize() const { return mQpackTableSize; }
+  uint16_t DefaultHttp3MaxBlockedStreams() const {
+    return (uint16_t)mHttp3MaxBlockedStreams;
+  }
 
   uint32_t MaxHttpResponseHeaderSize() const {
     return mMaxHttpResponseHeaderSize;
@@ -469,6 +481,7 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
   //
   void BuildUserAgent();
   void InitUserAgentComponents();
+  static void PrefsChanged(const char* pref, void* self);
   void PrefsChanged(const char* pref);
 
   MOZ_MUST_USE nsresult SetAcceptLanguages();
@@ -476,11 +489,10 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
 
   MOZ_MUST_USE nsresult InitConnectionMgr();
 
-  void NotifyObservers(nsIHttpChannel* chan, const char* event);
+  void NotifyObservers(nsIChannel* chan, const char* event);
+  void NotifyObservers(nsIProcessSwitchRequestor* request, const char* event);
 
   void SetFastOpenOSSupport();
-
-  void EnsureUAOverridesInit();
 
   // Checks if there are any user certs or active smart cards on a different
   // thread. Updates mSpeculativeConnectEnabled when done.
@@ -499,10 +511,6 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
 
   // the connection manager
   RefPtr<nsHttpConnectionMgr> mConnMgr;
-
-  // This thread is used for performing operations that should not block
-  // the main thread.
-  nsCOMPtr<nsIThread> mBackgroundThread;
 
   //
   // prefs
@@ -652,6 +660,9 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
   // while those elements load.
   bool mCriticalRequestPrioritization;
 
+  // Whether to respect X-Content-Type nosniff on Page loads
+  bool mRespectDocumentNoSniff;
+
   // TCP Keepalive configuration values.
 
   // True if TCP keepalive is enabled for short-lived conns.
@@ -679,6 +690,13 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
   Atomic<bool, Relaxed> mBug1563538;
   Atomic<bool, Relaxed> mBug1563695;
   Atomic<bool, Relaxed> mBug1556491;
+
+  Atomic<bool, Relaxed> mHttp3Enabled;
+  // Http3 parameters
+  Atomic<uint32_t, Relaxed> mQpackTableSize;
+  Atomic<uint32_t, Relaxed>
+      mHttp3MaxBlockedStreams;  // uint16_t is enough here, but Atomic only
+                                // supports uint32_t or uint64_t.
 
   // The max size (in bytes) for received Http response header.
   uint32_t mMaxHttpResponseHeaderSize;
@@ -766,10 +784,6 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
   void BlacklistSpdy(const nsHttpConnectionInfo* ci);
   MOZ_MUST_USE bool IsSpdyBlacklisted(const nsHttpConnectionInfo* ci);
 
-  virtual nsresult EnsureHSTSDataReadyNative(
-      already_AddRefed<mozilla::net::HSTSDataCallbackWrapper> aCallback)
-      override;
-
  private:
   nsTHashtable<nsCStringHashKey> mBlacklistedSpdyOrigins;
 
@@ -801,11 +815,6 @@ class nsHttpsHandler : public nsIHttpProtocolHandler,
   nsHttpsHandler() = default;
 
   MOZ_MUST_USE nsresult Init();
-  virtual nsresult EnsureHSTSDataReadyNative(
-      already_AddRefed<mozilla::net::HSTSDataCallbackWrapper> aCallback)
-      override {
-    return gHttpHandler->EnsureHSTSDataReadyNative(std::move(aCallback));
-  }
 };
 
 //-----------------------------------------------------------------------------

@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 :host {
+  --in-content-box-background-hover: var(--in-content-page-background);
   border-inline-end: 1px solid var(--in-content-box-border-color);
   background-color: var(--in-content-box-background);
   display: flex;
@@ -13,7 +14,7 @@
 .meta {
   display: flex;
   align-items: center;
-  padding: 5px 18px;
+  padding: 5px 16px;
   border-bottom: 1px solid var(--in-content-box-border-color);
   background-color: var(--in-content-box-background);
   color: var(--in-content-deemphasized-text);
@@ -22,15 +23,27 @@
 
 #login-sort {
   background-color: transparent;
+  margin-inline-start: 0;
   padding-inline-start: 0;
+  padding-inline-end: 16px;
   min-height: initial;
   font: inherit;
   font-weight: 600;
   color: var(--in-content-text-color) !important;
 }
 
+#login-sort:hover {
+  background-color: var(--in-content-button-background);
+}
+
 #login-sort > option {
   font-weight: normal;
+}
+
+#login-sort:-moz-focusring { /* This is a workaround due to Bug 1580935 */
+  color: transparent !important;
+  fill: var(--in-content-text-color);
+  text-shadow: 0 0 0 var(--in-content-text-color);
 }
 
 .count {
@@ -43,19 +56,26 @@
   display: contents;
 }
 
-:host(.no-logins) ol,
-:host(:not(.no-logins)) .intro {
+:host(.no-logins) .empty-search-message,
+:host(:not(.empty-search)) .empty-search-message,
+:host(.empty-search:not(.create-login-selected)) ol,
+:host(.no-logins:not(.create-login-selected)) ol,
+:host(:not(.no-logins)) .intro,
+:host(.create-login-selected) .intro,
+:host(.create-login-selected) .empty-search-message {
   display: none;
 }
 
+.empty-search-message,
 .intro {
   text-align: center;
   padding: 1em;
   max-width: 50ch; /* This should be kept in sync with login-list-item username and title max-width */
   flex-grow: 1;
-  border-bottom: 1px solid var(--in-content-box-border-color);
+  border-bottom: 1px solid var(--in-content-border-color);
 }
 
+.empty-search-message span,
 .intro span {
   font-size: 0.85em;
 }
@@ -66,20 +86,27 @@ ol {
   padding-inline-start: 0;
   overflow: hidden auto;
   flex-grow: 1;
-  box-shadow: inset 0 -10px 10px -10px var(--grey-90-a20);
 }
 
 .create-login-button {
   margin: 16px;
 }
 
+.create-login-button-container {
+  box-shadow: 0 -1px var(--in-content-box-border-color);
+  display: flex;
+  flex-direction: column;
+}
+
 .login-list-item {
-  display: block;
+  display: flex;
+  align-items: center;
   padding: 10px;
   padding-inline-end: 18px;
-  padding-inline-start: 14px;
+  padding-inline-start: 12px;
   border-inline-start: 4px solid transparent;
-  border-bottom: 1px solid var(--in-content-box-border-color);
+  border-bottom: 1px solid var(--in-content-border-color);
+  user-select: none;
 }
 
 .login-list-item:hover {
@@ -104,12 +131,40 @@ ol {
   font-weight: 600;
 }
 
+.labels {
+  flex-grow: 1;
+  overflow: hidden;
+  min-height: 40px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
 .title,
 .username {
   display: block;
-  max-width: 50ch;
   text-overflow: ellipsis;
   overflow: hidden;
+  white-space: nowrap;
+}
+
+.favicon-wrapper {
+  height: 16px;
+  width: 16px;
+  background-image: url("chrome://mozapps/skin/places/defaultFavicon.svg");
+  background-repeat: no-repeat;
+  margin-inline-end: 12px;
+  -moz-context-properties: fill, fill-opacity;
+  fill: currentColor;
+  fill-opacity: 0.8;
+}
+
+.favicon-wrapper.hide-default-favicon {
+  background-image: none;
+}
+
+.favicon {
+  width: 16px;
 }
 
 .username {
@@ -117,22 +172,26 @@ ol {
   color: var(--in-content-deemphasized-text);
 }
 
-.login-list-item.breached {
-  padding-inline-end: 48px;
-  background-image: url("chrome://global/skin/icons/warning.svg");
-  background-position: right 24px center;
-  background-repeat: no-repeat;
-  -moz-context-properties: fill;
-  fill: var(--red-90);
+:not(.breached) > .list-item-warning-icon {
+  display: none;
 }
 
-.login-list-item.breached:dir(rtl) {
-  background-position: left 24px center;
+.list-item-warning-icon {
+  -moz-context-properties: fill;
+  fill: var(--red-90);
+  min-width: 16px;
+  margin-inline-start: 12px;
+}
+
+@media (-moz-windows-default-theme: 0) {
+  .list-item-warning-icon {
+    fill: currentColor;
+  }
 }
 
 @supports -moz-bool-pref("browser.in-content.dark-mode") {
   @media (prefers-color-scheme: dark) {
-    .login-list-item.breached {
+    .breached > .list-item-warning-icon {
       fill: var(--red-60);
     }
   }

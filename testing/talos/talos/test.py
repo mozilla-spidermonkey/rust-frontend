@@ -119,6 +119,7 @@ class TsBase(Test):
         'setup',
         'cleanup',
         'webextensions',
+        'webextensions_folder',
         'reinstall',     # A list of files from the profile directory that
                          # should be copied to the temporary profile prior to
                          # running each cycle, to avoid one cycle overwriting
@@ -175,6 +176,18 @@ class startup_about_home_paint(ts_paint):
     cycles = 20
     extensions = ['${talos}/startup_test/startup_about_home_paint/addon']
     tpmanifest = '${talos}/startup_test/startup_about_home_paint/startup_about_home_paint.manifest'
+
+
+@register_test()
+class startup_about_home_paint_realworld_webextensions(ts_paint):
+    url = None
+    cycles = 20
+    extensions = [
+        '${talos}/startup_test/startup_about_home_paint/addon',
+        '${talos}/getinfooffline'
+    ]
+    tpmanifest = '${talos}/startup_test/startup_about_home_paint/startup_about_home_paint.manifest'
+    webextensions_folder = '${talos}/webextensions'
 
 
 @register_test()
@@ -253,7 +266,7 @@ class PageloaderTest(Test):
             'profile_path', 'xperf_providers', 'xperf_user_providers', 'xperf_stackwalk',
             'format_pagename', 'filters', 'preferences', 'extensions', 'setup', 'cleanup',
             'lower_is_better', 'alert_threshold', 'unit', 'webextensions', 'profile',
-            'subtest_alerts', 'perfherder_framework', 'pdfpaint']
+            'subtest_alerts', 'perfherder_framework', 'pdfpaint', 'webextensions_folder']
 
 
 class QuantumPageloadTest(PageloaderTest):
@@ -442,7 +455,7 @@ class damp(PageloaderTest):
     tploadnocache = True
     tpmozafterpaint = False
     gecko_profile_interval = 10
-    gecko_profile_entries = 2000000
+    gecko_profile_entries = 10000000
     win_counters = w7_counters = linux_counters = mac_counters = None
     filters = filter.ignore_first.prepare(1) + filter.median.prepare()
     preferences = {'devtools.memory.enabled': True,
@@ -836,12 +849,6 @@ class WebkitBenchmark(PageloaderTest):
     format_pagename = False
     lower_is_better = False
     unit = 'score'
-
-
-@register_test()
-class speedometer(WebkitBenchmark):
-    # Speedometer benchmark used by many browser vendors (from webkit)
-    tpmanifest = '${talos}/tests/speedometer/speedometer.manifest'
 
 
 @register_test()

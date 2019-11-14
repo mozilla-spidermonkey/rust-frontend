@@ -438,14 +438,12 @@ var PlacesUtils = {
   TOPIC_INIT_COMPLETE: "places-init-complete",
   TOPIC_DATABASE_LOCKED: "places-database-locked",
   TOPIC_EXPIRATION_FINISHED: "places-expiration-finished",
-  TOPIC_FEEDBACK_UPDATED: "places-autocomplete-feedback-updated",
   TOPIC_FAVICONS_EXPIRED: "places-favicons-expired",
   TOPIC_VACUUM_STARTING: "places-vacuum-starting",
   TOPIC_BOOKMARKS_RESTORE_BEGIN: "bookmarks-restore-begin",
   TOPIC_BOOKMARKS_RESTORE_SUCCESS: "bookmarks-restore-success",
   TOPIC_BOOKMARKS_RESTORE_FAILED: "bookmarks-restore-failed",
 
-  ACTION_SCHEME: "moz-action:",
   observers: PlacesObservers,
 
   /**
@@ -577,28 +575,6 @@ var PlacesUtils = {
   },
 
   /**
-   * Makes a moz-action URI for the given action and set of parameters.
-   *
-   * @param   type
-   *          The action type.
-   * @param   params
-   *          A JS object of action params.
-   * @returns A moz-action URI as a string.
-   */
-  mozActionURI(type, params) {
-    let encodedParams = {};
-    for (let key in params) {
-      // Strip null or undefined.
-      // Regardless, don't encode them or they would be converted to a string.
-      if (params[key] === null || params[key] === undefined) {
-        continue;
-      }
-      encodedParams[key] = encodeURIComponent(params[key]);
-    }
-    return this.ACTION_SCHEME + type + "," + JSON.stringify(encodedParams);
-  },
-
-  /**
    * Parses a moz-action URL and returns its parts.
    *
    * @param url A moz-action URI.
@@ -611,7 +587,7 @@ var PlacesUtils = {
       url = url.href;
     }
     // Faster bailout.
-    if (!url.startsWith(this.ACTION_SCHEME)) {
+    if (!url.startsWith("moz-action:")) {
       return null;
     }
 
@@ -856,7 +832,7 @@ var PlacesUtils = {
   _shutdownFunctions: [],
   registerShutdownFunction: function PU_registerShutdownFunction(aFunc) {
     // If this is the first registered function, add the shutdown observer.
-    if (this._shutdownFunctions.length == 0) {
+    if (!this._shutdownFunctions.length) {
       Services.obs.addObserver(this, this.TOPIC_SHUTDOWN);
     }
     this._shutdownFunctions.push(aFunc);
@@ -867,7 +843,7 @@ var PlacesUtils = {
     switch (aTopic) {
       case this.TOPIC_SHUTDOWN:
         Services.obs.removeObserver(this, this.TOPIC_SHUTDOWN);
-        while (this._shutdownFunctions.length > 0) {
+        while (this._shutdownFunctions.length) {
           this._shutdownFunctions.shift().apply(this);
         }
         break;
@@ -1502,6 +1478,13 @@ var PlacesUtils = {
   promiseLargeCacheDBConnection: () => gAsyncDBLargeCacheConnPromised,
 
   /**
+   * Returns a Sqlite.jsm wrapper for the main Places connection. Most callers
+   * should prefer `withConnectionWrapper`, which ensures that all database
+   * operations finish before the connection is closed.
+   */
+  promiseUnsafeWritableDBConnection: () => gAsyncDBWrapperPromised,
+
+  /**
    * Performs a read/write operation on the Places database through a Sqlite.jsm
    * wrapped connection to the Places database.
    *
@@ -1629,6 +1612,13 @@ var PlacesUtils = {
    */
   invalidateCachedGuidFor(aItemId) {
     GuidHelper.invalidateCacheForItemId(aItemId);
+  },
+
+  /**
+   * Invalidates the entire GUID cache.
+   */
+  invalidateCachedGuids() {
+    GuidHelper.invalidateCache();
   },
 
   /**
@@ -1892,6 +1882,32 @@ var PlacesUtils = {
     }
 
     return rootItem;
+  },
+
+  /**
+   * Returns a generator that iterates over `array` and yields slices of no
+   * more than `chunkLength` elements at a time.
+   *
+   * @param  {Array} array An array containing zero or more elements.
+   * @param  {number} chunkLength The maximum number of elements in each chunk.
+   * @yields {Array} A chunk of the array.
+   * @throws if `chunkLength` is negative or not an integer.
+   */
+  *chunkArray(array, chunkLength) {
+    if (chunkLength <= 0 || !Number.isInteger(chunkLength)) {
+      throw new TypeError("Chunk length must be a positive integer");
+    }
+    if (!array.length) {
+      return;
+    }
+    if (array.length <= chunkLength) {
+      yield array;
+      return;
+    }
+    let startIndex = 0;
+    while (startIndex < array.length) {
+      yield array.slice(startIndex, (startIndex += chunkLength));
+    }
   },
 };
 
@@ -2810,7 +2826,7 @@ var GuidHelper = {
           "SELECT b.id, b.guid from moz_bookmarks b WHERE b.guid = :guid LIMIT 1",
           { guid: aGuid }
         );
-        if (rows.length == 0) {
+        if (!rows.length) {
           throw new Error("no item found for the given GUID");
         }
 
@@ -2865,7 +2881,7 @@ var GuidHelper = {
           "SELECT b.id, b.guid from moz_bookmarks b WHERE b.id = :id LIMIT 1",
           { id: aItemId }
         );
-        if (rows.length == 0) {
+        if (!rows.length) {
           throw new Error("no item found for the given itemId");
         }
 
@@ -2901,6 +2917,11 @@ var GuidHelper = {
     let guid = this.guidsForIds.get(aItemId);
     this.guidsForIds.delete(aItemId);
     this.idsForGuids.delete(guid);
+  },
+
+  invalidateCache() {
+    this.guidsForIds.clear();
+    this.idsForGuids.clear();
   },
 
   ensureObservingRemovedItems() {

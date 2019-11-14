@@ -8,14 +8,18 @@
 
 #include "mozilla/PodOperations.h"
 
+#include <algorithm>
+
 #include "gc/FreeOp.h"
 #include "jit/JitFrames.h"
 #include "js/StableStringChars.h"
+#include "util/BitArray.h"
 #include "vm/AsyncFunction.h"
 #include "vm/GlobalObject.h"
 #include "vm/Stack.h"
 
 #include "gc/Nursery-inl.h"
+#include "vm/FrameIter-inl.h"  // js::FrameIter::unaliasedForEachActual
 #include "vm/JSObject-inl.h"
 #include "vm/NativeObject-inl.h"
 #include "vm/Stack-inl.h"
@@ -74,7 +78,8 @@ static void CopyStackFrameArguments(const AbstractFramePtr frame,
   MOZ_ASSERT_IF(frame.isInterpreterFrame(),
                 !frame.asInterpreterFrame()->runningInJit());
 
-  MOZ_ASSERT(Max(frame.numActualArgs(), frame.numFormalArgs()) == totalArgs);
+  MOZ_ASSERT(std::max(frame.numActualArgs(), frame.numFormalArgs()) ==
+             totalArgs);
 
   /* Copy arguments. */
   Value* src = frame.argv();
@@ -148,7 +153,7 @@ struct CopyJitFrameArgs {
         jit::CalleeTokenToFunction(frame_->calleeToken())->nargs();
     MOZ_ASSERT(numActuals <= totalArgs);
     MOZ_ASSERT(numFormals <= totalArgs);
-    MOZ_ASSERT(Max(numActuals, numFormals) == totalArgs);
+    MOZ_ASSERT(std::max(numActuals, numFormals) == totalArgs);
 
     /* Copy all arguments. */
     Value* src = frame_->argv() + 1; /* +1 to skip this. */
@@ -189,7 +194,7 @@ struct CopyScriptFrameIterArgs {
     unsigned numFormals = iter_.calleeTemplate()->nargs();
     MOZ_ASSERT(numActuals <= totalArgs);
     MOZ_ASSERT(numFormals <= totalArgs);
-    MOZ_ASSERT(Max(numActuals, numFormals) == totalArgs);
+    MOZ_ASSERT(std::max(numActuals, numFormals) == totalArgs);
 
     if (numActuals < numFormals) {
       GCPtrValue* dst = dstBase + numActuals;
@@ -214,8 +219,8 @@ struct CopyScriptFrameIterArgs {
 
 ArgumentsObject* ArgumentsObject::createTemplateObject(JSContext* cx,
                                                        bool mapped) {
-  const Class* clasp = mapped ? &MappedArgumentsObject::class_
-                              : &UnmappedArgumentsObject::class_;
+  const JSClass* clasp = mapped ? &MappedArgumentsObject::class_
+                                : &UnmappedArgumentsObject::class_;
 
   RootedObject proto(
       cx, GlobalObject::getOrCreateObjectPrototype(cx, cx->global()));
@@ -274,7 +279,7 @@ template <typename CopyArgs>
 /* static */
 ArgumentsObject* ArgumentsObject::create(JSContext* cx, HandleFunction callee,
                                          unsigned numActuals, CopyArgs& copy) {
-  bool mapped = callee->nonLazyScript()->hasMappedArgsObj();
+  bool mapped = callee->baseScript()->hasMappedArgsObj();
   ArgumentsObject* templateObj =
       cx->realm()->getOrCreateArgumentsTemplateObject(cx, mapped);
   if (!templateObj) {
@@ -285,7 +290,7 @@ ArgumentsObject* ArgumentsObject::create(JSContext* cx, HandleFunction callee,
   RootedObjectGroup group(cx, templateObj->group());
 
   unsigned numFormals = callee->nargs();
-  unsigned numArgs = Max(numActuals, numFormals);
+  unsigned numArgs = std::max(numActuals, numFormals);
   unsigned numBytes = ArgumentsData::bytesRequired(numArgs);
 
   Rooted<ArgumentsObject*> obj(cx);
@@ -390,7 +395,7 @@ ArgumentsObject* ArgumentsObject::finishForIonPure(JSContext* cx,
 
   unsigned numActuals = frame->numActualArgs();
   unsigned numFormals = callee->nargs();
-  unsigned numArgs = Max(numActuals, numFormals);
+  unsigned numArgs = std::max(numActuals, numFormals);
   unsigned numBytes = ArgumentsData::bytesRequired(numArgs);
 
   ArgumentsData* data = reinterpret_cast<ArgumentsData*>(
@@ -515,7 +520,7 @@ static bool MappedArgSetter(JSContext* cx, HandleObject obj, HandleId id,
     unsigned arg = unsigned(JSID_TO_INT(id));
     if (arg < argsobj->initialLength() && !argsobj->isElementDeleted(arg)) {
       argsobj->setElement(cx, arg, v);
-      if (arg < script->functionNonDelazifying()->nargs()) {
+      if (arg < script->function()->nargs()) {
         jit::JitScript::MonitorArgType(cx, script, arg, v);
       }
       return result.succeed();
@@ -731,7 +736,7 @@ bool MappedArgumentsObject::obj_defineProperty(JSContext* cx, HandleObject obj,
           return false;
         }
         argsobj->setElement(cx, arg, desc.value());
-        if (arg < script->functionNonDelazifying()->nargs()) {
+        if (arg < script->function()->nargs()) {
           jit::JitScript::MonitorArgType(cx, script, arg, desc.value());
         }
       }
@@ -901,7 +906,7 @@ bool UnmappedArgumentsObject::obj_enumerate(JSContext* cx, HandleObject obj) {
   return true;
 }
 
-void ArgumentsObject::finalize(FreeOp* fop, JSObject* obj) {
+void ArgumentsObject::finalize(JSFreeOp* fop, JSObject* obj) {
   MOZ_ASSERT(!IsInsideNursery(obj));
   ArgumentsObject& argsobj = obj->as<ArgumentsObject>();
   if (argsobj.data()) {
@@ -984,7 +989,7 @@ size_t ArgumentsObject::objectMoved(JSObject* dst, JSObject* src) {
  * stack frame with their corresponding property values in the frame's
  * arguments object.
  */
-const ClassOps MappedArgumentsObject::classOps_ = {
+const JSClassOps MappedArgumentsObject::classOps_ = {
     nullptr, /* addProperty */
     ArgumentsObject::obj_delProperty,
     MappedArgumentsObject::obj_enumerate,
@@ -1005,7 +1010,7 @@ const ObjectOps MappedArgumentsObject::objectOps_ = {
     nullptr, /* lookupProperty */
     MappedArgumentsObject::obj_defineProperty};
 
-const Class MappedArgumentsObject::class_ = {
+const JSClass MappedArgumentsObject::class_ = {
     "Arguments",
     JSCLASS_DELAY_METADATA_BUILDER |
         JSCLASS_HAS_RESERVED_SLOTS(MappedArgumentsObject::RESERVED_SLOTS) |
@@ -1020,7 +1025,7 @@ const Class MappedArgumentsObject::class_ = {
  * Unmapped arguments is significantly less magical than mapped arguments, so
  * it is represented by a different class while sharing some functionality.
  */
-const ClassOps UnmappedArgumentsObject::classOps_ = {
+const JSClassOps UnmappedArgumentsObject::classOps_ = {
     nullptr, /* addProperty */
     ArgumentsObject::obj_delProperty,
     UnmappedArgumentsObject::obj_enumerate,
@@ -1037,7 +1042,7 @@ const js::ClassExtension UnmappedArgumentsObject::classExt_ = {
     ArgumentsObject::objectMoved /* objectMovedOp */
 };
 
-const Class UnmappedArgumentsObject::class_ = {
+const JSClass UnmappedArgumentsObject::class_ = {
     "Arguments",
     JSCLASS_DELAY_METADATA_BUILDER |
         JSCLASS_HAS_RESERVED_SLOTS(UnmappedArgumentsObject::RESERVED_SLOTS) |

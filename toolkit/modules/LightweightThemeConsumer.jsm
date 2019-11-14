@@ -138,6 +138,15 @@ const toolkitVariableMap = [
     "--lwt-toolbar-field-focus",
     {
       lwtProperty: "toolbar_field_focus",
+      fallbackProperty: "toolbar_field",
+      processColor(rgbaChannels, element) {
+        // Ensure minimum opacity as this is used behind address bar results.
+        if (!rgbaChannels) {
+          return "white";
+        }
+        let { r, g, b, a } = rgbaChannels;
+        return `rgba(${r}, ${g}, ${b}, ${Math.max(a, 0.7)})`;
+      },
     },
   ],
   [
@@ -216,7 +225,7 @@ LightweightThemeConsumer.prototype = {
   },
 
   handleEvent(aEvent) {
-    if (aEvent.media == "(-moz-system-dark-theme)") {
+    if (aEvent.target == this.darkThemeMediaQuery) {
       this._update(this._lastData);
       return;
     }
@@ -287,6 +296,8 @@ LightweightThemeConsumer.prototype = {
 
     let contentThemeData = _getContentProperties(this._doc, active, theme);
     Services.ppmm.sharedData.set(`theme/${this._winId}`, contentThemeData);
+
+    this._win.dispatchEvent(new CustomEvent("windowlwthemeupdate"));
   },
 
   _setExperiment(active, experiment, properties) {
@@ -394,6 +405,7 @@ function _setProperties(root, active, themeData) {
     for (let [cssVarName, definition] of map) {
       const {
         lwtProperty,
+        fallbackProperty,
         optionalElementID,
         processColor,
         isColor = true,
@@ -404,6 +416,12 @@ function _setProperties(root, active, themeData) {
       let val = themeData[lwtProperty];
       if (isColor) {
         val = _sanitizeCSSColor(root.ownerDocument, val);
+        if (!val && fallbackProperty) {
+          val = _sanitizeCSSColor(
+            root.ownerDocument,
+            themeData[fallbackProperty]
+          );
+        }
         if (processColor) {
           val = processColor(_parseRGBA(val), elem);
         }

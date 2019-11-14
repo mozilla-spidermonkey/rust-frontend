@@ -455,12 +455,6 @@ function startup() {
   const browser = createBrowser();
   ModuleManager.init(browser, [
     {
-      name: "GeckoViewAccessibility",
-      onInit: {
-        resource: "resource://gre/modules/GeckoViewAccessibility.jsm",
-      },
-    },
-    {
       name: "GeckoViewContent",
       onInit: {
         resource: "resource://gre/modules/GeckoViewContent.jsm",
@@ -478,7 +472,12 @@ function startup() {
       name: "GeckoViewNavigation",
       onInit: {
         resource: "resource://gre/modules/GeckoViewNavigation.jsm",
-        frameScript: "chrome://geckoview/content/GeckoViewNavigationChild.js",
+      },
+    },
+    {
+      name: "GeckoViewProcessHangMonitor",
+      onInit: {
+        resource: "resource://gre/modules/GeckoViewProcessHangMonitor.jsm",
       },
     },
     {
@@ -518,12 +517,20 @@ function startup() {
       name: "GeckoViewContentBlocking",
       onEnable: {
         resource: "resource://gre/modules/GeckoViewContentBlocking.jsm",
+        frameScript:
+          "chrome://geckoview/content/GeckoViewContentBlockingChild.js",
       },
     },
     {
       name: "SessionStateAggregator",
       onInit: {
         frameScript: "chrome://geckoview/content/SessionStateAggregator.js",
+      },
+    },
+    {
+      name: "GeckoViewAutofill",
+      onInit: {
+        frameScript: "chrome://geckoview/content/GeckoViewAutofillChild.js",
       },
     },
   ]);

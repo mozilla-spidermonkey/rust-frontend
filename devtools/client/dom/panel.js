@@ -1,12 +1,10 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
 const { Cu } = require("chrome");
-const ObjectClient = require("devtools/shared/client/object-client");
+const ObjectFront = require("devtools/shared/fronts/object");
 
 const EventEmitter = require("devtools/shared/event-emitter");
 loader.lazyRequireGetter(
@@ -40,8 +38,16 @@ DomPanel.prototype = {
    * @return object
    *         A promise that is resolved when the DOM panel completes opening.
    */
-  open() {
+  async open() {
+    // Wait for the retrieval of root object properties before resolving open
+    const onGetProperties = new Promise(resolve => {
+      this._resolveOpen = resolve;
+    });
+
     this.initialize();
+    this.refresh();
+
+    await onGetProperties;
 
     this.isReady = true;
     this.emit("ready");
@@ -66,6 +72,13 @@ DomPanel.prototype = {
       getToolbox: this.getToolbox.bind(this),
       getPrototypeAndProperties: this.getPrototypeAndProperties.bind(this),
       openLink: this.openLink.bind(this),
+      // Resolve DomPanel.open once the object properties are fetched
+      onPropertiesFetched: () => {
+        if (this._resolveOpen) {
+          this._resolveOpen();
+          this._resolveOpen = null;
+        }
+      },
     };
 
     exportIntoContentScope(this.panelWin, provider, "DomProvider");
@@ -74,19 +87,15 @@ DomPanel.prototype = {
   },
 
   destroy() {
-    if (this._destroying) {
-      return this._destroying;
+    if (this._destroyed) {
+      return;
     }
+    this._destroyed = true;
 
-    this._destroying = new Promise(resolve => {
-      this.target.off("navigate", this.onTabNavigated);
-      this._toolbox.off("select", this.onPanelVisibilityChange);
+    this.target.off("navigate", this.onTabNavigated);
+    this._toolbox.off("select", this.onPanelVisibilityChange);
 
-      this.emit("destroyed");
-      resolve();
-    });
-
-    return this._destroying;
+    this.emit("destroyed");
   },
 
   // Events
@@ -152,8 +161,8 @@ DomPanel.prototype = {
 
     // If no request is in progress create a new one.
     if (!request) {
-      const client = new ObjectClient(this.target.client, grip);
-      request = client.getPrototypeAndProperties();
+      const objectFront = new ObjectFront(this.target.client, grip);
+      request = objectFront.getPrototypeAndProperties();
       this.pendingRequests.set(grip.actor, request);
     }
 

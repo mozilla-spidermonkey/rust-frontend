@@ -16,6 +16,7 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/TemplateLib.h"
 
+#include <algorithm>
 #include <string.h>
 
 #include "jsapi.h"
@@ -23,7 +24,6 @@
 #include "jsfriendapi.h"
 #include "jsnum.h"
 #include "jstypes.h"
-#include "jsutil.h"
 
 #include "builtin/Array.h"
 #include "builtin/BigInt.h"
@@ -40,9 +40,11 @@
 #include "js/PropertyDescriptor.h"  // JS::FromPropertyDescriptor
 #include "js/PropertySpec.h"        // JSPropertySpec
 #include "js/Proxy.h"
+#include "js/Result.h"
 #include "js/UbiNode.h"
 #include "js/UniquePtr.h"
 #include "js/Wrapper.h"
+#include "util/Memory.h"
 #include "util/Text.h"
 #include "util/Windows.h"
 #include "vm/ArgumentsObject.h"
@@ -534,7 +536,7 @@ bool js::SetIntegrityLevel(JSContext* cx, HandleObject obj,
         return false;
       }
     }
-    Reverse(shapes.begin(), shapes.end());
+    std::reverse(shapes.begin(), shapes.end());
 
     for (Shape* shape : shapes) {
       Rooted<StackShape> child(cx, StackShape(shape));
@@ -621,7 +623,7 @@ bool js::SetIntegrityLevel(JSContext* cx, HandleObject obj,
 }
 
 static bool ResolveLazyProperties(JSContext* cx, HandleNativeObject obj) {
-  const Class* clasp = obj->getClass();
+  const JSClass* clasp = obj->getClass();
   if (JSEnumerateOp enumerate = clasp->getEnumerate()) {
     if (!enumerate(cx, obj)) {
       return false;
@@ -755,7 +757,7 @@ bool js::TestIntegrityLevel(JSContext* cx, HandleObject obj,
  * Get the GC kind to use for scripted 'new' on the given class.
  * FIXME bug 547327: estimate the size from the allocation site.
  */
-static inline gc::AllocKind NewObjectGCKind(const js::Class* clasp) {
+static inline gc::AllocKind NewObjectGCKind(const JSClass* clasp) {
   if (clasp == &ArrayObject::class_) {
     return gc::AllocKind::OBJECT8;
   }
@@ -768,7 +770,7 @@ static inline gc::AllocKind NewObjectGCKind(const js::Class* clasp) {
 static inline JSObject* NewObject(JSContext* cx, HandleObjectGroup group,
                                   gc::AllocKind kind, NewObjectKind newKind,
                                   uint32_t initialShapeFlags = 0) {
-  const Class* clasp = group->clasp();
+  const JSClass* clasp = group->clasp();
 
   MOZ_ASSERT(clasp != &ArrayObject::class_);
   MOZ_ASSERT_IF(clasp == &JSFunction::class_,
@@ -815,7 +817,7 @@ static inline JSObject* NewObject(JSContext* cx, HandleObjectGroup group,
   return obj;
 }
 
-void NewObjectCache::fillProto(EntryIndex entry, const Class* clasp,
+void NewObjectCache::fillProto(EntryIndex entry, const JSClass* clasp,
                                js::TaggedProto proto, gc::AllocKind kind,
                                NativeObject* obj) {
   MOZ_ASSERT_IF(proto.isObject(), !proto.toObject()->is<GlobalObject>());
@@ -826,19 +828,19 @@ void NewObjectCache::fillProto(EntryIndex entry, const Class* clasp,
 bool js::NewObjectWithTaggedProtoIsCachable(JSContext* cx,
                                             Handle<TaggedProto> proto,
                                             NewObjectKind newKind,
-                                            const Class* clasp) {
+                                            const JSClass* clasp) {
   return !cx->isHelperThreadContext() && proto.isObject() &&
          newKind == GenericObject && clasp->isNative() &&
          !proto.toObject()->is<GlobalObject>();
 }
 
-JSObject* js::NewObjectWithGivenTaggedProto(JSContext* cx, const Class* clasp,
+JSObject* js::NewObjectWithGivenTaggedProto(JSContext* cx, const JSClass* clasp,
                                             Handle<TaggedProto> proto,
                                             gc::AllocKind allocKind,
                                             NewObjectKind newKind,
                                             uint32_t initialShapeFlags) {
-  if (CanBeFinalizedInBackground(allocKind, clasp)) {
-    allocKind = GetBackgroundAllocKind(allocKind);
+  if (CanChangeToBackgroundAllocKind(allocKind, clasp)) {
+    allocKind = ForegroundToBackgroundAllocKind(allocKind);
   }
 
   bool isCachable =
@@ -878,12 +880,12 @@ JSObject* js::NewObjectWithGivenTaggedProto(JSContext* cx, const Class* clasp,
 }
 
 static bool NewObjectIsCachable(JSContext* cx, NewObjectKind newKind,
-                                const Class* clasp) {
+                                const JSClass* clasp) {
   return !cx->isHelperThreadContext() && newKind == GenericObject &&
          clasp->isNative();
 }
 
-JSObject* js::NewObjectWithClassProtoCommon(JSContext* cx, const Class* clasp,
+JSObject* js::NewObjectWithClassProtoCommon(JSContext* cx, const JSClass* clasp,
                                             HandleObject protoArg,
                                             gc::AllocKind allocKind,
                                             NewObjectKind newKind) {
@@ -892,8 +894,8 @@ JSObject* js::NewObjectWithClassProtoCommon(JSContext* cx, const Class* clasp,
                                          allocKind, newKind);
   }
 
-  if (CanBeFinalizedInBackground(allocKind, clasp)) {
-    allocKind = GetBackgroundAllocKind(allocKind);
+  if (CanChangeToBackgroundAllocKind(allocKind, clasp)) {
+    allocKind = ForegroundToBackgroundAllocKind(allocKind);
   }
 
   Handle<GlobalObject*> global = cx->global();
@@ -963,8 +965,8 @@ JSObject* js::NewObjectWithGroupCommon(JSContext* cx, HandleObjectGroup group,
                                        gc::AllocKind allocKind,
                                        NewObjectKind newKind) {
   MOZ_ASSERT(gc::IsObjectAllocKind(allocKind));
-  if (CanBeFinalizedInBackground(allocKind, group->clasp())) {
-    allocKind = GetBackgroundAllocKind(allocKind);
+  if (CanChangeToBackgroundAllocKind(allocKind, group->clasp())) {
+    allocKind = ForegroundToBackgroundAllocKind(allocKind);
   }
 
   bool isCachable = NewObjectWithGroupIsCachable(cx, group, newKind);
@@ -1022,7 +1024,7 @@ bool js::NewObjectScriptedCall(JSContext* cx, MutableHandleObject pobj) {
   return true;
 }
 
-JSObject* js::CreateThis(JSContext* cx, const Class* newclasp,
+JSObject* js::CreateThis(JSContext* cx, const JSClass* newclasp,
                          HandleObject callee) {
   RootedObject proto(cx);
   if (!GetPrototypeFromConstructor(
@@ -1548,7 +1550,7 @@ static bool InitializePropertiesFromCompatibleNativeObject(
         return false;
       }
     }
-    Reverse(shapes.begin(), shapes.end());
+    std::reverse(shapes.begin(), shapes.end());
 
     for (Shape* shapeToClone : shapes) {
       Rooted<StackShape> child(cx, StackShape(shapeToClone));
@@ -1757,7 +1759,7 @@ void JSObject::fixDictionaryShapeAfterSwap() {
 }
 
 bool js::ObjectMayBeSwapped(const JSObject* obj) {
-  const js::Class* clasp = obj->getClass();
+  const JSClass* clasp = obj->getClass();
 
   // We want to optimize Window/globals and Gecko doesn't require transplanting
   // them (only the WindowProxy around them). A Window may be a DOMClass, so we
@@ -2029,7 +2031,7 @@ void JSObject::swap(JSContext* cx, HandleObject a, HandleObject b) {
 
 static NativeObject* DefineConstructorAndPrototype(
     JSContext* cx, HandleObject obj, HandleAtom atom, HandleObject protoProto,
-    const Class* clasp, Native constructor, unsigned nargs,
+    const JSClass* clasp, Native constructor, unsigned nargs,
     const JSPropertySpec* ps, const JSFunctionSpec* fs,
     const JSPropertySpec* static_ps, const JSFunctionSpec* static_fs,
     NativeObject** ctorp) {
@@ -2073,7 +2075,7 @@ static NativeObject* DefineConstructorAndPrototype(
 }
 
 NativeObject* js::InitClass(JSContext* cx, HandleObject obj,
-                            HandleObject protoProto_, const Class* clasp,
+                            HandleObject protoProto_, const JSClass* clasp,
                             Native constructor, unsigned nargs,
                             const JSPropertySpec* ps, const JSFunctionSpec* fs,
                             const JSPropertySpec* static_ps,
@@ -2562,9 +2564,14 @@ bool js::LookupOwnPropertyPure(JSContext* cx, JSObject* obj, jsid id,
     }
 
     if (obj->is<TypedArrayObject>()) {
-      uint64_t index;
-      if (IsTypedArrayIndex(id, &index)) {
-        if (index < obj->as<TypedArrayObject>().length()) {
+      JS::Result<mozilla::Maybe<uint64_t>> index = IsTypedArrayIndex(cx, id);
+      if (index.isErr()) {
+        cx->recoverFromOutOfMemory();
+        return false;
+      }
+
+      if (index.inspect()) {
+        if (index.inspect().value() < obj->as<TypedArrayObject>().length()) {
           propp->setDenseOrTypedArrayElement();
         } else {
           propp->setNotFound();
@@ -3058,15 +3065,6 @@ extern bool PropertySpecNameToId(JSContext* cx, JSPropertySpec::Name name,
 // JSPropertySpec list, but omit the definition if the preference is off.
 JS_FRIEND_API bool js::ShouldIgnorePropertyDefinition(JSContext* cx,
                                                       JSProtoKey key, jsid id) {
-  if (key == JSProto_DataView &&
-      !cx->realm()->creationOptions().getBigIntEnabled() &&
-      (id == NameToId(cx->names().getBigInt64) ||
-       id == NameToId(cx->names().getBigUint64) ||
-       id == NameToId(cx->names().setBigInt64) ||
-       id == NameToId(cx->names().setBigUint64))) {
-    return true;
-  }
-
   return false;
 }
 
@@ -3131,7 +3129,7 @@ static bool MaybeCallMethod(JSContext* cx, HandleObject obj, HandleId id,
 
 static bool ReportCantConvert(JSContext* cx, unsigned errorNumber,
                               HandleObject obj, JSType hint) {
-  const Class* clasp = obj->getClass();
+  const JSClass* clasp = obj->getClass();
 
   // Avoid recursive death when decompiling in ReportValueError.
   RootedString str(cx);
@@ -3159,7 +3157,7 @@ bool JS::OrdinaryToPrimitive(JSContext* cx, HandleObject obj, JSType hint,
 
   Rooted<jsid> id(cx);
 
-  const Class* clasp = obj->getClass();
+  const JSClass* clasp = obj->getClass();
   if (hint == JSTYPE_STRING) {
     id = NameToId(cx->names().toString);
 
@@ -3512,7 +3510,7 @@ static void dumpValue(const Value& v, js::GenericPrinter& out) {
         out.printf(" at %p>", (void*)fun);
       } else {
         JSObject* obj = &v.toObject();
-        const Class* clasp = obj->getClass();
+        const JSClass* clasp = obj->getClass();
         out.printf("<%s%s at %p>", clasp->name,
                    (clasp == &PlainObject::class_) ? "" : " object",
                    (void*)obj);
@@ -3642,7 +3640,7 @@ void JSObject::dump(js::GenericPrinter& out) const {
     out.printf("  global %p [%s]\n", globalObj, globalObj->getClass()->name);
   }
 
-  const Class* clasp = obj->getClass();
+  const JSClass* clasp = obj->getClass();
   out.printf("  class %p %s\n", clasp, clasp->name);
 
   if (obj->hasLazyGroup()) {
@@ -3907,7 +3905,7 @@ js::gc::AllocKind JSObject::allocKindForTenure(
     }
 
     size_t nelements = aobj.getDenseCapacity();
-    return GetBackgroundAllocKind(GetGCArrayKind(nelements));
+    return ForegroundToBackgroundAllocKind(GetGCArrayKind(nelements));
   }
 
   if (is<JSFunction>()) {
@@ -3926,7 +3924,7 @@ js::gc::AllocKind JSObject::allocKindForTenure(
     } else {
       allocKind = GetGCObjectKind(getClass());
     }
-    return GetBackgroundAllocKind(allocKind);
+    return ForegroundToBackgroundAllocKind(allocKind);
   }
 
   // Proxies that are CrossCompartmentWrappers may be nursery allocated.
@@ -4062,7 +4060,7 @@ void JSObject::traceChildren(JSTracer* trc) {
 
   traceShape(trc);
 
-  const Class* clasp = group_->clasp();
+  const JSClass* clasp = group_->clasp();
   if (clasp->isNative()) {
     NativeObject* nobj = &as<NativeObject>();
 
@@ -4074,9 +4072,7 @@ void JSObject::traceChildren(JSTracer* trc) {
       // but the compiler has no way of knowing this.
       const uint32_t nslots = nobj->slotSpan();
       for (uint32_t i = 0; i < nslots; ++i) {
-        TraceManuallyBarrieredEdge(
-            trc, nobj->getSlotRef(i).unsafeUnbarrieredForTracing(),
-            "object slot");
+        TraceEdge(trc, &nobj->getSlotRef(i), "object slot");
         ++index;
       }
       MOZ_ASSERT(nslots == nobj->slotSpan());
@@ -4246,7 +4242,7 @@ bool js::Unbox(JSContext* cx, HandleObject obj, MutableHandleValue vp) {
 void JSObject::debugCheckNewObject(ObjectGroup* group, Shape* shape,
                                    js::gc::AllocKind allocKind,
                                    js::gc::InitialHeap heap) {
-  const js::Class* clasp = group->clasp();
+  const JSClass* clasp = group->clasp();
   MOZ_ASSERT(clasp != &ArrayObject::class_);
 
   MOZ_ASSERT_IF(shape, clasp == shape->getObjectClass());

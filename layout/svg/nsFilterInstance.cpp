@@ -28,6 +28,7 @@
 #include "nsSVGDisplayableFrame.h"
 #include "nsSVGFilterInstance.h"
 #include "nsSVGFilterPaintCallback.h"
+#include "nsSVGIntegrationUtils.h"
 #include "nsSVGUtils.h"
 
 using namespace mozilla;
@@ -116,13 +117,13 @@ static mozilla::wr::ComponentTransferFuncType FuncTypeToWr(uint8_t aFuncType) {
 }
 
 bool nsFilterInstance::BuildWebRenderFilters(nsIFrame* aFilteredFrame,
+                                             Span<const StyleFilter> aFilters,
                                              WrFiltersHolder& aWrFilters,
                                              Maybe<nsRect>& aPostFilterClip) {
   aWrFilters.filters.Clear();
   aWrFilters.filter_datas.Clear();
   aWrFilters.values.Clear();
 
-  auto filterChain = aFilteredFrame->StyleEffects()->mFilters.AsSpan();
   UniquePtr<UserSpaceMetrics> metrics =
       UserSpaceMetricsForFrame(aFilteredFrame);
 
@@ -136,7 +137,7 @@ bool nsFilterInstance::BuildWebRenderFilters(nsIFrame* aFilteredFrame,
   // read the rendered contents of aFilteredFrame.
   bool inputIsTainted = true;
   nsFilterInstance instance(aFilteredFrame, aFilteredFrame->GetContent(),
-                            *metrics, filterChain, inputIsTainted, nullptr,
+                            *metrics, aFilters, inputIsTainted, nullptr,
                             scaleMatrixInDevUnits, nullptr, nullptr, nullptr,
                             nullptr);
 
@@ -768,6 +769,11 @@ void nsFilterInstance::Render(gfxContext* aCtx, imgDrawingParams& aImgParams,
   Rect renderRect = IntRectToRect(filterRect);
   RefPtr<DrawTarget> dt = aCtx->GetDrawTarget();
 
+  MOZ_ASSERT(dt);
+  if (!dt->IsValid()) {
+    return;
+  }
+
   BuildSourcePaints(aImgParams);
   RefPtr<FilterNode> sourceGraphic, fillPaint, strokePaint;
   if (mFillPaint.mSourceSurface) {
@@ -791,7 +797,7 @@ void nsFilterInstance::Render(gfxContext* aCtx, imgDrawingParams& aImgParams,
   }
 
   RefPtr<FilterNode> resultFilter = FilterNodeGraphFromDescription(
-      aCtx->GetDrawTarget(), mFilterDescription, renderRect, sourceGraphic,
+      dt, mFilterDescription, renderRect, sourceGraphic,
       mSourceGraphic.mSurfaceRect, fillPaint, strokePaint, mInputImages);
 
   if (!resultFilter) {
@@ -799,8 +805,7 @@ void nsFilterInstance::Render(gfxContext* aCtx, imgDrawingParams& aImgParams,
     return;
   }
 
-  BuildSourceImage(aCtx->GetDrawTarget(), aImgParams, resultFilter,
-                   sourceGraphic, renderRect);
+  BuildSourceImage(dt, aImgParams, resultFilter, sourceGraphic, renderRect);
   if (sourceGraphic) {
     if (mSourceGraphic.mSourceSurface) {
       sourceGraphic->SetInput(IN_TRANSFORM_IN, mSourceGraphic.mSourceSurface);
@@ -810,8 +815,7 @@ void nsFilterInstance::Render(gfxContext* aCtx, imgDrawingParams& aImgParams,
     }
   }
 
-  aCtx->GetDrawTarget()->DrawFilter(resultFilter, renderRect, Point(0, 0),
-                                    DrawOptions(aOpacity));
+  dt->DrawFilter(resultFilter, renderRect, Point(0, 0), DrawOptions(aOpacity));
 }
 
 nsRegion nsFilterInstance::ComputePostFilterDirtyRegion() {

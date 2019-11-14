@@ -8,6 +8,9 @@ const { Cc, Ci } = require("chrome");
 const Services = require("Services");
 const { Actor, ActorClassWithSpec } = require("devtools/shared/protocol");
 const { accessibleWalkerSpec } = require("devtools/shared/specs/accessibility");
+const {
+  simulation: { COLOR_TRANSFORMATION_MATRICES },
+} = require("./constants");
 
 loader.lazyRequireGetter(
   this,
@@ -60,8 +63,8 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
-  "loadSheet",
-  "devtools/shared/layout/utils",
+  "loadSheetForBackgroundCalculation",
+  "devtools/server/actors/utils/accessibility",
   true
 );
 loader.lazyRequireGetter(
@@ -72,8 +75,8 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
-  "removeSheet",
-  "devtools/shared/layout/utils",
+  "removeSheetForBackgroundCalculation",
+  "devtools/server/actors/utils/accessibility",
   true
 );
 loader.lazyRequireGetter(
@@ -84,16 +87,6 @@ loader.lazyRequireGetter(
 );
 
 const kStateHover = 0x00000004; // NS_EVENT_STATE_HOVER
-
-const HIGHLIGHTER_STYLES_SHEET = `data:text/css;charset=utf-8,
-* {
-  transition: none !important;
-}
-
-:-moz-devtools-highlighted {
-  color: transparent !important;
-  text-shadow: none !important;
-}`;
 
 const {
   EVENT_TEXT_CHANGED,
@@ -329,6 +322,22 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
 
   get rootDoc() {
     return this.targetActor && this.targetActor.window.document;
+  },
+
+  get colorMatrix() {
+    if (!this.targetActor.docShell) {
+      return null;
+    }
+
+    const colorMatrix = this.targetActor.docShell.getColorMatrix();
+    if (
+      colorMatrix.length === 0 ||
+      colorMatrix === COLOR_TRANSFORMATION_MATRICES.NONE
+    ) {
+      return null;
+    }
+
+    return colorMatrix;
   },
 
   reset() {
@@ -605,7 +614,7 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
    * @param {Ci.nsIAccessibleEvent} subject
    *                                      accessible event object.
    */
-  /* eslint-disable complexity */
+  // eslint-disable-next-line complexity
   observe(subject) {
     const event = subject.QueryInterface(Ci.nsIAccessibleEvent);
     const rawAccessible = event.accessible;
@@ -725,7 +734,6 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
         break;
     }
   },
-  /* eslint-enable complexity */
 
   /**
    * Ensure that nothing interferes with the audit for an accessible object
@@ -746,7 +754,7 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
     // highlighter temporarily modifies text color related CSS properties. In case where
     // there are transitions that affect them, there might be unexpected side effects when
     // taking a snapshot for contrast measurement).
-    loadSheet(win, HIGHLIGHTER_STYLES_SHEET);
+    loadSheetForBackgroundCalculation(win);
     this._loadedSheets.set(win, 1);
     this.hideHighlighter();
   },
@@ -771,7 +779,7 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
     }
 
     this.showHighlighter();
-    removeSheet(win, HIGHLIGHTER_STYLES_SHEET);
+    removeSheetForBackgroundCalculation(win);
     this._loadedSheets.delete(win);
   },
 

@@ -75,6 +75,7 @@ const SSL_ERROR_NO_CYPHER_OVERLAP = SSL_ERROR_BASE + 2;
 const SSL_ERROR_BAD_CERT_DOMAIN = SSL_ERROR_BASE + 12;
 const SSL_ERROR_BAD_CERT_ALERT = SSL_ERROR_BASE + 17;
 const SSL_ERROR_WEAK_SERVER_CERT_KEY = SSL_ERROR_BASE + 132;
+const SSL_ERROR_DC_INVALID_KEY_USAGE = SSL_ERROR_BASE + 184;
 
 const MOZILLA_PKIX_ERROR_KEY_PINNING_FAILURE = MOZILLA_PKIX_ERROR_BASE + 0;
 const MOZILLA_PKIX_ERROR_CA_CERT_USED_AS_END_ENTITY =
@@ -153,14 +154,27 @@ function pemToBase64(pem) {
 }
 
 function build_cert_chain(certNames, testDirectory = "bad_certs") {
-  let certList = Cc["@mozilla.org/security/x509certlist;1"].createInstance(
-    Ci.nsIX509CertList
-  );
+  let certList = [];
   certNames.forEach(function(certName) {
     let cert = constructCertFromFile(`${testDirectory}/${certName}.pem`);
-    certList.addCert(cert);
+    certList.push(cert);
   });
   return certList;
+}
+
+function areCertArraysEqual(certArrayA, certArrayB) {
+  if (certArrayA.length != certArrayB.length) {
+    return false;
+  }
+
+  for (let i = 0; i < certArrayA.length; i++) {
+    const certA = certArrayA[i];
+    const certB = certArrayB[i];
+    if (!certA.equals(certB)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function readFile(file) {
@@ -529,10 +543,6 @@ function add_connection_test(
       if (aAfterStreamOpen) {
         aAfterStreamOpen(this.transport);
       }
-      let sslSocketControl = this.transport.securityInfo.QueryInterface(
-        Ci.nsISSLSocketControl
-      );
-      sslSocketControl.proxyStartSSL();
       this.outputStream.write("0", 1);
       let inStream = this.transport
         .openInputStream(0, 0, 0)
@@ -837,25 +847,6 @@ function stopOCSPResponder(responder) {
   });
 }
 
-// A prototype for a fake, error-free secInfo
-var FakeTransportSecurityInfo = function(certificate) {
-  this.serverCert = certificate;
-};
-
-FakeTransportSecurityInfo.prototype = {
-  serverCert: null,
-  cipherName: null,
-  keyLength: 2048,
-  isDomainMismatch: false,
-  isNotValidAtThisTime: false,
-  isUntrusted: false,
-  isExtendedValidation: false,
-  getInterface(aIID) {
-    return this.QueryInterface(aIID);
-  },
-  QueryInterface: ChromeUtils.generateQI(["nsITransportSecurityInfo"]),
-};
-
 // Utility functions for adding tests relating to certificate error overrides
 
 // Helper function for add_cert_override_test. Probably doesn't need to be
@@ -1047,6 +1038,11 @@ function asyncTestCertificateUsages(certdb, cert, expectedUsages) {
  * Loads the pkcs11testmodule.cpp test PKCS #11 module, and registers a cleanup
  * function that unloads it once the calling test completes.
  *
+ * @param {nsIFile} libraryFile
+ *                  The dynamic library file that implements the module to
+ *                  load.
+ * @param {String} moduleName
+ *                 What to call the module.
  * @param {Boolean} expectModuleUnloadToFail
  *                  Should be set to true for tests that manually unload the
  *                  test module, so the attempt to auto unload the test module
@@ -1054,18 +1050,15 @@ function asyncTestCertificateUsages(certdb, cert, expectedUsages) {
  *                  otherwise, so failure to automatically unload the test
  *                  module gets reported.
  */
-function loadPKCS11TestModule(expectModuleUnloadToFail) {
-  let libraryFile = Services.dirsvc.get("CurWorkD", Ci.nsIFile);
-  libraryFile.append("pkcs11testmodule");
-  libraryFile.append(ctypes.libraryName("pkcs11testmodule"));
-  ok(libraryFile.exists(), "The pkcs11testmodule file should exist");
+function loadPKCS11Module(libraryFile, moduleName, expectModuleUnloadToFail) {
+  ok(libraryFile.exists(), "The PKCS11 module file should exist");
 
   let pkcs11ModuleDB = Cc["@mozilla.org/security/pkcs11moduledb;1"].getService(
     Ci.nsIPKCS11ModuleDB
   );
   registerCleanupFunction(() => {
     try {
-      pkcs11ModuleDB.deleteModule("PKCS11 Test Module");
+      pkcs11ModuleDB.deleteModule(moduleName);
     } catch (e) {
       Assert.ok(
         expectModuleUnloadToFail,
@@ -1073,7 +1066,7 @@ function loadPKCS11TestModule(expectModuleUnloadToFail) {
       );
     }
   });
-  pkcs11ModuleDB.addModule("PKCS11 Test Module", libraryFile.path, 0, 0);
+  pkcs11ModuleDB.addModule(moduleName, libraryFile.path, 0, 0);
 }
 
 /**
@@ -1102,4 +1095,71 @@ function writeLinesAndClose(lines, outputStream) {
     outputStream.write(line, line.length);
   }
   outputStream.close();
+}
+
+/**
+ * @param {String} moduleName
+ *        The name of the module that should not be loaded.
+ * @param {String} libraryName
+ *        A unique substring of name of the dynamic library file of the module
+ *        that should not be loaded.
+ */
+function checkPKCS11ModuleNotPresent(moduleName, libraryName) {
+  let moduleDB = Cc["@mozilla.org/security/pkcs11moduledb;1"].getService(
+    Ci.nsIPKCS11ModuleDB
+  );
+  let modules = moduleDB.listModules();
+  ok(
+    modules.hasMoreElements(),
+    "One or more modules should be present with test module not present"
+  );
+  for (let module of modules) {
+    notEqual(
+      module.name,
+      moduleName,
+      "Non-test module name shouldn't equal 'PKCS11 Test Module'"
+    );
+    ok(
+      !(module.libName && module.libName.includes(libraryName)),
+      `Non-test module lib name should not include '${libraryName}'`
+    );
+  }
+}
+
+/**
+ * Checks that the test module exists in the module list.
+ * Also checks various attributes of the test module for correctness.
+ *
+ * @param {String} moduleName
+ *                 The name of the module that should be present.
+ * @param {String} libraryName
+ *                 A unique substring of the name of the dynamic library file
+ *                 of the module that should be loaded.
+ * @returns {nsIPKCS11Module}
+ *          The test module.
+ */
+function checkPKCS11ModuleExists(moduleName, libraryName) {
+  let moduleDB = Cc["@mozilla.org/security/pkcs11moduledb;1"].getService(
+    Ci.nsIPKCS11ModuleDB
+  );
+  let modules = moduleDB.listModules();
+  ok(
+    modules.hasMoreElements(),
+    "One or more modules should be present with test module present"
+  );
+  let testModule = null;
+  for (let module of modules) {
+    if (module.name == moduleName) {
+      testModule = module;
+      break;
+    }
+  }
+  notEqual(testModule, null, "Test module should have been found");
+  notEqual(testModule.libName, null, "Test module lib name should not be null");
+  ok(
+    testModule.libName.includes(ctypes.libraryName(libraryName)),
+    `Test module lib name should include lib name of '${libraryName}'`
+  );
+
+  return testModule;
 }

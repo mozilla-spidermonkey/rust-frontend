@@ -90,6 +90,9 @@ var UrlbarUtils = {
     // A tab from another synced device.
     // Payload: { url, icon, device, title }
     REMOTE_TAB: 6,
+    // An actionable message to help the user with their query.
+    // Payload: { text, buttonText, data, [buttonUrl], [helpUrl] }
+    TIP: 7,
   },
 
   // This defines the source of results returned by a provider. Each provider
@@ -107,10 +110,11 @@ var UrlbarUtils = {
     OTHER_NETWORK: 6,
   },
 
-  // This defines icon locations that are common used in the UI.
+  // This defines icon locations that are commonly used in the UI.
   ICON: {
     // DEFAULT is defined lazily so it doesn't eagerly initialize PlacesUtils.
     SEARCH_GLASS: "chrome://browser/skin/search-glass.svg",
+    TIP: "chrome://browser/skin/tip.svg",
   },
 
   // The number of results by which Page Up/Down move the selection.
@@ -135,6 +139,17 @@ var UrlbarUtils = {
     SUGGESTED: 2,
   },
 
+  // Search results with keywords and empty queries are called "keyword offers".
+  // When the user selects a keyword offer, the keyword followed by a space is
+  // put in the input as a hint that the user can search using the keyword.
+  // Depending on the use case, keyword-offer results can show or not show the
+  // keyword itself.
+  KEYWORD_OFFER: {
+    NONE: 0,
+    SHOW: 1,
+    HIDE: 2,
+  },
+
   // UnifiedComplete's autocomplete results store their titles and tags together
   // in their comments.  This separator is used to separate them.  When we
   // rewrite UnifiedComplete for quantumbar, we should stop using this old hack
@@ -142,6 +157,10 @@ var UrlbarUtils = {
   // character that no title would ever have.  We use \x1F, the non-printable
   // unit separator.
   TITLE_TAGS_SEPARATOR: "\x1F",
+
+  // Regex matching single words (no spaces, dots or url-like chars).
+  // We accept a trailing dot though.
+  REGEXP_SINGLE_WORD: /^[^\s.?@:/]+\.?$/,
 
   /**
    * Adds a url to history as long as it isn't in a private browsing window,
@@ -333,6 +352,11 @@ var UrlbarUtils = {
         );
         return { url, postData };
       }
+      case UrlbarUtils.RESULT_TYPE.TIP: {
+        // Return the button URL. Consumers must check payload.helpUrl
+        // themselves if they need the tip's help link.
+        return { url: result.payload.buttonUrl, postData: null };
+      }
     }
     return { url: null, postData: null };
   },
@@ -351,6 +375,30 @@ var UrlbarUtils = {
   getSearchQueryUrl(engine, query) {
     let submission = engine.getSubmission(query, null, "keyword");
     return [submission.uri.spec, submission.postData];
+  },
+
+  /**
+   * Get the number of rows a result should span in the autocomplete dropdown.
+   *
+   * @param {UrlbarResult} result The result being created.
+   * @returns {number}
+   *          The number of rows the result should span in the autocomplete
+   *          dropdown.
+   */
+  getSpanForResult(result) {
+    switch (result.type) {
+      case UrlbarUtils.RESULT_TYPE.URL:
+      case UrlbarUtils.RESULT_TYPE.BOOKMARKS:
+      case UrlbarUtils.RESULT_TYPE.REMOTE_TAB:
+      case UrlbarUtils.RESULT_TYPE.TAB_SWITCH:
+      case UrlbarUtils.RESULT_TYPE.KEYWORD:
+      case UrlbarUtils.RESULT_TYPE.SEARCH:
+      case UrlbarUtils.RESULT_TYPE.OMNIBOX:
+        return 1;
+      case UrlbarUtils.RESULT_TYPE.TIP:
+        return 3;
+    }
+    return 1;
   },
 
   /**
@@ -446,6 +494,19 @@ var UrlbarUtils = {
       (event.inputType.startsWith("insertFromPaste") ||
         event.inputType == "insertFromYank")
     );
+  },
+
+  /**
+   * Given a string, checks if it looks like a single word host, not containing
+   * spaces nor dots (apart from a possible trailing one).
+   * @note This matching should stay in sync with the related code in
+   * nsDefaultURIFixup::KeywordURIFixup
+   * @param {string} value
+   * @returns {boolean} Whether the value looks like a single word host.
+   */
+  looksLikeSingleWordHost(value) {
+    let str = value.trim();
+    return this.REGEXP_SINGLE_WORD.test(str);
   },
 };
 
@@ -546,6 +607,7 @@ class UrlbarMuxer {
   get name() {
     return "UrlbarMuxerBase";
   }
+
   /**
    * Sorts queryContext results in-place.
    * @param {UrlbarQueryContext} queryContext the context to sort results for.
@@ -569,6 +631,7 @@ class UrlbarProvider {
   get name() {
     return "UrlbarProviderBase";
   }
+
   /**
    * The type of the provider, must be one of UrlbarUtils.PROVIDER_TYPE.
    * @abstract
@@ -576,6 +639,7 @@ class UrlbarProvider {
   get type() {
     throw new Error("Trying to access the base class, must be overridden");
   }
+
   /**
    * Whether this provider should be invoked for the given context.
    * If this method returns false, the providers manager won't start a query
@@ -587,6 +651,7 @@ class UrlbarProvider {
   isActive(queryContext) {
     throw new Error("Trying to access the base class, must be overridden");
   }
+
   /**
    * Whether this provider wants to restrict results to just itself.
    * Other providers won't be invoked, unless this provider doesn't
@@ -598,6 +663,7 @@ class UrlbarProvider {
   isRestricting(queryContext) {
     throw new Error("Trying to access the base class, must be overridden");
   }
+
   /**
    * Starts querying.
    * @param {UrlbarQueryContext} queryContext The query context object
@@ -610,6 +676,7 @@ class UrlbarProvider {
   startQuery(queryContext, addCallback) {
     throw new Error("Trying to access the base class, must be overridden");
   }
+
   /**
    * Cancels a running query,
    * @param {UrlbarQueryContext} queryContext the query context object to cancel
@@ -617,6 +684,17 @@ class UrlbarProvider {
    * @abstract
    */
   cancelQuery(queryContext) {
+    throw new Error("Trying to access the base class, must be overridden");
+  }
+
+  /**
+   * Called when a result from the provider without a URL is picked, but
+   * currently only for tip results.  The provider should handle the pick.
+   * @param {UrlbarResult} result
+   *   The result that was picked.
+   * @abstract
+   */
+  pickResult(result) {
     throw new Error("Trying to access the base class, must be overridden");
   }
 }

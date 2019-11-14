@@ -4,7 +4,17 @@
 
 /* eslint-env mozilla/frame-script */
 
-const MONITOR_SIGN_IN_URL = "https://monitor.firefox.com";
+const MONITOR_URL = RPMGetStringPref(
+  "browser.contentblocking.report.monitor.url",
+  ""
+);
+const MONITOR_SIGN_IN_URL = RPMGetStringPref(
+  "browser.contentblocking.report.monitor.sign_in_url",
+  ""
+);
+const HOW_IT_WORKS_URL_PREF = RPMGetFormatURLPref(
+  "browser.contentblocking.report.monitor.how_it_works.url"
+);
 
 export default class MonitorClass {
   constructor(document) {
@@ -12,44 +22,56 @@ export default class MonitorClass {
   }
 
   init() {
-    RPMAddMessageListener("SendUserLoginsData", ({ data }) => {
-      // Wait for monitor data and display the card.
-      this.getMonitorData(data);
-      RPMSendAsyncMessage("FetchMonitorData");
+    // Wait for monitor data and display the card.
+    this.getMonitorData();
+    RPMSendAsyncMessage("FetchMonitorData");
+
+    let monitorReportLink = this.doc.getElementById("full-report-link");
+    monitorReportLink.addEventListener("click", () => {
+      this.doc.sendTelemetryEvent("click", "mtr_report_link");
+      RPMSendAsyncMessage("ClearMonitorCache");
+    });
+
+    let monitorAboutLink = this.doc.getElementById("monitor-link");
+    monitorAboutLink.addEventListener("click", () => {
+      this.doc.sendTelemetryEvent("click", "mtr_about_link");
+    });
+
+    let openLockwise = this.doc.getElementById("lockwise-link");
+    openLockwise.addEventListener("click", evt => {
+      this.doc.sendTelemetryEvent("click", "lw_open_breach_link");
+      RPMSendAsyncMessage("OpenAboutLogins");
+      evt.preventDefault();
     });
   }
 
   /**
    * Adds a listener for receiving the monitor data. Once received then display this data
    * in the card.
-   *
-   * @param {Object}  loginData
-   *        Login data received from the Logins service.
-   */
-  getMonitorData(loginData) {
+   **/
+  getMonitorData() {
     RPMAddMessageListener("SendMonitorData", ({ data: monitorData }) => {
       // Once data for the user is retrieved, display the monitor card.
-      this.buildContent(loginData, monitorData);
+      this.buildContent(monitorData);
 
       // Show the Monitor card.
-      const monitorCard = this.doc.querySelector(".card.monitor-card.hidden");
-      monitorCard.classList.remove("hidden");
+      const monitorUI = this.doc.querySelector(".card.monitor-card.loading");
+      monitorUI.classList.remove("loading");
     });
   }
 
-  buildContent(loginData, monitorData) {
-    const { numLogins } = loginData;
+  buildContent(monitorData) {
     const headerContent = this.doc.querySelector(
       "#monitor-header-content span"
     );
     const monitorCard = this.doc.querySelector(".card.monitor-card");
-    if (numLogins > 0 && !monitorData.error) {
+    if (!monitorData.error) {
       monitorCard.classList.add("has-logins");
       headerContent.setAttribute(
         "data-l10n-id",
-        "monitor-header-content-logged-in"
+        "monitor-header-content-signed-in"
       );
-      this.renderContentForUserWithLogins(monitorData);
+      this.renderContentForUserWithAccount(monitorData);
     } else {
       monitorCard.classList.add("no-logins");
       const signUpForMonitorLink = this.doc.getElementById(
@@ -57,7 +79,13 @@ export default class MonitorClass {
       );
       signUpForMonitorLink.href = this.buildMonitorUrl(monitorData.userEmail);
       signUpForMonitorLink.setAttribute("data-l10n-id", "monitor-sign-up");
-      headerContent.setAttribute("data-l10n-id", "monitor-header-content");
+      headerContent.setAttribute(
+        "data-l10n-id",
+        "monitor-header-content-no-account"
+      );
+      signUpForMonitorLink.addEventListener("click", () => {
+        this.doc.sendTelemetryEvent("click", "mtr_signup_button");
+      });
     }
   }
 
@@ -72,19 +100,23 @@ export default class MonitorClass {
    * @return URL to Monitor website.
    */
   buildMonitorUrl(email = null) {
-    let url = MONITOR_SIGN_IN_URL;
-
-    if (email) {
-      url += `/oauth/init?email=${email}&entrypoint=protection_report_monitor&utm_source=about-protections`;
-    } else {
-      url +=
-        "/?entrypoint=protection_report_monitor&utm_source=about-protections";
-    }
-
-    return url;
+    return email
+      ? `${MONITOR_SIGN_IN_URL}${encodeURIComponent(email)}`
+      : MONITOR_URL;
   }
 
-  renderContentForUserWithLogins(monitorData) {
+  renderContentForUserWithAccount(monitorData) {
+    const monitorCardBody = this.doc.querySelector(
+      ".card.monitor-card .card-body"
+    );
+    monitorCardBody.classList.remove("hidden");
+
+    const monitorLinkTag = this.doc.getElementById("monitor-inline-link");
+    monitorLinkTag.href = this.buildMonitorUrl(monitorData.userEmail);
+
+    const howItWorksLink = this.doc.getElementById("monitor-link");
+    howItWorksLink.href = HOW_IT_WORKS_URL_PREF;
+
     const storedEmail = this.doc.querySelector(
       "span[data-type='stored-emails']"
     );
@@ -108,7 +140,7 @@ export default class MonitorClass {
     );
     infoMonitoredAddresses.setAttribute(
       "data-l10n-id",
-      "info-monitored-addresses"
+      "info-monitored-emails"
     );
 
     const infoKnownBreaches = this.doc.getElementById("info-known-breaches");
@@ -116,7 +148,7 @@ export default class MonitorClass {
       "data-l10n-args",
       JSON.stringify({ count: monitorData.numBreaches })
     );
-    infoKnownBreaches.setAttribute("data-l10n-id", "info-known-breaches");
+    infoKnownBreaches.setAttribute("data-l10n-id", "info-known-breaches-found");
 
     const infoExposedPasswords = this.doc.getElementById(
       "info-exposed-passwords"
@@ -125,7 +157,10 @@ export default class MonitorClass {
       "data-l10n-args",
       JSON.stringify({ count: monitorData.passwords })
     );
-    infoExposedPasswords.setAttribute("data-l10n-id", "info-exposed-passwords");
+    infoExposedPasswords.setAttribute(
+      "data-l10n-id",
+      "info-exposed-passwords-found"
+    );
 
     // Display Lockwise section if there are any potential breached logins to report.
     if (monitorData.potentiallyBreachedLogins > 0) {

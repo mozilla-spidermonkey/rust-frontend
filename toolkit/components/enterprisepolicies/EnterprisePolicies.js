@@ -23,6 +23,9 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 // ${InstallDir}/distribution folder.
 const POLICIES_FILENAME = "policies.json";
 
+// When true browser policy is loaded per-user from
+// /run/user/$UID/appname
+const PREF_PER_USER_DIR = "toolkit.policies.perUserDir";
 // For easy testing, modify the helpers/sample.json file,
 // and set PREF_ALTERNATE_PATH in firefox.js as:
 // /your/repo/browser/components/enterprisepolicies/helpers/sample.json
@@ -188,7 +191,7 @@ EnterprisePoliciesManager.prototype = {
 
   _runPoliciesCallbacks(timing) {
     let callbacks = this._callbacks[timing];
-    while (callbacks.length > 0) {
+    while (callbacks.length) {
       let callback = callbacks.shift();
       try {
         callback();
@@ -438,7 +441,10 @@ class JSONPoliciesProvider {
   }
 
   get hasPolicies() {
-    return this._policies !== null || this._failed;
+    return (
+      this._failed ||
+      (this._policies !== null && Object.keys(this._policies).length)
+    );
   }
 
   get policies() {
@@ -452,7 +458,12 @@ class JSONPoliciesProvider {
   _getConfigurationFile() {
     let configFile = null;
     try {
-      configFile = Services.dirsvc.get("XREAppDist", Ci.nsIFile);
+      let perUserPath = Services.prefs.getBoolPref(PREF_PER_USER_DIR, false);
+      if (perUserPath) {
+        configFile = Services.dirsvc.get("XREUserRunTimeDir", Ci.nsIFile);
+      } else {
+        configFile = Services.dirsvc.get("XREAppDist", Ci.nsIFile);
+      }
       configFile.append(POLICIES_FILENAME);
     } catch (ex) {
       // Getting the correct directory will fail in xpcshell tests. This should
@@ -543,7 +554,7 @@ class WindowsGPOPoliciesProvider {
   }
 
   get hasPolicies() {
-    return this._policies !== null;
+    return this._policies !== null && Object.keys(this._policies).length;
   }
 
   get policies() {
@@ -576,7 +587,7 @@ class macOSPoliciesProvider {
   }
 
   get hasPolicies() {
-    return this._policies !== null;
+    return this._policies !== null && Object.keys(this._policies).length;
   }
 
   get policies() {

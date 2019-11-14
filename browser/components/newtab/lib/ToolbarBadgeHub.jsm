@@ -3,60 +3,32 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "EveryWindow",
-  "resource:///modules/EveryWindow.jsm"
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
 );
-ChromeUtils.defineModuleGetter(
-  this,
-  "ToolbarPanelHub",
-  "resource://activity-stream/lib/ToolbarPanelHub.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "Services",
-  "resource://gre/modules/Services.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "setTimeout",
-  "resource://gre/modules/Timer.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "clearTimeout",
-  "resource://gre/modules/Timer.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "Services",
-  "resource://gre/modules/Services.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "PrivateBrowsingUtils",
-  "resource://gre/modules/PrivateBrowsingUtils.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "setInterval",
-  "resource://gre/modules/Timer.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "clearInterval",
-  "resource://gre/modules/Timer.jsm"
-);
+
+XPCOMUtils.defineLazyModuleGetters(this, {
+  EveryWindow: "resource:///modules/EveryWindow.jsm",
+  ToolbarPanelHub: "resource://activity-stream/lib/ToolbarPanelHub.jsm",
+  Services: "resource://gre/modules/Services.jsm",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
+});
+
+const {
+  setInterval,
+  clearInterval,
+  requestIdleCallback,
+  setTimeout,
+  clearTimeout,
+} = ChromeUtils.import("resource://gre/modules/Timer.jsm");
 
 // Frequency at which to check for new messages
 const SYSTEM_TICK_INTERVAL = 5 * 60 * 1000;
-const notificationsByWindow = new WeakMap();
+let notificationsByWindow = new WeakMap();
 
 class _ToolbarBadgeHub {
   constructor() {
     this.id = "toolbar-badge-hub";
-    this.template = "toolbar_badge";
     this.state = null;
     this.prefs = {
       WHATSNEW_TOOLBAR_PANEL: "browser.messaging-system.whatsNewPanel.enabled",
@@ -93,7 +65,10 @@ class _ToolbarBadgeHub {
     this._dispatch = dispatch;
     // Need to wait for ASRouter to initialize before trying to fetch messages
     await waitForInitialized;
-    this.messageRequest("toolbarBadgeUpdate");
+    this.messageRequest({
+      triggerId: "toolbarBadgeUpdate",
+      template: "toolbar_badge",
+    });
     // Listen for pref changes that could trigger new badges
     Services.prefs.addObserver(this.prefs.WHATSNEW_TOOLBAR_PANEL, this);
     const _intervalId = setInterval(
@@ -127,15 +102,25 @@ class _ToolbarBadgeHub {
       }
     }
 
-    this.messageRequest("momentsUpdate");
+    this.messageRequest({
+      triggerId: "momentsUpdate",
+      template: "update_action",
+    });
   }
 
   observe(aSubject, aTopic, aPrefName) {
     switch (aPrefName) {
       case this.prefs.WHATSNEW_TOOLBAR_PANEL:
-        this.messageRequest("toolbarBadgeUpdate");
+        this.messageRequest({
+          triggerId: "toolbarBadgeUpdate",
+          template: "toolbar_badge",
+        });
         break;
     }
+  }
+
+  maybeInsertFTL(win) {
+    win.MozXULElement.insertFTLIfNeeded("browser/newtab/asrouter.ftl");
   }
 
   executeAction({ id, data, message_id }) {
@@ -199,7 +184,7 @@ class _ToolbarBadgeHub {
         "mousedown",
         this.removeAllNotifications
       );
-      event.target.removeEventListener("click", this.removeAllNotifications);
+      event.target.removeEventListener("keypress", this.removeAllNotifications);
       // If we have an event it means the user interacted with the badge
       // we should send telemetry
       if (this.state.notification) {
@@ -220,11 +205,16 @@ class _ToolbarBadgeHub {
     toolbarButton
       .querySelector(".toolbarbutton-badge")
       .classList.remove("feature-callout");
-    // Remove it from the toolbar icon
-    toolbarButton
-      .querySelector(".toolbarbutton-icon")
-      .classList.remove("feature-callout");
     toolbarButton.removeAttribute("badged");
+    // Remove id used for for aria-label badge description
+    const notificationDescription = toolbarButton.querySelector(
+      "#toolbarbutton-notification-description"
+    );
+    if (notificationDescription) {
+      notificationDescription.remove();
+      toolbarButton.removeAttribute("aria-labelledby");
+      toolbarButton.removeAttribute("aria-describedby");
+    }
   }
 
   addToolbarNotification(win, message) {
@@ -234,21 +224,45 @@ class _ToolbarBadgeHub {
     }
     let toolbarbutton = document.getElementById(message.content.target);
     if (toolbarbutton) {
+      const badge = toolbarbutton.querySelector(".toolbarbutton-badge");
+      badge.classList.add("feature-callout");
       toolbarbutton.setAttribute("badged", true);
-      toolbarbutton
-        .querySelector(".toolbarbutton-badge")
-        .classList.add("feature-callout");
-      // This creates the cut-out effect for the icon where the notification
-      // fits in
-      toolbarbutton
-        .querySelector(".toolbarbutton-icon")
-        .classList.add("feature-callout");
-
+      // If we have additional aria-label information for the notification
+      // we add this content to the hidden `toolbarbutton-text` node.
+      // We then use `aria-labelledby` to link this description to the button
+      // that received the notification badge.
+      if (message.content.badgeDescription) {
+        // Insert strings as soon as we know we're showing them
+        this.maybeInsertFTL(win);
+        toolbarbutton.setAttribute(
+          "aria-labelledby",
+          `toolbarbutton-notification-description ${message.content.target}`
+        );
+        // Because tooltiptext is different to the label, it gets duplicated as
+        // the description. Setting `describedby` to the same value as
+        // `labelledby` will be detected by the a11y code and the description
+        // will be removed.
+        toolbarbutton.setAttribute(
+          "aria-describedby",
+          `toolbarbutton-notification-description ${message.content.target}`
+        );
+        const descriptionEl = document.createElement("span");
+        descriptionEl.setAttribute(
+          "id",
+          "toolbarbutton-notification-description"
+        );
+        descriptionEl.setAttribute("hidden", true);
+        document.l10n.setAttributes(
+          descriptionEl,
+          message.content.badgeDescription.string_id
+        );
+        toolbarbutton.appendChild(descriptionEl);
+      }
       // `mousedown` event required because of the `onmousedown` defined on
       // the button that prevents `click` events from firing
       toolbarbutton.addEventListener("mousedown", this.removeAllNotifications);
-      // `click` event required for keyboard accessibility
-      toolbarbutton.addEventListener("click", this.removeAllNotifications);
+      // `keypress` event required for keyboard accessibility
+      toolbarbutton.addEventListener("keypress", this.removeAllNotifications);
       this.state = { notification: { id: message.id } };
 
       return toolbarbutton;
@@ -258,6 +272,12 @@ class _ToolbarBadgeHub {
   }
 
   registerBadgeToAllWindows(message) {
+    if (message.template === "update_action") {
+      this.executeAction({ ...message.content.action, message_id: message.id });
+      // No badge to set only an action to execute
+      return;
+    }
+
     // Impression should be added when the badge becomes visible
     this._addImpression(message);
     // Send a telemetry ping when adding the notification badge
@@ -292,17 +312,17 @@ class _ToolbarBadgeHub {
 
     if (message.content.delay) {
       this.state.showBadgeTimeoutId = setTimeout(() => {
-        this.registerBadgeToAllWindows(message);
+        requestIdleCallback(() => this.registerBadgeToAllWindows(message));
       }, message.content.delay);
     } else {
       this.registerBadgeToAllWindows(message);
     }
   }
 
-  async messageRequest(triggerId) {
+  async messageRequest({ triggerId, template }) {
     const message = await this._handleMessageRequest({
       triggerId,
-      template: this.template,
+      template,
     });
     if (message) {
       this.registerBadgeNotificationListener(message);
@@ -337,6 +357,7 @@ class _ToolbarBadgeHub {
     this._clearBadgeTimeout();
     clearInterval(this.state._intervalId);
     this.state = null;
+    notificationsByWindow = new WeakMap();
     Services.prefs.removeObserver(this.prefs.WHATSNEW_TOOLBAR_PANEL, this);
   }
 }

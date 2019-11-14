@@ -424,6 +424,10 @@ class SandboxPolicyCommon : public SandboxPolicyBase {
           return Trap(LStatTrap, mBroker);
         CASES_FOR_fstatat:
           return Trap(StatAtTrap, mBroker);
+        // Used by new libc and Rust's stdlib, if available.
+        // We don't have broker support yet so claim it does not exist.
+        case __NR_statx:
+          return Error(ENOSYS);
         case __NR_chmod:
           return Trap(ChmodTrap, mBroker);
         case __NR_link:
@@ -523,6 +527,13 @@ class SandboxPolicyCommon : public SandboxPolicyBase {
       case __NR_mprotect:
         return Allow();
 
+#if !defined(MOZ_MEMORY)
+        // No jemalloc means using a system allocator like glibc
+        // that might use brk.
+      case __NR_brk:
+        return Allow();
+#endif
+
         // madvise hints used by malloc; see bug 1303813 and bug 1364533
       case __NR_madvise: {
         Arg<int> advice(2);
@@ -535,6 +546,10 @@ class SandboxPolicyCommon : public SandboxPolicyBase {
 #endif
             .Else(InvalidSyscall());
       }
+
+        // musl libc will set this up in pthreads support.
+      case __NR_membarrier:
+        return Allow();
 
       // Signal handling
 #if defined(ANDROID) || defined(MOZ_ASAN)
@@ -1365,7 +1380,13 @@ class GMPSandboxPolicy : public SandboxPolicyCommon {
         return Trap(OpenTrap, mFiles);
 
       case __NR_brk:
+      // Because Firefox on glibc resorts to the fallback implementation
+      // mentioned in bug 1576006, we must explicitly allow the get*id()
+      // functions in order to use NSS in the clearkey CDM.
+      CASES_FOR_getuid:
+      CASES_FOR_getgid:
       CASES_FOR_geteuid:
+      CASES_FOR_getegid:
         return Allow();
       case __NR_sched_get_priority_min:
       case __NR_sched_get_priority_max:

@@ -12,6 +12,7 @@
 #include "YuvStamper.h"
 #include "mozilla/TemplateLib.h"
 #include "mozilla/media/MediaUtils.h"
+#include "mozilla/StaticPrefs_media.h"
 #include "nsComponentManagerUtils.h"
 #include "nsIPrefBranch.h"
 #include "nsIGfxInfo.h"
@@ -44,7 +45,7 @@
 #endif
 #include "WebrtcGmpVideoCodec.h"
 
-#include "MediaDataDecoderCodec.h"
+#include "MediaDataCodec.h"
 
 // for ntohs
 #ifdef _MSC_VER
@@ -440,7 +441,8 @@ void WebrtcVideoConduit::ReceiveStreamStatistics::Update(
  * Factory Method for VideoConduit
  */
 RefPtr<VideoSessionConduit> VideoSessionConduit::Create(
-    RefPtr<WebRtcCallWrapper> aCall, nsCOMPtr<nsIEventTarget> aStsThread) {
+    RefPtr<WebRtcCallWrapper> aCall,
+    nsCOMPtr<nsISerialEventTarget> aStsThread) {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(aCall, "missing required parameter: aCall");
   CSFLogVerbose(LOGTAG, "%s", __FUNCTION__);
@@ -458,8 +460,8 @@ RefPtr<VideoSessionConduit> VideoSessionConduit::Create(
   return obj.forget();
 }
 
-WebrtcVideoConduit::WebrtcVideoConduit(RefPtr<WebRtcCallWrapper> aCall,
-                                       nsCOMPtr<nsIEventTarget> aStsThread)
+WebrtcVideoConduit::WebrtcVideoConduit(
+    RefPtr<WebRtcCallWrapper> aCall, nsCOMPtr<nsISerialEventTarget> aStsThread)
     : mTransportMonitor("WebrtcVideoConduit"),
       mStsThread(aStsThread),
       mMutex("WebrtcVideoConduit::mMutex"),
@@ -1613,7 +1615,7 @@ std::unique_ptr<webrtc::VideoDecoder> WebrtcVideoConduit::CreateDecoder(
 #endif
 
   // Attempt to create a decoder using MediaDataDecoder.
-  decoder.reset(MediaDataDecoderCodec::CreateDecoder(aType));
+  decoder.reset(MediaDataCodec::CreateDecoder(aType));
   if (decoder) {
     return decoder;
   }
@@ -1681,6 +1683,13 @@ std::unique_ptr<webrtc::VideoEncoder> WebrtcVideoConduit::CreateEncoder(
 #ifdef MOZ_WEBRTC_MEDIACODEC
   bool enabled = false;
 #endif
+
+  if (StaticPrefs::media_webrtc_platformencoder()) {
+    encoder.reset(MediaDataCodec::CreateEncoder(aType));
+    if (encoder) {
+      return encoder;
+    }
+  }
 
   switch (aType) {
     case webrtc::VideoCodecType::kVideoCodecH264:
@@ -2035,7 +2044,17 @@ MediaConduitErrorCode WebrtcVideoConduit::ReceivedRTCPPacket(const void* data,
     return kMediaConduitRTPProcessingFailed;
   }
 
+  // TODO(bug 1496533): We will need to keep separate timestamps for each SSRC,
+  // and for each SSRC we will need to keep a timestamp for SR and RR.
+  mLastRtcpReceived = Some(GetNow());
   return kMediaConduitNoError;
+}
+
+// TODO(bug 1496533): We will need to add a type (ie; SR or RR) param here, or
+// perhaps break this function into two functions, one for each type.
+Maybe<DOMHighResTimeStamp> WebrtcVideoConduit::LastRtcpReceived() const {
+  ASSERT_ON_THREAD(mStsThread);
+  return mLastRtcpReceived;
 }
 
 MediaConduitErrorCode WebrtcVideoConduit::StopTransmitting() {
@@ -2159,7 +2178,7 @@ MediaConduitErrorCode WebrtcVideoConduit::StartReceivingLocked() {
 }
 
 // WebRTC::RTP Callback Implementation
-// Called on MSG thread
+// Called on MTG thread
 bool WebrtcVideoConduit::SendRtp(const uint8_t* packet, size_t length,
                                  const webrtc::PacketOptions& options) {
   // XXX(pkerr) - PacketOptions possibly containing RTP extensions are ignored.
@@ -2295,6 +2314,19 @@ bool WebrtcVideoConduit::RequiresNewSendStream(
         !CompatibleH264Config(mEncoderSpecificH264, newConfig))
 #endif
       ;
+}
+
+bool WebrtcVideoConduit::HasH264Hardware() {
+  nsCOMPtr<nsIGfxInfo> gfxInfo = do_GetService("@mozilla.org/gfx/info;1");
+  if (!gfxInfo) {
+    return false;
+  }
+  int32_t status;
+  nsCString discardFailureId;
+  return NS_SUCCEEDED(gfxInfo->GetFeatureStatus(
+             nsIGfxInfo::FEATURE_WEBRTC_HW_ACCELERATION_H264, discardFailureId,
+             &status)) &&
+         status == nsIGfxInfo::FEATURE_STATUS_OK;
 }
 
 }  // namespace mozilla

@@ -41,14 +41,11 @@ void DebugAPI::onNewScript(JSContext* cx, HandleScript script) {
     return;
   }
 
-  if (script->realm()->isDebuggee()) {
-    slowPathOnNewScript(cx, script);
-  }
+  slowPathOnNewScript(cx, script);
 }
 
 /* static */
-void DebugAPI::onNewGlobalObject(JSContext* cx,
-                                 Handle<GlobalObject*> global) {
+void DebugAPI::onNewGlobalObject(JSContext* cx, Handle<GlobalObject*> global) {
   MOZ_ASSERT(!global->realm()->firedOnNewGlobalObject);
 #ifdef DEBUG
   global->realm()->firedOnNewGlobalObject = true;
@@ -61,9 +58,9 @@ void DebugAPI::onNewGlobalObject(JSContext* cx,
 /* static */
 void DebugAPI::notifyParticipatesInGC(GlobalObject* global,
                                       uint64_t majorGCNumber) {
-  GlobalObject::DebuggerVector* dbgs = global->getDebuggers();
-  if (dbgs && !dbgs->empty()) {
-    slowPathNotifyParticipatesInGC(majorGCNumber, *dbgs);
+  Realm::DebuggerVector& dbgs = global->getDebuggers();
+  if (!dbgs.empty()) {
+    slowPathNotifyParticipatesInGC(majorGCNumber, dbgs);
   }
 }
 
@@ -71,12 +68,12 @@ void DebugAPI::notifyParticipatesInGC(GlobalObject* global,
 bool DebugAPI::onLogAllocationSite(JSContext* cx, JSObject* obj,
                                    HandleSavedFrame frame,
                                    mozilla::TimeStamp when) {
-  GlobalObject::DebuggerVector* dbgs = cx->global()->getDebuggers();
-  if (!dbgs || dbgs->empty()) {
+  Realm::DebuggerVector& dbgs = cx->global()->getDebuggers();
+  if (dbgs.empty()) {
     return true;
   }
   RootedObject hobj(cx, obj);
-  return slowPathOnLogAllocationSite(cx, hobj, frame, when, *dbgs);
+  return slowPathOnLogAllocationSite(cx, hobj, frame, when, dbgs);
 }
 
 /* static */
@@ -135,6 +132,15 @@ ResumeMode DebugAPI::onResumeFrame(JSContext* cx, AbstractFramePtr frame) {
 }
 
 /* static */
+ResumeMode DebugAPI::onNativeCall(JSContext* cx, const CallArgs& args,
+                                  CallReason reason) {
+  if (!cx->realm()->isDebuggee()) {
+    return ResumeMode::Continue;
+  }
+  return slowPathOnNativeCall(cx, args, reason);
+}
+
+/* static */
 ResumeMode DebugAPI::onDebuggerStatement(JSContext* cx,
                                          AbstractFramePtr frame) {
   if (!cx->realm()->isDebuggee()) {
@@ -173,13 +179,6 @@ void DebugAPI::onPromiseSettled(JSContext* cx, Handle<PromiseObject*> promise) {
   }
 }
 
-/* static */
-void DebugAPI::sweepBreakpoints(FreeOp* fop, JSScript* script) {
-  if (script->hasDebugScript()) {
-    sweepBreakpointsSlow(fop, script);
-  }
-}
-
-} // namespace js
+}  // namespace js
 
 #endif /* debugger_DebugAPI_inl_h */

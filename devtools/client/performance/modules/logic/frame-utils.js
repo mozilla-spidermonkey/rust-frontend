@@ -42,7 +42,7 @@ const gFrameData = new WeakMap();
  * Parses the raw location of this function call to retrieve the actual
  * function name, source url, host name, line and column.
  */
-/* eslint-disable complexity */
+// eslint-disable-next-line complexity
 function parseLocation(location, fallbackLine, fallbackColumn) {
   // Parse the `location` for the function name, source url, line, column etc.
 
@@ -198,7 +198,6 @@ function parseLocation(location, fallbackLine, fallbackColumn) {
 
   return { functionName, fileName, host, port, url, line, column };
 }
-/* eslint-enable complexity */
 
 /**
  * Sets the properties of `isContent` and `category` on a frame.
@@ -206,11 +205,6 @@ function parseLocation(location, fallbackLine, fallbackColumn) {
  * @param {InflatedFrame} frame
  */
 function computeIsContentAndCategory(frame) {
-  // Only C++ stack frames have associated category information.
-  if (frame.category !== null && frame.category !== undefined) {
-    return;
-  }
-
   const location = frame.location;
 
   // There are 3 variants of location strings in the profiler (with optional
@@ -244,6 +238,10 @@ function computeIsContentAndCategory(frame) {
   // them all as content.
   if (isContentScheme(location, schemeStartIndex) || isWASM(location)) {
     frame.isContent = true;
+    return;
+  }
+
+  if (frame.category !== null && frame.category !== undefined) {
     return;
   }
 

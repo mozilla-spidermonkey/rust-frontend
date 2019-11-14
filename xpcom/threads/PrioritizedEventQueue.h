@@ -9,15 +9,19 @@
 
 #include "mozilla/AbstractEventQueue.h"
 #include "mozilla/EventQueue.h"
+#include "mozilla/IdlePeriodState.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/TypeTraits.h"
 #include "mozilla/UniquePtr.h"
 #include "nsCOMPtr.h"
-#include "nsIIdlePeriod.h"
 
+class nsIIdlePeriod;
 class nsIRunnable;
 
 namespace mozilla {
+namespace ipc {
+class IdleSchedulerChild;
+}
 
 // This AbstractEventQueue implementation has one queue for each
 // EventQueuePriority. The type of queue used for each priority is determined by
@@ -40,22 +44,19 @@ class PrioritizedEventQueue final : public AbstractEventQueue {
  public:
   static const bool SupportsPrioritization = true;
 
-  explicit PrioritizedEventQueue(already_AddRefed<nsIIdlePeriod> aIdlePeriod)
-      : mHighQueue(MakeUnique<EventQueue>(EventQueuePriority::High)),
-        mInputQueue(MakeUnique<EventQueue>(EventQueuePriority::Input)),
-        mMediumHighQueue(
-            MakeUnique<EventQueue>(EventQueuePriority::MediumHigh)),
-        mNormalQueue(MakeUnique<EventQueue>(EventQueuePriority::Normal)),
-        mDeferredTimersQueue(
-            MakeUnique<EventQueue>(EventQueuePriority::DeferredTimers)),
-        mIdleQueue(MakeUnique<EventQueue>(EventQueuePriority::Idle)),
-        mIdlePeriod(aIdlePeriod) {}
+  explicit PrioritizedEventQueue(already_AddRefed<nsIIdlePeriod>&& aIdlePeriod);
+
+  virtual ~PrioritizedEventQueue();
 
   void PutEvent(already_AddRefed<nsIRunnable>&& aEvent,
-                EventQueuePriority aPriority,
-                const MutexAutoLock& aProofOfLock) final;
+                EventQueuePriority aPriority, const MutexAutoLock& aProofOfLock,
+                mozilla::TimeDuration* aDelay = nullptr) final;
+  // See PrioritizedEventQueue.cpp for explanation of
+  // aHypotheticalInputEventDelay
   already_AddRefed<nsIRunnable> GetEvent(
-      EventQueuePriority* aPriority, const MutexAutoLock& aProofOfLock) final;
+      EventQueuePriority* aPriority, const MutexAutoLock& aProofOfLock,
+      mozilla::TimeDuration* aHypotheticalInputEventDelay = nullptr) final;
+  void DidRunEvent(const MutexAutoLock& aProofOfLock);
 
   bool IsEmpty(const MutexAutoLock& aProofOfLock) final;
   size_t Count(const MutexAutoLock& aProofOfLock) const final;
@@ -93,9 +94,7 @@ class PrioritizedEventQueue final : public AbstractEventQueue {
     n += mDeferredTimersQueue->SizeOfIncludingThis(aMallocSizeOf);
     n += mIdleQueue->SizeOfIncludingThis(aMallocSizeOf);
 
-    if (mIdlePeriod) {
-      n += aMallocSizeOf(mIdlePeriod);
-    }
+    n += mIdlePeriodState.SizeOfExcludingThis(aMallocSizeOf);
 
     return n;
   }
@@ -103,9 +102,6 @@ class PrioritizedEventQueue final : public AbstractEventQueue {
  private:
   EventQueuePriority SelectQueue(bool aUpdateState,
                                  const MutexAutoLock& aProofOfLock);
-
-  // Returns a null TimeStamp if we're not in the idle period.
-  mozilla::TimeStamp GetIdleDeadline();
 
   UniquePtr<EventQueue> mHighQueue;
   UniquePtr<EventQueue> mInputQueue;
@@ -117,6 +113,9 @@ class PrioritizedEventQueue final : public AbstractEventQueue {
   // We need to drop the queue mutex when checking the idle deadline, so we keep
   // a pointer to it here.
   Mutex* mMutex = nullptr;
+
+  TimeDuration mLastEventDelay;
+  TimeStamp mLastEventStart;
 
 #ifndef RELEASE_OR_BETA
   // Pointer to a place where the most recently computed idle deadline is
@@ -130,17 +129,6 @@ class PrioritizedEventQueue final : public AbstractEventQueue {
   // secondary queue and prevents starving the normal queue.
   bool mProcessHighPriorityQueue = false;
 
-  // mIdlePeriod keeps track of the current idle period. If at any
-  // time the main event queue is empty, calling
-  // mIdlePeriod->GetIdlePeriodHint() will give an estimate of when
-  // the current idle period will end.
-  nsCOMPtr<nsIIdlePeriod> mIdlePeriod;
-
-  // Set to true if HasPendingEvents() has been called and returned true because
-  // of a pending idle event.  This is used to remember to return that idle
-  // event from GetIdleEvent() to ensure that HasPendingEvents() never lies.
-  bool mHasPendingEventsPromisedIdleEvent = false;
-
   TimeStamp mInputHandlingStartTime;
 
   enum InputEventQueueState {
@@ -150,6 +138,9 @@ class PrioritizedEventQueue final : public AbstractEventQueue {
     STATE_ENABLED
   };
   InputEventQueueState mInputQueueState = STATE_DISABLED;
+
+  // Tracking of our idle state of various sorts.
+  IdlePeriodState mIdlePeriodState;
 };
 
 }  // namespace mozilla

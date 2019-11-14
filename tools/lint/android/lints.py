@@ -4,8 +4,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import itertools
 import json
 import os
@@ -40,7 +38,7 @@ def setup(root, **setupargs):
     return 0
 
 
-def gradle(topsrcdir=None, topobjdir=None, tasks=[], extra_args=[], verbose=True):
+def gradle(log, topsrcdir=None, topobjdir=None, tasks=[], extra_args=[], verbose=True):
     sys.path.insert(0, os.path.join(topsrcdir, 'mobile', 'android'))
     from gradle import gradle_lock
 
@@ -51,8 +49,8 @@ def gradle(topsrcdir=None, topobjdir=None, tasks=[], extra_args=[], verbose=True
             tasks + \
             extra_args
 
-        if verbose:
-            print(' '.join(six.moves.shlex_quote(arg) for arg in cmd_args))
+        cmd = ' '.join(six.moves.shlex_quote(arg) for arg in cmd_args)
+        log.debug(cmd)
 
         # Gradle and mozprocess do not get along well, so we use subprocess
         # directly.
@@ -78,7 +76,7 @@ def api_lint(config, **lintargs):
     topsrcdir = lintargs['root']
     topobjdir = lintargs['topobjdir']
 
-    gradle(topsrcdir=topsrcdir, topobjdir=topobjdir,
+    gradle(lintargs['log'], topsrcdir=topsrcdir, topobjdir=topobjdir,
            tasks=lintargs['substs']['GRADLE_ANDROID_API_LINT_TASKS'],
            extra_args=lintargs.get('extra_args') or [])
 
@@ -92,11 +90,11 @@ def api_lint(config, **lintargs):
         for rule in ('compat_failures', 'failures'):
             for r in issues[rule]:
                 err = {
-                    'rule': rule,
+                    'rule': r['rule'] if rule == 'failures' else 'compat_failures',
                     'path': mozpath.relpath(r['file'], topsrcdir),
                     'lineno': int(r['line']),
                     'column': int(r.get('column') or 0),
-                    'message': '{}: {}'.format(r['msg'], r['detail']),
+                    'message': r['msg'],
                 }
                 results.append(result.from_config(config, **err))
 
@@ -106,9 +104,37 @@ def api_lint(config, **lintargs):
                 'path': mozpath.relpath(r['file'], topsrcdir),
                 'lineno': int(r['line']),
                 'column': int(r.get('column') or 0),
-                'message': 'Unexpected api change',
+                'message': 'Unexpected api change. Please run ./gradlew {} for more '
+                           'information'.format(
+                    ' '.join(lintargs['substs']['GRADLE_ANDROID_API_LINT_TASKS'])),
             }
             results.append(result.from_config(config, **err))
+
+    return results
+
+
+def javadoc(config, **lintargs):
+    topsrcdir = lintargs['root']
+    topobjdir = lintargs['topobjdir']
+
+    gradle(lintargs['log'], topsrcdir=topsrcdir, topobjdir=topobjdir,
+           tasks=lintargs['substs']['GRADLE_ANDROID_GECKOVIEW_DOCS_TASKS'],
+           extra_args=lintargs.get('extra_args') or [])
+
+    output_files = lintargs['substs']['GRADLE_ANDROID_GECKOVIEW_DOCS_OUTPUT_FILES']
+
+    results = []
+
+    for output_file in output_files:
+        with open(os.path.join(topobjdir, output_file)) as f:
+            # Like: '[{"path":"/absolute/path/to/topsrcdir/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/ContentBlocking.java","lineno":"462","level":"warning","message":"no @return"}]'.  # NOQA: E501
+            issues = json.load(f)
+
+            for issue in issues:
+                issue['path'] = issue['path'].replace(lintargs['root'], '')
+                # We want warnings to be errors for linting purposes.
+                issue['level'] = 'error'
+                results.append(result.from_config(config, **issue))
 
     return results
 
@@ -117,7 +143,7 @@ def lint(config, **lintargs):
     topsrcdir = lintargs['root']
     topobjdir = lintargs['topobjdir']
 
-    gradle(topsrcdir=topsrcdir, topobjdir=topobjdir,
+    gradle(lintargs['log'], topsrcdir=topsrcdir, topobjdir=topobjdir,
            tasks=lintargs['substs']['GRADLE_ANDROID_LINT_TASKS'],
            extra_args=lintargs.get('extra_args') or [])
 
@@ -127,7 +153,7 @@ def lint(config, **lintargs):
     path = os.path.join(
         lintargs['topobjdir'],
         'gradle/build/mobile/android/geckoview/reports',
-        'lint-results-{}.xml'.format(lintargs['substs']['GRADLE_ANDROID_APP_VARIANT_NAME']))
+        'lint-results-{}.xml'.format(lintargs['substs']['GRADLE_ANDROID_GECKOVIEW_VARIANT_NAME']))
     tree = ET.parse(open(path, 'rt'))
     root = tree.getroot()
 
@@ -141,51 +167,6 @@ def lint(config, **lintargs):
             'message': issue.get('message'),
             'path': location.get('file').replace(lintargs['root'], ''),
             'lineno': int(location.get('line') or 0),
-        }
-        results.append(result.from_config(config, **err))
-
-    return results
-
-
-def findbugs(config, **lintargs):
-    topsrcdir = lintargs['root']
-    topobjdir = lintargs['topobjdir']
-
-    # A brute force way to turn a Java FQN into a path on disk.  Assumes Java and Kotlin sources
-    # are in mobile/android for performance and simplicity.
-    sourcepath_finder = FileFinder(os.path.join(topsrcdir, 'mobile', 'android'))
-
-    gradle(topsrcdir=topsrcdir, topobjdir=topobjdir,
-           tasks=lintargs['substs']['GRADLE_ANDROID_FINDBUGS_TASKS'],
-           extra_args=lintargs.get('extra_args') or [])
-
-    path = os.path.join(
-        lintargs['topobjdir'],
-        'gradle/build/mobile/android/app/reports/findbugs',
-        'findbugs-{}-output.xml'.format(lintargs['substs']['GRADLE_ANDROID_APP_VARIANT_NAME']))
-    tree = ET.parse(open(path, 'rt'))
-    root = tree.getroot()
-
-    results = []
-
-    for issue in root.findall('./BugInstance'):
-        location = issue.find('./SourceLine')
-        # Like 'org/mozilla/gecko/sync/repositories/android/FennecTabsRepository.java'.
-        unanchored_sourcepath = location.get('sourcepath')
-
-        sourcepaths = list(sourcepath_finder.find('**/{}'.format(unanchored_sourcepath)))
-        if not len(sourcepaths) == 1:
-            raise RuntimeError('No sourcepath found for unanchored sourcepath {path}'
-                               .format(path=unanchored_sourcepath))
-
-        sourcepath, _ = sourcepaths[0]
-
-        err = {
-            'level': 'error',
-            'rule': issue.get('type'),
-            'message': ET.tostring(issue),
-            'path': os.path.join('mobile', 'android', sourcepath),
-            'lineno': int(location.get('start') or 0),
         }
         results.append(result.from_config(config, **err))
 
@@ -216,7 +197,7 @@ def checkstyle(config, **lintargs):
     topsrcdir = lintargs['root']
     topobjdir = lintargs['topobjdir']
 
-    gradle(topsrcdir=topsrcdir, topobjdir=topobjdir,
+    gradle(lintargs['log'], topsrcdir=topsrcdir, topobjdir=topobjdir,
            tasks=lintargs['substs']['GRADLE_ANDROID_CHECKSTYLE_TASKS'],
            extra_args=lintargs.get('extra_args') or [])
 
@@ -287,7 +268,7 @@ def test(config, **lintargs):
     topsrcdir = lintargs['root']
     topobjdir = lintargs['topobjdir']
 
-    gradle(topsrcdir=topsrcdir, topobjdir=topobjdir,
+    gradle(lintargs['log'], topsrcdir=topsrcdir, topobjdir=topobjdir,
            tasks=lintargs['substs']['GRADLE_ANDROID_TEST_TASKS'],
            extra_args=lintargs.get('extra_args') or [])
 
@@ -297,8 +278,7 @@ def test(config, **lintargs):
         # Can't use str.capitalize because it lower cases trailing letters.
         return (s[0].upper() + s[1:]) if s else ''
 
-    pairs = (('app', lintargs['substs']['GRADLE_ANDROID_APP_VARIANT_NAME']),
-             ('geckoview', lintargs['substs']['GRADLE_ANDROID_GECKOVIEW_VARIANT_NAME']))
+    pairs = [('geckoview', lintargs['substs']['GRADLE_ANDROID_GECKOVIEW_VARIANT_NAME'])]
     for project, variant in pairs:
         report_dir = os.path.join(
             lintargs['topobjdir'],

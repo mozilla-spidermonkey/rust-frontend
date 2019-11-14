@@ -16,23 +16,14 @@ function getSecurityInfo(securityInfoAsString) {
 function getCertChain(securityInfoAsString) {
   let certChain = "";
   let securityInfo = getSecurityInfo(securityInfoAsString);
-  for (let cert of securityInfo.failedCertChain.getEnumerator()) {
+  for (let cert of securityInfo.failedCertChain) {
     certChain += getPEMString(cert);
   }
   return certChain;
 }
 
-function getDERString(cert) {
-  var derArray = cert.getRawDER();
-  var derString = "";
-  for (var i = 0; i < derArray.length; i++) {
-    derString += String.fromCharCode(derArray[i]);
-  }
-  return derString;
-}
-
 function getPEMString(cert) {
-  var derb64 = btoa(getDERString(cert));
+  var derb64 = cert.getBase64DERString();
   // Wrap the Base64 string into lines of 64 characters,
   // with CRLF line breaks (as specified in RFC 1421).
   var wrapped = derb64.replace(/(\S{64}(?!$))/g, "$1\r\n");
@@ -43,17 +34,20 @@ function getPEMString(cert) {
   );
 }
 
-function injectErrorPageFrame(tab, src) {
+function injectErrorPageFrame(tab, src, sandboxed) {
   return ContentTask.spawn(
     tab.linkedBrowser,
-    { frameSrc: src },
-    async function({ frameSrc }) {
+    { frameSrc: src, frameSandboxed: sandboxed },
+    async function({ frameSrc, frameSandboxed }) {
       let loaded = ContentTaskUtils.waitForEvent(
         content.wrappedJSObject,
         "DOMFrameContentLoaded"
       );
       let iframe = content.document.createElement("iframe");
       iframe.src = frameSrc;
+      if (frameSandboxed) {
+        iframe.setAttribute("sandbox", "allow-scripts");
+      }
       content.document.body.appendChild(iframe);
       await loaded;
       // We will have race conditions when accessing the frame content after setting a src,
@@ -66,7 +60,7 @@ function injectErrorPageFrame(tab, src) {
   );
 }
 
-async function openErrorPage(src, useFrame) {
+async function openErrorPage(src, useFrame, sandboxed) {
   let dummyPage =
     getRootDirectory(gTestPath).replace(
       "chrome://mochitests/content",
@@ -77,7 +71,7 @@ async function openErrorPage(src, useFrame) {
   if (useFrame) {
     info("Loading cert error page in an iframe");
     tab = await BrowserTestUtils.openNewForegroundTab(gBrowser, dummyPage);
-    await injectErrorPageFrame(tab, src);
+    await injectErrorPageFrame(tab, src, sandboxed);
   } else {
     let certErrorLoaded;
     tab = await BrowserTestUtils.openNewForegroundTab(

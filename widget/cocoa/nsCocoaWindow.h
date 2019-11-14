@@ -50,6 +50,7 @@ typedef struct _nsCocoaWindowList {
   BOOL mDrawTitle;
   BOOL mBrightTitlebarForeground;
   BOOL mUseMenuStyle;
+  BOOL mIsAnimationSuppressed;
 
   nsTouchBar* mTouchBar;
 }
@@ -78,6 +79,9 @@ typedef struct _nsCocoaWindowList {
 - (void)setBeingShown:(BOOL)aValue;
 - (BOOL)isBeingShown;
 - (BOOL)isVisibleOrBeingShown;
+
+- (void)setIsAnimationSuppressed:(BOOL)aValue;
+- (BOOL)isAnimationSuppressed;
 
 // Returns an autoreleased NSArray containing the NSViews that we consider the
 // "contents" of this window. All views in the returned array are subviews of
@@ -306,6 +310,7 @@ class nsCocoaWindow final : public nsBaseWidget, public nsPIWidgetCocoa {
   virtual nsresult SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint, uint32_t aNativeMessage,
                                               uint32_t aModifierFlags,
                                               nsIObserver* aObserver) override;
+  virtual void LockAspectRatio(bool aShouldLock) override;
 
   void DispatchSizeModeEvent();
   void DispatchOcclusionEvent();
@@ -323,7 +328,7 @@ class nsCocoaWindow final : public nsBaseWidget, public nsPIWidgetCocoa {
   virtual void SetInputContext(const InputContext& aContext,
                                const InputContextAction& aAction) override;
   virtual InputContext GetInputContext() override { return mInputContext; }
-  virtual void GetEditCommands(NativeKeyBindingsType aType,
+  virtual bool GetEditCommands(NativeKeyBindingsType aType,
                                const mozilla::WidgetKeyboardEvent& aEvent,
                                nsTArray<mozilla::CommandInt>& aCommands) override;
 
@@ -366,6 +371,7 @@ class nsCocoaWindow final : public nsBaseWidget, public nsPIWidgetCocoa {
   int32_t mShadowStyle;
 
   CGFloat mBackingScaleFactor;
+  CGFloat mAspectRatio;
 
   WindowAnimationType mAnimationType;
 
@@ -389,6 +395,8 @@ class nsCocoaWindow final : public nsBaseWidget, public nsPIWidgetCocoa {
   bool mInReportMoveEvent;  // true if in a call to ReportMoveEvent().
   bool mInResize;           // true if in a call to DoResize().
   bool mWindowTransformIsIdentity;
+  bool mAlwaysOnTop;
+  bool mAspectRatioLocked;
 
   int32_t mNumModalDescendents;
   InputContext mInputContext;

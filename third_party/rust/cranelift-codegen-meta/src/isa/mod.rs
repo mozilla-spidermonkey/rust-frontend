@@ -38,8 +38,8 @@ impl Isa {
     }
 
     /// Returns all supported isa targets.
-    pub fn all() -> [Isa; 4] {
-        [Isa::Riscv, Isa::X86, Isa::Arm32, Isa::Arm64]
+    pub fn all() -> &'static [Isa] {
+        &[Isa::Riscv, Isa::X86, Isa::Arm32, Isa::Arm64]
     }
 }
 
@@ -55,7 +55,7 @@ impl fmt::Display for Isa {
     }
 }
 
-pub fn define(isas: &Vec<Isa>, shared_defs: &mut SharedDefinitions) -> Vec<TargetIsa> {
+pub(crate) fn define(isas: &Vec<Isa>, shared_defs: &mut SharedDefinitions) -> Vec<TargetIsa> {
     isas.iter()
         .map(|isa| match isa {
             Isa::Riscv => riscv::define(shared_defs),

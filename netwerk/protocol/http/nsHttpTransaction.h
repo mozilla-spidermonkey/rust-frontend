@@ -119,6 +119,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
 
   void EnableKeepAlive() { mCaps |= NS_HTTP_ALLOW_KEEPALIVE; }
   void MakeSticky() { mCaps |= NS_HTTP_STICKY_CONNECTION; }
+  void MakeNonSticky() override { mCaps &= ~NS_HTTP_STICKY_CONNECTION; }
 
   // SetPriority() may only be used by the connection manager.
   void SetPriority(int32_t priority) { mPriority = priority; }
@@ -140,6 +141,8 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   void RemoveDispatchedAsBlocking();
 
   void DisableSpdy() override;
+
+  void DoNotRemoveAltSvc() override { mDoNotRemoveAltSvc = true; }
 
   nsHttpTransaction* QueryHttpTransaction() override { return this; }
 
@@ -179,6 +182,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   mozilla::TimeStamp GetResponseEnd();
 
   int64_t GetTransferSize() { return mTransferSize; }
+  int64_t GetRequestSize() { return mRequestSize; }
 
   MOZ_MUST_USE bool Do0RTT() override;
   MOZ_MUST_USE nsresult Finish0RTT(bool aRestart,
@@ -377,6 +381,8 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   bool mContentDecodingCheck;
   bool mDeferredSendProgress;
   bool mWaitingOnPipeOut;
+
+  bool mDoNotRemoveAltSvc;
 
   // mClosed           := transaction has been explicitly closed
   // mTransactionDone  := transaction ran to completion or was interrupted

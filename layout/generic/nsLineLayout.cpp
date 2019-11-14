@@ -710,8 +710,9 @@ static bool IsPercentageAware(const nsIFrame* aFrame, WritingMode aWM) {
     // We need to check for frames that shrink-wrap when they're auto
     // width.
     const nsStyleDisplay* disp = aFrame->StyleDisplay();
-    if (disp->mDisplay == StyleDisplay::InlineBlock ||
-        disp->mDisplay == StyleDisplay::InlineTable ||
+    if ((disp->DisplayOutside() == StyleDisplayOutside::Inline &&
+         (disp->DisplayInside() == StyleDisplayInside::FlowRoot ||
+          disp->DisplayInside() == StyleDisplayInside::Table)) ||
         fType == LayoutFrameType::HTMLButtonControl ||
         fType == LayoutFrameType::GfxButtonControl ||
         fType == LayoutFrameType::FieldSet ||
@@ -1672,7 +1673,7 @@ void nsLineLayout::AdjustLeadings(nsIFrame* spanFrame, PerSpanData* psd,
     requiredStartLeading += leadings.mStart;
     requiredEndLeading += leadings.mEnd;
   }
-  if (aStyleText->HasTextEmphasis()) {
+  if (aStyleText->HasEffectiveTextEmphasis()) {
     nscoord bsize = GetBSizeOfEmphasisMarks(spanFrame, aInflation);
     LogicalSide side = aStyleText->TextEmphasisSide(mRootSpan->mWritingMode);
     if (side == eLogicalSideBStart) {
@@ -2029,9 +2030,16 @@ void nsLineLayout::VerticalAlignFrames(PerSpanData* psd) {
         default:
         case StyleVerticalAlignKeyword::Baseline:
           if (lineWM.IsVertical() && !lineWM.IsSideways()) {
+            // FIXME: We should really use a central baseline from the
+            // baseline table of the font, rather than assuming it's in
+            // the middle.
             if (frameSpan) {
+              nscoord borderBoxBSize = pfd->mBounds.BSize(lineWM);
+              nscoord bStartBP = pfd->mBorderPadding.BStart(lineWM);
+              nscoord bEndBP = pfd->mBorderPadding.BEnd(lineWM);
+              nscoord contentBoxBSize = borderBoxBSize - bStartBP - bEndBP;
               pfd->mBounds.BStart(lineWM) =
-                  revisedBaselineBCoord - pfd->mBounds.BSize(lineWM) / 2;
+                  revisedBaselineBCoord - contentBoxBSize / 2 - bStartBP;
             } else {
               pfd->mBounds.BStart(lineWM) = revisedBaselineBCoord -
                                             logicalBSize / 2 +
@@ -2279,7 +2287,7 @@ void nsLineLayout::VerticalAlignFrames(PerSpanData* psd) {
             fm, minimumLineBSize, lineWM.IsLineInverted());
         nscoord blockEnd = blockStart + minimumLineBSize;
 
-        if (mStyleText->HasTextEmphasis()) {
+        if (mStyleText->HasEffectiveTextEmphasis()) {
           nscoord fontMaxHeight = fm->MaxHeight();
           nscoord emphasisHeight =
               GetBSizeOfEmphasisMarks(spanFrame, inflation);
@@ -3149,7 +3157,7 @@ void nsLineLayout::TextAlignLine(nsLineBox* aLine, bool aIsLastLine) {
 
       case NS_STYLE_TEXT_ALIGN_LEFT:
       case NS_STYLE_TEXT_ALIGN_MOZ_LEFT:
-        if (!lineWM.IsBidiLTR()) {
+        if (lineWM.IsBidiRTL()) {
           dx = remainingISize;
         }
         break;
@@ -3177,7 +3185,7 @@ void nsLineLayout::TextAlignLine(nsLineBox* aLine, bool aIsLastLine) {
   }
 
   if (mPresContext->BidiEnabled() &&
-      (!mPresContext->IsVisualMode() || !lineWM.IsBidiLTR())) {
+      (!mPresContext->IsVisualMode() || lineWM.IsBidiRTL())) {
     PerFrameData* startFrame = psd->mFirstFrame;
     MOZ_ASSERT(startFrame, "empty line?");
     if (startFrame->mIsMarker) {
@@ -3279,7 +3287,8 @@ void nsLineLayout::RelativePositionFrames(PerSpanData* psd,
     if (frame->HasView())
       nsContainerFrame::SyncFrameViewAfterReflow(
           mPresContext, frame, frame->GetView(),
-          pfd->mOverflowAreas.VisualOverflow(), NS_FRAME_NO_SIZE_VIEW);
+          pfd->mOverflowAreas.VisualOverflow(),
+          nsIFrame::ReflowChildFlags::NoSizeView);
 
     // Note: the combined area of a child is in its coordinate
     // system. We adjust the childs combined area into our coordinate
@@ -3302,7 +3311,7 @@ void nsLineLayout::RelativePositionFrames(PerSpanData* psd,
         // (4) When there are text strokes
         if (pfd->mRecomputeOverflow ||
             frame->Style()->HasTextDecorationLines() ||
-            frame->StyleText()->HasTextEmphasis() ||
+            frame->StyleText()->HasEffectiveTextEmphasis() ||
             frame->StyleText()->HasWebkitTextStroke()) {
           nsTextFrame* f = static_cast<nsTextFrame*>(frame);
           r = f->RecomputeOverflow(mBlockReflowInput->mFrame);
@@ -3326,7 +3335,7 @@ void nsLineLayout::RelativePositionFrames(PerSpanData* psd,
     if (frame->HasView())
       nsContainerFrame::SyncFrameViewAfterReflow(
           mPresContext, frame, frame->GetView(), r.VisualOverflow(),
-          NS_FRAME_NO_MOVE_VIEW);
+          nsIFrame::ReflowChildFlags::NoMoveView);
 
     overflowAreas.UnionWith(r + frame->GetPosition());
   }

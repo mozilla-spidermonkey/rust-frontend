@@ -27,6 +27,7 @@
 #include "nsIWebNavigation.h"
 #include "nsLocalFile.h"
 #include "nsMemory.h"
+#include "nsProxyRelease.h"
 #include "nsString.h"
 #include "nsThreadUtils.h"
 #include "shared-libraries.h"
@@ -40,14 +41,6 @@ using namespace mozilla;
 using dom::AutoJSAPI;
 using dom::Promise;
 using std::string;
-
-extern "C" {
-// This function is defined in the profiler rust module at
-// tools/profiler/rust-helper. nsProfiler::SymbolTable and CompactSymbolTable
-// have identical memory layout.
-bool profiler_get_symbol_table(const char* debug_path, const char* breakpad_id,
-                               nsProfiler::SymbolTable* symbol_table);
-}
 
 NS_IMPL_ISUPPORTS(nsProfiler, nsIProfiler, nsIObserver)
 
@@ -181,13 +174,90 @@ nsProfiler::ResumeSampling() {
 
 NS_IMETHODIMP
 nsProfiler::AddMarker(const char* aMarker) {
-  profiler_add_marker(aMarker, JS::ProfilingCategoryPair::OTHER);
+  PROFILER_ADD_MARKER(aMarker, OTHER);
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsProfiler::ClearAllPages() {
   profiler_clear_all_pages();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsProfiler::WaitOnePeriodicSampling(JSContext* aCx, Promise** aPromise) {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  if (NS_WARN_IF(!aCx)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  nsIGlobalObject* globalObject = xpc::CurrentNativeGlobal(aCx);
+  if (NS_WARN_IF(!globalObject)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  ErrorResult result;
+  RefPtr<Promise> promise = Promise::Create(globalObject, result);
+  if (NS_WARN_IF(result.Failed())) {
+    return result.StealNSResult();
+  }
+
+  // The callback cannot officially own the promise RefPtr directly, because
+  // `Promise` doesn't support multi-threading, and the callback could destroy
+  // the promise in the sampler thread.
+  // `nsMainThreadPtrHandle` ensures that the promise can only be destroyed on
+  // the main thread. And the invocation from the Sampler thread immediately
+  // dispatches a task back to the main thread, to resolve/reject the promise.
+  // The lambda needs to be `mutable`, to allow moving-from
+  // `promiseHandleInSampler`.
+  if (!profiler_callback_after_sampling(
+          [promiseHandleInSampler = nsMainThreadPtrHandle<Promise>(
+               new nsMainThreadPtrHolder<Promise>(
+                   "WaitOnePeriodicSampling promise for Sampler", promise))](
+              SamplingState aSamplingState) mutable {
+            SystemGroup::Dispatch(
+                TaskCategory::Other,
+                NS_NewRunnableFunction(
+                    "nsProfiler::WaitOnePeriodicSampling result on main thread",
+                    [promiseHandleInMT = std::move(promiseHandleInSampler),
+                     aSamplingState]() {
+                      AutoJSAPI jsapi;
+                      if (NS_WARN_IF(!jsapi.Init(
+                              promiseHandleInMT->GetGlobalObject()))) {
+                        // We're really hosed if we can't get a JS context for
+                        // some reason.
+                        promiseHandleInMT->MaybeReject(
+                            NS_ERROR_DOM_UNKNOWN_ERR);
+                        return;
+                      }
+
+                      switch (aSamplingState) {
+                        case SamplingState::JustStopped:
+                        case SamplingState::SamplingPaused:
+                          promiseHandleInMT->MaybeReject(NS_ERROR_FAILURE);
+                          break;
+
+                        case SamplingState::NoStackSamplingCompleted:
+                        case SamplingState::SamplingCompleted: {
+                          JS::RootedValue val(jsapi.cx());
+                          promiseHandleInMT->MaybeResolve(val);
+                        } break;
+
+                        default:
+                          MOZ_ASSERT(false, "Unexpected SamplingState value");
+                          promiseHandleInMT->MaybeReject(
+                              NS_ERROR_DOM_UNKNOWN_ERR);
+                          break;
+                      }
+                    }));
+          })) {
+    // Callback was not added (e.g., profiler is not running) and will never be
+    // invoked, so we need to resolve the promise here.
+    promise->MaybeReject(NS_ERROR_DOM_UNKNOWN_ERR);
+  }
+
+  promise.forget(aPromise);
   return NS_OK;
 }
 
@@ -228,6 +298,30 @@ nsProfiler::GetSharedLibraries(JSContext* aCx,
     return NS_ERROR_FAILURE;
   }
   aResult.setObject(*obj);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsProfiler::GetActiveConfiguration(JSContext* aCx,
+                                   JS::MutableHandle<JS::Value> aResult) {
+  JS::RootedValue jsValue(aCx);
+  {
+    nsString buffer;
+    JSONWriter writer(MakeUnique<StringWriteFunc>(buffer));
+    profiler_write_active_configuration(writer);
+    MOZ_ALWAYS_TRUE(JS_ParseJSON(aCx,
+                                 static_cast<const char16_t*>(buffer.get()),
+                                 buffer.Length(), &jsValue));
+  }
+  if (jsValue.isNull()) {
+    aResult.setNull();
+  } else {
+    JS::RootedObject obj(aCx, &jsValue.toObject());
+    if (!obj) {
+      return NS_ERROR_FAILURE;
+    }
+    aResult.setObject(*obj);
+  }
   return NS_OK;
 }
 
@@ -711,10 +805,14 @@ RefPtr<nsProfiler::GatheringPromise> nsProfiler::StartGathering(
 
   mWriter.emplace();
 
+  UniquePtr<ProfilerCodeAddressService> service =
+      profiler_code_address_service_for_presymbolication();
+
   // Start building up the JSON result and grab the profile from this process.
   mWriter->Start();
   if (!profiler_stream_json_for_this_process(*mWriter, aSinceTime,
-                                             /* aIsShuttingDown */ false)) {
+                                             /* aIsShuttingDown */ false,
+                                             service.get())) {
     // The profiler is inactive. This either means that it was inactive even
     // at the time that ProfileGatherer::Start() was called, or that it was
     // stopped on a different thread since that call. Either way, we need to

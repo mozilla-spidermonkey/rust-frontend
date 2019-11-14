@@ -36,7 +36,6 @@
 #include "nsColor.h"
 #include "nsGfxCIID.h"
 #include "nsIDocShell.h"
-#include "nsIDOMWindow.h"
 #include "nsPIDOMWindow.h"
 #include "nsDisplayList.h"
 #include "nsFocusManager.h"
@@ -359,6 +358,14 @@ class AdjustedTargetForFilter {
       mSourceGraphicRect.SizeTo(1, 1);
     }
 
+    if (!mFinalTarget->CanCreateSimilarDrawTarget(mSourceGraphicRect.Size(),
+                                                  SurfaceFormat::B8G8R8A8)) {
+      mTarget = mFinalTarget;
+      mCtx = nullptr;
+      mFinalTarget = nullptr;
+      return;
+    }
+
     mTarget = mFinalTarget->CreateSimilarDrawTarget(mSourceGraphicRect.Size(),
                                                     SurfaceFormat::B8G8R8A8);
 
@@ -480,6 +487,14 @@ class AdjustedTargetForShadow {
     bounds.Inflate(blurRadius);
     bounds.RoundOut();
     bounds.ToIntRect(&mTempRect);
+
+    if (!mFinalTarget->CanCreateSimilarDrawTarget(mTempRect.Size(),
+                                                  SurfaceFormat::B8G8R8A8)) {
+      mTarget = mFinalTarget;
+      mCtx = nullptr;
+      mFinalTarget = nullptr;
+      return;
+    }
 
     mTarget = mFinalTarget->CreateShadowDrawTarget(
         mTempRect.Size(), SurfaceFormat::B8G8R8A8, mSigma);
@@ -1672,13 +1687,13 @@ CanvasRenderingContext2D::GetSurfaceSnapshot(gfxAlphaType* aOutAlphaType) {
     *aOutAlphaType = (mOpaque ? gfxAlphaType::Opaque : gfxAlphaType::Premult);
   }
 
-  if (!mBufferProvider) {
-    if (!EnsureTarget()) {
-      MOZ_ASSERT(
-          mTarget == sErrorTarget,
-          "On EnsureTarget failure mTarget should be set to sErrorTarget.");
-      return mTarget->Snapshot();
-    }
+  // For GetSurfaceSnapshot we always call EnsureTarget even if mBufferProvider
+  // already exists, otherwise we get performance issues. See bug 1567054.
+  if (!EnsureTarget()) {
+    MOZ_ASSERT(
+        mTarget == sErrorTarget,
+        "On EnsureTarget failure mTarget should be set to sErrorTarget.");
+    return mTarget->Snapshot();
   }
 
   // The concept of BorrowSnapshot seems a bit broken here, but the original
@@ -2094,7 +2109,6 @@ already_AddRefed<CanvasPattern> CanvasRenderingContext2D::CreatePattern(
   } else if (aSource.IsHTMLImageElement()) {
     HTMLImageElement* img = &aSource.GetAsHTMLImageElement();
     if (img->IntrinsicState().HasState(NS_EVENT_STATE_BROKEN)) {
-      aError.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
       return nullptr;
     }
 
@@ -5444,13 +5458,13 @@ JSObject* CanvasPath::WrapObject(JSContext* aCx,
 }
 
 already_AddRefed<CanvasPath> CanvasPath::Constructor(
-    const GlobalObject& aGlobal, ErrorResult& aRv) {
+    const GlobalObject& aGlobal) {
   RefPtr<CanvasPath> path = new CanvasPath(aGlobal.GetAsSupports());
   return path.forget();
 }
 
 already_AddRefed<CanvasPath> CanvasPath::Constructor(
-    const GlobalObject& aGlobal, CanvasPath& aCanvasPath, ErrorResult& aRv) {
+    const GlobalObject& aGlobal, CanvasPath& aCanvasPath) {
   RefPtr<gfx::Path> tempPath = aCanvasPath.GetPath(
       CanvasWindingRule::Nonzero,
       gfxPlatform::GetPlatform()->ScreenReferenceDrawTarget().get());
@@ -5461,11 +5475,10 @@ already_AddRefed<CanvasPath> CanvasPath::Constructor(
 }
 
 already_AddRefed<CanvasPath> CanvasPath::Constructor(
-    const GlobalObject& aGlobal, const nsAString& aPathString,
-    ErrorResult& aRv) {
+    const GlobalObject& aGlobal, const nsAString& aPathString) {
   RefPtr<gfx::Path> tempPath = SVGContentUtils::GetPath(aPathString);
   if (!tempPath) {
-    return Constructor(aGlobal, aRv);
+    return Constructor(aGlobal);
   }
 
   RefPtr<CanvasPath> path =

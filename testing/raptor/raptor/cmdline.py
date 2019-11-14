@@ -5,6 +5,7 @@ from __future__ import absolute_import, print_function
 
 import argparse
 import os
+import platform
 
 from mozlog.commandline import add_logging_group
 
@@ -84,9 +85,10 @@ def create_parser(mach_interface=False):
             "loaded from the environment variable HOST_IP.",
             default='127.0.0.1')
     add_arg('--power-test', dest="power_test", action="store_true",
-            help="Use Raptor to measure power usage. Supported across GeckoView, "
-            "Fenix, Firefox (Fennec), and Reference Browsers."
-            "The host ip address must be specified via the --host command line argument.")
+            help="Use Raptor to measure power usage on Android browsers (Geckoview Example, "
+            "Fenix, Refbrow, and Fennec) as well as on Intel-based MacOS machines that have "
+            "Intel Power Gadget installed. The host ip address must be specified via the "
+            "--host command line argument if an android device/browser is being tested.")
     add_arg('--memory-test', dest="memory_test", action="store_true",
             help="Use Raptor to measure memory usage.")
     add_arg('--cpu-test', dest="cpu_test", action="store_true",
@@ -145,14 +147,22 @@ def create_parser(mach_interface=False):
                 help="Browser-build obj_path (received when running in production)")
     add_arg('--noinstall', dest="noinstall", default=False, action="store_true",
             help="Flag which indicates if Raptor should not offer to install Android APK.")
+    add_arg('--installerpath', dest="installerpath", default=None, type=str,
+            help="Location where Android browser APK was extracted to before installation.")
 
     # Arguments for invoking browsertime.
+    add_arg('--browsertime', dest='browsertime', default=False, action="store_true",
+            help="Whether to use browsertime to execute pageload tests")
     add_arg('--browsertime-node', dest='browsertime_node',
             help="path to Node.js executable")
     add_arg('--browsertime-browsertimejs', dest='browsertime_browsertimejs',
             help="path to browsertime.js script")
     add_arg('--browsertime-chromedriver', dest='browsertime_chromedriver',
             help="path to chromedriver executable")
+    add_arg('--browsertime-video', dest='browsertime_video',
+            help="records the viewport", default=False, action="store_true")
+    add_arg('--browsertime-ffmpeg', dest='browsertime_ffmpeg',
+            help="path to ffmpeg executable (for `--video=true`)")
     add_arg('--browsertime-geckodriver', dest='browsertime_geckodriver',
             help="path to geckodriver executable")
 
@@ -174,12 +184,25 @@ def verify_options(parser, args):
     if args.gecko_profile is True and args.app != "firefox":
         parser.error("Gecko profiling is only supported when running Raptor on Firefox!")
 
-    # if --power-test specified, must be on geckoview/android with --host specified.
+    # if running power tests on geckoview/android, --host must be specified.
     if args.power_test:
-        if args.app not in ["fennec", "geckoview", "refbrow", "fenix"] \
-                or args.host in ('localhost', '127.0.0.1'):
-            parser.error("Power test is only supported when running Raptor on Firefox Android "
-                         "browsers when host is specified!")
+        if args.app in ["fennec", "geckoview", "refbrow", "fenix"]:
+            if args.host in ('localhost', '127.0.0.1'):
+                parser.error("When running power tests on Android browsers, the --host "
+                             "argument is required.")
+        elif platform.system().lower() not in ('darwin',):
+            parser.error("--power-test is only available on MacOS desktop machines, "
+                         "platform detected: %s." % platform.system().lower())
+
+    if args.cpu_test:
+        if args.app not in ["fennec", "geckoview", "refbrow", "fenix"]:
+            parser.error("CPU test is only supported when running Raptor on Firefox Android "
+                         "browsers!")
+
+    if args.memory_test:
+        if args.app not in ["fennec", "geckoview", "refbrow", "fenix"]:
+            parser.error("Memory test is only supported when running Raptor on Firefox Android "
+                         "browsers!")
 
     # if --enable-webrender specified, must be on desktop firefox or geckoview-based browser.
     if args.enable_webrender:

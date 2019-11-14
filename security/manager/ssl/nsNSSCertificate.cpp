@@ -9,11 +9,14 @@
 #include "ExtendedValidation.h"
 #include "NSSCertDBTrustDomain.h"
 #include "certdb.h"
+#include "ipc/IPCMessageUtils.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Base64.h"
 #include "mozilla/Casting.h"
+#include "mozilla/ipc/TransportSecurityInfoUtils.h"
 #include "mozilla/NotNull.h"
 #include "mozilla/Span.h"
+#include "mozilla/TextUtils.h"
 #include "mozilla/Unused.h"
 #include "nsArray.h"
 #include "nsCOMPtr.h"
@@ -554,7 +557,7 @@ void nsNSSCertificate::GetSubjectAltNames() {
             current->name.other.len);
         // dNSName fields are defined as type IA5String and thus should
         // be limited to ASCII characters.
-        if (IsASCII(nameFromCert)) {
+        if (IsAscii(nameFromCert)) {
           name.Assign(NS_ConvertASCIItoUTF16(nameFromCert));
           mSubjectAltNames.push_back(name);
         }
@@ -707,6 +710,20 @@ nsNSSCertificate::GetRawDER(nsTArray<uint8_t>& aArray) {
   return NS_ERROR_FAILURE;
 }
 
+NS_IMETHODIMP
+nsNSSCertificate::GetBase64DERString(nsACString& base64DERString) {
+  nsDependentCSubstring derString(
+      reinterpret_cast<const char*>(mCert->derCert.data), mCert->derCert.len);
+
+  nsresult rv = Base64Encode(derString, base64DERString);
+
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  return NS_OK;
+}
+
 CERTCertificate* nsNSSCertificate::GetCert() {
   return (mCert) ? CERT_DupCertificate(mCert.get()) : nullptr;
 }
@@ -854,79 +871,8 @@ UniqueCERTCertList nsNSSCertList::DupCertList(
   return newList;
 }
 
-NS_IMETHODIMP
-nsNSSCertList::AsPKCS7Blob(/*out*/ nsACString& result) {
-  UniqueNSSCMSMessage cmsg(NSS_CMSMessage_Create(nullptr));
-  if (!cmsg) {
-    MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
-            ("nsNSSCertList::AsPKCS7Blob - can't create CMS message"));
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  UniqueNSSCMSSignedData sigd(nullptr);
-  nsresult rv = ForEachCertificateInChain(
-      [&cmsg, &sigd](nsCOMPtr<nsIX509Cert> aCert, bool /*unused*/,
-                     /*out*/ bool& /*unused*/) {
-        // We need an owning handle when calling nsIX509Cert::GetCert().
-        UniqueCERTCertificate nssCert(aCert->GetCert());
-        if (!sigd) {
-          sigd.reset(NSS_CMSSignedData_CreateCertsOnly(cmsg.get(),
-                                                       nssCert.get(), false));
-          if (!sigd) {
-            MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
-                    ("nsNSSCertList::AsPKCS7Blob - can't create SignedData"));
-            return NS_ERROR_FAILURE;
-          }
-        } else if (NSS_CMSSignedData_AddCertificate(
-                       sigd.get(), nssCert.get()) != SECSuccess) {
-          MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
-                  ("nsNSSCertList::AsPKCS7Blob - can't add cert"));
-          return NS_ERROR_FAILURE;
-        }
-        return NS_OK;
-      });
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-
-  NSSCMSContentInfo* cinfo = NSS_CMSMessage_GetContentInfo(cmsg.get());
-  if (NSS_CMSContentInfo_SetContent_SignedData(cmsg.get(), cinfo, sigd.get()) !=
-      SECSuccess) {
-    MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
-            ("nsNSSCertList::AsPKCS7Blob - can't attach SignedData"));
-    return NS_ERROR_FAILURE;
-  }
-  // cmsg owns sigd now.
-  Unused << sigd.release();
-
-  UniquePLArenaPool arena(PORT_NewArena(1024));
-  if (!arena) {
-    MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
-            ("nsNSSCertList::AsPKCS7Blob - out of memory"));
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  SECItem certP7 = {siBuffer, nullptr, 0};
-  NSSCMSEncoderContext* ecx = NSS_CMSEncoder_Start(
-      cmsg.get(), nullptr, nullptr, &certP7, arena.get(), nullptr, nullptr,
-      nullptr, nullptr, nullptr, nullptr);
-  if (!ecx) {
-    MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
-            ("nsNSSCertList::AsPKCS7Blob - can't create encoder"));
-    return NS_ERROR_FAILURE;
-  }
-
-  if (NSS_CMSEncoder_Finish(ecx) != SECSuccess) {
-    MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
-            ("nsNSSCertList::AsPKCS7Blob - failed to add encoded data"));
-    return NS_ERROR_FAILURE;
-  }
-
-  result.Assign(nsDependentCSubstring(
-      reinterpret_cast<const char*>(certP7.data), certP7.len));
-  return NS_OK;
-}
-
+// NB: Any updates (except disk-only fields) must be kept in sync with
+//     |SerializeToIPC|.
 NS_IMETHODIMP
 nsNSSCertList::Write(nsIObjectOutputStream* aStream) {
   // Write the length of the list
@@ -951,6 +897,8 @@ nsNSSCertList::Write(nsIObjectOutputStream* aStream) {
   return rv;
 }
 
+// NB: Any updates (except disk-only fields) must be kept in sync with
+//     |DeserializeFromIPC|.
 NS_IMETHODIMP
 nsNSSCertList::Read(nsIObjectInputStream* aStream) {
   uint32_t certListLen;
@@ -976,6 +924,35 @@ nsNSSCertList::Read(nsIObjectInputStream* aStream) {
   }
 
   return NS_OK;
+}
+
+void nsNSSCertList::SerializeToIPC(IPC::Message* aMsg) {
+  const size_t certCount = static_cast<size_t>(mCerts.size());
+  WriteParam(aMsg, certCount);
+
+  for (const auto& certRef : mCerts) {
+    RefPtr<nsIX509Cert> cert = nsNSSCertificate::Create(certRef.get());
+    MOZ_RELEASE_ASSERT(cert);
+
+    WriteParam(aMsg, cert);
+  }
+}
+
+bool nsNSSCertList::DeserializeFromIPC(const IPC::Message* aMsg,
+                                       PickleIterator* aIter) {
+  size_t count = 0;
+  if (!ReadParam(aMsg, aIter, &count)) {
+    return false;
+  }
+
+  for (size_t i = 0; i < count; i++) {
+    RefPtr<nsIX509Cert> cert;
+    if (!ReadParam(aMsg, aIter, &cert) || !cert || NS_FAILED(AddCert(cert))) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 NS_IMETHODIMP
@@ -1147,6 +1124,59 @@ nsresult nsNSSCertList::GetRootCertificate(
   return NS_OK;
 }
 
+nsresult nsNSSCertificate::SegmentCertificateChain(
+    /* in */ const nsTArray<RefPtr<nsIX509Cert>>& aCertList,
+    /* out */ nsCOMPtr<nsIX509Cert>& aRoot,
+    /* out */ nsTArray<RefPtr<nsIX509Cert>>& aIntermediates,
+    /* out */ nsCOMPtr<nsIX509Cert>& aEndEntity) {
+  if (aRoot || aEndEntity) {
+    // All passed-in nsCOMPtrs should be empty for the state machine to work
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  if (!aIntermediates.IsEmpty()) {
+    return NS_ERROR_INVALID_ARG;
+  }
+
+  for (size_t i = 0; i < aCertList.Length(); ++i) {
+    const auto& cert = aCertList[i];
+    if (!aEndEntity) {
+      aEndEntity = cert;
+    } else if (i == aCertList.Length() - 1) {
+      aRoot = cert;
+    } else {
+      // One of (potentially many) intermediates
+      aIntermediates.AppendElement(cert);
+    }
+  }
+
+  if (!aRoot || !aEndEntity) {
+    // No self-signed (or empty) chains allowed
+    return NS_ERROR_INVALID_ARG;
+  }
+
+  return NS_OK;
+}
+
+nsresult nsNSSCertificate::GetRootCertificate(
+    /* in */ const nsTArray<RefPtr<nsIX509Cert>>& aCertList,
+    /* out */ nsCOMPtr<nsIX509Cert>& aRoot) {
+  if (aRoot) {
+    return NS_ERROR_UNEXPECTED;
+  }
+  // If the list is empty, leave aRoot empty.
+  if (aCertList.IsEmpty()) {
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIX509Cert> cert(aCertList.LastElement());
+  aRoot = cert;
+  if (!aRoot) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+  return NS_OK;
+}
+
 nsNSSCertListEnumerator::nsNSSCertListEnumerator(
     const std::vector<UniqueCERTCertificate>& certs) {
   mCerts.reserve(certs.size());
@@ -1183,6 +1213,8 @@ nsNSSCertListEnumerator::GetNext(nsISupports** _retval) {
   return NS_OK;
 }
 
+// NB: Any updates (except disk-only fields) must be kept in sync with
+//     |SerializeToIPC|.
 NS_IMETHODIMP
 nsNSSCertificate::Write(nsIObjectOutputStream* aStream) {
   NS_ENSURE_STATE(mCert);
@@ -1195,9 +1227,12 @@ nsNSSCertificate::Write(nsIObjectOutputStream* aStream) {
   if (NS_FAILED(rv)) {
     return rv;
   }
-  return aStream->WriteBytes(AsBytes(MakeSpan(mCert->derCert.data, mCert->derCert.len)));
+  return aStream->WriteBytes(
+      AsBytes(MakeSpan(mCert->derCert.data, mCert->derCert.len)));
 }
 
+// NB: Any updates (except disk-only fields) must be kept in sync with
+//     |DeserializeFromIPC|.
 NS_IMETHODIMP
 nsNSSCertificate::Read(nsIObjectInputStream* aStream) {
   NS_ENSURE_STATE(!mCert);
@@ -1226,6 +1261,45 @@ nsNSSCertificate::Read(nsIObjectInputStream* aStream) {
   }
 
   return NS_OK;
+}
+
+void nsNSSCertificate::SerializeToIPC(IPC::Message* aMsg) {
+  bool hasCert = static_cast<bool>(mCert);
+  WriteParam(aMsg, hasCert);
+
+  if (!hasCert) {
+    return;
+  }
+
+  const nsDependentCSubstring certBytes(
+      reinterpret_cast<char*>(mCert->derCert.data), mCert->derCert.len);
+
+  WriteParam(aMsg, certBytes);
+}
+
+bool nsNSSCertificate::DeserializeFromIPC(const IPC::Message* aMsg,
+                                          PickleIterator* aIter) {
+  bool hasCert = false;
+  if (!ReadParam(aMsg, aIter, &hasCert)) {
+    return false;
+  }
+
+  if (!hasCert) {
+    return true;
+  }
+
+  nsCString derBytes;
+  if (!ReadParam(aMsg, aIter, &derBytes)) {
+    return false;
+  }
+
+  if (derBytes.Length() == 0) {
+    return false;
+  }
+
+  // NSS accepts a |char*| here, but doesn't modify the contents of the array
+  // and casts it back to an |unsigned char*|.
+  return InitFromDER(const_cast<char*>(derBytes.get()), derBytes.Length());
 }
 
 NS_IMETHODIMP

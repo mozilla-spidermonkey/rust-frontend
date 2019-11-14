@@ -12,10 +12,10 @@ use crate::ir::{
 use crate::isa::{RegInfo, TargetIsa};
 use crate::packed_option::ReservedValue;
 use crate::value_label::ValueLabelsRanges;
+use crate::HashSet;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt::{self, Write};
-use std::collections::HashSet;
-use std::string::String;
-use std::vec::Vec;
 
 /// A `FuncWriter` used to decorate functions during printing.
 pub trait FuncWriter {
@@ -504,6 +504,18 @@ pub fn write_operands(
         NullAry { .. } => write!(w, " "),
         InsertLane { lane, args, .. } => write!(w, " {}, {}, {}", args[0], lane, args[1]),
         ExtractLane { lane, arg, .. } => write!(w, " {}, {}", arg, lane),
+        UnaryConst {
+            constant_handle, ..
+        } => {
+            let constant_data = dfg.constants.get(constant_handle);
+            write!(w, " {}", constant_data)
+        }
+        Shuffle { mask, args, .. } => {
+            let data = dfg.immediates.get(mask).expect(
+                "Expected the shuffle mask to already be inserted into the immediates table",
+            );
+            write!(w, " {}, {}, {}", args[0], args[1], data)
+        }
         IntCompare { cond, args, .. } => write!(w, " {} {}, {}", cond, args[0], args[1]),
         IntCompareImm { cond, arg, imm, .. } => write!(w, " {} {}, {}", cond, arg, imm),
         IntCond { cond, arg, .. } => write!(w, " {} {}", cond, arg),
@@ -664,6 +676,14 @@ pub fn write_operands(
                 write!(w, " %{} -> %{}", src, dst)
             }
         }
+        CopyToSsa { src, .. } => {
+            if let Some(isa) = isa {
+                let regs = isa.register_info();
+                write!(w, " {}", regs.display_regunit(src))
+            } else {
+                write!(w, " %{}", src)
+            }
+        }
         RegSpill { arg, src, dst, .. } => {
             if let Some(isa) = isa {
                 let regs = isa.register_info();
@@ -736,7 +756,7 @@ mod tests {
     use crate::cursor::{Cursor, CursorPosition, FuncCursor};
     use crate::ir::types;
     use crate::ir::{ExternalName, Function, InstBuilder, StackSlotData, StackSlotKind};
-    use std::string::ToString;
+    use alloc::string::ToString;
 
     #[test]
     fn basic() {

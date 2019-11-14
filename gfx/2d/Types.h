@@ -9,6 +9,7 @@
 
 #include "mozilla/EndianUtils.h"
 #include "mozilla/MacroArgs.h"  // for MOZ_CONCAT
+#include "mozilla/TypedEnumBits.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -87,14 +88,62 @@ enum class SurfaceFormat : int8_t {
 // value.
 #if MOZ_LITTLE_ENDIAN
   A8R8G8B8_UINT32 = B8G8R8A8,  // 0xAARRGGBB
-  X8R8G8B8_UINT32 = B8G8R8X8   // 0x00RRGGBB
+  X8R8G8B8_UINT32 = B8G8R8X8,  // 0x00RRGGBB
 #elif MOZ_BIG_ENDIAN
   A8R8G8B8_UINT32 = A8R8G8B8,  // 0xAARRGGBB
-  X8R8G8B8_UINT32 = X8R8G8B8   // 0x00RRGGBB
+  X8R8G8B8_UINT32 = X8R8G8B8,  // 0x00RRGGBB
 #else
 #  error "bad endianness"
 #endif
+
+  // The following values are OS and endian-independent synonyms.
+  //
+  // TODO(aosmond): When everything blocking bug 1581828 has been resolved, we
+  // can make this use R8B8G8A8 and R8B8G8X8 for non-Windows platforms.
+  OS_RGBA = A8R8G8B8_UINT32,
+  OS_RGBX = X8R8G8B8_UINT32
 };
+
+// Represents the bit-shifts required to access color channels when the layout
+// is viewed as a uint32_t value.
+enum class SurfaceFormatBit : uint32_t {
+#if MOZ_LITTLE_ENDIAN
+  R8G8B8A8_R = 0,
+  R8G8B8A8_G = 8,
+  R8G8B8A8_B = 16,
+  R8G8B8A8_A = 24,
+#elif MOZ_BIG_ENDIAN
+  R8G8B8A8_A = 0,
+  R8G8B8A8_B = 8,
+  R8G8B8A8_G = 16,
+  R8G8B8A8_R = 24,
+#else
+#  error "bad endianness"
+#endif
+
+  // The following values are endian-independent for A8R8G8B8_UINT32.
+  A8R8G8B8_UINT32_B = 0,
+  A8R8G8B8_UINT32_G = 8,
+  A8R8G8B8_UINT32_R = 16,
+  A8R8G8B8_UINT32_A = 24,
+
+  // The following values are OS and endian-independent.
+  //
+  // TODO(aosmond): When everything blocking bug 1581828 has been resolved, we
+  // can make this use R8G8B8A8_X for non-Windows platforms.
+  OS_R = A8R8G8B8_UINT32_R,
+  OS_G = A8R8G8B8_UINT32_G,
+  OS_B = A8R8G8B8_UINT32_B,
+  OS_A = A8R8G8B8_UINT32_A,
+};
+
+inline uint32_t operator<<(uint8_t a, SurfaceFormatBit b) {
+  return a << static_cast<uint32_t>(b);
+}
+
+inline uint32_t operator>>(uint32_t a, SurfaceFormatBit b) {
+  return a >> static_cast<uint32_t>(b);
+}
 
 static inline int BytesPerPixel(SurfaceFormat aFormat) {
   switch (aFormat) {
@@ -156,11 +205,7 @@ enum class ColorDepth : uint8_t {
   UNKNOWN
 };
 
-enum class ColorRange : uint8_t {
-  LIMITED,
-  FULL,
-  UNKNOWN
-};
+enum class ColorRange : uint8_t { LIMITED, FULL, UNKNOWN };
 
 static inline SurfaceFormat SurfaceFormatForColorDepth(ColorDepth aColorDepth) {
   SurfaceFormat format = SurfaceFormat::A8;
@@ -304,12 +349,6 @@ enum class NativeSurfaceType : int8_t {
   CGCONTEXT,
   CGCONTEXT_ACCELERATED,
   OPENGL_TEXTURE
-};
-
-enum class NativeFontType : int8_t {
-  GDI_LOGFONT,
-  FREETYPE_FACE,
-  FONTCONFIG_PATTERN,
 };
 
 enum class FontStyle : int8_t { NORMAL, ITALIC, BOLD, BOLD_ITALIC };
@@ -484,6 +523,14 @@ enum SideBits {
   eSideBitsLeftRight = eSideBitsLeft | eSideBitsRight,
   eSideBitsAll = eSideBitsTopBottom | eSideBitsLeftRight
 };
+
+// Even though SideBits isn't an enum class, bitwise operators for it are
+// necessary for things like `a = a | b` to compile. This is because non-class
+// enums will implicitly convert to int (causing the right hand side to match
+// the built-in `operator|(int, int)` and have result type int), but int will
+// not implicitly convert back to the enum type.
+// TODO: Make SideBits an enum class.
+MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(SideBits)
 
 // Creates a for loop that walks over the four mozilla::Side values.
 // We use an int32_t helper variable (instead of a Side) for our loop counter,

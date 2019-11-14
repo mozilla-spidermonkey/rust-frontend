@@ -93,6 +93,10 @@ from its prototype:
 :   True if this instance refers to a `JSScript` for an async function, defined
     with an `async function` expression or statement. False otherwise.
 
+`isFunction`
+:   True if this instance refers to a `JSScript` for a function. False
+    otherwise.
+
 `isModule`
 :   True if this instance refers to a `JSScript` that was parsed and loaded
     as an ECMAScript module. False otherwise.
@@ -301,8 +305,7 @@ methods of other kinds of objects.
     debugger's compartment).
 
     The new breakpoint belongs to the [`Debugger`][debugger-object] instance to
-    which this script belongs. Disabling the [`Debugger`][debugger-object]
-    instance disables this breakpoint; and removing a global from the
+    which this script belongs. Removing a global from the
     [`Debugger`][debugger-object] instance's set of debuggees clears all the
     breakpoints belonging to that [`Debugger`][debugger-object] instance in that
     global's scripts.
@@ -343,6 +346,13 @@ methods of other kinds of objects.
     containing the offsets of all bytecodes in the script for which
     <i>offset</i> is an immediate successor via non-exceptional
     control flow paths.
+
+<code>getEffectfulOffsets()</code>
+:   **If the instance refers to a `JSScript`**, return an array
+    containing the offsets of all bytecodes in the script which can have direct
+    side effects that are visible outside the currently executing frame.  This
+    includes, for example, operations that set properties or elements on
+    objects, or that may set names in environments created outside the frame.
 
 `getOffsetsCoverage()`:
 :   **If the instance refers to a `JSScript`**, return `null` or an array which

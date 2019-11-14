@@ -15,16 +15,14 @@ const { RemotePages } = ChromeUtils.import(
 );
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "fxAccounts",
-  "resource://gre/modules/FxAccounts.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "LoginHelper",
-  "resource://gre/modules/LoginHelper.jsm"
-);
+XPCOMUtils.defineLazyModuleGetters(this, {
+  fxAccounts: "resource://gre/modules/FxAccounts.jsm",
+  FXA_PWDMGR_HOST: "resource://gre/modules/FxAccountsCommon.js",
+  FXA_PWDMGR_REALM: "resource://gre/modules/FxAccountsCommon.js",
+  AddonManager: "resource://gre/modules/AddonManager.jsm",
+  LoginBreaches: "resource:///modules/LoginBreaches.jsm",
+  LoginHelper: "resource://gre/modules/LoginHelper.jsm",
+});
 
 XPCOMUtils.defineLazyServiceGetter(
   this,
@@ -38,12 +36,13 @@ let idToTextMap = new Map([
   [Ci.nsITrackingDBService.TRACKING_COOKIES_ID, "cookie"],
   [Ci.nsITrackingDBService.CRYPTOMINERS_ID, "cryptominer"],
   [Ci.nsITrackingDBService.FINGERPRINTERS_ID, "fingerprinter"],
+  [Ci.nsITrackingDBService.SOCIAL_ID, "social"],
 ]);
 
 const MONITOR_API_ENDPOINT = "https://monitor.firefox.com/user/breach-stats";
 
-// TODO: there will be a monitor-specific scope for FxA access tokens, which we should be
-// using once it's implemented. See: https://github.com/mozilla/blurts-server/issues/1128
+const SECURE_PROXY_ADDON_ID = "secure-proxy@mozilla.com";
+
 const SCOPE_MONITOR = [
   "profile:uid",
   "https://identity.mozilla.com/apps/monitor",
@@ -61,7 +60,9 @@ const MONITOR_RESPONSE_PROPS = ["monitoredEmails", "numBreaches", "passwords"];
 
 var AboutProtectionsHandler = {
   _inited: false,
+  monitorResponse: null,
   _topics: [
+    "ClearMonitorCache",
     // Opening about:* pages
     "OpenAboutLogins",
     "OpenContentBlockingPreferences",
@@ -70,6 +71,7 @@ var AboutProtectionsHandler = {
     "FetchContentBlockingEvents",
     "FetchMonitorData",
     "FetchUserLoginsData",
+    "GetShowProxyCard",
   ],
 
   init() {
@@ -78,6 +80,10 @@ var AboutProtectionsHandler = {
     for (let topic of this._topics) {
       this.pageListener.addMessageListener(topic, this.receiveMessage);
     }
+    Services.telemetry.setEventRecordingEnabled(
+      "security.ui.protections",
+      true
+    );
     this._inited = true;
   },
 
@@ -98,7 +104,15 @@ var AboutProtectionsHandler = {
    * @return valid data from endpoint.
    */
   async fetchUserBreachStats(token) {
-    let monitorResponse = null;
+    if (this.monitorResponse && this.monitorResponse.timestamp) {
+      var timeDiff = Date.now() - this.monitorResponse.timestamp;
+      let oneDayInMS = 24 * 60 * 60 * 1000;
+      if (timeDiff >= oneDayInMS) {
+        this.monitorResponse = null;
+      } else {
+        return this.monitorResponse;
+      }
+    }
 
     // Make the request
     const headers = new Headers();
@@ -120,31 +134,33 @@ var AboutProtectionsHandler = {
         }
       }
 
-      monitorResponse = isValid ? json : new Error(UNEXPECTED_RESPONSE);
+      this.monitorResponse = isValid ? json : new Error(UNEXPECTED_RESPONSE);
+      if (isValid) {
+        this.monitorResponse.timestamp = Date.now();
+      }
     } else {
       // Check the reason for the error
       switch (response.status) {
         case 400:
         case 401:
-          monitorResponse = new Error(INVALID_OAUTH_TOKEN);
+          this.monitorResponse = new Error(INVALID_OAUTH_TOKEN);
           break;
         case 404:
-          monitorResponse = new Error(USER_UNSUBSCRIBED_TO_MONITOR);
+          this.monitorResponse = new Error(USER_UNSUBSCRIBED_TO_MONITOR);
           break;
         case 503:
-          monitorResponse = new Error(SERVICE_UNAVAILABLE);
+          this.monitorResponse = new Error(SERVICE_UNAVAILABLE);
           break;
         default:
-          monitorResponse = new Error(UNKNOWN_ERROR);
+          this.monitorResponse = new Error(UNKNOWN_ERROR);
           break;
       }
     }
 
-    if (monitorResponse instanceof Error) {
-      throw monitorResponse;
+    if (this.monitorResponse instanceof Error) {
+      throw this.monitorResponse;
     }
-
-    return monitorResponse;
+    return this.monitorResponse;
   },
 
   /**
@@ -156,21 +172,26 @@ var AboutProtectionsHandler = {
    *         The login data.
    */
   async getLoginData() {
-    let syncedDevices = [];
     let hasFxa = false;
 
     try {
-      if ((hasFxa = await fxAccounts.accountStatus())) {
-        syncedDevices = await fxAccounts.getDeviceList();
+      if ((hasFxa = !!(await fxAccounts.getSignedInUser()))) {
+        await fxAccounts.device.refreshDeviceList();
       }
     } catch (e) {
       Cu.reportError("There was an error fetching login data: ", e.message);
     }
 
+    const userFacingLogins =
+      Services.logins.countLogins("", "", "") -
+      Services.logins.countLogins(FXA_PWDMGR_HOST, null, FXA_PWDMGR_REALM);
+
     return {
       hasFxa,
-      numLogins: Services.logins.countLogins("", "", ""),
-      numSyncedDevices: syncedDevices.length,
+      numLogins: userFacingLogins,
+      numSyncedDevices: fxAccounts.device.recentDeviceList
+        ? fxAccounts.device.recentDeviceList.length
+        : 0,
     };
   },
 
@@ -192,24 +213,21 @@ var AboutProtectionsHandler = {
     let token = await this.getMonitorScopedOAuthToken();
 
     try {
-      if ((await fxAccounts.accountStatus()) && token) {
+      if (token) {
         monitorData = await this.fetchUserBreachStats(token);
 
         // Get the stats for number of potentially breached Lockwise passwords if no master
         // password is set.
         if (!LoginHelper.isMasterPasswordSet()) {
           const logins = await LoginHelper.getAllUserFacingLogins();
-          potentiallyBreachedLogins = await LoginHelper.getBreachesForLogins(
+          potentiallyBreachedLogins = await LoginBreaches.getPotentialBreachesByLoginGUID(
             logins
           );
-
-          // If the user isn't subscribed to Monitor, then send back their email so the
-          // protections report can direct them to the proper OAuth flow on Monitor.
-          if (monitorData.errorMessage) {
-            const { email } = await fxAccounts.getSignedInUser();
-            userEmail = email;
-          }
         }
+        // Send back user's email so the protections report can direct them to the proper
+        // OAuth flow on Monitor.
+        const { email } = await fxAccounts.getSignedInUser();
+        userEmail = email;
       } else {
         // If no account exists, then the user is not logged in with an fxAccount.
         monitorData = {
@@ -218,6 +236,8 @@ var AboutProtectionsHandler = {
       }
     } catch (e) {
       Cu.reportError(e.message);
+      monitorData.errorMessage = e.message;
+
       // If the user's OAuth token is invalid, we clear the cached token and refetch
       // again. If OAuth token is invalid after the second fetch, then the monitor UI
       // will simply show the "no logins" UI version.
@@ -229,8 +249,12 @@ var AboutProtectionsHandler = {
           monitorData = await this.fetchUserBreachStats(token);
         } catch (_) {
           Cu.reportError(e.message);
-          monitorData.errorMessage = INVALID_OAUTH_TOKEN;
         }
+      } else if (e.message === USER_UNSUBSCRIBED_TO_MONITOR) {
+        // Send back user's email so the protections report can direct them to the proper
+        // OAuth flow on Monitor.
+        const { email } = await fxAccounts.getSignedInUser();
+        userEmail = email;
       } else {
         monitorData.errorMessage = e.message || "An error ocurred.";
       }
@@ -262,6 +286,27 @@ var AboutProtectionsHandler = {
   },
 
   /**
+   * The proxy card will only show if the user is in the US, has the browser language in "en-US",
+   * and does not yet have Proxy installed.
+   */
+  async shouldShowProxyCard() {
+    const region = Services.prefs.getCharPref("browser.search.region");
+    const languages = Services.prefs.getComplexValue(
+      "intl.accept_languages",
+      Ci.nsIPrefLocalizedString
+    );
+    const alreadyInstalled = await AddonManager.getAddonByID(
+      SECURE_PROXY_ADDON_ID
+    );
+
+    return (
+      region.toLowerCase() === "us" &&
+      !alreadyInstalled &&
+      languages.data.toLowerCase().includes("en-us")
+    );
+  },
+
+  /**
    * Sends a response from message target.
    *
    * @param {Object}  target
@@ -282,7 +327,9 @@ var AboutProtectionsHandler = {
     let win = aMessage.target.browser.ownerGlobal;
     switch (aMessage.name) {
       case "OpenAboutLogins":
-        win.openTrustedLinkIn("about:logins", "tab");
+        LoginHelper.openPasswordManager(win, {
+          entryPoint: "aboutprotections",
+        });
         break;
       case "OpenContentBlockingPreferences":
         win.openPreferences("privacy-trackingprotection", {
@@ -355,6 +402,13 @@ var AboutProtectionsHandler = {
           await this.getLoginData()
         );
         break;
+      case "ClearMonitorCache":
+        this.monitorResponse = null;
+        break;
+      case "GetShowProxyCard":
+        if (await this.shouldShowProxyCard()) {
+          this.sendMessage(aMessage.target, "SendShowProxyCard");
+        }
     }
   },
 };

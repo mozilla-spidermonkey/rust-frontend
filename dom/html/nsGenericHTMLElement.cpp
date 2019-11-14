@@ -30,7 +30,6 @@
 #include "mozilla/dom/BindContext.h"
 #include "mozilla/dom/Document.h"
 #include "nsIDocumentEncoder.h"
-#include "nsIDOMWindow.h"
 #include "nsMappedAttributes.h"
 #include "nsHTMLStyleSheet.h"
 #include "nsPIDOMWindow.h"
@@ -49,6 +48,7 @@
 #include "nsIPrincipal.h"
 #include "nsContainerFrame.h"
 #include "nsStyleUtil.h"
+#include "ReferrerInfo.h"
 
 #include "mozilla/PresState.h"
 #include "nsILayoutHistoryState.h"
@@ -100,9 +100,10 @@
 #include "mozilla/dom/HTMLBodyElement.h"
 #include "imgIContainer.h"
 #include "nsComputedDOMStyle.h"
-#include "ReferrerPolicy.h"
 #include "mozilla/dom/HTMLLabelElement.h"
 #include "mozilla/dom/HTMLInputElement.h"
+#include "mozilla/dom/CustomElementRegistry.h"
+#include "mozilla/dom/ElementInternals.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -111,49 +112,9 @@ nsresult nsGenericHTMLElement::CopyInnerTo(Element* aDst) {
   MOZ_ASSERT(!aDst->GetUncomposedDoc(),
              "Should not CopyInnerTo an Element in a document");
 
-  bool reparse = (aDst->OwnerDoc() != OwnerDoc());
-
-  nsresult rv =
-      static_cast<nsGenericHTMLElement*>(aDst)->mAttrs.EnsureCapacityToClone(
-          mAttrs);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  int32_t i, count = GetAttrCount();
-  for (i = 0; i < count; ++i) {
-    const nsAttrName* name = mAttrs.AttrNameAt(i);
-    const nsAttrValue* value = mAttrs.AttrAt(i);
-
-    if (name->Equals(nsGkAtoms::style, kNameSpaceID_None) &&
-        value->Type() == nsAttrValue::eCSSDeclaration) {
-      // We still clone CSS attributes, even in the cross-document case.
-      // https://github.com/w3c/webappsec-csp/issues/212
-
-      // We can't just set this as a string, because that will fail
-      // to reparse the string into style data until the node is
-      // inserted into the document.  Clone the Rule instead.
-      nsAttrValue valueCopy(*value);
-      rv = aDst->SetParsedAttr(name->NamespaceID(), name->LocalName(),
-                               name->GetPrefix(), valueCopy, false);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      DeclarationBlock* cssDeclaration = value->GetCSSDeclarationValue();
-      cssDeclaration->SetImmutable();
-    } else if (reparse) {
-      nsAutoString valStr;
-      value->ToString(valStr);
-
-      rv = aDst->SetAttr(name->NamespaceID(), name->LocalName(),
-                         name->GetPrefix(), valStr, false);
-      NS_ENSURE_SUCCESS(rv, rv);
-    } else {
-      nsAttrValue valueCopy(*value);
-      rv = aDst->SetParsedAttr(name->NamespaceID(), name->LocalName(),
-                               name->GetPrefix(), valueCopy, false);
-      NS_ENSURE_SUCCESS(rv, rv);
-    }
-  }
-
-  return NS_OK;
+  auto reparse = aDst->OwnerDoc() == OwnerDoc() ? ReparseAttributes::No
+                                                : ReparseAttributes::Yes;
+  return Element::CopyInnerTo(aDst, reparse);
 }
 
 static const nsAttrValue::EnumTable kDirTable[] = {
@@ -185,15 +146,11 @@ void nsGenericHTMLElement::GetAccessKeyLabel(nsString& aLabel) {
   }
 }
 
-static bool IsTableCell(LayoutFrameType frameType) {
-  return LayoutFrameType::TableCell == frameType ||
-         LayoutFrameType::BCTableCell == frameType;
-}
-
 static bool IsOffsetParent(nsIFrame* aFrame) {
   LayoutFrameType frameType = aFrame->Type();
 
-  if (IsTableCell(frameType) || frameType == LayoutFrameType::Table) {
+  if (frameType == LayoutFrameType::TableCell ||
+      frameType == LayoutFrameType::Table) {
     // Per the IDL for Element, only td, th, and table are acceptable
     // offsetParents apart from body or positioned elements; we need to check
     // the content type as well as the frame type so we ignore anonymous tables
@@ -280,15 +237,12 @@ static OffsetResult GetUnretargetedOffsetsFor(const Element& aElement) {
     }
   }
 
-  // Subtract the parent border unless it uses border-box sizing.
-  if (parent && parent->StylePosition()->mBoxSizing != StyleBoxSizing::Border) {
+  // Make the position relative to the padding edge.
+  if (parent) {
     const nsStyleBorder* border = parent->StyleBorder();
     origin.x -= border->GetComputedBorderWidth(eSideLeft);
     origin.y -= border->GetComputedBorderWidth(eSideTop);
   }
-
-  // XXX We should really consider subtracting out padding for
-  // content-box sizing, but we should see what IE does....
 
   // Get the union of all rectangles in this and continuation frames.
   // It doesn't really matter what we use as aRelativeTo here, since
@@ -941,6 +895,7 @@ static const nsAttrValue::EnumTable kFrameborderTable[] = {
     {"0", NS_STYLE_FRAME_0},
     {nullptr, 0}};
 
+// TODO(emilio): Nobody uses the parsed attribute here.
 static const nsAttrValue::EnumTable kScrollingTable[] = {
     {"yes", NS_STYLE_FRAME_YES},       {"no", NS_STYLE_FRAME_NO},
     {"on", NS_STYLE_FRAME_ON},         {"off", NS_STYLE_FRAME_OFF},
@@ -1038,25 +993,29 @@ bool nsGenericHTMLElement::ParseImageAttribute(nsAtom* aAttribute,
 
 bool nsGenericHTMLElement::ParseReferrerAttribute(const nsAString& aString,
                                                   nsAttrValue& aResult) {
-  static const nsAttrValue::EnumTable kReferrerTable[] = {
-      {ReferrerPolicyToString(net::RP_No_Referrer),
-       static_cast<int16_t>(net::RP_No_Referrer)},
-      {ReferrerPolicyToString(net::RP_Origin),
-       static_cast<int16_t>(net::RP_Origin)},
-      {ReferrerPolicyToString(net::RP_Origin_When_Crossorigin),
-       static_cast<int16_t>(net::RP_Origin_When_Crossorigin)},
-      {ReferrerPolicyToString(net::RP_No_Referrer_When_Downgrade),
-       static_cast<int16_t>(net::RP_No_Referrer_When_Downgrade)},
-      {ReferrerPolicyToString(net::RP_Unsafe_URL),
-       static_cast<int16_t>(net::RP_Unsafe_URL)},
-      {ReferrerPolicyToString(net::RP_Strict_Origin),
-       static_cast<int16_t>(net::RP_Strict_Origin)},
-      {ReferrerPolicyToString(net::RP_Same_Origin),
-       static_cast<int16_t>(net::RP_Same_Origin)},
-      {ReferrerPolicyToString(net::RP_Strict_Origin_When_Cross_Origin),
-       static_cast<int16_t>(net::RP_Strict_Origin_When_Cross_Origin)},
-      {nullptr, 0}};
-  return aResult.ParseEnumValue(aString, kReferrerTable, false);
+  using mozilla::dom::ReferrerInfo;
+  static const nsAttrValue::EnumTable kReferrerPolicyTable[] = {
+      {ReferrerInfo::ReferrerPolicyToString(ReferrerPolicy::No_referrer),
+       static_cast<int16_t>(ReferrerPolicy::No_referrer)},
+      {ReferrerInfo::ReferrerPolicyToString(ReferrerPolicy::Origin),
+       static_cast<int16_t>(ReferrerPolicy::Origin)},
+      {ReferrerInfo::ReferrerPolicyToString(
+           ReferrerPolicy::Origin_when_cross_origin),
+       static_cast<int16_t>(ReferrerPolicy::Origin_when_cross_origin)},
+      {ReferrerInfo::ReferrerPolicyToString(
+           ReferrerPolicy::No_referrer_when_downgrade),
+       static_cast<int16_t>(ReferrerPolicy::No_referrer_when_downgrade)},
+      {ReferrerInfo::ReferrerPolicyToString(ReferrerPolicy::Unsafe_url),
+       static_cast<int16_t>(ReferrerPolicy::Unsafe_url)},
+      {ReferrerInfo::ReferrerPolicyToString(ReferrerPolicy::Strict_origin),
+       static_cast<int16_t>(ReferrerPolicy::Strict_origin)},
+      {ReferrerInfo::ReferrerPolicyToString(ReferrerPolicy::Same_origin),
+       static_cast<int16_t>(ReferrerPolicy::Same_origin)},
+      {ReferrerInfo::ReferrerPolicyToString(
+           ReferrerPolicy::Strict_origin_when_cross_origin),
+       static_cast<int16_t>(ReferrerPolicy::Strict_origin_when_cross_origin)},
+      {nullptr, ReferrerPolicy::_empty}};
+  return aResult.ParseEnumValue(aString, kReferrerPolicyTable, false);
 }
 
 bool nsGenericHTMLElement::ParseFrameborderValue(const nsAString& aString,
@@ -1262,7 +1221,8 @@ void nsGenericHTMLElement::MapHeightAttributeInto(
 }
 
 void nsGenericHTMLElement::MapImageSizeAttributesInto(
-    const nsMappedAttributes* aAttributes, MappedDeclarations& aDecls) {
+    const nsMappedAttributes* aAttributes, MappedDeclarations& aDecls,
+    MapAspectRatio aMapAspectRatio) {
   auto* width = aAttributes->GetAttr(nsGkAtoms::width);
   auto* height = aAttributes->GetAttr(nsGkAtoms::height);
   if (width) {
@@ -1271,11 +1231,8 @@ void nsGenericHTMLElement::MapImageSizeAttributesInto(
   if (height) {
     MapDimensionAttributeInto(aDecls, eCSSProperty_height, *height);
   }
-  // NOTE(emilio): If we implement the unrestricted aspect-ratio proposal, we
-  // probably need to make this attribute mapping not apply to things like
-  // <marquee> and <table>, which right now can go through this path.
   if (StaticPrefs::layout_css_width_and_height_map_to_aspect_ratio_enabled() &&
-      width && height) {
+      aMapAspectRatio == MapAspectRatio::Yes && width && height) {
     Maybe<double> w;
     if (width->Type() == nsAttrValue::eInteger) {
       w.emplace(width->GetIntegerValue());
@@ -1631,17 +1588,44 @@ nsIContent::IMEState nsGenericHTMLFormElement::GetDesiredIMEState() {
   return state;
 }
 
+static bool IsSameOriginAsTop(const BindContext& aContext,
+                              const nsGenericHTMLFormElement* aElement) {
+  MOZ_ASSERT(aElement);
+
+  BrowsingContext* browsingContext = aContext.OwnerDoc().GetBrowsingContext();
+  if (!browsingContext) {
+    return false;
+  }
+
+  nsPIDOMWindowOuter* topWindow = browsingContext->Top()->GetDOMWindow();
+  if (!topWindow) {
+    // If we don't have a DOMWindow, We are not in same origin.
+    return false;
+  }
+
+  Document* topLevelDocument = topWindow->GetExtantDoc();
+  if (!topLevelDocument) {
+    return false;
+  }
+
+  return NS_SUCCEEDED(
+      nsContentUtils::CheckSameOrigin(topLevelDocument, aElement));
+}
+
 nsresult nsGenericHTMLFormElement::BindToTree(BindContext& aContext,
                                               nsINode& aParent) {
   nsresult rv = nsGenericHTMLElement::BindToTree(aContext, aParent);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // An autofocus event has to be launched if the autofocus attribute is
-  // specified and the element accept the autofocus attribute. In addition,
-  // the document should not be already loaded and the "browser.autofocus"
-  // preference should be 'true'.
+  // specified and the element accepts the autofocus attribute and only if the
+  // target document is in the same origin as the top level document.
+  // https://html.spec.whatwg.org/multipage/interaction.html#the-autofocus-attribute:same-origin
+  // In addition, the document should not be already loaded and the
+  // "browser.autofocus" preference should be 'true'.
   if (IsAutofocusable() && HasAttr(kNameSpaceID_None, nsGkAtoms::autofocus) &&
-      StaticPrefs::browser_autofocus() && IsInUncomposedDoc()) {
+      StaticPrefs::browser_autofocus() && IsInUncomposedDoc() &&
+      IsSameOriginAsTop(aContext, this)) {
     aContext.OwnerDoc().SetAutoFocusElement(this);
   }
 
@@ -2686,9 +2670,8 @@ nsresult nsGenericHTMLElement::NewURIFromString(const nsAString& aURISpec,
 
   nsCOMPtr<Document> doc = OwnerDoc();
 
-  nsresult rv =
-      nsContentUtils::NewURIWithDocumentCharset(aURI, aURISpec, doc,
-                                                GetBaseURI());
+  nsresult rv = nsContentUtils::NewURIWithDocumentCharset(aURI, aURISpec, doc,
+                                                          GetBaseURI());
   NS_ENSURE_SUCCESS(rv, rv);
 
   bool equal;
@@ -2814,4 +2797,78 @@ void nsGenericHTMLElement::SetInnerText(const nsAString& aValue) {
   }
 
   mb.NodesAdded();
+}
+
+// https://html.spec.whatwg.org/commit-snapshots/b48bb2238269d90ea4f455a52cdf29505aff3df0/#dom-attachinternals
+already_AddRefed<ElementInternals> nsGenericHTMLElement::AttachInternals(
+    ErrorResult& aRv) {
+  CustomElementData* ceData = GetCustomElementData();
+
+  // 1. If element's is value is not null, then throw a "NotSupportedError"
+  //    DOMException.
+  nsAtom* isAtom = ceData ? ceData->GetIs(this) : nullptr;
+  nsAtom* nameAtom = NodeInfo()->NameAtom();
+  if (isAtom) {
+    aRv.ThrowDOMException(
+        NS_ERROR_DOM_NOT_SUPPORTED_ERR,
+        nsPrintfCString(
+            "Cannot attach ElementInternals to a customized built-in element "
+            "'%s'",
+            NS_ConvertUTF16toUTF8(isAtom->GetUTF16String()).get()));
+    return nullptr;
+  }
+
+  // 2. Let definition be the result of looking up a custom element definition
+  //    given element's node document, its namespace, its local name, and null
+  //    as is value.
+  CustomElementDefinition* definition = nullptr;
+  if (ceData) {
+    definition = ceData->GetCustomElementDefinition();
+
+    // If the definition is null, the element possible hasn't yet upgraded.
+    // Fallback to use LookupCustomElementDefinition to find its definition.
+    if (!definition) {
+      definition = nsContentUtils::LookupCustomElementDefinition(
+          NodeInfo()->GetDocument(), nameAtom,
+          NodeInfo()->NamespaceID(), ceData->GetCustomElementType());
+    }
+  }
+
+  // 3. If definition is null, then throw an "NotSupportedError" DOMException.
+  if (!definition) {
+    aRv.ThrowDOMException(
+        NS_ERROR_DOM_NOT_SUPPORTED_ERR,
+        nsPrintfCString(
+            "Cannot attach ElementInternals to a non-custom element '%s'",
+            NS_ConvertUTF16toUTF8(nameAtom->GetUTF16String()).get()));
+    return nullptr;
+  }
+
+  // 4. If definition's disable internals is true, then throw a
+  //    "NotSupportedError" DOMException.
+  if (definition->mDisableInternals) {
+    aRv.ThrowDOMException(
+        NS_ERROR_DOM_NOT_SUPPORTED_ERR,
+        nsPrintfCString(
+            "AttachInternal() to '%s' is disabled by disabledFeatures",
+            NS_ConvertUTF16toUTF8(nameAtom->GetUTF16String()).get()));
+    return nullptr;
+  }
+
+  // 5. If element's attached internals is true, then throw an
+  //    "NotSupportedError" DOMException.
+  if (ceData->HasAttachedInternals()) {
+    aRv.ThrowDOMException(
+        NS_ERROR_DOM_NOT_SUPPORTED_ERR,
+        nsPrintfCString(
+            "AttachInternals() has already been called from '%s'",
+            NS_ConvertUTF16toUTF8(nameAtom->GetUTF16String()).get()));
+    return nullptr;
+  }
+
+  // 6. Set element's attached internals to true.
+  ceData->AttachedInternals();
+
+  // 7. Create a new ElementInternals instance targeting element, and return it.
+  return MakeAndAddRef<ElementInternals>(this);
 }

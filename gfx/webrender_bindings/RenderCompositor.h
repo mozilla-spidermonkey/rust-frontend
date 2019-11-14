@@ -9,6 +9,7 @@
 
 #include "mozilla/RefPtr.h"
 #include "mozilla/UniquePtr.h"
+#include "mozilla/webrender/WebRenderTypes.h"
 #include "Units.h"
 
 namespace mozilla {
@@ -19,7 +20,7 @@ class GLContext;
 
 namespace layers {
 class SyncObjectHost;
-}
+}  // namespace layers
 
 namespace widget {
 class CompositorWidget;
@@ -36,12 +37,26 @@ class RenderCompositor {
   virtual ~RenderCompositor();
 
   virtual bool BeginFrame() = 0;
-  virtual void EndFrame() = 0;
+
+  // Called to notify the RenderCompositor that all of the commands for a frame
+  // have been pushed to the queue.
+  // @return a RenderedFrameId for the frame
+  virtual RenderedFrameId EndFrame(
+      const FfiVec<DeviceIntRect>& aDirtyRects) = 0;
   // Returns false when waiting gpu tasks is failed.
   // It might happen when rendering context is lost.
   virtual bool WaitForGPU() { return true; }
+
+  // Check for and return the last completed frame.
+  // @return the last (highest) completed RenderedFrameId
+  virtual RenderedFrameId GetLastCompletedFrameId() {
+    return mLatestRenderFrameId.Prev();
+  }
+
   virtual void Pause() = 0;
   virtual bool Resume() = 0;
+  // Called when WR rendering is skipped
+  virtual void Update() {}
 
   virtual gl::GLContext* gl() const { return nullptr; }
 
@@ -61,7 +76,37 @@ class RenderCompositor {
 
   virtual bool IsContextLost();
 
+  virtual bool ShouldUseNativeCompositor() { return false; }
+  virtual uint32_t GetMaxUpdateRects() { return 0; }
+
+  // Interface for wr::Compositor
+  virtual void CompositorBeginFrame() {}
+  virtual void CompositorEndFrame() {}
+  virtual void Bind(wr::NativeSurfaceId aId, wr::DeviceIntPoint* aOffset,
+                    uint32_t* aFboId, wr::DeviceIntRect aDirtyRect) {}
+  virtual void Unbind() {}
+  virtual void CreateSurface(wr::NativeSurfaceId aId, wr::DeviceIntSize aSize,
+                             bool aIsOpaque) {}
+  virtual void DestroySurface(NativeSurfaceId aId) {}
+  virtual void AddSurface(wr::NativeSurfaceId aId, wr::DeviceIntPoint aPosition,
+                          wr::DeviceIntRect aClipRect) {}
+
+  // Interface for partial present
+  virtual bool UsePartialPresent() { return false; }
+  virtual bool RequestFullRender() { return false; }
+  virtual uint32_t GetMaxPartialPresentRects() { return 0; }
+
+  // Whether the surface origin is top-left.
+  virtual bool SurfaceOriginIsTopLeft() { return false; }
+
  protected:
+  // We default this to 2, so that mLatestRenderFrameId.Prev() is always valid.
+  RenderedFrameId mLatestRenderFrameId = RenderedFrameId{2};
+  RenderedFrameId GetNextRenderFrameId() {
+    mLatestRenderFrameId = mLatestRenderFrameId.Next();
+    return mLatestRenderFrameId;
+  }
+
   RefPtr<widget::CompositorWidget> mWidget;
   RefPtr<layers::SyncObjectHost> mSyncObject;
 };

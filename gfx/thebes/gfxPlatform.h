@@ -282,6 +282,7 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
   void GetTilesSupportInfo(mozilla::widget::InfoObject& aObj);
   void GetFrameStats(mozilla::widget::InfoObject& aObj);
   void GetCMSSupportInfo(mozilla::widget::InfoObject& aObj);
+  void GetDisplayInfo(mozilla::widget::InfoObject& aObj);
 
   // Get the default content backend that will be used with the default
   // compositor. If the compositor is known when calling this function,
@@ -545,9 +546,19 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
   static qcms_transform* GetCMSRGBATransform();
 
   /**
-   * Return sRGBA -> output device transform.
+   * Return sBGRA -> output device transform.
    */
   static qcms_transform* GetCMSBGRATransform();
+
+  /**
+   * Return OS RGBA -> output device transform.
+   */
+  static qcms_transform* GetCMSOSRGBATransform();
+
+  /**
+   * Return OS RGBA QCMS type.
+   */
+  static qcms_data_type GetCMSOSRGBAType();
 
   virtual void FontsPrefsChanged(const char* aPref);
 
@@ -720,8 +731,6 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
    */
   virtual void ImportGPUDeviceData(const mozilla::gfx::GPUDeviceData& aData);
 
-  virtual FT_Library GetFTLibrary() { return nullptr; }
-
   bool HasVariationFontSupport() const { return mHasVariationFontSupport; }
 
   bool HasNativeColrFontSupport() const { return mHasNativeColrFontSupport; }
@@ -749,6 +758,7 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
 
   virtual void InitAcceleration();
   virtual void InitWebRenderConfig();
+  virtual void InitWebGPUConfig();
 
   /**
    * Called immediately before deleting the gfxPlatform object.
@@ -914,6 +924,7 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
   mozilla::widget::GfxInfoCollector<gfxPlatform> mTilesInfoCollector;
   mozilla::widget::GfxInfoCollector<gfxPlatform> mFrameStatsCollector;
   mozilla::widget::GfxInfoCollector<gfxPlatform> mCMSInfoCollector;
+  mozilla::widget::GfxInfoCollector<gfxPlatform> mDisplayInfoCollector;
 
   nsTArray<mozilla::layers::FrameStats> mFrameStats;
 
@@ -925,6 +936,9 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
 
   int32_t mScreenDepth;
   mozilla::gfx::IntSize mScreenSize;
+
+  // Total number of screen pixels across all monitors.
+  int64_t mScreenPixels;
 
   // An instance of gfxSkipChars which is empty. It is used as the
   // basis for error-case iterators.

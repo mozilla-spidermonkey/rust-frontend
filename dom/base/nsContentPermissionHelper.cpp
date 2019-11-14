@@ -7,6 +7,8 @@
 #include <map>
 #include "nsCOMPtr.h"
 #include "nsIPrincipal.h"
+#include "mozilla/dom/BrowserChild.h"
+#include "mozilla/dom/BrowserParent.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/Element.h"
@@ -16,10 +18,8 @@
 #include "mozilla/dom/PermissionMessageUtils.h"
 #include "mozilla/dom/PContentPermissionRequestParent.h"
 #include "mozilla/dom/ScriptSettings.h"
-#include "mozilla/dom/BrowserChild.h"
-#include "mozilla/dom/BrowserParent.h"
+#include "mozilla/dom/UserActivation.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/EventStateManager.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Unused.h"
 #include "nsComponentManagerUtils.h"
@@ -515,12 +515,15 @@ nsContentPermissionRequester::GetOnVisibilityChange(
 static nsIPrincipal* GetTopLevelPrincipal(nsPIDOMWindowInner* aWindow) {
   MOZ_ASSERT(aWindow);
 
-  nsPIDOMWindowOuter* top = aWindow->GetInProcessScriptableTop();
-  if (!top) {
+  BrowsingContext* top = aWindow->GetBrowsingContext()->Top();
+  MOZ_ASSERT(top);
+
+  nsPIDOMWindowOuter* outer = top->GetDOMWindow();
+  if (!outer) {
     return nullptr;
   }
 
-  nsPIDOMWindowInner* inner = top->GetCurrentInnerWindow();
+  nsPIDOMWindowInner* inner = outer->GetCurrentInnerWindow();
   if (!inner) {
     return nullptr;
   }
@@ -548,7 +551,7 @@ ContentPermissionRequestBase::ContentPermissionRequestBase(
       mRequester(aWindow ? new nsContentPermissionRequester(aWindow) : nullptr),
       mPrefName(aPrefName),
       mType(aType),
-      mIsHandlingUserInput(EventStateManager::IsHandlingUserInput()),
+      mIsHandlingUserInput(UserActivation::IsHandlingUserInput()),
       mUserHadInteractedWithDocument(false),
       mDocumentDOMContentLoadedTimestamp(0) {
   if (!aWindow) {
@@ -559,6 +562,8 @@ ContentPermissionRequestBase::ContentPermissionRequestBase(
   if (!doc) {
     return;
   }
+
+  mPermissionHandler = doc->GetPermissionDelegateHandler();
 
   mUserHadInteractedWithDocument = doc->UserHasInteracted();
 
@@ -652,8 +657,25 @@ ContentPermissionRequestBase::CheckPromptPrefs() {
   return PromptResult::Pending;
 }
 
+bool ContentPermissionRequestBase::CheckPermissionDelegate() {
+  // There is case that ContentPermissionRequestBase is constructed without
+  // window, then mPermissionHandler will be null. So we only check permission
+  // delegate if we have non-null mPermissionHandler
+  if (mPermissionHandler &&
+      !mPermissionHandler->HasPermissionDelegated(mType)) {
+    return false;
+  }
+
+  return true;
+}
+
 nsresult ContentPermissionRequestBase::ShowPrompt(
     ContentPermissionRequestBase::PromptResult& aResult) {
+  if (!CheckPermissionDelegate()) {
+    aResult = PromptResult::Denied;
+    return NS_OK;
+  }
+
   aResult = CheckPromptPrefs();
 
   if (aResult != PromptResult::Pending) {

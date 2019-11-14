@@ -35,6 +35,7 @@
     SUBCATEGORY(IDLE, IDLE, "Other")                                          \
   END_CATEGORY                                                                \
   BEGIN_CATEGORY(OTHER, "Other", "grey")                                      \
+    SUBCATEGORY(OTHER, OTHER_PreferenceRead, "Preference Read")               \
     SUBCATEGORY(OTHER, OTHER, "Other")                                        \
   END_CATEGORY                                                                \
   BEGIN_CATEGORY(LAYOUT, "Layout", "purple")                                  \
@@ -70,6 +71,9 @@
   END_CATEGORY                                                                \
   BEGIN_CATEGORY(DOM, "DOM", "blue")                                          \
     SUBCATEGORY(DOM, DOM, "Other")                                            \
+  END_CATEGORY                                                                \
+  BEGIN_CATEGORY(IPC, "IPC", "lightgreen")                                    \
+    SUBCATEGORY(IPC, IPC, "Other")                                            \
   END_CATEGORY
 
 namespace JS {

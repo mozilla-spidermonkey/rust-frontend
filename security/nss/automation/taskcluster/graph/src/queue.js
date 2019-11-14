@@ -96,7 +96,8 @@ function convertTask(def) {
 
   let env = merge({
     NSS_HEAD_REPOSITORY: process.env.NSS_HEAD_REPOSITORY,
-    NSS_HEAD_REVISION: process.env.NSS_HEAD_REVISION
+    NSS_HEAD_REVISION: process.env.NSS_HEAD_REVISION,
+    NSS_MAX_MP_PBE_ITERATION_COUNT: "100",
   }, def.env || {});
 
   if (def.parent) {
@@ -113,6 +114,14 @@ function convertTask(def) {
 
   if (def.cycle) {
     env.NSS_CYCLES = def.cycle;
+  }
+  if (def.kind === "build") {
+    // Disable leak checking during builds (bug 1579290).
+    if (env.ASAN_OPTIONS) {
+      env.ASAN_OPTIONS += ":detect_leaks=0";
+    } else {
+      env.ASAN_OPTIONS = "detect_leaks=0";
+    }
   }
 
   let payload = {
@@ -143,7 +152,7 @@ function convertTask(def) {
   }
 
   let extra = Object.assign({
-      treeherder: parseTreeherder(def)
+    treeherder: parseTreeherder(def)
   }, parameters);
 
   return {

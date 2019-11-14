@@ -3,8 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { DebuggerServer } = require("devtools/server/main");
-const promise = require("promise");
+const { DebuggerServer } = require("devtools/server/debugger-server");
 const {
   longStringSpec,
   SimpleStringFront,
@@ -32,7 +31,7 @@ class LongStringFront extends FrontClassWithSpec(longStringSpec) {
     if (!this.strPromise) {
       const promiseRest = thusFar => {
         if (thusFar.length === this.length) {
-          return promise.resolve(thusFar);
+          return Promise.resolve(thusFar);
         }
         return this.substring(
           thusFar.length,

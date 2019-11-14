@@ -18,9 +18,8 @@ XPCOMUtils.defineLazyGlobalGetters(this, ["URL"]);
 XPCOMUtils.defineLazyModuleGetters(this, {
   E10SUtils: "resource://gre/modules/E10SUtils.jsm",
   BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
-  findAllCssSelectors: "resource://gre/modules/css-selector.js",
   SpellCheckHelper: "resource://gre/modules/InlineSpellChecker.jsm",
-  LoginManagerContent: "resource://gre/modules/LoginManagerContent.jsm",
+  LoginManagerChild: "resource://gre/modules/LoginManagerChild.jsm",
   WebNavigationFrames: "resource://gre/modules/WebNavigationFrames.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   InlineSpellCheckerContent:
@@ -523,7 +522,12 @@ class ContextMenuChild extends JSWindowActorChild {
 
     let defaultPrevented = aEvent.defaultPrevented;
 
-    if (!Services.prefs.getBoolPref("dom.event.contextmenu.enabled")) {
+    if (
+      // If the event is not from a chrome-privileged document, and if
+      // `dom.event.contextmenu.enabled` is false, force defaultPrevented=false.
+      !aEvent.composedTarget.nodePrincipal.isSystemPrincipal &&
+      !Services.prefs.getBoolPref("dom.event.contextmenu.enabled")
+    ) {
       let plugin = null;
 
       try {
@@ -561,9 +565,9 @@ class ContextMenuChild extends JSWindowActorChild {
     } = doc;
     docLocation = docLocation && docLocation.spec;
     let frameOuterWindowID = WebNavigationFrames.getFrameId(doc.defaultView);
-    let loginFillInfo = LoginManagerContent.getFieldContext(
-      aEvent.composedTarget
-    );
+    let loginFillInfo = LoginManagerChild.forWindow(
+      doc.defaultView
+    ).getFieldContext(aEvent.composedTarget);
 
     // The same-origin check will be done in nsContextMenu.openLinkInTab.
     let parentAllowsMixedContent = !!this.docShell.mixedContentChannel;
@@ -609,7 +613,6 @@ class ContextMenuChild extends JSWindowActorChild {
     let selectionInfo = BrowserUtils.getSelectionDetails(this.contentWindow);
     let loadContext = this.docShell.QueryInterface(Ci.nsILoadContext);
     let userContextId = loadContext.originAttributes.userContextId;
-    let popupNodeSelectors = findAllCssSelectors(aEvent.composedTarget);
 
     this._setContext(aEvent);
     let context = this.context;
@@ -623,10 +626,18 @@ class ContextMenuChild extends JSWindowActorChild {
     let referrerInfo = Cc["@mozilla.org/referrer-info;1"].createInstance(
       Ci.nsIReferrerInfo
     );
-    referrerInfo.initWithNode(
-      context.onLink ? context.link : aEvent.composedTarget
-    );
+    referrerInfo.initWithNode(aEvent.composedTarget);
     referrerInfo = E10SUtils.serializeReferrerInfo(referrerInfo);
+
+    // In the case "onLink" we may have to send link referrerInfo to use in
+    // _openLinkInParameters
+    let linkReferrerInfo = null;
+    if (context.onLink) {
+      linkReferrerInfo = Cc["@mozilla.org/referrer-info;1"].createInstance(
+        Ci.nsIReferrerInfo
+      );
+      linkReferrerInfo.initWithNode(context.link);
+    }
 
     let target = context.target;
     if (target) {
@@ -670,7 +681,6 @@ class ContextMenuChild extends JSWindowActorChild {
       customMenuItems,
       contentDisposition,
       frameOuterWindowID,
-      popupNodeSelectors,
       disableSetDesktopBackground,
       parentAllowsMixedContent,
     };
@@ -681,17 +691,8 @@ class ContextMenuChild extends JSWindowActorChild {
       );
     }
 
-    // In the case "onLink" we may have to send target referrerInfo. This object
-    // may be used to in saveMedia function.
-    if (context.onLink) {
-      let targetReferrerInfo = Cc[
-        "@mozilla.org/referrer-info;1"
-      ].createInstance(Ci.nsIReferrerInfo);
-
-      targetReferrerInfo.initWithNode(aEvent.composedTarget);
-      data.targetReferrerInfo = E10SUtils.serializeReferrerInfo(
-        targetReferrerInfo
-      );
+    if (linkReferrerInfo) {
+      data.linkReferrerInfo = E10SUtils.serializeReferrerInfo(linkReferrerInfo);
     }
 
     if (Services.appinfo.processType == Services.appinfo.PROCESS_TYPE_CONTENT) {
@@ -875,6 +876,7 @@ class ContextMenuChild extends JSWindowActorChild {
     context.onCTPPlugin = false;
     context.onDRMMedia = false;
     context.onPiPVideo = false;
+    context.onMediaStreamVideo = false;
     context.onEditable = false;
     context.onImage = false;
     context.onKeywordField = false;
@@ -1016,6 +1018,8 @@ class ContextMenuChild extends JSWindowActorChild {
       if (context.target.isCloningElementVisually) {
         context.onPiPVideo = true;
       }
+
+      context.onMediaStreamVideo = !!context.target.srcObject;
 
       // Firefox always creates a HTMLVideoElement when loading an ogg file
       // directly. If the media is actually audio, be smarter and provide a

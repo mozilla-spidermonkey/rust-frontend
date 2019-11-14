@@ -14,6 +14,7 @@ const TEST_DOMAIN_6 = "http://mochi.test:8888/";
 const TEST_3RD_PARTY_DOMAIN = "https://tracking.example.org/";
 const TEST_3RD_PARTY_DOMAIN_HTTP = "http://tracking.example.org/";
 const TEST_3RD_PARTY_DOMAIN_TP = "https://tracking.example.com/";
+const TEST_3RD_PARTY_DOMAIN_STP = "https://social-tracking.example.org/";
 const TEST_4TH_PARTY_DOMAIN = "http://not-tracking.example.com/";
 const TEST_ANOTHER_3RD_PARTY_DOMAIN = "https://another-tracking.example.net/";
 
@@ -50,10 +51,21 @@ const BEHAVIOR_LIMIT_FOREIGN = Ci.nsICookieService.BEHAVIOR_LIMIT_FOREIGN;
 const BEHAVIOR_REJECT_FOREIGN = Ci.nsICookieService.BEHAVIOR_REJECT_FOREIGN;
 const BEHAVIOR_REJECT_TRACKER = Ci.nsICookieService.BEHAVIOR_REJECT_TRACKER;
 
+let originalRequestLongerTimeout = requestLongerTimeout;
+// eslint-disable-next-line no-global-assign
+requestLongerTimeout = function AntiTrackingRequestLongerTimeout(factor) {
+  let ccovMultiplier = AppConstants.MOZ_CODE_COVERAGE ? 2 : 1;
+  originalRequestLongerTimeout(ccovMultiplier * factor);
+};
+
 requestLongerTimeout(3);
 
 const { UrlClassifierTestUtils } = ChromeUtils.import(
   "resource://testing-common/UrlClassifierTestUtils.jsm"
+);
+
+const { PermissionTestUtils } = ChromeUtils.import(
+  "resource://testing-common/PermissionTestUtils.jsm"
 );
 
 Services.scriptloader.loadSubScript(

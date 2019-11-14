@@ -58,8 +58,8 @@ function testTrackingPage(window) {
     "icon box shows no exception"
   );
   is(
-    gProtectionsHandler.iconBox.getAttribute("tooltiptext"),
-    gNavigatorBundle.getString("trackingProtection.icon.activeTooltip"),
+    gProtectionsHandler._trackingProtectionIconTooltipLabel.textContent,
+    gNavigatorBundle.getString("trackingProtection.icon.activeTooltip2"),
     "correct tooltip"
   );
 }
@@ -81,8 +81,8 @@ function testTrackingPageUnblocked() {
     "shield shows exception"
   );
   is(
-    gProtectionsHandler.iconBox.getAttribute("tooltiptext"),
-    gNavigatorBundle.getString("trackingProtection.icon.disabledTooltip"),
+    gProtectionsHandler._trackingProtectionIconTooltipLabel.textContent,
+    gNavigatorBundle.getString("trackingProtection.icon.disabledTooltip2"),
     "correct tooltip"
   );
 
@@ -138,7 +138,7 @@ add_task(async function testExceptionAddition() {
   await promiseTabLoadEvent(tab, TRACKING_PAGE);
   testTrackingPageUnblocked();
 
-  privateWin.close();
+  await BrowserTestUtils.closeWindow(privateWin);
 });
 
 add_task(async function testExceptionPersistence() {
@@ -179,5 +179,5 @@ add_task(async function testExceptionPersistence() {
   ]);
   testTrackingPageUnblocked();
 
-  privateWin.close();
+  await BrowserTestUtils.closeWindow(privateWin);
 });

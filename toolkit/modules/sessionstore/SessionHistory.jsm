@@ -115,10 +115,7 @@ var SessionHistoryInternal = {
     // If either the session history isn't available yet or doesn't have any
     // valid entries, make sure we at least include the current page,
     // unless of course we just skipped all entries because aFromIdx was big enough.
-    if (
-      data.entries.length == 0 &&
-      (skippedCount != entryCount || aFromIdx < 0)
-    ) {
+    if (!data.entries.length && (skippedCount != entryCount || aFromIdx < 0)) {
       let uri = webNavigation.currentURI.displaySpec;
       let body = webNavigation.document.body;
       // We landed here because the history is inaccessible or there are no
@@ -233,7 +230,7 @@ var SessionHistoryInternal = {
               Object.getOwnPropertyNames(presState).length > 1
           );
 
-        if (presStates.length > 0) {
+        if (presStates.length) {
           entry.presState = presStates;
         }
       }
@@ -262,11 +259,12 @@ var SessionHistoryInternal = {
       entry.csp = E10SUtils.serializeCSP(shEntry.csp);
     }
 
-    entry.docIdentifier = shEntry.BFCacheEntry.ID;
+    entry.docIdentifier = shEntry.bfcacheID;
 
     if (shEntry.stateData != null) {
-      entry.structuredCloneState = shEntry.stateData.getDataAsBase64();
-      entry.structuredCloneVersion = shEntry.stateData.formatVersion;
+      let stateData = shEntry.stateData;
+      entry.structuredCloneState = stateData.getDataAsBase64();
+      entry.structuredCloneVersion = stateData.formatVersion;
     }
 
     if (shEntry.childCount > 0 && !shEntry.hasDynamicallyAddedChild()) {
@@ -353,7 +351,7 @@ var SessionHistoryInternal = {
       }
       let persist = "persist" in entry ? entry.persist : true;
       history.addEntry(
-        this.deserializeEntry(entry, idMap, docIdentMap),
+        this.deserializeEntry(entry, idMap, docIdentMap, history),
         persist
       );
     }
@@ -377,10 +375,8 @@ var SessionHistoryInternal = {
    *        Hash to ensure reuse of BFCache entries
    * @returns nsISHEntry
    */
-  deserializeEntry(entry, idMap, docIdentMap) {
-    var shEntry = Cc[
-      "@mozilla.org/browser/session-history-entry;1"
-    ].createInstance(Ci.nsISHEntry);
+  deserializeEntry(entry, idMap, docIdentMap, shistory) {
+    var shEntry = shistory.createEntry();
 
     shEntry.URI = Services.io.newURI(entry.url);
     shEntry.title = entry.title || entry.url;
@@ -470,14 +466,15 @@ var SessionHistoryInternal = {
     }
 
     if (entry.structuredCloneState && entry.structuredCloneVersion) {
-      shEntry.stateData = Cc[
+      var stateData = Cc[
         "@mozilla.org/docshell/structured-clone-container;1"
       ].createInstance(Ci.nsIStructuredCloneContainer);
 
-      shEntry.stateData.initFromBase64(
+      stateData.initFromBase64(
         entry.structuredCloneState,
         entry.structuredCloneVersion
       );
+      shEntry.stateData = stateData;
     }
 
     if (entry.scrollRestorationIsManual) {
@@ -564,7 +561,12 @@ var SessionHistoryInternal = {
         // they have the same parent or their parents have the same document.
 
         shEntry.AddChild(
-          this.deserializeEntry(entry.children[i], idMap, childDocIdents),
+          this.deserializeEntry(
+            entry.children[i],
+            idMap,
+            childDocIdents,
+            shEntry.shistory
+          ),
           i
         );
       }

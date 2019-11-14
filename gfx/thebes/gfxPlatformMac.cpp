@@ -7,7 +7,6 @@
 
 #include "gfxQuartzSurface.h"
 #include "mozilla/gfx/2D.h"
-#include "mozilla/gfx/MacIOSurface.h"
 
 #include "gfxMacPlatformFontList.h"
 #include "gfxMacFont.h"
@@ -75,8 +74,6 @@ gfxPlatformMac::gfxPlatformMac() {
   mFontAntiAliasingThreshold = ReadAntiAliasingThreshold();
 
   InitBackendPrefs(GetBackendPrefs());
-
-  MacIOSurfaceLib::LoadLibrary();
 
   if (nsCocoaFeatures::OnHighSierraOrLater()) {
     mHasNativeColrFontSupport = true;
@@ -170,6 +167,7 @@ static const char kFontMenlo[] = "Menlo";
 static const char kFontMicrosoftTaiLe[] = "Microsoft Tai Le";
 static const char kFontMingLiUExtB[] = "MingLiU-ExtB";
 static const char kFontMyanmarMN[] = "Myanmar MN";
+static const char kFontNotoSansMongolian[] = "Noto Sans Mongolian";
 static const char kFontPlantagenetCherokee[] = "Plantagenet Cherokee";
 static const char kFontSimSunExtB[] = "SimSun-ExtB";
 static const char kFontSongtiSC[] = "Songti SC";
@@ -245,7 +243,7 @@ void gfxPlatformMac::GetCommonFallbackFonts(uint32_t aCh, uint32_t aNextCh,
         aFontList.AppendElement(kFontGeneva);
         break;
       case 0x18:  // Mongolian, UCAS
-        aFontList.AppendElement(kFontSTHeiti);
+        aFontList.AppendElement(kFontNotoSansMongolian);
         aFontList.AppendElement(kFontEuphemiaUCAS);
         break;
       case 0x19:  // Khmer
@@ -395,8 +393,23 @@ class OSXVsyncSource final : public VsyncSource {
       // in multi-monitor situations. According to the docs, it is compatible
       // with all displays running on the computer But if we have different
       // monitors at different display rates, we may hit issues.
-      if (CVDisplayLinkCreateWithActiveCGDisplays(&mDisplayLink) !=
-          kCVReturnSuccess) {
+      CVReturn retval = CVDisplayLinkCreateWithActiveCGDisplays(&mDisplayLink);
+
+      // Workaround for bug 1201401: CVDisplayLinkCreateWithCGDisplays()
+      // (called by CVDisplayLinkCreateWithActiveCGDisplays()) sometimes
+      // creates a CVDisplayLinkRef with an uninitialized (nulled) internal
+      // pointer. If we continue to use this CVDisplayLinkRef, we will
+      // eventually crash in CVCGDisplayLink::getDisplayTimes(), where the
+      // internal pointer is dereferenced. Fortunately, when this happens
+      // another internal variable is also left uninitialized (zeroed),
+      // which is accessible via CVDisplayLinkGetCurrentCGDisplay(). In
+      // normal conditions the current display is never zero.
+      if ((retval == kCVReturnSuccess) &&
+          (CVDisplayLinkGetCurrentCGDisplay(mDisplayLink) == 0)) {
+        retval = kCVReturnInvalidDisplay;
+      }
+
+      if (retval != kCVReturnSuccess) {
         NS_WARNING(
             "Could not create a display link with all active displays. "
             "Retrying");

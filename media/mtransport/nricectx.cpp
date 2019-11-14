@@ -57,6 +57,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "nsComponentManagerUtils.h"
 #include "nsError.h"
 #include "nsIEventTarget.h"
+#include "nsIUUIDGenerator.h"
 #include "nsNetCID.h"
 #include "nsComponentManagerUtils.h"
 #include "nsServiceManagerUtils.h"
@@ -95,6 +96,10 @@ extern "C" {
 #include "nrinterfaceprioritizer.h"
 #include "rlogconnector.h"
 #include "test_nr_socket.h"
+
+extern "C" {
+#include "mdns_service/mdns_service.h"
+}
 
 namespace mozilla {
 
@@ -275,7 +280,7 @@ NrIceCtx::NrIceCtx(const std::string& name, Policy policy)
       policy_(policy),
       nat_(nullptr),
       proxy_config_(nullptr),
-      proxy_only_(false) {}
+      obfuscate_host_addresses_(false) {}
 
 /* static */
 RefPtr<NrIceCtx> NrIceCtx::Create(const std::string& name, bool allow_loopback,
@@ -427,21 +432,26 @@ void NrIceCtx::trickle_cb(void* arg, nr_ice_ctx* ice_ctx,
   }
 
   if (!candidate) {
-    s->SignalCandidate(s, "", stream->ufrag);
+    s->SignalCandidate(s, "", stream->ufrag, "", "");
     return;
   }
+
+  std::string actual_addr;
+  std::string mdns_addr;
+  ctx->GenerateObfuscatedAddress(candidate, &mdns_addr, &actual_addr);
 
   // Format the candidate.
   char candidate_str[NR_ICE_MAX_ATTRIBUTE_SIZE];
   int r = nr_ice_format_candidate_attribute(candidate, candidate_str,
-                                            sizeof(candidate_str));
+                                            sizeof(candidate_str),
+                                            ctx->obfuscate_host_addresses_);
   MOZ_ASSERT(!r);
   if (r) return;
 
   MOZ_MTLOG(ML_INFO, "NrIceCtx(" << ctx->name_ << "): trickling candidate "
                                  << candidate_str);
 
-  s->SignalCandidate(s, candidate_str, stream->ufrag);
+  s->SignalCandidate(s, candidate_str, stream->ufrag, mdns_addr, actual_addr);
 }
 
 void NrIceCtx::InitializeGlobals(bool allow_loopback, bool tcp_enabled,
@@ -837,12 +847,12 @@ nsresult NrIceCtx::SetResolver(nr_resolver* resolver) {
   return NS_OK;
 }
 
-nsresult NrIceCtx::SetProxyServer(NrSocketProxyConfig&& config) {
+nsresult NrIceCtx::SetProxyConfig(NrSocketProxyConfig&& config) {
   proxy_config_.reset(new NrSocketProxyConfig(std::move(config)));
   return NS_OK;
 }
 
-void NrIceCtx::SetCtxFlags(bool default_route_only, bool proxy_only) {
+void NrIceCtx::SetCtxFlags(bool default_route_only) {
   ASSERT_ON_THREAD(sts_target_);
 
   if (default_route_only) {
@@ -850,21 +860,17 @@ void NrIceCtx::SetCtxFlags(bool default_route_only, bool proxy_only) {
   } else {
     nr_ice_ctx_remove_flags(ctx_, NR_ICE_CTX_FLAGS_ONLY_DEFAULT_ADDRS);
   }
-
-  if (proxy_only) {
-    nr_ice_ctx_add_flags(ctx_, NR_ICE_CTX_FLAGS_ONLY_PROXY);
-  } else {
-    nr_ice_ctx_remove_flags(ctx_, NR_ICE_CTX_FLAGS_ONLY_PROXY);
-  }
 }
 
-nsresult NrIceCtx::StartGathering(bool default_route_only, bool proxy_only) {
+nsresult NrIceCtx::StartGathering(bool default_route_only,
+                                  bool obfuscate_host_addresses) {
   ASSERT_ON_THREAD(sts_target_);
+
+  obfuscate_host_addresses_ = obfuscate_host_addresses;
+
   SetGatheringState(ICE_CTX_GATHER_STARTED);
 
-  SetCtxFlags(default_route_only, proxy_only);
-    
-  proxy_only_ = proxy_only;
+  SetCtxFlags(default_route_only);
 
   // This might start gathering for the first time, or again after
   // renegotiation, or might do nothing at all if gathering has already
@@ -1033,6 +1039,34 @@ void NrIceCtx::SetGatheringState(GatheringState state) {
   SignalGatheringStateChange(this, state);
 }
 
+void NrIceCtx::GenerateObfuscatedAddress(nr_ice_candidate* candidate,
+                                         std::string* mdns_address,
+                                         std::string* actual_address) {
+  if (candidate->type == HOST && obfuscate_host_addresses_) {
+    char addr[64];
+    if (nr_transport_addr_get_addrstring(&candidate->addr, addr,
+                                         sizeof(addr))) {
+      return;
+    }
+
+    *actual_address = addr;
+
+    const auto& iter = obfuscated_host_addresses_.find(*actual_address);
+    if (iter != obfuscated_host_addresses_.end()) {
+      *mdns_address = iter->second;
+    } else {
+      const char* uuid = mdns_service_generate_uuid();
+      std::ostringstream o;
+      o << uuid << ".local";
+      *mdns_address = o.str();
+      mdns_service_free_uuid(uuid);
+
+      obfuscated_host_addresses_[*actual_address] = *mdns_address;
+    }
+    candidate->mdns_addr = r_strdup(mdns_address->c_str());
+  }
+}
+
 }  // namespace mozilla
 
 // Reimplement nr_ice_compute_codeword to avoid copyright issues
@@ -1055,11 +1089,6 @@ int nr_socket_local_create(void* obj, nr_transport_addr* addr,
 
   if (obj) {
     config = static_cast<NrIceCtx*>(obj)->GetProxyConfig();
-    bool ctx_proxy_only = static_cast<NrIceCtx*>(obj)->proxy_only();
-
-    if (ctx_proxy_only && !config) {
-      ABORT(R_FAILED);
-    }
   }
 
   r = NrSocketBase::CreateSocket(addr, &sock, config);

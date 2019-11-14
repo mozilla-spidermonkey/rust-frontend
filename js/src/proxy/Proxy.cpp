@@ -257,19 +257,13 @@ bool Proxy::has(JSContext* cx, HandleObject proxy, HandleId id, bool* bp) {
 }
 
 bool js::ProxyHas(JSContext* cx, HandleObject proxy, HandleValue idVal,
-                  MutableHandleValue result) {
+                  bool* result) {
   RootedId id(cx);
   if (!ValueToId<CanGC>(cx, idVal, &id)) {
     return false;
   }
 
-  bool has;
-  if (!Proxy::has(cx, proxy, id, &has)) {
-    return false;
-  }
-
-  result.setBoolean(has);
-  return true;
+  return Proxy::has(cx, proxy, id, result);
 }
 
 bool Proxy::hasOwn(JSContext* cx, HandleObject proxy, HandleId id, bool* bp) {
@@ -286,19 +280,13 @@ bool Proxy::hasOwn(JSContext* cx, HandleObject proxy, HandleId id, bool* bp) {
 }
 
 bool js::ProxyHasOwn(JSContext* cx, HandleObject proxy, HandleValue idVal,
-                     MutableHandleValue result) {
+                     bool* result) {
   RootedId id(cx);
   if (!ValueToId<CanGC>(cx, idVal, &id)) {
     return false;
   }
 
-  bool hasOwn;
-  if (!Proxy::hasOwn(cx, proxy, id, &hasOwn)) {
-    return false;
-  }
-
-  result.setBoolean(hasOwn);
-  return true;
+  return Proxy::hasOwn(cx, proxy, id, result);
 }
 
 static MOZ_ALWAYS_INLINE Value ValueToWindowProxyIfWindow(const Value& v,
@@ -687,10 +675,9 @@ void ProxyObject::trace(JSTracer* trc, JSObject* obj) {
        * Assert that this proxy is tracked in the wrapper map. We maintain
        * the invariant that the wrapped object is the key in the wrapper map.
        */
-      Value key = ObjectValue(*referent);
-      WrapperMap::Ptr p = proxy->compartment()->lookupWrapper(key);
+      ObjectWrapperMap::Ptr p = proxy->compartment()->lookupWrapper(referent);
       MOZ_ASSERT(p);
-      MOZ_ASSERT(*p->value().unsafeGet() == ObjectValue(*proxy));
+      MOZ_ASSERT(*p->value().unsafeGet() == proxy);
     }
   }
 #endif
@@ -716,7 +703,7 @@ void ProxyObject::trace(JSTracer* trc, JSObject* obj) {
   Proxy::trace(trc, obj);
 }
 
-static void proxy_Finalize(FreeOp* fop, JSObject* obj) {
+static void proxy_Finalize(JSFreeOp* fop, JSObject* obj) {
   // Suppress a bogus warning about finalize().
   JS::AutoSuppressGCAnalysis nogc;
 
@@ -743,7 +730,7 @@ size_t js::proxy_ObjectMoved(JSObject* obj, JSObject* old) {
   return proxy.handler()->objectMoved(obj, old);
 }
 
-const ClassOps js::ProxyClassOps = {
+const JSClassOps js::ProxyClassOps = {
     nullptr,            /* addProperty */
     nullptr,            /* delProperty */
     nullptr,            /* enumerate   */
@@ -766,7 +753,7 @@ const ObjectOps js::ProxyObjectOps = {
     proxy_DeleteProperty, Proxy::getElements,
     Proxy::fun_toString};
 
-const Class js::ProxyClass =
+const JSClass js::ProxyClass =
     PROXY_CLASS_DEF("Proxy", JSCLASS_HAS_CACHED_PROTO(JSProto_Proxy) |
                                  JSCLASS_HAS_RESERVED_SLOTS(2));
 
@@ -776,6 +763,12 @@ JS_FRIEND_API JSObject* js::NewProxyObject(JSContext* cx,
                                            const ProxyOptions& options) {
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
+
+  // This can be called from the compartment wrap hooks while in a realm with a
+  // gray global. Trigger the read barrier on the global to ensure this is
+  // unmarked.
+  cx->realm()->maybeGlobal();
+
   if (proto_ != TaggedProto::LazyProto) {
     cx->check(proto_);  // |priv| might be cross-compartment.
   }

@@ -15,7 +15,6 @@
 #include "jslibmath.h"
 
 #include "builtin/RegExp.h"
-#include "builtin/String.h"
 #include "jit/AtomicOperations.h"
 #include "jit/BaselineInspector.h"
 #include "jit/IonBuilder.h"
@@ -3912,6 +3911,45 @@ MDefinition* MToNumberInt32::foldsTo(TempAllocator& alloc) {
   return this;
 }
 
+MDefinition* MToIntegerInt32::foldsTo(TempAllocator& alloc) {
+  MDefinition* input = getOperand(0);
+
+  // Fold this operation if the input operand is constant.
+  if (input->isConstant()) {
+    switch (input->type()) {
+      case MIRType::Undefined:
+      case MIRType::Null:
+        return MConstant::New(alloc, Int32Value(0));
+      case MIRType::Boolean:
+        return MConstant::New(alloc,
+                              Int32Value(input->toConstant()->toBoolean()));
+      case MIRType::Int32:
+        return MConstant::New(alloc,
+                              Int32Value(input->toConstant()->toInt32()));
+      case MIRType::Float32:
+      case MIRType::Double: {
+        double result = JS::ToInteger(input->toConstant()->numberToDouble());
+        int32_t ival;
+        // Only the value within the range of Int32 can be substituted as
+        // constant.
+        if (mozilla::NumberEqualsInt32(result, &ival)) {
+          return MConstant::New(alloc, Int32Value(ival));
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  // See the comment in |MToNumberInt32::foldsTo|.
+  if (input->type() == MIRType::Int32 && !IsUint32Type(input)) {
+    return input;
+  }
+
+  return this;
+}
+
 void MToNumberInt32::analyzeEdgeCasesBackward() {
   if (!NeedNegativeZeroCheck(this)) {
     setCanBeNegativeZero(false);
@@ -5634,6 +5672,23 @@ MDefinition* MGetFirstDollarIndex::foldsTo(TempAllocator& alloc) {
   return MConstant::New(alloc, Int32Value(index));
 }
 
+MDefinition* MTypedArrayIndexToInt32::foldsTo(TempAllocator& alloc) {
+  MDefinition* input = getOperand(0);
+  if (!input->isConstant() || input->type() != MIRType::Double) {
+    return this;
+  }
+
+  // Fold constant double representable as int32 to int32.
+  int32_t ival;
+  if (!mozilla::NumberEqualsInt32(input->toConstant()->numberToDouble(),
+                                  &ival)) {
+    // If not representable as an int32, this access is equal to an OOB access.
+    // So replace it with a known int32 value which also produces an OOB access.
+    ival = -1;
+  }
+  return MConstant::New(alloc, Int32Value(ival));
+}
+
 bool jit::ElementAccessIsDenseNative(CompilerConstraintList* constraints,
                                      MDefinition* obj, MDefinition* id) {
   if (obj->mightBeType(MIRType::String)) {
@@ -5650,7 +5705,7 @@ bool jit::ElementAccessIsDenseNative(CompilerConstraintList* constraints,
   }
 
   // Typed arrays are native classes but do not have dense elements.
-  const Class* clasp = types->getKnownClass(constraints);
+  const JSClass* clasp = types->getKnownClass(constraints);
   return clasp && clasp->isNative() && !IsTypedArrayClass(clasp);
 }
 
@@ -5990,7 +6045,7 @@ AbortReasonOr<bool> PrototypeHasIndexedProperty(IonBuilder* builder,
 // Whether obj or any of its prototypes have an indexed property.
 AbortReasonOr<bool> jit::TypeCanHaveExtraIndexedProperties(
     IonBuilder* builder, TemporaryTypeSet* types) {
-  const Class* clasp = types->getKnownClass(builder->constraints());
+  const JSClass* clasp = types->getKnownClass(builder->constraints());
 
   // Note: typed arrays have indexed properties not accounted for by type
   // information, though these are all in bounds and will be accounted for
@@ -6290,11 +6345,8 @@ bool jit::PropertyWriteNeedsTypeBarrier(TempAllocator& alloc,
 MIonToWasmCall* MIonToWasmCall::New(TempAllocator& alloc,
                                     WasmInstanceObject* instanceObj,
                                     const wasm::FuncExport& funcExport) {
-  wasm::ExprType retType = funcExport.funcType().ret();
-
-  MIRType resultType = retType.code() == wasm::ExprType::Void
-                           ? MIRType::Value
-                           : ToMIRType(retType);
+  Maybe<wasm::ValType> retType = funcExport.funcType().ret();
+  MIRType resultType = retType ? ToMIRType(retType.ref()) : MIRType::Value;
 
   auto* ins = new (alloc) MIonToWasmCall(instanceObj, resultType, funcExport);
   if (!ins->init(alloc, funcExport.funcType().args().length())) {

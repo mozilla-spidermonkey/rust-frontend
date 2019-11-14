@@ -219,12 +219,8 @@ nsresult ConvertDetailsUpdate(JSContext* aCx,
 
 void ConvertOptions(const PaymentOptions& aOptions,
                     IPCPaymentOptions& aIPCOption) {
-  uint8_t shippingTypeIndex = static_cast<uint8_t>(aOptions.mShippingType);
-  nsString shippingType(NS_LITERAL_STRING("shipping"));
-  if (shippingTypeIndex < ArrayLength(PaymentShippingTypeValues::strings)) {
-    shippingType.AssignASCII(
-        PaymentShippingTypeValues::strings[shippingTypeIndex].value);
-  }
+  NS_ConvertASCIItoUTF16 shippingType(
+      PaymentShippingTypeValues::GetString(aOptions.mShippingType));
   aIPCOption =
       IPCPaymentOptions(aOptions.mRequestPayerName, aOptions.mRequestPayerEmail,
                         aOptions.mRequestPayerPhone, aOptions.mRequestShipping,
@@ -315,16 +311,16 @@ void ConvertMethodChangeDetails(const IPCMethodChangeDetails& aIPCDetails,
 StaticRefPtr<PaymentRequestManager> gPaymentManager;
 const char kSupportedRegionsPref[] = "dom.payments.request.supportedRegions";
 
-void SupportedRegionsPrefChangedCallback(const char* aPrefName,
-                                         nsTArray<nsString>* aRetval) {
+void SupportedRegionsPrefChangedCallback(const char* aPrefName, void* aRetval) {
+  auto retval = static_cast<nsTArray<nsString>*>(aRetval);
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(!strcmp(aPrefName, kSupportedRegionsPref));
 
   nsAutoString supportedRegions;
   Preferences::GetString(aPrefName, supportedRegions);
-  aRetval->Clear();
+  retval->Clear();
   for (const nsAString& each : supportedRegions.Split(',')) {
-    aRetval->AppendElement(each);
+    retval->AppendElement(each);
   }
 }
 
@@ -371,6 +367,11 @@ nsresult PaymentRequestManager::SendRequestPayment(
     PaymentRequest* aRequest, const IPCPaymentActionRequest& aAction,
     bool aResponseExpected) {
   PaymentRequestChild* requestChild = GetPaymentChild(aRequest);
+  // bug 1580496, ignoring the case that requestChild is nullptr. It could be
+  // nullptr while the corresponding nsPIDOMWindowInner is nullptr.
+  if (NS_WARN_IF(!requestChild)) {
+    return NS_ERROR_FAILURE;
+  }
   nsresult rv = requestChild->RequestPayment(aAction);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
@@ -546,11 +547,8 @@ nsresult PaymentRequestManager::CompletePayment(
   if (aTimedOut) {
     completeStatusString.AssignLiteral("timeout");
   } else {
-    uint8_t completeIndex = static_cast<uint8_t>(aComplete);
-    if (completeIndex < ArrayLength(PaymentCompleteValues::strings)) {
-      completeStatusString.AssignASCII(
-          PaymentCompleteValues::strings[completeIndex].value);
-    }
+    completeStatusString.AssignASCII(
+        PaymentCompleteValues::GetString(aComplete));
   }
 
   nsAutoString requestId;
@@ -646,31 +644,30 @@ nsresult PaymentRequestManager::RespondPayment(
     }
     case IPCPaymentActionResponse::TIPCPaymentShowActionResponse: {
       const IPCPaymentShowActionResponse& response = aResponse;
-      nsresult rejectedReason = NS_ERROR_DOM_ABORT_ERR;
+      ErrorResult rejectedReason;
       ResponseData responseData;
       ConvertResponseData(response.data(), responseData);
       switch (response.status()) {
         case nsIPaymentActionResponse::PAYMENT_ACCEPTED: {
-          rejectedReason = NS_OK;
           break;
         }
         case nsIPaymentActionResponse::PAYMENT_REJECTED: {
-          rejectedReason = NS_ERROR_DOM_ABORT_ERR;
+          rejectedReason.Throw(NS_ERROR_DOM_ABORT_ERR);
           break;
         }
         case nsIPaymentActionResponse::PAYMENT_NOTSUPPORTED: {
-          rejectedReason = NS_ERROR_DOM_NOT_SUPPORTED_ERR;
+          rejectedReason.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
           break;
         }
         default: {
-          rejectedReason = NS_ERROR_UNEXPECTED;
+          rejectedReason.Throw(NS_ERROR_UNEXPECTED);
           break;
         }
       }
       aRequest->RespondShowPayment(response.methodName(), responseData,
                                    response.payerName(), response.payerEmail(),
                                    response.payerPhone(), rejectedReason);
-      if (NS_FAILED(rejectedReason)) {
+      if (rejectedReason.Failed()) {
         NotifyRequestDone(aRequest);
       }
       break;

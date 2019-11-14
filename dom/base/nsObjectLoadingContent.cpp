@@ -82,7 +82,6 @@
 #include "mozilla/dom/PluginCrashedEvent.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/EventDispatcher.h"
-#include "mozilla/EventStateManager.h"
 #include "mozilla/EventStates.h"
 #include "mozilla/IMEStateManager.h"
 #include "mozilla/widget/IMEData.h"
@@ -90,6 +89,7 @@
 #include "mozilla/dom/HTMLObjectElementBinding.h"
 #include "mozilla/dom/HTMLEmbedElement.h"
 #include "mozilla/dom/HTMLObjectElement.h"
+#include "mozilla/dom/UserActivation.h"
 #include "mozilla/net/UrlClassifierFeatureFactory.h"
 #include "mozilla/LoadInfo.h"
 #include "mozilla/PresShell.h"
@@ -107,7 +107,6 @@
 static NS_DEFINE_CID(kAppShellCID, NS_APPSHELL_CID);
 
 static const char kPrefYoutubeRewrite[] = "plugins.rewrite_youtube_embeds";
-static const char kPrefBlockURIs[] = "browser.safebrowsing.blockedURIs.enabled";
 static const char kPrefFavorFallbackMode[] = "plugins.favorfallback.mode";
 static const char kPrefFavorFallbackRules[] = "plugins.favorfallback.rules";
 
@@ -2330,7 +2329,7 @@ nsresult nsObjectLoadingContent::OpenChannel() {
     }
 
     nsCOMPtr<nsIClassOfService> cos(do_QueryInterface(httpChan));
-    if (cos && EventStateManager::IsHandlingUserInput()) {
+    if (cos && UserActivation::IsHandlingUserInput()) {
       cos->AddClassFlags(nsIClassOfService::UrgentStart);
     }
   }
@@ -2540,7 +2539,7 @@ void nsObjectLoadingContent::CreateStaticClone(
   if (mFrameLoader) {
     nsCOMPtr<nsIContent> content =
         do_QueryInterface(static_cast<nsIImageLoadingContent*>(aDest));
-    nsFrameLoader* fl =
+    RefPtr<nsFrameLoader> fl =
         nsFrameLoader::Create(content->AsElement(), nullptr, false);
     if (fl) {
       aDest->mFrameLoader = fl;
@@ -2941,32 +2940,9 @@ uint32_t nsObjectLoadingContent::GetRunID(SystemCallerGuarantee,
   return mRunID;
 }
 
-static bool sPrefsInitialized;
-static uint32_t sSessionTimeoutMinutes;
-static uint32_t sPersistentTimeoutDays;
-static bool sBlockURIs;
-
-static void initializeObjectLoadingContentPrefs() {
-  if (!sPrefsInitialized) {
-    Preferences::AddUintVarCache(
-        &sSessionTimeoutMinutes,
-        "plugin.sessionPermissionNow.intervalInMinutes", 60);
-    Preferences::AddUintVarCache(
-        &sPersistentTimeoutDays,
-        "plugin.persistentPermissionAlways.intervalInDays", 90);
-
-    Preferences::AddBoolVarCache(&sBlockURIs, kPrefBlockURIs, false);
-    sPrefsInitialized = true;
-  }
-}
-
 bool nsObjectLoadingContent::ShouldBlockContent() {
-  if (!sPrefsInitialized) {
-    initializeObjectLoadingContentPrefs();
-  }
-
   if (mContentBlockingEnabled && mURI && IsFlashMIME(mContentType) &&
-      sBlockURIs) {
+      StaticPrefs::browser_safebrowsing_blockedURIs_enabled()) {
     return true;
   }
 
@@ -2976,22 +2952,10 @@ bool nsObjectLoadingContent::ShouldBlockContent() {
 bool nsObjectLoadingContent::ShouldPlay(FallbackType& aReason) {
   nsresult rv;
 
-  if (!sPrefsInitialized) {
-    initializeObjectLoadingContentPrefs();
-  }
-
-  if (BrowserTabsRemoteAutostart()) {
-    bool shouldLoadInParent =
-        nsPluginHost::ShouldLoadTypeInParent(mContentType);
-    bool inParent = XRE_IsParentProcess();
-
-    if (shouldLoadInParent != inParent) {
-      // Plugins need to be locked to either the parent process or the content
-      // process. If a plugin is locked to one process type, it can't be used in
-      // the other. Otherwise we'll get hangs.
-      aReason = eFallbackDisabled;
-      return false;
-    }
+  if (BrowserTabsRemoteAutostart() && XRE_IsParentProcess()) {
+    // We no longer support loading plugins in the parent process.
+    aReason = eFallbackDisabled;
+    return false;
   }
 
   RefPtr<nsPluginHost> pluginHost = nsPluginHost::GetInst();
@@ -3082,14 +3046,6 @@ bool nsObjectLoadingContent::ShouldPlay(FallbackType& aReason) {
     rv = permissionManager->TestPermissionFromPrincipal(
         topDoc->NodePrincipal(), permissionString, &permission);
     NS_ENSURE_SUCCESS(rv, false);
-    if (permission != nsIPermissionManager::UNKNOWN_ACTION) {
-      uint64_t nowms = PR_Now() / 1000;
-      permissionManager->UpdateExpireTime(
-          topDoc->NodePrincipal(), permissionString, false,
-          nowms + sSessionTimeoutMinutes * 60 * 1000,
-          nowms / 1000 +
-              uint64_t(sPersistentTimeoutDays) * 24 * 60 * 60 * 1000);
-    }
     switch (permission) {
       case nsIPermissionManager::ALLOW_ACTION:
         if (PreferFallback(false /* isPluginClickToPlay */)) {

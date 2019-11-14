@@ -1,3 +1,5 @@
+// |jit-test| allow-unhandlable-oom
+
 // Crash test. Try lots of different combinations of mark colors and
 // sequencing, and rely on the in-code asserts to detect problems.
 
@@ -56,7 +58,7 @@ function varying(mapColor, keyColor, delegateColor, order, where) {
   vals.m = vals.key = vals.val = null;
 
   if (delegateColor == 'uncollected')
-    schedulegc({});
+    schedulezone({});
   startgc(100000);
   print('  ' + getMarks().join("/"));
   gcslice(100000);

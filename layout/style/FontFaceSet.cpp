@@ -18,7 +18,6 @@
 #include "mozilla/dom/FontFaceSetLoadEventBinding.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/FontPropertyTypes.h"
-#include "mozilla/net/ReferrerPolicy.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Preferences.h"
@@ -206,7 +205,7 @@ void FontFaceSet::ParseFontShorthandForMatching(
     const nsAString& aFont, RefPtr<SharedFontList>& aFamilyList,
     FontWeight& aWeight, FontStretch& aStretch, FontSlantStyle& aStyle,
     ErrorResult& aRv) {
-  StyleComputedFontStyleDescriptor style;
+  auto style = StyleComputedFontStyleDescriptor::Normal();
   float stretch;
   float weight;
 
@@ -587,9 +586,7 @@ nsresult FontFaceSet::StartLoad(gfxUserFontEntry* aUserFontEntry,
   gfxFontSrcPrincipal* principal = aUserFontEntry->GetPrincipal();
 
   uint32_t securityFlags = 0;
-  bool isFile = false;
-  if (NS_SUCCEEDED(aFontFaceSrc->mURI->get()->SchemeIs("file", &isFile)) &&
-      isFile) {
+  if (aFontFaceSrc->mURI->get()->SchemeIs("file")) {
     securityFlags = nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_INHERITS;
   } else {
     securityFlags = nsILoadInfo::SEC_REQUIRE_CORS_DATA_INHERITS;
@@ -1207,9 +1204,8 @@ RawServoFontFaceRule* FontFaceSet::FindRuleForUserFontEntry(
 nsresult FontFaceSet::LogMessage(gfxUserFontEntry* aUserFontEntry,
                                  const char* aMessage, uint32_t aFlags,
                                  nsresult aStatus) {
-  MOZ_ASSERT(NS_IsMainThread(),
-             "LogMessage only works on the main thread, due to the Servo_XXX "
-             "CSSOM calls it makes");
+  MOZ_ASSERT(NS_IsMainThread() ||
+             ServoStyleSet::IsCurrentThreadInServoTraversal());
 
   nsCOMPtr<nsIConsoleService> console(
       do_GetService(NS_CONSOLESERVICE_CONTRACTID));
@@ -1250,9 +1246,7 @@ nsresult FontFaceSet::LogMessage(gfxUserFontEntry* aUserFontEntry,
   message.AppendLiteral(" source: ");
   message.Append(fontURI);
 
-  if (LOG_ENABLED()) {
-    LOG(("userfonts (%p) %s", mUserFontSet.get(), message.get()));
-  }
+  LOG(("userfonts (%p) %s", mUserFontSet.get(), message.get()));
 
   // try to give the user an indication of where the rule came from
   RawServoFontFaceRule* rule = FindRuleForUserFontEntry(aUserFontEntry);
@@ -1276,7 +1270,7 @@ nsresult FontFaceSet::LogMessage(gfxUserFontEntry* aUserFontEntry,
       href.AssignLiteral("unknown");
     }
 #endif
-    href.AssignLiteral("unknown");
+    // Leave href empty if we don't know how to get the correct sheet.
   }
 
   nsresult rv;

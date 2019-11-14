@@ -18,6 +18,8 @@
 
 using namespace mozilla;
 
+RefPtr<SharedThreadPool> sFuzzThreadPool;
+
 class FuzzRunner {
  public:
   explicit FuzzRunner(Benchmark* aBenchmark) : mBenchmark(aBenchmark) {}
@@ -35,14 +37,16 @@ class FuzzRunner {
 };
 
 static int FuzzingInitMedia(int* argc, char*** argv) {
-  /* Generic no-op initialization used for all targets */
+  // Grab a strong reference to the media thread pool to avoid thread
+  // leaks. For more information, see bug 1567170.
+  sFuzzThreadPool = GetMediaThreadPool(MediaThreadType::PLAYBACK);
   return 0;
 }
 
 #define MOZ_MEDIA_FUZZER(_name)                                         \
   static int FuzzingRunMedia##_name(const uint8_t* data, size_t size) { \
     if (!size) {                                                        \
-        return 0;                                                       \
+      return 0;                                                         \
     }                                                                   \
     RefPtr<BufferMediaResource> resource =                              \
         new BufferMediaResource(data, size);                            \

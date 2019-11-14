@@ -104,6 +104,18 @@ static void ChannelMessageHandler(Message::UniquePtr aMsg) {
           [=]() { gDebuggerRunsInMiddleman = true; });
       break;
     }
+    case MessageType::Ping: {
+      // The progress value included in a ping response reflects both the JS
+      // execution progress counter and the progress that all threads have
+      // made in their event streams. This accounts for an assortment of
+      // scenarios which could be mistaken for a hang, such as a long-running
+      // script that doesn't interact with the recording, or a long-running
+      // operation running off the main thread.
+      const PingMessage& nmsg = (const PingMessage&)*aMsg;
+      uint64_t total = *ExecutionProgressCounter() + Thread::TotalEventProgress();
+      gChannel->SendMessage(PingResponseMessage(nmsg.mId, total));
+      break;
+    }
     case MessageType::Terminate: {
       // Terminate messages behave differently in recording vs. replaying
       // processes. When sent to a recording process (which the middleman
@@ -298,12 +310,6 @@ bool DebuggerRunsInMiddleman() {
   return RecordReplayValue(gDebuggerRunsInMiddleman);
 }
 
-void CreateCheckpoint() {
-  if (!HasDivergedFromRecording()) {
-    NewCheckpoint();
-  }
-}
-
 void ReportFatalError(const Maybe<MinidumpInfo>& aMinidump, const char* aFormat,
                       ...) {
   // Notify the middleman that we are crashing and are going to try to write a
@@ -348,9 +354,7 @@ void ReportFatalError(const Maybe<MinidumpInfo>& aMinidump, const char* aFormat,
   Thread::WaitForeverNoIdle();
 }
 
-size_t GetId() {
-  return gChannel->GetId();
-}
+size_t GetId() { return gChannel->GetId(); }
 
 ///////////////////////////////////////////////////////////////////////////////
 // Vsyncs
@@ -495,8 +499,7 @@ static void PaintFromMainThread() {
 
   if (IsMainChild() && gDrawTargetBuffer) {
     memcpy(gGraphicsShmem, gDrawTargetBuffer, gDrawTargetBufferSize);
-    gChannel->SendMessage(
-        PaintMessage(GetLastCheckpoint(), gPaintWidth, gPaintHeight));
+    gChannel->SendMessage(PaintMessage(gPaintWidth, gPaintHeight));
   }
 }
 
@@ -538,14 +541,6 @@ bool Repaint(nsAString& aData) {
     gDidRepaint = true;
     gRepainting = true;
 
-    // Allow other threads to diverge from the recording so the compositor can
-    // perform any paint we are about to trigger, or finish any in flight paint
-    // that existed at the point we are paused at.
-    for (size_t i = MainThreadId + 1; i <= MaxRecordedThreadId; i++) {
-      Thread::GetById(i)->SetShouldDivergeFromRecording();
-    }
-    Thread::ResumeIdleThreads();
-
     // Create an artifical vsync to see if graphics have changed since the last
     // paint and a new paint is needed.
     NotifyVsyncObserver();
@@ -559,7 +554,6 @@ bool Repaint(nsAString& aData) {
       }
     }
 
-    Thread::WaitForIdleThreads();
     gRepainting = false;
   }
 
@@ -571,14 +565,13 @@ bool Repaint(nsAString& aData) {
   nsCString encoderCID("@mozilla.org/image/encoder;2?type=image/png");
   nsCOMPtr<imgIEncoder> encoder = do_CreateInstance(encoderCID.get());
 
+  size_t stride = layers::ImageDataSerializer::ComputeRGBStride(gSurfaceFormat,
+                                                                gPaintWidth);
+
   nsString options;
-  nsresult rv = encoder->InitFromData((const uint8_t*) gDrawTargetBuffer,
-                                      gPaintWidth * gPaintHeight * 4,
-                                      gPaintWidth,
-                                      gPaintHeight,
-                                      gPaintWidth * 4,
-                                      imgIEncoder::INPUT_FORMAT_HOSTARGB,
-                                      options);
+  nsresult rv = encoder->InitFromData(
+      (const uint8_t*)gDrawTargetBuffer, stride * gPaintHeight, gPaintWidth,
+      gPaintHeight, stride, imgIEncoder::INPUT_FORMAT_HOSTARGB, options);
   if (NS_FAILED(rv)) {
     return false;
   }

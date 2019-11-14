@@ -120,7 +120,7 @@ FileReader::~FileReader() {
 
 /* static */
 already_AddRefed<FileReader> FileReader::Constructor(
-    const GlobalObject& aGlobal, ErrorResult& aRv) {
+    const GlobalObject& aGlobal) {
   nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
   RefPtr<WeakWorkerRef> workerRef;
 
@@ -143,31 +143,25 @@ FileReader::GetInterface(const nsIID& aIID, void** aResult) {
   return QueryInterface(aIID, aResult);
 }
 
-void FileReader::GetResult(JSContext* aCx, JS::MutableHandle<JS::Value> aResult,
-                           ErrorResult& aRv) {
+void FileReader::GetResult(JSContext* aCx,
+                           Nullable<OwningStringOrArrayBuffer>& aResult) {
   JS::Rooted<JS::Value> result(aCx);
 
   if (mDataFormat == FILE_AS_ARRAYBUFFER) {
-    if (mReadyState == DONE && mResultArrayBuffer) {
-      result.setObject(*mResultArrayBuffer);
-    } else {
-      result.setNull();
+    if (mReadyState != DONE || !mResultArrayBuffer ||
+        !aResult.SetValue().SetAsArrayBuffer().Init(mResultArrayBuffer)) {
+      aResult.SetNull();
     }
 
-    if (!JS_WrapValue(aCx, &result)) {
-      aRv.Throw(NS_ERROR_FAILURE);
-      return;
-    }
-
-    aResult.set(result);
     return;
   }
 
-  nsString tmpResult = mResult;
-  if (!xpc::StringToJsval(aCx, tmpResult, aResult)) {
-    aRv.Throw(NS_ERROR_FAILURE);
+  if (mResult.IsVoid()) {
+    aResult.SetNull();
     return;
   }
+
+  aResult.SetValue().SetAsString() = mResult;
 }
 
 void FileReader::OnLoadEndArrayBuffer() {
@@ -209,9 +203,9 @@ void FileReader::OnLoadEndArrayBuffer() {
   }
 
   nsAutoString errorName;
-  JSFlatString* name = js::GetErrorTypeName(cx, er->exnType);
+  JSLinearString* name = js::GetErrorTypeName(cx, er->exnType);
   if (name) {
-    AssignJSFlatString(errorName, name);
+    AssignJSLinearString(errorName, name);
   }
 
   nsAutoCString errorMsg(er->message().c_str());
@@ -246,7 +240,7 @@ namespace {
 void PopulateBufferForBinaryString(char16_t* aDest, const char* aSource,
                                    uint32_t aCount) {
   // Zero-extend each char to char16_t.
-  ConvertLatin1toUTF16(MakeSpan(aSource, aCount), MakeSpan(aDest, aCount));
+  ConvertLatin1toUtf16(MakeSpan(aSource, aCount), MakeSpan(aDest, aCount));
 }
 
 nsresult ReadFuncBinaryString(nsIInputStream* aInputStream, void* aClosure,

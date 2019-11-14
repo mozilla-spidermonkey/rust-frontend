@@ -8,12 +8,12 @@
 
 #include "mozilla/DebugOnly.h"
 
-#include "jsutil.h"
 #include "NamespaceImports.h"
 
 #include "gc/GCInternals.h"
 #include "gc/PublicIterators.h"
 #include "gc/Zone.h"
+#include "util/Memory.h"
 #include "util/Text.h"
 #include "vm/BigIntType.h"
 #include "vm/JSFunction.h"
@@ -51,10 +51,13 @@ JS_FOR_EACH_TRACEKIND(INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS);
 
 template <typename T>
 bool DoCallback(JS::CallbackTracer* trc, T* thingp, const char* name) {
-  // return true as default. For some types the lambda below won't be called.
+  // Return true by default. For some types the lambda below won't be called.
   bool ret = true;
   auto thing = MapGCThingTyped(*thingp, [trc, name, &ret](auto t) {
-    ret = DoCallback(trc, &t, name);
+    if (!DoCallback(trc, &t, name)) {
+      ret = false;
+      return TaggedPtr<T>::empty();
+    }
     return TaggedPtr<T>::wrap(t);
   });
   // Only update *thingp if the value changed, to avoid TSan false positives for
@@ -103,20 +106,26 @@ void js::TraceChildren(JSTracer* trc, void* thing, JS::TraceKind kind) {
 
 JS_PUBLIC_API void JS::TraceIncomingCCWs(
     JSTracer* trc, const JS::CompartmentSet& compartments) {
-  for (js::CompartmentsIter comp(trc->runtime()); !comp.done(); comp.next()) {
-    if (compartments.has(comp)) {
+  for (CompartmentsIter source(trc->runtime()); !source.done(); source.next()) {
+    if (compartments.has(source)) {
       continue;
     }
-
-    for (Compartment::WrapperEnum e(comp); !e.empty(); e.popFront()) {
-      mozilla::DebugOnly<const CrossCompartmentKey> prior = e.front().key();
-      e.front().mutableKey().applyToWrapped([trc, &compartments](auto tp) {
-        Compartment* comp = (*tp)->maybeCompartment();
-        if (comp && compartments.has(comp)) {
-          TraceManuallyBarrieredEdge(trc, tp, "cross-compartment wrapper");
-        }
-      });
-      MOZ_ASSERT(e.front().key() == prior);
+    // Iterate over all compartments that |source| has wrappers for.
+    for (Compartment::WrappedObjectCompartmentEnum dest(source); !dest.empty();
+         dest.popFront()) {
+      if (!compartments.has(dest)) {
+        continue;
+      }
+      // Iterate over all wrappers from |source| to |dest| compartments.
+      for (Compartment::ObjectWrapperEnum e(source, dest); !e.empty();
+           e.popFront()) {
+        JSObject* obj = e.front().key();
+        MOZ_ASSERT(compartments.has(obj->compartment()));
+        mozilla::DebugOnly<JSObject*> prior = obj;
+        TraceManuallyBarrieredEdge(trc, &obj,
+                                   "cross-compartment wrapper target");
+        MOZ_ASSERT(obj == prior);
+      }
     }
   }
 }
@@ -187,28 +196,25 @@ static const char* StringKindHeader(JSString* str) {
     return "atom: ";
   }
 
-  if (str->isFlat()) {
-    if (str->isExtensible()) {
-      return "extensible: ";
+  if (str->isExtensible()) {
+    return "extensible: ";
+  }
+
+  if (str->isInline()) {
+    if (str->isFatInline()) {
+      return "fat inline: ";
     }
-    if (str->isUndepended()) {
-      return "undepended: ";
-    }
-    if (str->isInline()) {
-      if (str->isFatInline()) {
-        return "fat inline: ";
-      }
-      return "inline: ";
-    }
-    return "flat: ";
+    return "inline: ";
   }
 
   if (str->isDependent()) {
     return "dependent: ";
   }
+
   if (str->isExternal()) {
     return "external: ";
   }
+
   return "linear: ";
 }
 

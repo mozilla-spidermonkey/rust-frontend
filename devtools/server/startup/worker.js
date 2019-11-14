@@ -9,8 +9,8 @@
 
 /*
  * Worker debugger script that listens for requests to start a `DebuggerServer` for a
- * worker in a process.  Loaded into a specific worker during
- * `DebuggerServer.connectToWorker` which is called from the same process as the worker.
+ * worker in a process.  Loaded into a specific worker during worker-connector.js'
+ * `connectToWorker` which is called from the same process as the worker.
  */
 
 // This function is used to do remote procedure calls from the worker to the
@@ -43,7 +43,7 @@ var { ThreadActor } = worker.require("devtools/server/actors/thread");
 var { WebConsoleActor } = worker.require("devtools/server/actors/webconsole");
 var { TabSources } = worker.require("devtools/server/actors/utils/TabSources");
 var makeDebugger = worker.require("devtools/server/actors/utils/make-debugger");
-var { DebuggerServer } = worker.require("devtools/server/main");
+var { DebuggerServer } = worker.require("devtools/server/debugger-server");
 
 DebuggerServer.init();
 DebuggerServer.createRootActor = function() {
@@ -71,18 +71,26 @@ this.addEventListener("message", function(event) {
 
       let sources = null;
 
+      const makeWorkerDebugger = makeDebugger.bind(null, {
+        findDebuggees: () => {
+          return [this.global];
+        },
+
+        shouldAddNewGlobalAsDebuggee: () => {
+          return true;
+        },
+      });
+
       const parent = {
         actorID: packet.id,
 
-        makeDebugger: makeDebugger.bind(null, {
-          findDebuggees: () => {
-            return [this.global];
-          },
-
-          shouldAddNewGlobalAsDebuggee: () => {
-            return true;
-          },
-        }),
+        get dbg() {
+          if (!this._dbg) {
+            this._dbg = makeWorkerDebugger();
+          }
+          return this._dbg;
+        },
+        makeDebugger: makeWorkerDebugger,
 
         get sources() {
           if (sources === null) {

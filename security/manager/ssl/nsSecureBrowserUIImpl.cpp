@@ -225,6 +225,10 @@ void nsSecureBrowserUIImpl::CheckForContentBlockingEvents() {
     mEvent |= STATE_COOKIES_BLOCKED_TRACKER;
   }
 
+  if (doc->GetHasSocialTrackingCookiesBlocked()) {
+    mEvent |= STATE_COOKIES_BLOCKED_SOCIALTRACKER;
+  }
+
   if (doc->GetHasForeignCookiesBlocked()) {
     mEvent |= STATE_COOKIES_BLOCKED_FOREIGN;
   }
@@ -235,6 +239,14 @@ void nsSecureBrowserUIImpl::CheckForContentBlockingEvents() {
 
   if (doc->GetHasCookiesLoaded()) {
     mEvent |= STATE_COOKIES_LOADED;
+  }
+
+  if (doc->GetHasTrackerCookiesLoaded()) {
+    mEvent |= STATE_COOKIES_LOADED_TRACKER;
+  }
+
+  if (doc->GetHasSocialTrackerCookiesLoaded()) {
+    mEvent |= STATE_COOKIES_LOADED_SOCIALTRACKER;
   }
 }
 
@@ -258,15 +270,7 @@ static nsresult URICanBeConsideredSecure(
   MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
           ("  innermost URI is '%s'", innermostURI->GetSpecOrDefault().get()));
 
-  bool isHttps;
-  nsresult rv = innermostURI->SchemeIs("https", &isHttps);
-  if (NS_FAILED(rv)) {
-    MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
-            ("  nsIURI->SchemeIs failed"));
-    return rv;
-  }
-
-  canBeConsideredSecure = isHttps;
+  canBeConsideredSecure = innermostURI->SchemeIs("https");
 
   return NS_OK;
 }

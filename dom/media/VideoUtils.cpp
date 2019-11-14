@@ -78,7 +78,7 @@ CheckedInt64 TimeUnitToFrames(const TimeUnit& aTime, uint32_t aRate) {
 }
 
 nsresult SecondsToUsecs(double aSeconds, int64_t& aOutUsecs) {
-  if (aSeconds * double(USECS_PER_S) > INT64_MAX) {
+  if (aSeconds * double(USECS_PER_S) > double(INT64_MAX)) {
     return NS_ERROR_FAILURE;
   }
   aOutUsecs = int64_t(aSeconds * double(USECS_PER_S));
@@ -87,7 +87,8 @@ nsresult SecondsToUsecs(double aSeconds, int64_t& aOutUsecs) {
 
 static int32_t ConditionDimension(float aValue) {
   // This will exclude NaNs and too-big values.
-  if (aValue > 1.0 && aValue <= INT32_MAX) return int32_t(NS_round(aValue));
+  if (aValue > 1.0 && aValue <= float(INT32_MAX))
+    return int32_t(NS_round(aValue));
   return 0;
 }
 
@@ -188,24 +189,25 @@ bool IsVideoContentType(const nsCString& aContentType) {
 bool IsValidVideoRegion(const gfx::IntSize& aFrame,
                         const gfx::IntRect& aPicture,
                         const gfx::IntSize& aDisplay) {
-  return aFrame.width <= PlanarYCbCrImage::MAX_DIMENSION &&
+  return aFrame.width > 0 && aFrame.width <= PlanarYCbCrImage::MAX_DIMENSION &&
+         aFrame.height > 0 &&
          aFrame.height <= PlanarYCbCrImage::MAX_DIMENSION &&
          aFrame.width * aFrame.height <= MAX_VIDEO_WIDTH * MAX_VIDEO_HEIGHT &&
-         aFrame.width * aFrame.height != 0 &&
+         aPicture.width > 0 &&
          aPicture.width <= PlanarYCbCrImage::MAX_DIMENSION &&
          aPicture.x < PlanarYCbCrImage::MAX_DIMENSION &&
          aPicture.x + aPicture.width < PlanarYCbCrImage::MAX_DIMENSION &&
+         aPicture.height > 0 &&
          aPicture.height <= PlanarYCbCrImage::MAX_DIMENSION &&
          aPicture.y < PlanarYCbCrImage::MAX_DIMENSION &&
          aPicture.y + aPicture.height < PlanarYCbCrImage::MAX_DIMENSION &&
          aPicture.width * aPicture.height <=
              MAX_VIDEO_WIDTH * MAX_VIDEO_HEIGHT &&
-         aPicture.width * aPicture.height != 0 &&
+         aDisplay.width > 0 &&
          aDisplay.width <= PlanarYCbCrImage::MAX_DIMENSION &&
+         aDisplay.height > 0 &&
          aDisplay.height <= PlanarYCbCrImage::MAX_DIMENSION &&
-         aDisplay.width * aDisplay.height <=
-             MAX_VIDEO_WIDTH * MAX_VIDEO_HEIGHT &&
-         aDisplay.width * aDisplay.height != 0;
+         aDisplay.width * aDisplay.height <= MAX_VIDEO_WIDTH * MAX_VIDEO_HEIGHT;
 }
 
 already_AddRefed<SharedThreadPool> GetMediaThreadPool(MediaThreadType aType) {
@@ -215,8 +217,8 @@ already_AddRefed<SharedThreadPool> GetMediaThreadPool(MediaThreadType aType) {
     case MediaThreadType::PLATFORM_DECODER:
       name = "MediaPDecoder";
       break;
-    case MediaThreadType::MSG_CONTROL:
-      name = "MSGControl";
+    case MediaThreadType::MTG_CONTROL:
+      name = "MTGControl";
       break;
     case MediaThreadType::WEBRTC_DECODER:
       name = "WebRTCPD";
@@ -224,6 +226,9 @@ already_AddRefed<SharedThreadPool> GetMediaThreadPool(MediaThreadType aType) {
     case MediaThreadType::MDSM:
       name = "MediaDecoderStateMachine";
       threads = 1;
+      break;
+    case MediaThreadType::PLATFORM_ENCODER:
+      name = "MediaPEncoder";
       break;
     default:
       MOZ_FALLTHROUGH_ASSERT("Unexpected MediaThreadType");

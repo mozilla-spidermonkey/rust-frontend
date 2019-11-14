@@ -7,6 +7,7 @@
 
 var EXPORTED_SYMBOLS = [
   "BrowserUsageTelemetry",
+  "getUniqueDomainsVisitedInPast24Hours",
   "URICountListener",
   "URLBAR_SELECTED_RESULT_TYPES",
   "URLBAR_SELECTED_RESULT_METHODS",
@@ -22,6 +23,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   SearchTelemetry: "resource:///modules/SearchTelemetry.jsm",
   Services: "resource://gre/modules/Services.jsm",
   setTimeout: "resource://gre/modules/Timer.jsm",
+  clearTimeout: "resource://gre/modules/Timer.jsm",
 });
 
 // This pref is in seconds!
@@ -39,7 +41,6 @@ const TAB_RESTORING_TOPIC = "SSTabRestoring";
 const TELEMETRY_SUBSESSIONSPLIT_TOPIC =
   "internal-telemetry-after-subsession-split";
 const DOMWINDOW_OPENED_TOPIC = "domwindowopened";
-const AUTOCOMPLETE_ENTER_TEXT_TOPIC = "autocomplete-did-enter-text";
 
 // Probe names.
 const MAX_TAB_COUNT_SCALAR_NAME = "browser.engagement.max_concurrent_tab_count";
@@ -65,6 +66,7 @@ const KNOWN_SEARCH_SOURCES = [
   "contextmenu",
   "newtab",
   "searchbar",
+  "system",
   "urlbar",
   "webextension",
 ];
@@ -92,6 +94,7 @@ const URLBAR_SELECTED_RESULT_TYPES = {
   remotetab: 9,
   extension: 10,
   "preloaded-top-site": 11,
+  tip: 12,
 };
 
 /**
@@ -165,6 +168,8 @@ let URICountListener = {
   _domain24hrSet: new Set(),
   // A map to keep track of the URIs loaded from the restored tabs.
   _restoredURIsMap: new WeakMap(),
+  // Ongoing expiration timeouts.
+  _timeouts: new Set(),
 
   isHttpURI(uri) {
     // Only consider http(s) schemas.
@@ -180,8 +185,10 @@ let URICountListener = {
   },
 
   onLocationChange(browser, webProgress, request, uri, flags) {
-    // By default, assume we no longer need to track this tab.
-    SearchTelemetry.stopTrackingBrowser(browser);
+    if (!(flags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT)) {
+      // By default, assume we no longer need to track this tab.
+      SearchTelemetry.stopTrackingBrowser(browser);
+    }
 
     // Don't count this URI if it's an error page.
     if (flags & Ci.nsIWebProgressListener.LOCATION_CHANGE_ERROR_PAGE) {
@@ -291,9 +298,11 @@ let URICountListener = {
 
     this._domain24hrSet.add(baseDomain);
     if (gRecentVisitedOriginsExpiry) {
-      setTimeout(() => {
+      let timeoutId = setTimeout(() => {
         this._domain24hrSet.delete(baseDomain);
+        this._timeouts.remove(timeoutId);
       }, gRecentVisitedOriginsExpiry * 1000);
+      this._timeouts.add(timeoutId);
     }
   },
 
@@ -316,6 +325,8 @@ let URICountListener = {
    * Resets the number of unique domains visited in this session.
    */
   resetUniqueDomainsVisitedInPast24Hours() {
+    this._timeouts.forEach(timeoutId => clearTimeout(timeoutId));
+    this._timeouts.clear();
     this._domain24hrSet.clear();
   },
 
@@ -325,104 +336,11 @@ let URICountListener = {
   ]),
 };
 
-let urlbarListener = {
-  // This is needed for recordUrlbarSelectedResultMethod().
-  selectedIndex: -1,
-
-  init() {
-    Services.obs.addObserver(this, AUTOCOMPLETE_ENTER_TEXT_TOPIC, true);
-  },
-
-  uninit() {
-    Services.obs.removeObserver(this, AUTOCOMPLETE_ENTER_TEXT_TOPIC);
-  },
-
-  observe(subject, topic, data) {
-    switch (topic) {
-      case AUTOCOMPLETE_ENTER_TEXT_TOPIC:
-        this._handleURLBarTelemetry(
-          subject.QueryInterface(Ci.nsIAutoCompleteInput)
-        );
-        break;
-    }
-  },
-
-  /**
-   * Used to log telemetry when the user enters text in the urlbar.
-   *
-   * @param {nsIAutoCompleteInput} input  The autocomplete element where the
-   *                                      text was entered.
-   */
-  _handleURLBarTelemetry(input) {
-    if (!input || input.id != "urlbar") {
-      return;
-    }
-    if (input.inPrivateContext || input.popup.selectedIndex < 0) {
-      this.selectedIndex = -1;
-      return;
-    }
-
-    // Except for the history popup, the urlbar always has a selection.  The
-    // first result at index 0 is the "heuristic" result that indicates what
-    // will happen when you press the Enter key.  Treat it as no selection.
-    this.selectedIndex =
-      input.popup.selectedIndex > 0 || !input.popup._isFirstResultHeuristic
-        ? input.popup.selectedIndex
-        : -1;
-
-    let controller = input.popup.view.QueryInterface(
-      Ci.nsIAutoCompleteController
-    );
-    let idx = input.popup.selectedIndex;
-    let value = controller.getValueAt(idx);
-    let action = input._parseActionUrl(value);
-    let actionType;
-    if (action) {
-      actionType =
-        action.type == "searchengine" && action.params.searchSuggestion
-          ? "searchsuggestion"
-          : action.type;
-    }
-    if (!actionType) {
-      let styles = new Set(controller.getStyleAt(idx).split(/\s+/));
-      let style = ["preloaded-top-site", "autofill", "tag", "bookmark"].find(
-        s => styles.has(s)
-      );
-      actionType = style || "history";
-    }
-
-    Services.telemetry
-      .getHistogramById("FX_URLBAR_SELECTED_RESULT_INDEX")
-      .add(idx);
-
-    // You can add values but don't change any of the existing values.
-    // Otherwise you'll break our data.
-    if (actionType in URLBAR_SELECTED_RESULT_TYPES) {
-      Services.telemetry
-        .getHistogramById("FX_URLBAR_SELECTED_RESULT_TYPE")
-        .add(URLBAR_SELECTED_RESULT_TYPES[actionType]);
-      Services.telemetry
-        .getKeyedHistogramById("FX_URLBAR_SELECTED_RESULT_INDEX_BY_TYPE")
-        .add(actionType, idx);
-    } else {
-      Cu.reportError(
-        "Unknown FX_URLBAR_SELECTED_RESULT_TYPE type: " + actionType
-      );
-    }
-  },
-
-  QueryInterface: ChromeUtils.generateQI([
-    Ci.nsIObserver,
-    Ci.nsISupportsWeakReference,
-  ]),
-};
-
 let BrowserUsageTelemetry = {
   _inited: false,
 
   init() {
     this._lastRecordTabCount = 0;
-    urlbarListener.init();
     this._setupAfterRestore();
     this._inited = true;
   },
@@ -459,7 +377,6 @@ let BrowserUsageTelemetry = {
     }
     Services.obs.removeObserver(this, DOMWINDOW_OPENED_TOPIC);
     Services.obs.removeObserver(this, TELEMETRY_SUBSESSIONSPLIT_TOPIC);
-    urlbarListener.uninit();
   },
 
   observe(subject, topic, data) {
@@ -524,10 +441,11 @@ let BrowserUsageTelemetry = {
       return;
     }
 
-    const isOneOff = !!details.isOneOff;
-    const countId = getSearchEngineId(engine) + "." + source;
+    const countIdPrefix = getSearchEngineId(engine) + ".";
+    const countIdSource = countIdPrefix + source;
+    let histogram = Services.telemetry.getKeyedHistogramById("SEARCH_COUNTS");
 
-    if (isOneOff) {
+    if (details.isOneOff) {
       if (!KNOWN_ONEOFF_SOURCES.includes(source)) {
         // Silently drop the error if this bogus call
         // came from 'urlbar' or 'searchbar'. They're
@@ -535,9 +453,7 @@ let BrowserUsageTelemetry = {
         // code paths because they want to record the search
         // in SEARCH_COUNTS.
         if (["urlbar", "searchbar"].includes(source)) {
-          Services.telemetry
-            .getKeyedHistogramById("SEARCH_COUNTS")
-            .add(countId);
+          histogram.add(countIdSource);
           return;
         }
         throw new Error("Unknown source for one-off search: " + source);
@@ -546,15 +462,15 @@ let BrowserUsageTelemetry = {
       if (!KNOWN_SEARCH_SOURCES.includes(source)) {
         throw new Error("Unknown source for search: " + source);
       }
-      let histogram = Services.telemetry.getKeyedHistogramById("SEARCH_COUNTS");
-      histogram.add(countId);
-
       if (
         details.alias &&
         engine.wrappedJSObject._internalAliases.includes(details.alias)
       ) {
-        let aliasCountId = getSearchEngineId(engine) + ".alias";
-        histogram.add(aliasCountId);
+        // This search uses an internal @search keyword.  Record the source as
+        // "alias", not "urlbar".
+        histogram.add(countIdPrefix + "alias");
+      } else {
+        histogram.add(countIdSource);
       }
     }
 
@@ -590,6 +506,7 @@ let BrowserUsageTelemetry = {
         this._recordSearch(engine, "about_newtab", "enter");
         break;
       case "contextmenu":
+      case "system":
       case "webextension":
         this._recordSearch(engine, source);
         break;
@@ -642,37 +559,7 @@ let BrowserUsageTelemetry = {
   },
 
   /**
-   * Records the method by which the user selected a urlbar result for the
-   * legacy urlbar.
-   *
-   * @param {Event} event
-   *        The event that triggered the selection.
-   * @param {string} userSelectionBehavior
-   *        How the user cycled through results before picking the current match.
-   *        Could be one of "tab", "arrow" or "none".
-   */
-  recordLegacyUrlbarSelectedResultMethod(
-    event,
-    userSelectionBehavior = "none"
-  ) {
-    // The reason this method relies on urlbarListener instead of having the
-    // caller pass in an index is that by the time the urlbar handles a
-    // selection, the selection in its popup has been cleared, so it's not easy
-    // to tell which popup index was selected.  Fortunately this file already
-    // has urlbarListener, which gets notified of selections in the urlbar
-    // before the popup selection is cleared, so just use that.
-
-    this._recordUrlOrSearchbarSelectedResultMethod(
-      event,
-      urlbarListener.selectedIndex,
-      "FX_URLBAR_SELECTED_RESULT_METHOD",
-      userSelectionBehavior
-    );
-  },
-
-  /**
-   * Records the method by which the user selected a urlbar result for the
-   * legacy urlbar.
+   * Records the method by which the user selected a result from the urlbar.
    *
    * @param {Event} event
    *        The event that triggered the selection.
@@ -688,13 +575,6 @@ let BrowserUsageTelemetry = {
     index,
     userSelectionBehavior = "none"
   ) {
-    // The reason this method relies on urlbarListener instead of having the
-    // caller pass in an index is that by the time the urlbar handles a
-    // selection, the selection in its popup has been cleared, so it's not easy
-    // to tell which popup index was selected.  Fortunately this file already
-    // has urlbarListener, which gets notified of selections in the urlbar
-    // before the popup selection is cleared, so just use that.
-
     this._recordUrlOrSearchbarSelectedResultMethod(
       event,
       index,
@@ -890,3 +770,8 @@ let BrowserUsageTelemetry = {
     }
   },
 };
+
+// Used by nsIBrowserUsage
+function getUniqueDomainsVisitedInPast24Hours() {
+  return URICountListener.uniqueDomainsVisitedInPast24Hours;
+}

@@ -35,6 +35,7 @@ import org.mozilla.gecko.GeckoScreenOrientation;
 import org.mozilla.gecko.GeckoSystemStateListener;
 import org.mozilla.gecko.GeckoThread;
 import org.mozilla.gecko.PrefsHelper;
+import org.mozilla.gecko.annotation.WrapForJNI;
 import org.mozilla.gecko.util.BundleEventListener;
 import org.mozilla.gecko.util.ContextUtils;
 import org.mozilla.gecko.util.DebugConfig;
@@ -45,6 +46,7 @@ import org.yaml.snakeyaml.error.YAMLException;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.net.URI;
 
 public final class GeckoRuntime implements Parcelable {
     private static final String LOGTAG = "GeckoRuntime";
@@ -156,17 +158,71 @@ public final class GeckoRuntime implements Parcelable {
         return sDefaultRuntime;
     }
 
+    private static GeckoRuntime sRuntime;
     private GeckoRuntimeSettings mSettings;
     private Delegate mDelegate;
+    private ServiceWorkerDelegate mServiceWorkerDelegate;
+    private WebNotificationDelegate mNotificationDelegate;
     private RuntimeTelemetry mTelemetry;
     private final WebExtensionEventDispatcher mWebExtensionDispatcher;
     private StorageController mStorageController;
     private final WebExtensionController mWebExtensionController;
+    private WebPushController mPushController;
+    private final ContentBlockingController mContentBlockingController;
 
-    public GeckoRuntime() {
+    private GeckoRuntime() {
         mWebExtensionDispatcher = new WebExtensionEventDispatcher();
         mWebExtensionController = new WebExtensionController(this, mWebExtensionDispatcher);
+        mContentBlockingController = new ContentBlockingController();
+        if (sRuntime != null) {
+            throw new IllegalStateException("Only one GeckoRuntime instance is allowed");
+        }
+        sRuntime = this;
     }
+
+    @WrapForJNI
+    @UiThread
+    private @Nullable static GeckoRuntime getInstance() {
+        return sRuntime;
+    }
+
+
+    /**
+     * Called by mozilla::dom::ClientOpenWindowInCurrentProcess to retrieve the window id to use
+     * for a ServiceWorkerClients.openWindow() request.
+     * @param baseUrl The base Url for the request.
+     * @param url Url being requested to be opened in a new window.
+     * @return SessionID to use for the request.
+     */
+    @WrapForJNI(calledFrom = "gecko")
+    private static @NonNull GeckoResult<String> serviceWorkerOpenWindow(final @NonNull String baseUrl, final @NonNull String url) {
+        if (sRuntime != null && sRuntime.mServiceWorkerDelegate != null) {
+            final URI actual = URI.create(baseUrl).resolve(url);
+            GeckoResult<String> result = new GeckoResult<>();
+            // perform the onOpenWindow call in the UI thread
+            ThreadUtils.postToUiThread(() -> {
+                sRuntime
+                    .mServiceWorkerDelegate
+                    .onOpenWindow(actual.toString())
+                    .accept( session -> {
+                        if (session != null) {
+                            if (!session.isOpen()) {
+                                result.completeExceptionally(new RuntimeException("Returned GeckoSession must be open."));
+                            } else {
+                                session.loadUri(actual.toString());
+                                result.complete(session.getId());
+                            }
+                        } else {
+                            result.complete(null);
+                        }
+                    });
+            });
+            return result;
+        } else {
+            return GeckoResult.fromException(new java.lang.RuntimeException("No available Service Worker delegate."));
+        }
+    }
+
 
     /**
      * Attach the runtime to the given context.
@@ -343,6 +399,16 @@ public final class GeckoRuntime implements Parcelable {
     }
 
     /**
+     * Returns the ContentBlockingController for this GeckoRuntime.
+     *
+     * @return An instance of {@link ContentBlockingController}.
+     */
+    @UiThread
+    public @NonNull ContentBlockingController getContentBlockingController() {
+        return mContentBlockingController;
+    }
+
+    /**
      * Register a {@link WebExtension} that will be run with this GeckoRuntime.
      *
      * <p>At this time, WebExtensions don't have access to any UI element and
@@ -503,18 +569,86 @@ public final class GeckoRuntime implements Parcelable {
         return mDelegate;
     }
 
+    @UiThread
+    public interface ServiceWorkerDelegate {
+
+        /**
+         * This is called when a service worker tries to open a new window using client.openWindow()
+         * The GeckoView application should provide an open {@link GeckoSession} to open the url.
+         *
+         * @param url Url which the Service Worker wishes to open in a new window.
+         * @return New or existing open {@link GeckoSession} in which to open the requested url.
+         *
+         * @see <a href="https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API">Service Worker API</a>
+         * @see <a href="https://developer.mozilla.org/en-US/docs/Web/API/Clients/openWindow">openWindow()</a>
+         */
+        @UiThread
+        @NonNull
+        GeckoResult<GeckoSession> onOpenWindow(@NonNull String url);
+    }
+
+    /**
+     * Sets the {@link ServiceWorkerDelegate} to be used for Service Worker requests.
+     *
+     * @param serviceWorkerDelegate An instance of {@link ServiceWorkerDelegate}.
+     *
+     * @see <a href="https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API">Service Worker API</a>
+     */
+    @UiThread
+    public void setServiceWorkerDelegate(final @Nullable ServiceWorkerDelegate serviceWorkerDelegate) {
+        mServiceWorkerDelegate = serviceWorkerDelegate;
+    }
+
+    /**
+     * Sets the delegate to be used for handling Web Notifications.
+     *
+     * @param delegate An instance of {@link WebNotificationDelegate}.
+     *
+     * @see <a href="https://developer.mozilla.org/en-US/docs/Web/API/Notification">Web Notifications</a>
+     */
+    @UiThread
+    public void setWebNotificationDelegate(final @Nullable WebNotificationDelegate delegate) {
+        mNotificationDelegate = delegate;
+    }
+
+    /**
+     * Returns the current WebNotificationDelegate, if any
+     *
+     * @return an instance of  WebNotificationDelegate or null if no delegate has been set
+     */
+    @WrapForJNI
+    @UiThread
+    public @Nullable WebNotificationDelegate getWebNotificationDelegate() {
+        return mNotificationDelegate;
+    }
+
+    @WrapForJNI
+    @UiThread
+    private void notifyOnShow(final WebNotification notification) {
+        ThreadUtils.getUiHandler().post(() -> {
+            if (mNotificationDelegate != null) {
+                mNotificationDelegate.onShowNotification(notification);
+            }
+        });
+    }
+
+    @WrapForJNI
+    @UiThread
+    private void notifyOnClose(final WebNotification notification) {
+        ThreadUtils.getUiHandler().post(() -> {
+            if (mNotificationDelegate != null) {
+                mNotificationDelegate.onCloseNotification(notification);
+            }
+        });
+    }
+
     @AnyThread
     public @NonNull GeckoRuntimeSettings getSettings() {
         return mSettings;
     }
 
-    /* package */ void setPref(final String name, final Object value,
-                               final boolean override) {
-        if (override || !GeckoAppShell.isFennec()) {
-            // Override pref on Fennec only when requested to prevent
-            // overriding of persistent prefs.
-            PrefsHelper.setPref(name, value, /* flush */ false);
-        }
+    /* package */ void setPref(final String name, final Object value) {
+        PrefsHelper.setPref(name, value, /* flush */ false);
     }
 
     /**
@@ -592,6 +726,24 @@ public final class GeckoRuntime implements Parcelable {
             mStorageController = new StorageController();
         }
         return mStorageController;
+    }
+
+    /**
+     * Get the Web Push controller for this runtime.
+     * The Web Push controller can be used to allow content
+     * to use the Web Push API.
+     *
+     * @return The {@link WebPushController} for this instance.
+     */
+    @UiThread
+    public @NonNull WebPushController getWebPushController() {
+        ThreadUtils.assertOnUiThread();
+
+        if (mPushController == null) {
+            mPushController = new WebPushController();
+        }
+
+        return mPushController;
     }
 
     @Override // Parcelable

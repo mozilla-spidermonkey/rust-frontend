@@ -104,6 +104,14 @@ this.test = class extends ExtensionAPI {
         async getRequestedLocales() {
           return Services.locale.requestedLocales;
         },
+
+        async addHistogram(id, value) {
+          return Services.telemetry.getHistogramById(id).add(value);
+        },
+
+        async setScalar(id, value) {
+          return Services.telemetry.scalarSet(id, value);
+        },
       },
     };
   }

@@ -17,10 +17,12 @@ const {
   h1,
   ul,
 } = require("devtools/client/shared/vendor/react-dom-factories");
-const Worker = createFactory(require("./Worker"));
 
 const FluentReact = require("devtools/client/shared/vendor/fluent-react");
 const Localized = createFactory(FluentReact.Localized);
+
+const Types = require("../../types/index");
+const Worker = createFactory(require("./Worker"));
 
 /**
  * This component handles the list of service workers displayed in the application panel
@@ -31,7 +33,7 @@ class WorkerList extends PureComponent {
   static get propTypes() {
     return {
       canDebugWorkers: PropTypes.bool.isRequired,
-      workers: PropTypes.array.isRequired,
+      workers: Types.workerArray.isRequired,
     };
   }
 
@@ -44,7 +46,7 @@ class WorkerList extends PureComponent {
         Localized(
           { id: "serviceworker-list-header" },
           h1({
-            className: "application--title",
+            className: "app-page__title",
           })
         ),
         ul(

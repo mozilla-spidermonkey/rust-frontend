@@ -35,11 +35,7 @@ const createReferrerInfo = aReferrer => {
     referrerUri = Services.io.newURI(aReferrer);
   } catch (ignored) {}
 
-  return new ReferrerInfo(
-    Ci.nsIHttpChannel.REFERRER_POLICY_UNSET,
-    true,
-    referrerUri
-  );
+  return new ReferrerInfo(Ci.nsIReferrerInfo.EMPTY, true, referrerUri);
 };
 
 // Handles navigation requests between Gecko and a GeckoView.
@@ -68,6 +64,7 @@ class GeckoViewNavigation extends GeckoViewModule {
       "GeckoView:LoadUri",
       "GeckoView:Reload",
       "GeckoView:Stop",
+      "GeckoView:PurgeHistory",
     ]);
 
     this.messageManager.addMessageListener("Browser:LoadURI", this);
@@ -105,7 +102,7 @@ class GeckoViewNavigation extends GeckoViewModule {
         this.browser.gotoIndex(aData.index);
         break;
       case "GeckoView:LoadUri":
-        const { uri, referrerUri, referrerSessionId, flags } = aData;
+        const { uri, referrerUri, referrerSessionId, flags, headers } = aData;
 
         let navFlags = 0;
 
@@ -134,6 +131,10 @@ class GeckoViewNavigation extends GeckoViewModule {
           navFlags |= Ci.nsIWebNavigation.LOAD_FLAGS_FORCE_ALLOW_DATA_URI;
         }
 
+        if (flags & (1 << 6)) {
+          navFlags |= Ci.nsIWebNavigation.LOAD_FLAGS_REPLACE_HISTORY;
+        }
+
         if (this.settings.useMultiprocess) {
           this.moduleManager.updateRemoteTypeForURI(uri);
         }
@@ -149,7 +150,7 @@ class GeckoViewNavigation extends GeckoViewModule {
 
           const referrerPolicy = referrerWindow.browser.referrerInfo
             ? referrerWindow.browser.referrerInfo.referrerPolicy
-            : Ci.nsIHttpChannel.REFERRER_POLICY_UNSET;
+            : Ci.nsIReferrerInfo.EMPTY;
 
           referrerInfo = new ReferrerInfo(
             referrerPolicy,
@@ -183,6 +184,31 @@ class GeckoViewNavigation extends GeckoViewModule {
           );
         }
 
+        let additionalHeaders = null;
+        if (headers) {
+          // Filter out request headers as per discussion in Bug #1567549
+          // CONNECTION: Used by Gecko to manage connections
+          // HOST: Relates to how gecko will ultimately interpret the resulting resource as that
+          //       determines the effective request URI
+          const badHeaders = ["connection", "host"];
+          additionalHeaders = "";
+          headers.forEach(entry => {
+            const key = entry
+              .split(/:/)[0]
+              .toLowerCase()
+              .trim();
+
+            if (!badHeaders.includes(key)) {
+              additionalHeaders += entry + "\r\n";
+            }
+          });
+          if (additionalHeaders != "") {
+            additionalHeaders = E10SUtils.makeInputStream(additionalHeaders);
+          } else {
+            additionalHeaders = null;
+          }
+        }
+
         // For any navigation here, we should have an appropriate triggeringPrincipal:
         //
         // 1) If we have a referring session, triggeringPrincipal is the contentPrincipal from the
@@ -203,6 +229,7 @@ class GeckoViewNavigation extends GeckoViewModule {
           flags: navFlags,
           referrerInfo,
           triggeringPrincipal,
+          headers: additionalHeaders,
           csp,
         });
         break;
@@ -216,6 +243,9 @@ class GeckoViewNavigation extends GeckoViewModule {
         break;
       case "GeckoView:Stop":
         this.browser.stop();
+        break;
+      case "GeckoView:PurgeHistory":
+        this.browser.purgeSessionHistory();
         break;
     }
   }

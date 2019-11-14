@@ -1680,6 +1680,14 @@ IMEContentObserver::IMENotificationSender::Run() {
   if (observer->mNeedsToNotifyIMEOfTextChange) {
     observer->mNeedsToNotifyIMEOfTextChange = false;
     SendTextChange();
+    // Even if the observer hasn't received selection change, let's try to send
+    // selection change notification to IME because selection start offset may
+    // be changed if the previous contents of selection start are changed.  For
+    // example, when previous `<p>` element of another `<p>` element which
+    // contains caret is removed by a DOM mutation, selection change event
+    // won't be fired, but selection start offset should be decreased by the
+    // length of removed `<p>` element.
+    observer->mNeedsToNotifyIMEOfSelectionChange = true;
   }
 
   // If a text change notification causes another text change again, we should

@@ -77,6 +77,15 @@ export function toggleFrameworkGrouping(toggleValue: boolean) {
   };
 }
 
+export function toggleInlinePreview(toggleValue: boolean) {
+  return ({ dispatch, getState }: ThunkArgs) => {
+    dispatch({
+      type: "TOGGLE_INLINE_PREVIEW",
+      value: toggleValue,
+    });
+  };
+}
+
 export function showSource(cx: Context, sourceId: string) {
   return ({ dispatch, getState }: ThunkArgs) => {
     const source = getSource(getState(), sourceId);
@@ -185,13 +194,16 @@ export function clearProjectDirectoryRoot(cx: Context) {
 
 export function setProjectDirectoryRoot(cx: Context, newRoot: string) {
   return ({ dispatch, getState }: ThunkArgs) => {
-    // Remove the thread actor ID from the root path
     const threadActor = startsWithThreadActor(getState(), newRoot);
+
+    let curRoot = getProjectDirectoryRoot(getState());
+
+    // Remove the thread actor ID from the root path
     if (threadActor) {
       newRoot = newRoot.slice(threadActor.length + 1);
+      curRoot = curRoot.slice(threadActor.length + 1);
     }
 
-    const curRoot = getProjectDirectoryRoot(getState());
     if (newRoot && curRoot) {
       const newRootArr = newRoot.replace(/\/+/g, "/").split("/");
       const curRootArr = curRoot
@@ -217,6 +229,10 @@ export function updateViewport() {
     type: "SET_VIEWPORT",
     viewport: getLocationsInViewport(getEditor()),
   };
+}
+
+export function updateCursorPosition(cursorPosition: SourceLocation) {
+  return { type: "SET_CURSOR_POSITION", cursorPosition };
 }
 
 export function setOrientation(orientation: OrientationType) {

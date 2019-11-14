@@ -22,6 +22,7 @@ import org.json.JSONArray
 import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.junit.Ignore
 
 @RunWith(AndroidJUnit4::class)
 @MediumTest
@@ -239,9 +240,8 @@ class PermissionDelegateTest : BaseSessionTest() {
                 result as String, equalTo("granted"))
     }
 
+    @Ignore("disable test for frequently failing Bug 1542525")
     @Test fun notification_reject() {
-        //Disable for frequent failures Bug 1542525
-        assumeThat(sessionRule.env.isDebugBuild, equalTo(false))
         mainSession.loadTestPath(HELLO_HTML_PATH)
         mainSession.waitForPageStop()
 
@@ -257,7 +257,7 @@ class PermissionDelegateTest : BaseSessionTest() {
         val result = mainSession.waitForJS("Notification.requestPermission()")
 
         assertThat("Permission should not be granted",
-                result as String, equalTo("default"))
+                result as String, equalTo("denied"))
     }
 
     // @Test fun persistentStorage() {

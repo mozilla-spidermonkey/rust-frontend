@@ -167,6 +167,14 @@ recurse_android-fat-aar-artifact:
     --distdir $(abspath $(DIST)/fat-aar))
 endif
 
+ifeq ($(MOZ_BUILD_APP),mobile/android)
+
+recurse_android-stage-package: stage-package
+
+recurse_android-archive-geckoview:
+	GRADLE_INVOKED_WITHIN_MACH_BUILD=1 $(topsrcdir)/mach --log-no-times android archive-geckoview
+endif
+
 ifdef MOZ_WIDGET_TOOLKIT
 ifdef ENABLE_TESTS
 # Additional makefile targets to call automated test suites
@@ -184,7 +192,7 @@ profiledbuild::
 	$(MAKE) default MOZ_PROFILE_GENERATE=1 MOZ_LTO=
 	$(call BUILDSTATUS,TIER_FINISH pgo_profile_generate)
 	$(call BUILDSTATUS,TIER_START pgo_package)
-	$(MAKE) package MOZ_INTERNAL_SIGNING_FORMAT= MOZ_EXTERNAL_SIGNING_FORMAT=
+	$(MAKE) package
 	rm -f jarlog/en-US.log
 	$(call BUILDSTATUS,TIER_FINISH pgo_package)
 	$(call BUILDSTATUS,TIER_START pgo_profile)

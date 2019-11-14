@@ -64,9 +64,13 @@
 #include "mozilla/dom/XMLHttpRequest.h"
 #include "mozilla/dom/XMLSerializerBinding.h"
 #include "mozilla/dom/FormDataBinding.h"
+#include "mozilla/dom/nsCSPContext.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/DeferredFinalize.h"
+#include "mozilla/ExtensionPolicyService.h"
 #include "mozilla/NullPrincipal.h"
+#include "mozilla/ResultExtensions.h"
+#include "mozilla/StaticPrefs_extensions.h"
 
 using namespace mozilla;
 using namespace JS;
@@ -411,7 +415,7 @@ static bool SandboxCloneInto(JSContext* cx, unsigned argc, Value* vp) {
   return xpc::CloneInto(cx, args[0], args[1], options, args.rval());
 }
 
-static void sandbox_finalize(js::FreeOp* fop, JSObject* obj) {
+static void sandbox_finalize(JSFreeOp* fop, JSObject* obj) {
   nsIScriptObjectPrincipal* sop =
       static_cast<nsIScriptObjectPrincipal*>(xpc_GetJSPrivate(obj));
   if (!sop) {
@@ -440,7 +444,7 @@ static size_t sandbox_moved(JSObject* obj, JSObject* old) {
 #define XPCONNECT_SANDBOX_CLASS_METADATA_SLOT \
   (XPCONNECT_GLOBAL_EXTRA_SLOT_OFFSET)
 
-static const js::ClassOps SandboxClassOps = {
+static const JSClassOps SandboxClassOps = {
     nullptr,
     nullptr,
     nullptr,
@@ -458,7 +462,7 @@ static const js::ClassExtension SandboxClassExtension = {
     sandbox_moved /* objectMovedOp */
 };
 
-static const js::Class SandboxClass = {
+static const JSClass SandboxClass = {
     "Sandbox",
     XPCONNECT_GLOBAL_FLAGS_WITH_EXTRA_SLOTS(1) | JSCLASS_FOREGROUND_FINALIZE,
     &SandboxClassOps,
@@ -471,7 +475,7 @@ static const JSFunctionSpec SandboxFunctions[] = {
     JS_FN("importFunction", SandboxImport, 1, 0), JS_FS_END};
 
 bool xpc::IsSandbox(JSObject* obj) {
-  const js::Class* clasp = js::GetObjectClass(obj);
+  const JSClass* clasp = js::GetObjectClass(obj);
   return clasp == &SandboxClass;
 }
 
@@ -816,68 +820,68 @@ bool xpc::GlobalProperties::Parse(JSContext* cx, JS::HandleObject obj) {
       JS_ReportErrorASCII(cx, "Property names must be strings");
       return false;
     }
-    JSFlatString* nameStr = JS_FlattenString(cx, nameValue.toString());
+    JSLinearString* nameStr = JS_EnsureLinearString(cx, nameValue.toString());
     if (!nameStr) {
       return false;
     }
-    if (JS_FlatStringEqualsAscii(nameStr, "Blob")) {
+    if (JS_LinearStringEqualsLiteral(nameStr, "Blob")) {
       Blob = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "ChromeUtils")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "ChromeUtils")) {
       ChromeUtils = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "CSS")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "CSS")) {
       CSS = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "CSSRule")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "CSSRule")) {
       CSSRule = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "Directory")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "Directory")) {
       Directory = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "DOMParser")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "DOMParser")) {
       DOMParser = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "Element")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "Element")) {
       Element = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "Event")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "Event")) {
       Event = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "File")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "File")) {
       File = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "FileReader")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "FileReader")) {
       FileReader = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "FormData")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "FormData")) {
       FormData = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "InspectorUtils")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "InspectorUtils")) {
       InspectorUtils = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "MessageChannel")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "MessageChannel")) {
       MessageChannel = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "Node")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "Node")) {
       Node = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "NodeFilter")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "NodeFilter")) {
       NodeFilter = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "PromiseDebugging")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "PromiseDebugging")) {
       PromiseDebugging = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "TextDecoder")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "TextDecoder")) {
       TextDecoder = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "TextEncoder")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "TextEncoder")) {
       TextEncoder = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "URL")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "URL")) {
       URL = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "URLSearchParams")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "URLSearchParams")) {
       URLSearchParams = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "XMLHttpRequest")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "XMLHttpRequest")) {
       XMLHttpRequest = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "XMLSerializer")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "XMLSerializer")) {
       XMLSerializer = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "atob")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "atob")) {
       atob = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "btoa")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "btoa")) {
       btoa = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "caches")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "caches")) {
       caches = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "crypto")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "crypto")) {
       crypto = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "fetch")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "fetch")) {
       fetch = true;
-    } else if (JS_FlatStringEqualsAscii(nameStr, "indexedDB")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "indexedDB")) {
       indexedDB = true;
 #ifdef MOZ_WEBRTC
-    } else if (JS_FlatStringEqualsAscii(nameStr, "rtcIdentityProvider")) {
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "rtcIdentityProvider")) {
       rtcIdentityProvider = true;
 #endif
     } else {
@@ -1018,6 +1022,75 @@ bool xpc::GlobalProperties::DefineInSandbox(JSContext* cx,
   return Define(cx, obj);
 }
 
+/**
+ * If enabled, apply the extension base CSP, then apply the
+ * content script CSP which will either be a default or one
+ * provided by the extension in its manifest.
+ */
+nsresult ApplyAddonContentScriptCSP(nsISupports* prinOrSop) {
+  if (!StaticPrefs::extensions_content_script_csp_enabled()) {
+    return NS_OK;
+  }
+  nsCOMPtr<nsIPrincipal> principal = do_QueryInterface(prinOrSop);
+  if (!principal) {
+    return NS_OK;
+  }
+
+  auto* basePrin = BasePrincipal::Cast(principal);
+  // We only get an addonPolicy if the principal is an
+  // expanded principal with an extension principal in it.
+  auto* addonPolicy = basePrin->ContentScriptAddonPolicy();
+  if (!addonPolicy) {
+    return NS_OK;
+  }
+
+  nsString url;
+  MOZ_TRY_VAR(url, addonPolicy->GetURL(NS_LITERAL_STRING("")));
+
+  nsCOMPtr<nsIURI> selfURI;
+  MOZ_TRY(NS_NewURI(getter_AddRefs(selfURI), url));
+
+  nsAutoString baseCSP;
+  MOZ_ALWAYS_SUCCEEDS(
+      ExtensionPolicyService::GetSingleton().GetBaseCSP(baseCSP));
+
+  // If we got here, we're definitly an expanded principal.
+  auto expanded = basePrin->As<ExpandedPrincipal>();
+  nsCOMPtr<nsIContentSecurityPolicy> csp;
+
+#ifdef MOZ_DEBUG
+  // Bug 1548468: Move CSP off ExpandedPrincipal
+  expanded->GetCsp(getter_AddRefs(csp));
+  if (csp) {
+    uint32_t count = 0;
+    csp->GetPolicyCount(&count);
+    if (count > 0) {
+      // Ensure that the policy was not already added.
+      nsAutoString parsedPolicyStr;
+      for (uint32_t i = 0; i < count; i++) {
+        csp->GetPolicyString(i, parsedPolicyStr);
+        MOZ_ASSERT(!parsedPolicyStr.Equals(baseCSP));
+      }
+    }
+  }
+#endif
+
+  csp = new nsCSPContext();
+  MOZ_TRY(
+      csp->SetRequestContextWithPrincipal(expanded, selfURI, EmptyString(), 0));
+
+  bool reportOnly = StaticPrefs::extensions_content_script_csp_report_only();
+
+  MOZ_TRY(csp->AppendPolicy(baseCSP, reportOnly, false));
+
+  // Set default or extension provided csp.
+  const nsAString& contentScriptCSP = addonPolicy->ContentScriptCSP();
+  MOZ_TRY(csp->AppendPolicy(contentScriptCSP, reportOnly, false));
+
+  expanded->SetCsp(csp);
+  return NS_OK;
+}
+
 nsresult xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp,
                                   nsISupports* prinOrSop,
                                   SandboxOptions& options) {
@@ -1044,9 +1117,6 @@ nsresult xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp,
   // creationOptions.setSecureContext(true).
 
   bool isSystemPrincipal = principal->IsSystemPrincipal();
-  if (isSystemPrincipal) {
-    creationOptions.setClampAndJitterTime(false);
-  }
 
   xpc::SetPrefableRealmOptions(realmOptions);
   if (options.sameZoneAs) {
@@ -1069,10 +1139,14 @@ nsresult xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp,
 
   realmOptions.behaviors().setDiscardSource(options.discardSource);
 
-  const js::Class* clasp = &SandboxClass;
+  if (isSystemPrincipal) {
+    realmOptions.behaviors().setClampAndJitterTime(false);
+  }
 
-  RootedObject sandbox(cx, xpc::CreateGlobalObject(cx, js::Jsvalify(clasp),
-                                                   principal, realmOptions));
+  const JSClass* clasp = &SandboxClass;
+
+  RootedObject sandbox(
+      cx, xpc::CreateGlobalObject(cx, clasp, principal, realmOptions));
   if (!sandbox) {
     return NS_ERROR_FAILURE;
   }
@@ -1151,9 +1225,9 @@ nsresult xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp,
           JS_ReportErrorASCII(cx, "Sandbox must subsume sandboxPrototype");
           return NS_ERROR_INVALID_ARG;
         }
-        const js::Class* unwrappedClass = js::GetObjectClass(unwrappedProto);
+        const JSClass* unwrappedClass = js::GetObjectClass(unwrappedProto);
         useSandboxProxy = IS_WN_CLASS(unwrappedClass) ||
-                          mozilla::dom::IsDOMClass(Jsvalify(unwrappedClass));
+                          mozilla::dom::IsDOMClass(unwrappedClass);
       }
 
       if (useSandboxProxy) {
@@ -1767,6 +1841,8 @@ nsresult nsXPCComponents_utils_Sandbox::CallOrConstruct(
       } else {
         ok = GetExpandedPrincipal(cx, obj, options, getter_AddRefs(expanded));
         prinOrSop = expanded;
+        // If this is an addon content script we need to apply the csp.
+        MOZ_TRY(ApplyAddonContentScriptCSP(prinOrSop));
       }
     } else {
       ok = GetPrincipalOrSOP(cx, obj, getter_AddRefs(prinOrSop));

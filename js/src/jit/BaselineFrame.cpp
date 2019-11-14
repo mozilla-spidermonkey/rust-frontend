@@ -6,6 +6,8 @@
 
 #include "jit/BaselineFrame-inl.h"
 
+#include <algorithm>
+
 #include "debugger/DebugAPI.h"
 #include "jit/BaselineJIT.h"
 #include "jit/Ion.h"
@@ -33,7 +35,7 @@ void BaselineFrame::trace(JSTracer* trc, const JSJitFrameIter& frameIterator) {
   if (isFunctionFrame()) {
     TraceRoot(trc, &thisArgument(), "baseline-this");
 
-    unsigned numArgs = js::Max(numActualArgs(), numFormalArgs());
+    unsigned numArgs = std::max(numActualArgs(), numFormalArgs());
     TraceRootRange(trc, numArgs + isConstructing(), argv(), "baseline-args");
   }
 
@@ -66,20 +68,23 @@ void BaselineFrame::trace(JSTracer* trc, const JSJitFrameIter& frameIterator) {
   frameIterator.baselineScriptAndPc(nullptr, &pc);
   size_t nlivefixed = script->calculateLiveFixed(pc);
 
-  // NB: It is possible that numValueSlots() could be zero, even if nfixed is
-  // nonzero.  This is the case if the function has an early stack check.
-  if (numValueSlots() == 0) {
+  uint32_t numValueSlots = frameIterator.baselineFrameNumValueSlots();
+
+  // NB: It is possible that numValueSlots could be zero, even if nfixed is
+  // nonzero.  This is the case when we're initializing the environment chain or
+  // failed the prologue stack check.
+  if (numValueSlots == 0) {
     return;
   }
 
-  MOZ_ASSERT(nfixed <= numValueSlots());
+  MOZ_ASSERT(nfixed <= numValueSlots);
 
   if (nfixed == nlivefixed) {
     // All locals are live.
-    TraceLocals(this, trc, 0, numValueSlots());
+    TraceLocals(this, trc, 0, numValueSlots);
   } else {
     // Trace operand stack.
-    TraceLocals(this, trc, nfixed, numValueSlots());
+    TraceLocals(this, trc, nfixed, numValueSlots);
 
     // Clear dead block-scoped locals.
     while (nfixed > nlivefixed) {
@@ -116,7 +121,7 @@ void BaselineFrame::setInterpreterFields(JSScript* script, jsbytecode* pc) {
   interpreterICEntry_ = jitScript->interpreterICEntryFromPCOffset(pcOffset);
 }
 
-void BaselineFrame::setInterpreterFieldsForPrologueBailout(JSScript* script) {
+void BaselineFrame::setInterpreterFieldsForPrologue(JSScript* script) {
   JitScript* jitScript = script->jitScript();
   interpreterScript_ = script;
   interpreterPC_ = script->code();
@@ -160,10 +165,10 @@ bool BaselineFrame::initForOsr(InterpreterFrame* fp, uint32_t numStackValues) {
   flags_ |= BaselineFrame::RUNNING_IN_INTERPRETER;
   setInterpreterFields(pc);
 
-  frameSize_ = BaselineFrame::FramePointerOffset + BaselineFrame::Size() +
-               numStackValues * sizeof(Value);
-
-  MOZ_ASSERT(numValueSlots() == numStackValues);
+#ifdef DEBUG
+  debugFrameSize_ = frameSizeForNumValueSlots(numStackValues);
+  MOZ_ASSERT(debugNumValueSlots() == numStackValues);
+#endif
 
   for (uint32_t i = 0; i < numStackValues; i++) {
     *valueSlot(i) = fp->slots()[i];

@@ -42,12 +42,12 @@ var TabModalPrompt = class {
 
                 <row class="tabmodalprompt-loginContainer" hidden="true" align="center">
                   <label class="tabmodalprompt-loginLabel" value="&editfield0.label;" control="loginTextbox-${randomIdSuffix}"/>
-                  <textbox class="tabmodalprompt-loginTextbox" id="loginTextbox-${randomIdSuffix}"/>
+                  <html:input class="tabmodalprompt-loginTextbox" id="loginTextbox-${randomIdSuffix}"/>
                 </row>
 
                 <row class="tabmodalprompt-password1Container" hidden="true" align="center">
                   <label class="tabmodalprompt-password1Label" value="&editfield1.label;" control="password1Textbox-${randomIdSuffix}"/>
-                  <textbox class="tabmodalprompt-password1Textbox" type="password" id="password1Textbox-${randomIdSuffix}"/>
+                  <html:input class="tabmodalprompt-password1Textbox" type="password" id="password1Textbox-${randomIdSuffix}"/>
                 </row>
 
                 <row class="tabmodalprompt-checkboxContainer" hidden="true">
@@ -245,20 +245,6 @@ var TabModalPrompt = class {
     //       Better yet, just drop support for 4-button dialogs. (bug 609510)
 
     this.onResize();
-  }
-
-  // Sadly this is needed to ensure all the bindings inside the <tabmodalprompt>
-  // are attached. This method had to be called by CommonDialog.jsm after
-  // it had set the visibility of each of the elements.
-  ensureXBLBindingAttached() {
-    for (let key in this.ui) {
-      if (this.ui[key] instanceof this.win.XULElement) {
-        if (this.ui[key].hidden) {
-          continue;
-        }
-        this.ui[key].clientTop;
-      }
-    }
   }
 
   shutdownPrompt() {

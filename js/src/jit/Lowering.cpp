@@ -15,6 +15,7 @@
 #include "jit/LIR.h"
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
+#include "util/Memory.h"
 
 #include "jit/shared/Lowering-shared-inl.h"
 #include "vm/BytecodeUtil-inl.h"
@@ -1100,7 +1101,7 @@ void LIRGenerator::visitSameValue(MSameValue* ins) {
   assignSafepoint(lir, ins);
 }
 
-void LIRGenerator::lowerBitOp(JSOp op, MInstruction* ins) {
+void LIRGenerator::lowerBitOp(JSOp op, MBinaryBitwiseInstruction* ins) {
   MDefinition* lhs = ins->getOperand(0);
   MDefinition* rhs = ins->getOperand(1);
 
@@ -1118,10 +1119,7 @@ void LIRGenerator::lowerBitOp(JSOp op, MInstruction* ins) {
     return;
   }
 
-  LBitOpV* lir =
-      new (alloc()) LBitOpV(op, useBoxAtStart(lhs), useBoxAtStart(rhs));
-  defineReturn(lir, ins);
-  assignSafepoint(lir, ins);
+  lowerBinaryV(op, ins);
 }
 
 void LIRGenerator::visitTypeOf(MTypeOf* ins) {
@@ -1234,17 +1232,7 @@ void LIRGenerator::lowerShiftOp(JSOp op, MShiftInstruction* ins) {
   }
 
   MOZ_ASSERT(ins->specialization() == MIRType::None);
-
-  if (op == JSOP_URSH) {
-    // Result is either int32 or double so we have to use BinaryV.
-    lowerBinaryV(JSOP_URSH, ins);
-    return;
-  }
-
-  LBitOpV* lir =
-      new (alloc()) LBitOpV(op, useBoxAtStart(lhs), useBoxAtStart(rhs));
-  defineReturn(lir, ins);
-  assignSafepoint(lir, ins);
+  lowerBinaryV(op, ins);
 }
 
 void LIRGenerator::visitLsh(MLsh* ins) { lowerShiftOp(JSOP_LSH, ins); }
@@ -2110,6 +2098,56 @@ void LIRGenerator::visitToNumberInt32(MToNumberInt32* convert) {
   }
 }
 
+void LIRGenerator::visitToIntegerInt32(MToIntegerInt32* convert) {
+  MDefinition* opd = convert->input();
+
+  switch (opd->type()) {
+    case MIRType::Value: {
+      auto* lir = new (alloc()) LValueToInt32(useBox(opd), tempDouble(), temp(),
+                                              LValueToInt32::TRUNCATE_NOWRAP);
+      assignSnapshot(lir, Bailout_NonPrimitiveInput);
+      define(lir, convert);
+      assignSafepoint(lir, convert);
+      break;
+    }
+
+    case MIRType::Undefined:
+    case MIRType::Null:
+      define(new (alloc()) LInteger(0), convert);
+      break;
+
+    case MIRType::Boolean:
+    case MIRType::Int32:
+      redefine(convert, opd);
+      break;
+
+    case MIRType::Float32: {
+      auto* lir = new (alloc()) LFloat32ToIntegerInt32(useRegister(opd));
+      assignSnapshot(lir, Bailout_Overflow);
+      define(lir, convert);
+      break;
+    }
+
+    case MIRType::Double: {
+      auto* lir = new (alloc()) LDoubleToIntegerInt32(useRegister(opd));
+      assignSnapshot(lir, Bailout_Overflow);
+      define(lir, convert);
+      break;
+    }
+
+    case MIRType::String:
+    case MIRType::Symbol:
+    case MIRType::BigInt:
+    case MIRType::Object:
+      // Objects might be effectful. Symbols and BigInts throw.
+      // Strings are complicated - we don't handle them yet.
+      MOZ_CRASH("ToIntegerInt32 invalid input type");
+
+    default:
+      MOZ_CRASH("unexpected type");
+  }
+}
+
 void LIRGenerator::visitToNumeric(MToNumeric* ins) {
   MOZ_ASSERT(ins->input()->type() == MIRType::Value);
   LToNumeric* lir = new (alloc()) LToNumeric(useBoxAtStart(ins->input()));
@@ -2225,7 +2263,7 @@ void LIRGenerator::visitToString(MToString* ins) {
     case MIRType::Value: {
       LValueToString* lir =
           new (alloc()) LValueToString(useBox(opd), tempToUnbox());
-      if (ins->fallible()) {
+      if (ins->needsSnapshot()) {
         assignSnapshot(lir, Bailout_NonPrimitiveInput);
       }
       define(lir, ins);
@@ -2846,6 +2884,16 @@ void LIRGenerator::visitTypedArrayElementShift(MTypedArrayElementShift* ins) {
   define(new (alloc())
              LTypedArrayElementShift(useRegisterAtStart(ins->object())),
          ins);
+}
+
+void LIRGenerator::visitTypedArrayIndexToInt32(MTypedArrayIndexToInt32* ins) {
+  MDefinition* input = ins->input();
+  if (input->type() == MIRType::Int32) {
+    redefine(ins, input);
+  } else {
+    MOZ_ASSERT(input->type() == MIRType::Double);
+    define(new (alloc()) LTypedArrayIndexToInt32(useRegister(input)), ins);
+  }
 }
 
 void LIRGenerator::visitTypedObjectDescr(MTypedObjectDescr* ins) {
@@ -3903,19 +3951,16 @@ void LIRGenerator::visitSetPropertyCache(MSetPropertyCache* ins) {
   // attach a scripted setter stub that calls this script recursively.
   gen->setNeedsOverrecursedCheck();
 
-  // We need a double/float32 temp register for typed array stubs if this is
-  // a SETELEM or INITELEM op.
+  // We need a double temp register for typed array stubs if this is a SETELEM
+  // or INITELEM op.
   LDefinition tempD = LDefinition::BogusTemp();
-  LDefinition tempF32 = LDefinition::BogusTemp();
   if (IsElemPC(ins->resumePoint()->pc())) {
-    tempD = tempDouble();
-    tempF32 = hasUnaliasedDouble() ? tempFloat32() : LDefinition::BogusTemp();
+    tempD = tempFixed(FloatReg0);
   }
 
   LInstruction* lir = new (alloc()) LSetPropertyCache(
       useRegister(ins->object()), useBoxOrTypedOrConstant(id, useConstId),
-      useBoxOrTypedOrConstant(ins->value(), useConstValue), temp(), tempD,
-      tempF32);
+      useBoxOrTypedOrConstant(ins->value(), useConstValue), temp(), tempD);
   add(lir, ins);
   assignSafepoint(lir, ins);
 }
@@ -4169,6 +4214,14 @@ void LIRGenerator::visitIsObject(MIsObject* ins) {
   define(lir, ins);
 }
 
+void LIRGenerator::visitIsNullOrUndefined(MIsNullOrUndefined* ins) {
+  MDefinition* opd = ins->input();
+  MOZ_ASSERT(opd->type() == MIRType::Value);
+  LIsNullOrUndefined* lir =
+      new (alloc()) LIsNullOrUndefined(useBoxAtStart(opd));
+  define(lir, ins);
+}
+
 void LIRGenerator::visitHasClass(MHasClass* ins) {
   MOZ_ASSERT(ins->object()->type() == MIRType::Object);
   MOZ_ASSERT(ins->type() == MIRType::Boolean);
@@ -4206,9 +4259,6 @@ void LIRGenerator::visitWasmLoadTls(MWasmLoadTls* ins) {
 }
 
 void LIRGenerator::visitWasmBoundsCheck(MWasmBoundsCheck* ins) {
-#ifdef WASM_HUGE_MEMORY
-  MOZ_CRASH("No bounds checking on huge memory");
-#else
   MOZ_ASSERT(!ins->isRedundant());
 
   MDefinition* index = ins->index();
@@ -4226,7 +4276,6 @@ void LIRGenerator::visitWasmBoundsCheck(MWasmBoundsCheck* ins) {
         useRegisterAtStart(index), useRegisterAtStart(boundsCheckLimit));
     add(lir, ins);
   }
-#endif
 }
 
 void LIRGenerator::visitWasmAlignmentCheck(MWasmAlignmentCheck* ins) {

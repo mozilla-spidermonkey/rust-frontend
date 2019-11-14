@@ -18,7 +18,10 @@ import {
   PARENT_TO_CHILD_MESSAGE_NAME,
 } from "./constants";
 import { actionCreators as ac } from "common/Actions.jsm";
-import { ASRouterPreferences } from "lib/ASRouterPreferences.jsm";
+import {
+  ASRouterPreferences,
+  TARGETING_PREFERENCES,
+} from "lib/ASRouterPreferences.jsm";
 import { ASRouterTriggerListeners } from "lib/ASRouterTriggerListeners.jsm";
 import { CFRPageActions } from "lib/CFRPageActions.jsm";
 import { GlobalOverrider } from "test/unit/utils";
@@ -36,6 +39,9 @@ const FAKE_PROVIDERS = [
 const FAKE_BUNDLE = [FAKE_LOCAL_MESSAGES[1], FAKE_LOCAL_MESSAGES[2]];
 const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
 const FAKE_RESPONSE_HEADERS = { get() {} };
+
+const USE_REMOTE_L10N_PREF =
+  "browser.newtabpage.activity-stream.asrouter.useRemoteL10n";
 
 // Creates a message object that looks like messages returned by
 // RemotePageManager listeners
@@ -116,6 +122,12 @@ describe("ASRouter", () => {
     sandbox.spy(ASRouterPreferences, "uninit");
     sandbox.spy(ASRouterPreferences, "addListener");
     sandbox.spy(ASRouterPreferences, "removeListener");
+    sandbox.replaceGetter(ASRouterPreferences, "personalizedCfr", function() {
+      return {
+        personalizedCfrScores: {},
+        personalizedCfrThreshold: 1.5,
+      };
+    });
 
     clock = sandbox.useFakeTimers();
     fetchStub = sandbox
@@ -141,6 +153,7 @@ describe("ASRouter", () => {
     FakeToolbarPanelHub = {
       init: sandbox.stub(),
       uninit: sandbox.stub(),
+      forceShowMessage: sandbox.stub(),
     };
     FakeToolbarBadgeHub = {
       init: sandbox.stub(),
@@ -148,6 +161,11 @@ describe("ASRouter", () => {
       registerBadgeNotificationListener: sandbox.stub(),
     };
     globals.set({
+      ASRouterPreferences,
+      TARGETING_PREFERENCES,
+      ASRouterTargeting,
+      ASRouterTriggerListeners,
+      QueryCache,
       AttributionCode: fakeAttributionCode,
       // Testing framework doesn't know how to `defineLazyModuleGetter` so we're
       // importing these modules into the global scope ourselves.
@@ -156,6 +174,22 @@ describe("ASRouter", () => {
       BookmarkPanelHub: FakeBookmarkPanelHub,
       ToolbarBadgeHub: FakeToolbarBadgeHub,
       ToolbarPanelHub: FakeToolbarPanelHub,
+      KintoHttpClient: class {
+        bucket() {
+          return this;
+        }
+        collection() {
+          return this;
+        }
+        getRecord() {
+          return Promise.resolve({ data: {} });
+        }
+      },
+      Downloader: class {
+        download() {
+          return Promise.resolve("/path/to/downlowned");
+        }
+      },
     });
     await createRouterAndInit();
   });
@@ -214,6 +248,7 @@ describe("ASRouter", () => {
         {
           getMessages: Router.handleMessageRequest,
           dispatch: Router.dispatch,
+          handleUserAction: Router.handleUserAction,
         }
       );
 
@@ -293,6 +328,27 @@ describe("ASRouter", () => {
           type: "AS_ROUTER_INITIALIZED",
           data: ASRouterPreferences.specialConditions,
         })
+      );
+    });
+    it("should add observer for `intl:app-locales-changed`", async () => {
+      sandbox.spy(global.Services.obs, "addObserver");
+      await createRouterAndInit();
+
+      assert.calledOnce(global.Services.obs.addObserver);
+      assert.equal(
+        global.Services.obs.addObserver.args[0][1],
+        "intl:app-locales-changed"
+      );
+    });
+    it("should add a pref observer", async () => {
+      sandbox.spy(global.Services.prefs, "addObserver");
+      await createRouterAndInit();
+
+      assert.calledOnce(global.Services.prefs.addObserver);
+      assert.calledWithExactly(
+        global.Services.prefs.addObserver,
+        USE_REMOTE_L10N_PREF,
+        Router
       );
     });
     describe("lazily loading local test providers", () => {
@@ -462,15 +518,45 @@ describe("ASRouter", () => {
     beforeEach(() => {
       sandbox.stub(CFRPageActions, "forceRecommendation");
       sandbox.stub(CFRPageActions, "addRecommendation");
+      sandbox.stub(CFRPageActions, "showMilestone");
       target = { sendAsyncMessage: sandbox.stub() };
+    });
+    it("should route whatsnew_panel_message message to the right hub", () => {
+      Router.routeMessageToTarget(
+        { template: "whatsnew_panel_message" },
+        target,
+        "",
+        true
+      );
+
+      assert.calledOnce(FakeToolbarPanelHub.forceShowMessage);
+      assert.notCalled(FakeToolbarBadgeHub.registerBadgeNotificationListener);
+      assert.notCalled(FakeBookmarkPanelHub._forceShowMessage);
+      assert.notCalled(CFRPageActions.addRecommendation);
+      assert.notCalled(CFRPageActions.forceRecommendation);
+      assert.notCalled(CFRPageActions.showMilestone);
+      assert.notCalled(target.sendAsyncMessage);
     });
     it("should route toolbar_badge message to the right hub", () => {
       Router.routeMessageToTarget({ template: "toolbar_badge" }, target);
 
       assert.calledOnce(FakeToolbarBadgeHub.registerBadgeNotificationListener);
+      assert.notCalled(FakeToolbarPanelHub.forceShowMessage);
       assert.notCalled(FakeBookmarkPanelHub._forceShowMessage);
       assert.notCalled(CFRPageActions.addRecommendation);
       assert.notCalled(CFRPageActions.forceRecommendation);
+      assert.notCalled(CFRPageActions.showMilestone);
+      assert.notCalled(target.sendAsyncMessage);
+    });
+    it("should route milestone_message to the right hub", () => {
+      Router.routeMessageToTarget({ template: "milestone_message" }, target);
+
+      assert.calledOnce(CFRPageActions.showMilestone);
+      assert.notCalled(CFRPageActions.addRecommendation);
+      assert.notCalled(CFRPageActions.forceRecommendation);
+      assert.notCalled(FakeBookmarkPanelHub._forceShowMessage);
+      assert.notCalled(FakeToolbarBadgeHub.registerBadgeNotificationListener);
+      assert.notCalled(FakeToolbarPanelHub.forceShowMessage);
       assert.notCalled(target.sendAsyncMessage);
     });
     it("should route fxa_bookmark_panel message to the right hub force = true", () => {
@@ -482,9 +568,11 @@ describe("ASRouter", () => {
       );
 
       assert.calledOnce(FakeBookmarkPanelHub._forceShowMessage);
+      assert.notCalled(FakeToolbarPanelHub.forceShowMessage);
       assert.notCalled(FakeToolbarBadgeHub.registerBadgeNotificationListener);
       assert.notCalled(CFRPageActions.addRecommendation);
       assert.notCalled(CFRPageActions.forceRecommendation);
+      assert.notCalled(CFRPageActions.showMilestone);
       assert.notCalled(target.sendAsyncMessage);
     });
     it("should route cfr_doorhanger message to the right hub force = false", () => {
@@ -496,9 +584,11 @@ describe("ASRouter", () => {
       );
 
       assert.calledOnce(CFRPageActions.addRecommendation);
+      assert.notCalled(FakeToolbarPanelHub.forceShowMessage);
       assert.notCalled(FakeBookmarkPanelHub._forceShowMessage);
       assert.notCalled(FakeToolbarBadgeHub.registerBadgeNotificationListener);
       assert.notCalled(CFRPageActions.forceRecommendation);
+      assert.notCalled(CFRPageActions.showMilestone);
       assert.notCalled(target.sendAsyncMessage);
     });
     it("should route cfr_doorhanger message to the right hub force = true", () => {
@@ -510,7 +600,9 @@ describe("ASRouter", () => {
       );
 
       assert.calledOnce(CFRPageActions.forceRecommendation);
+      assert.notCalled(FakeToolbarPanelHub.forceShowMessage);
       assert.notCalled(CFRPageActions.addRecommendation);
+      assert.notCalled(CFRPageActions.showMilestone);
       assert.notCalled(FakeBookmarkPanelHub._forceShowMessage);
       assert.notCalled(FakeToolbarBadgeHub.registerBadgeNotificationListener);
       assert.notCalled(target.sendAsyncMessage);
@@ -519,8 +611,10 @@ describe("ASRouter", () => {
       Router.routeMessageToTarget({ template: "snippets" }, target, {}, true);
 
       assert.calledOnce(target.sendAsyncMessage);
+      assert.notCalled(FakeToolbarPanelHub.forceShowMessage);
       assert.notCalled(CFRPageActions.forceRecommendation);
       assert.notCalled(CFRPageActions.addRecommendation);
+      assert.notCalled(CFRPageActions.showMilestone);
       assert.notCalled(FakeBookmarkPanelHub._forceShowMessage);
       assert.notCalled(FakeToolbarBadgeHub.registerBadgeNotificationListener);
     });
@@ -662,7 +756,7 @@ describe("ASRouter", () => {
         data: {
           action: "asrouter_undesired_event",
           event: "ASR_RS_ERROR",
-          value: "remotey-settingsy",
+          event_context: "remotey-settingsy",
           message_id: "n/a",
         },
         meta: { from: "ActivityStream:Content", to: "ActivityStream:Main" },
@@ -678,7 +772,55 @@ describe("ASRouter", () => {
         data: {
           action: "asrouter_undesired_event",
           event: "ASR_RS_NO_MESSAGES",
-          value: "remotey-settingsy",
+          event_context: "remotey-settingsy",
+          message_id: "n/a",
+        },
+        meta: { from: "ActivityStream:Content", to: "ActivityStream:Main" },
+        type: "AS_ROUTER_TELEMETRY_USER_EVENT",
+      });
+    });
+    it("should download the attachment if RemoteSettings returns some messages", async () => {
+      sandbox
+        .stub(global.Services.locale, "appLocaleAsLangTag")
+        .get(() => "en-US");
+      sandbox
+        .stub(MessageLoaderUtils, "_getRemoteSettingsMessages")
+        .resolves([{ id: "message_1" }]);
+      const spy = sandbox.spy();
+      global.Downloader.prototype.download = spy;
+      const provider = {
+        id: "cfr",
+        enabled: true,
+        type: "remote-settings",
+        bucket: "cfr",
+      };
+      await createRouterAndInit([provider]);
+
+      assert.calledOnce(spy);
+    });
+    it("should dispatch undesired event if the ms-language-packs returns no messages", async () => {
+      sandbox
+        .stub(global.Services.locale, "appLocaleAsLangTag")
+        .get(() => "en-US");
+      sandbox
+        .stub(MessageLoaderUtils, "_getRemoteSettingsMessages")
+        .resolves([{ id: "message_1" }]);
+      sandbox
+        .stub(global.KintoHttpClient.prototype, "getRecord")
+        .resolves(null);
+      const provider = {
+        id: "cfr",
+        enabled: true,
+        type: "remote-settings",
+        bucket: "cfr",
+      };
+      await createRouterAndInit([provider]);
+
+      assert.calledWith(Router.dispatchToAS, {
+        data: {
+          action: "asrouter_undesired_event",
+          event: "ASR_RS_NO_MESSAGES",
+          event_context: "ms-language-packs",
           message_id: "n/a",
         },
         meta: { from: "ActivityStream:Content", to: "ActivityStream:Main" },
@@ -929,6 +1071,60 @@ describe("ASRouter", () => {
 
       assert.deepEqual(result, [message2, message1]);
     });
+    it("should forward trigger param info", async () => {
+      const trigger = {
+        triggerId: "foo",
+        triggerParam: "bar",
+        triggerContext: "context",
+      };
+      const message1 = {
+        id: "1",
+        campaign: "foocampaign",
+        trigger: { id: "foo" },
+      };
+      const message2 = {
+        id: "2",
+        campaign: "foocampaign",
+        trigger: { id: "bar" },
+      };
+      await Router.setState({ messages: [message2, message1] });
+      // Just return the first message provided as arg
+      const stub = sandbox.stub(Router, "_findMessage");
+
+      Router.handleMessageRequest(trigger);
+
+      assert.calledOnce(stub);
+      assert.calledWithExactly(stub, sinon.match.array, {
+        id: trigger.triggerId,
+        param: trigger.triggerParam,
+        context: trigger.triggerContext,
+      });
+    });
+    it("should filter out messages without a trigger (or different) when a triggerId is defined", async () => {
+      const trigger = { triggerId: "foo" };
+      const message1 = {
+        id: "1",
+        campaign: "foocampaign",
+        trigger: { id: "foo" },
+      };
+      const message2 = {
+        id: "2",
+        campaign: "foocampaign",
+        trigger: { id: "bar" },
+      };
+      const message3 = {
+        id: "3",
+        campaign: "bazcampaign",
+      };
+      await Router.setState({ messages: [message2, message1, message3] });
+      // Just return the first message provided as arg
+      sandbox.stub(Router, "_findMessage").callsFake(args => args);
+
+      const result = Router.handleMessageRequest(trigger);
+
+      assert.lengthOf(result, 1);
+      assert.deepEqual(result[0], message1);
+    });
   });
 
   describe("#uninit", () => {
@@ -968,6 +1164,24 @@ describe("ASRouter", () => {
         "previousSessionEnd",
         sinon.match.number
       );
+    });
+    it("should remove the observer for `intl:app-locales-changed`", () => {
+      sandbox.spy(global.Services.obs, "removeObserver");
+      Router.uninit();
+
+      assert.calledOnce(global.Services.obs.removeObserver);
+      assert.equal(
+        global.Services.obs.removeObserver.args[0][1],
+        "intl:app-locales-changed"
+      );
+    });
+    it("should remove the pref observer for `USE_REMOTE_L10N_PREF`", async () => {
+      sandbox.spy(global.Services.prefs, "removeObserver");
+      Router.uninit();
+
+      // Grab the last call as #uninit() also involves multiple calls of `Services.prefs.removeObserver`.
+      const call = global.Services.prefs.removeObserver.lastCall;
+      assert.calledWithExactly(call, USE_REMOTE_L10N_PREF, Router);
     });
   });
 
@@ -1197,6 +1411,76 @@ describe("ASRouter", () => {
         await Router.onMessage(msg);
 
         assert.lengthOf(Router.state.providers.filter(p => p.url === url), 0);
+      });
+      it("should handle onboarding message provider", async () => {
+        const handleMessageRequestStub = sandbox.stub(
+          Router,
+          "handleMessageRequest"
+        );
+        handleMessageRequestStub
+          .withArgs({
+            template: "extended_triplets",
+          })
+          .resolves({ id: "foo" });
+        const spy = sandbox.spy(Router, "setupExtendedTriplets");
+        const msg = fakeAsyncMessage({
+          type: "NEWTAB_MESSAGE_REQUEST",
+          data: {},
+        });
+        await Router.onMessage(msg);
+
+        assert.calledOnce(spy);
+      });
+      it("should fallback to snippets if one was assigned to the holdback experiment", async () => {
+        sandbox.stub(global.Sampling, "ratioSample").resolves(1); // 1 = holdback branch
+        const handleMessageRequestStub = sandbox.stub(
+          Router,
+          "handleMessageRequest"
+        );
+        handleMessageRequestStub
+          .withArgs({
+            template: "extended_triplets",
+          })
+          .resolves({ id: "foo" });
+        const msg = fakeAsyncMessage({
+          type: "NEWTAB_MESSAGE_REQUEST",
+          data: {},
+        });
+        await Router.onMessage(msg);
+
+        assert.calledTwice(handleMessageRequestStub);
+        assert.calledWithExactly(handleMessageRequestStub, {
+          template: "extended_triplets",
+        });
+        assert.calledWithExactly(handleMessageRequestStub, {
+          provider: "snippets",
+        });
+      });
+      it("should fallback to snippets if onboarding message provider returned none", async () => {
+        const handleMessageRequestStub = sandbox.stub(
+          Router,
+          "handleMessageRequest"
+        );
+        handleMessageRequestStub
+          .withArgs({
+            template: "extended_triplets",
+          })
+          .resolves(null);
+        const spy = sandbox.spy(Router, "setupExtendedTriplets");
+        const msg = fakeAsyncMessage({
+          type: "NEWTAB_MESSAGE_REQUEST",
+          data: {},
+        });
+        await Router.onMessage(msg);
+
+        assert.notCalled(spy);
+        assert.calledTwice(handleMessageRequestStub);
+        assert.calledWithExactly(handleMessageRequestStub, {
+          template: "extended_triplets",
+        });
+        assert.calledWithExactly(handleMessageRequestStub, {
+          provider: "snippets",
+        });
       });
     });
 
@@ -1524,6 +1808,8 @@ describe("ASRouter", () => {
         assert.calledOnce(Router._findMessage);
         assert.deepEqual(Router._findMessage.firstCall.args[1], {
           id: "firstRun",
+          param: undefined,
+          context: undefined,
         });
       });
       it("consider the trigger when picking a message", async () => {
@@ -1825,7 +2111,6 @@ describe("ASRouter", () => {
       it("should add/remove observers for `webextension-install-notify`", async () => {
         sandbox.spy(global.Services.obs, "addObserver");
         sandbox.spy(global.Services.obs, "removeObserver");
-        sandbox.spy(Router, "blockMessageById");
 
         sandbox.stub(MessageLoaderUtils, "installAddonFromURL").resolves(null);
         const msg = fakeExecuteUserAction({
@@ -1843,8 +2128,6 @@ describe("ASRouter", () => {
 
         assert.calledOnce(global.Services.obs.removeObserver);
         assert.calledOnce(channel.sendAsyncMessage);
-        assert.calledOnce(Router.blockMessageById);
-        assert.calledWithExactly(Router.blockMessageById, "RETURN_TO_AMO_1");
       });
     });
 
@@ -1864,6 +2147,45 @@ describe("ASRouter", () => {
           "pinTab",
           { showDescription: true }
         );
+      });
+    });
+
+    describe("#onMessage: OPEN_PROTECTION_PANEL", () => {
+      it("should open protection panel", async () => {
+        const msg = fakeExecuteUserAction({ type: "OPEN_PROTECTION_PANEL" });
+        let { gProtectionsHandler } = msg.target.browser.ownerGlobal;
+
+        await Router.onMessage(msg);
+
+        assert.calledOnce(gProtectionsHandler.showProtectionsPopup);
+        assert.calledWithExactly(gProtectionsHandler.showProtectionsPopup, {});
+      });
+    });
+
+    describe("#onMessage: OPEN_PROTECTION_REPORT", () => {
+      it("should open protection report", async () => {
+        const msg = fakeExecuteUserAction({ type: "OPEN_PROTECTION_REPORT" });
+        let { gProtectionsHandler } = msg.target.browser.ownerGlobal;
+
+        await Router.onMessage(msg);
+
+        assert.calledOnce(gProtectionsHandler.openProtections);
+      });
+    });
+
+    describe("#onMessage: DISABLE_STP_DOORHANGERS", () => {
+      it("should block STP related messages", async () => {
+        const msg = fakeExecuteUserAction({ type: "DISABLE_STP_DOORHANGERS" });
+
+        assert.deepEqual(Router.state.messageBlockList, []);
+
+        await Router.onMessage(msg);
+
+        assert.deepEqual(Router.state.messageBlockList, [
+          "SOCIAL_TRACKING_PROTECTION",
+          "FINGERPRINTERS_PROTECTION",
+          "CRYPTOMINERS_PROTECTION",
+        ]);
       });
     });
 
@@ -2053,9 +2375,17 @@ describe("ASRouter", () => {
 
   describe("#UITour", () => {
     let showMenuStub;
+    const highlightTarget = { target: "target" };
     beforeEach(() => {
       showMenuStub = sandbox.stub();
-      globals.set("UITour", { showMenu: showMenuStub });
+      globals.set("UITour", {
+        showMenu: showMenuStub,
+        getTarget: sandbox
+          .stub()
+          .withArgs(sinon.match.object, "pageAaction-sendToDevice")
+          .resolves(highlightTarget),
+        showHighlight: sandbox.stub(),
+      });
     });
     it("should call UITour.showMenu with the correct params on OPEN_APPLICATIONS_MENU", async () => {
       const msg = fakeExecuteUserAction({
@@ -2069,6 +2399,21 @@ describe("ASRouter", () => {
         showMenuStub,
         msg.target.browser.ownerGlobal,
         "appMenu"
+      );
+    });
+    it("should call UITour.showHighlight with the correct params on HIGHLIGHT_FEATURE", async () => {
+      const msg = fakeExecuteUserAction({
+        type: "HIGHLIGHT_FEATURE",
+        data: { args: "pageAction-sendToDevice" },
+      });
+      await Router.onMessage(msg);
+
+      assert.calledOnce(UITour.getTarget);
+      assert.calledOnce(UITour.showHighlight);
+      assert.calledWith(
+        UITour.showHighlight,
+        msg.target.browser.ownerGlobal,
+        highlightTarget
       );
     });
   });
@@ -2191,6 +2536,7 @@ describe("ASRouter", () => {
           document: { getElementById },
           promiseDocumentFlushed: sandbox.stub().resolves([{ width: 0 }]),
           setTimeout: sandbox.stub(),
+          A11yUtils: { announce: sandbox.stub() },
         };
         const firstMessage = { ...FAKE_RECOMMENDATION, id: "first_message" };
         const secondMessage = { ...FAKE_RECOMMENDATION, id: "second_message" };
@@ -2560,6 +2906,18 @@ describe("ASRouter", () => {
       assert.equal(Router.state.trailheadInterrupt, "join");
       assert.equal(Router.state.trailheadTriplet, "supercharge");
     });
+    it("should set default triplet when firstrun.branches pref not set", async () => {
+      sandbox.spy(Router, "setFirstRunStateFromPref");
+      getStringPrefStub.withArgs(TRAILHEAD_CONFIG.OVERRIDE_PREF).returns("");
+
+      await Router.init(channel, createFakeStorage(), dispatchStub);
+
+      assert.calledOnce(Router.setFirstRunStateFromPref);
+      assert.equal(
+        Router.state.trailheadTriplet,
+        TRAILHEAD_CONFIG.DEFAULT_TRIPLET
+      );
+    });
     it.skip("should call .setupTrailhead on init", async () => {
       sandbox.spy(Router, "setupTrailhead");
       sandbox
@@ -2654,8 +3012,8 @@ describe("ASRouter", () => {
       };
       const configWithoutExperiment = {
         experiment: "",
-        interrupt: "control",
-        triplet: "",
+        interrupt: "join",
+        triplet: "supercharge",
       };
 
       it("should generates an experiment/branch configuration and update Router.state", async () => {
@@ -2784,17 +3142,25 @@ describe("ASRouter", () => {
           triplet: "",
         });
       });
-      it("should return control experience with no experiment if locale is NOT in TRAILHEAD_LOCALES", async () => {
+      it("should return default experience with no experiment if locale is NOT in TRAILHEAD_LOCALES", async () => {
         sandbox
           .stub(global.Services.locale, "appLocaleAsLangTag")
           .get(() => "zh-CN");
-        checkReturnValue({ experiment: "", interrupt: "control", triplet: "" });
+        checkReturnValue({
+          experiment: "",
+          interrupt: "join",
+          triplet: "supercharge",
+        });
       });
-      it("should return control experience with no experiment if locale is NOT in TRAILHEAD_LOCALES", async () => {
+      it("should return default experience with no experiment if locale is NOT in TRAILHEAD_LOCALES", async () => {
         sandbox
           .stub(global.Services.locale, "appLocaleAsLangTag")
           .get(() => "zh-CN");
-        checkReturnValue({ experiment: "", interrupt: "control", triplet: "" });
+        checkReturnValue({
+          experiment: "",
+          interrupt: "join",
+          triplet: "supercharge",
+        });
       });
       it("should roll for experiment if locale is in TRAILHEAD_LOCALES", async () => {
         sandbox.stub(global.Sampling, "ratioSample").resolves(1); // 1 = interrupts experiment
@@ -2857,6 +3223,75 @@ describe("ASRouter", () => {
         });
       });
     });
+
+    describe(".setupExtendedTriplets", () => {
+      let setStringPrefStub;
+      let setExperimentActiveStub;
+
+      beforeEach(() => {
+        setStringPrefStub = sandbox.stub(
+          global.Services.prefs,
+          "setStringPref"
+        );
+        setExperimentActiveStub = sandbox.stub(
+          global.TelemetryEnvironment,
+          "setExperimentActive"
+        );
+      });
+
+      it("should generates a control branch configuration and update Router.state", async () => {
+        sandbox.stub(global.Sampling, "ratioSample").resolves(0); // 0 = control branch
+
+        await Router.setupExtendedTriplets();
+
+        assert.propertyVal(Router.state, "extendedTripletsInitialized", true);
+        assert.propertyVal(Router.state, "showExtendedTriplets", true);
+        assert.calledWith(
+          setStringPrefStub,
+          TRAILHEAD_CONFIG.EXTENDED_TRIPLETS_EXPERIMENT_PREF,
+          "control"
+        );
+        assert.calledWith(
+          setExperimentActiveStub,
+          "activity-stream-extended-triplets-v2-1581912",
+          "control"
+        );
+      });
+      it("should generates a test branch configuration and update Router.state", async () => {
+        sandbox.stub(global.Sampling, "ratioSample").resolves(1); // 1 = holdback branch
+
+        await Router.setupExtendedTriplets();
+
+        assert.propertyVal(Router.state, "extendedTripletsInitialized", true);
+        assert.propertyVal(Router.state, "showExtendedTriplets", false);
+        assert.calledWith(
+          setStringPrefStub,
+          TRAILHEAD_CONFIG.EXTENDED_TRIPLETS_EXPERIMENT_PREF,
+          "holdback"
+        );
+        assert.calledWith(
+          setExperimentActiveStub,
+          "activity-stream-extended-triplets-v2-1581912",
+          "holdback"
+        );
+      });
+      it("should reuse the existing branch if it's already defined", async () => {
+        getStringPrefStub.returns("control");
+
+        await Router.setupExtendedTriplets();
+
+        assert.notCalled(setStringPrefStub);
+      });
+      it("should only run once", async () => {
+        sandbox.spy(Router, "setState");
+
+        await Router.setupExtendedTriplets();
+        await Router.setupExtendedTriplets();
+        await Router.setupExtendedTriplets();
+
+        assert.calledOnce(Router.setState);
+      });
+    });
   });
 
   describe("chooseBranch", () => {
@@ -2873,6 +3308,86 @@ describe("ASRouter", () => {
 
       assert.calledWith(global.Sampling.ratioSample, "bleep", [1, 1]);
       assert.equal(result, "bar");
+    });
+  });
+
+  describe("#_onLocaleChanged", () => {
+    it("should call _maybeUpdateL10nAttachment in the handler", async () => {
+      sandbox.spy(Router, "_maybeUpdateL10nAttachment");
+      await Router._onLocaleChanged();
+
+      assert.calledOnce(Router._maybeUpdateL10nAttachment);
+    });
+  });
+
+  describe("#_maybeUpdateL10nAttachment", () => {
+    it("should update the l10n attachment if the locale was changed", async () => {
+      const getter = sandbox.stub();
+      getter.onFirstCall().returns("en-US");
+      getter.onSecondCall().returns("fr");
+      sandbox.stub(global.Services.locale, "appLocaleAsLangTag").get(getter);
+      const provider = {
+        id: "cfr",
+        enabled: true,
+        type: "remote-settings",
+        bucket: "cfr",
+      };
+      await createRouterAndInit([provider]);
+      sandbox.spy(Router, "setState");
+      sandbox.spy(Router, "loadMessagesFromAllProviders");
+
+      await Router._maybeUpdateL10nAttachment();
+
+      assert.calledWith(Router.setState, {
+        localeInUse: "fr",
+        providers: [
+          {
+            id: "cfr",
+            enabled: true,
+            type: "remote-settings",
+            bucket: "cfr",
+            lastUpdated: undefined,
+            errors: [],
+          },
+        ],
+      });
+      assert.calledOnce(Router.loadMessagesFromAllProviders);
+    });
+    it("should not update the l10n attachment if the provider doesn't need l10n attachment", async () => {
+      const getter = sandbox.stub();
+      getter.onFirstCall().returns("en-US");
+      getter.onSecondCall().returns("fr");
+      sandbox.stub(global.Services.locale, "appLocaleAsLangTag").get(getter);
+      const provider = {
+        id: "localProvider",
+        enabled: true,
+        type: "local",
+      };
+      await createRouterAndInit([provider]);
+      sandbox.spy(Router, "setState");
+      sandbox.spy(Router, "loadMessagesFromAllProviders");
+
+      await Router._maybeUpdateL10nAttachment();
+
+      assert.notCalled(Router.setState);
+      assert.notCalled(Router.loadMessagesFromAllProviders);
+    });
+  });
+
+  describe("#observe", () => {
+    it("should reload l10n for CFRPageActions when the `USE_REMOTE_L10N_PREF` pref is changed", () => {
+      sandbox.spy(CFRPageActions, "reloadL10n");
+
+      Router.observe("", "", USE_REMOTE_L10N_PREF);
+
+      assert.calledOnce(CFRPageActions.reloadL10n);
+    });
+    it("should not react to other pref changes", () => {
+      sandbox.spy(CFRPageActions, "reloadL10n");
+
+      Router.observe("", "", "foo");
+
+      assert.notCalled(CFRPageActions.reloadL10n);
     });
   });
 });

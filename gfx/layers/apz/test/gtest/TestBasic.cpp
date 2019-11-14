@@ -312,11 +312,6 @@ TEST_F(APZCBasicTester, OverScroll_Bug1152051a) {
   // the pan, which is 100 ms).
   SCOPED_GFX_PREF_FLOAT("apz.fling_friction", 0);
 
-  // To ensure the velocity after the first sample is 0, set the spring
-  // stiffness to the incoming velocity (4.9) divided by the overscroll
-  // (400 pixels) times the step duration (1 ms).
-  SCOPED_GFX_PREF_FLOAT("apz.overscroll.spring_stiffness", 0.01225f);
-
   TestOverscroll();
 }
 
@@ -344,12 +339,10 @@ TEST_F(APZCBasicTester, OverScroll_Bug1152051b) {
   // to schedule a new one since we're still overscrolled. We don't pan because
   // panning can trigger functions that clear the overscroll animation state
   // in other ways.
-  uint64_t blockId;
-  nsEventStatus status =
-      TouchDown(apzc, ScreenIntPoint(10, 10), mcc->Time(), &blockId);
+  APZEventResult result = TouchDown(apzc, ScreenIntPoint(10, 10), mcc->Time());
   if (StaticPrefs::layout_css_touch_action_enabled() &&
-      status != nsEventStatus_eConsumeNoDefault) {
-    SetDefaultAllowedTouchBehavior(apzc, blockId);
+      result.mStatus != nsEventStatus_eConsumeNoDefault) {
+    SetDefaultAllowedTouchBehavior(apzc, result.mInputBlockId);
   }
   TouchUp(apzc, ScreenIntPoint(10, 10), mcc->Time());
 
@@ -418,4 +411,64 @@ TEST_F(APZCBasicTester, OverScrollPanningAbort) {
   apzc->CancelAnimation();
   EXPECT_FALSE(apzc->IsOverscrolled());
   apzc->AssertStateIsReset();
+}
+
+TEST_F(APZCBasicTester, ResumeInterruptedTouchDrag_Bug1592435) {
+  // Start a touch-drag and scroll some amount, not lifting the finger.
+  SCOPED_GFX_PREF_FLOAT("apz.touch_start_tolerance", 1.0f / 1000.0f);
+  ScreenIntPoint touchPos(10, 50);
+  uint64_t touchBlock = TouchDown(apzc, touchPos, mcc->Time()).mInputBlockId;
+  SetDefaultAllowedTouchBehavior(apzc, touchBlock);
+  for (int i = 0; i < 20; ++i) {
+    touchPos.y -= 1;
+    mcc->AdvanceByMillis(1);
+    TouchMove(apzc, touchPos, mcc->Time());
+  }
+
+  // Take note of the scroll offset before the interruption.
+  CSSPoint scrollOffsetBeforeInterruption =
+      apzc->GetFrameMetrics().GetScrollOffset();
+
+  // Have the main thread interrupt the touch-drag by sending
+  // a main thread scroll update to a nearby location.
+  CSSPoint mainThreadOffset = scrollOffsetBeforeInterruption;
+  mainThreadOffset.y -= 5;
+  ScrollMetadata metadata = apzc->GetScrollMetadata();
+  metadata.GetMetrics().SetScrollOffset(mainThreadOffset);
+  metadata.GetMetrics().SetScrollGeneration(1);
+  metadata.GetMetrics().SetScrollOffsetUpdateType(FrameMetrics::eMainThread);
+  apzc->NotifyLayersUpdated(metadata, false, true);
+
+  // Continue and finish the touch-drag gesture.
+  for (int i = 0; i < 20; ++i) {
+    touchPos.y -= 1;
+    mcc->AdvanceByMillis(1);
+    TouchMove(apzc, touchPos, mcc->Time());
+  }
+
+  // Check that the portion of the touch-drag that occurred after
+  // the interruption caused additional scrolling.
+  CSSPoint finalScrollOffset = apzc->GetFrameMetrics().GetScrollOffset();
+  EXPECT_GT(finalScrollOffset.y, scrollOffsetBeforeInterruption.y);
+
+  // Now do the same thing, but for a visual scroll update.
+  scrollOffsetBeforeInterruption = apzc->GetFrameMetrics().GetScrollOffset();
+  mainThreadOffset = scrollOffsetBeforeInterruption;
+  mainThreadOffset.y -= 5;
+  metadata = apzc->GetScrollMetadata();
+  metadata.GetMetrics().SetVisualViewportOffset(mainThreadOffset);
+  metadata.GetMetrics().SetScrollGeneration(2);
+  metadata.GetMetrics().SetVisualScrollUpdateType(FrameMetrics::eMainThread);
+  apzc->NotifyLayersUpdated(metadata, false, true);
+  for (int i = 0; i < 20; ++i) {
+    touchPos.y -= 1;
+    mcc->AdvanceByMillis(1);
+    TouchMove(apzc, touchPos, mcc->Time());
+  }
+  finalScrollOffset = apzc->GetFrameMetrics().GetScrollOffset();
+  EXPECT_GT(finalScrollOffset.y, scrollOffsetBeforeInterruption.y);
+
+  // Clean up by ending the touch gesture.
+  mcc->AdvanceByMillis(1);
+  TouchUp(apzc, touchPos, mcc->Time());
 }

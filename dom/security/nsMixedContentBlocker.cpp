@@ -40,6 +40,7 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/ipc/URIUtils.h"
+#include "mozilla/net/DNS.h"
 
 using namespace mozilla;
 
@@ -371,17 +372,39 @@ nsMixedContentBlocker::ShouldLoad(nsIURI* aContentLocation,
   return rv;
 }
 
-bool nsMixedContentBlocker::IsPotentiallyTrustworthyLoopbackURL(nsIURI* aURL) {
-  nsAutoCString host;
-  nsresult rv = aURL->GetHost(host);
-  NS_ENSURE_SUCCESS(rv, false);
+bool nsMixedContentBlocker::IsPotentiallyTrustworthyLoopbackHost(
+    const nsACString& aAsciiHost) {
+  if (aAsciiHost.EqualsLiteral("::1") ||
+      aAsciiHost.EqualsLiteral("localhost")) {
+    return true;
+  }
 
-  // We could also allow 'localhost' (if we can guarantee that it resolves
-  // to a loopback address), but Chrome doesn't support it as of writing. For
-  // web compat, lets only allow what Chrome allows.
-  // see also https://bugzilla.mozilla.org/show_bug.cgi?id=1220810
-  return host.EqualsLiteral("127.0.0.1") || host.EqualsLiteral("::1") ||
-         host.EqualsLiteral("localhost");
+  PRNetAddr tempAddr;
+  memset(&tempAddr, 0, sizeof(PRNetAddr));
+
+  if (PR_StringToNetAddr(PromiseFlatCString(aAsciiHost).get(), &tempAddr) !=
+      PR_SUCCESS) {
+    return false;
+  }
+
+  using namespace mozilla::net;
+  NetAddr addr;
+  PRNetAddrToNetAddr(&tempAddr, &addr);
+
+  // Step 4 of
+  // https://w3c.github.io/webappsec-secure-contexts/#is-origin-trustworthy says
+  // we should only consider [::1]/128 as a potentially trustworthy IPv6
+  // address, whereas for IPv4 127.0.0.1/8 are considered as potentially
+  // trustworthy.  We already handled "[::1]" above, so all that's remained to
+  // handle here are IPv4 loopback addresses.
+  return IsIPAddrV4(&addr) && IsLoopBackAddress(&addr);
+}
+
+bool nsMixedContentBlocker::IsPotentiallyTrustworthyLoopbackURL(nsIURI* aURL) {
+  nsAutoCString asciiHost;
+  nsresult rv = aURL->GetAsciiHost(asciiHost);
+  NS_ENSURE_SUCCESS(rv, false);
+  return IsPotentiallyTrustworthyLoopbackHost(asciiHost);
 }
 
 /* Maybe we have a .onion URL. Treat it as whitelisted as well if
@@ -948,7 +971,6 @@ nsresult nsMixedContentBlocker::ShouldLoad(
     if (!sBlockMixedObjectSubrequest) {
       rootDoc->WarnOnceAbout(Document::eMixedDisplayObjectSubrequest);
     }
-    rootDoc->SetHasMixedContentObjectSubrequest(true);
   }
 
   // If the content is display content, and the pref says display content should

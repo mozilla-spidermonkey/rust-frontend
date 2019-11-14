@@ -55,7 +55,7 @@ class WindowGlobalParent final : public WindowGlobalActor,
   }
 
   // Has this actor been shut down
-  bool IsClosed() { return mIPCClosed; }
+  bool IsClosed() { return !CanSend(); }
 
   // Check if this actor is managed by PInProcess, as-in the document is loaded
   // in-process.
@@ -90,7 +90,7 @@ class WindowGlobalParent final : public WindowGlobalActor,
   // which this WindowGlobal is a part of. This will be the nsFrameLoader
   // holding the BrowserParent for remote tabs, and the root content frameloader
   // for non-remote tabs.
-  nsFrameLoader* GetRootFrameLoader() { return mFrameLoader; }
+  already_AddRefed<nsFrameLoader> GetRootFrameLoader();
 
   // The current URI which loaded in the document.
   nsIURI* GetDocumentURI() override { return mDocumentURI; }
@@ -110,11 +110,6 @@ class WindowGlobalParent final : public WindowGlobalActor,
   bool IsInitialDocument() { return mIsInitialDocument; }
 
   bool HasBeforeUnload() { return mHasBeforeUnload; }
-
-  already_AddRefed<Promise> ChangeFrameRemoteness(dom::BrowsingContext* aBc,
-                                                  const nsAString& aRemoteType,
-                                                  uint64_t aPendingSwitchId,
-                                                  ErrorResult& aRv);
 
   already_AddRefed<mozilla::dom::Promise> DrawSnapshot(
       const DOMRect* aRect, double aScale, const nsAString& aBackgroundColor,
@@ -139,6 +134,11 @@ class WindowGlobalParent final : public WindowGlobalActor,
   JSWindowActor::Type GetSide() override { return JSWindowActor::Type::Parent; }
 
   // IPC messages
+  mozilla::ipc::IPCResult RecvLoadURI(dom::BrowsingContext* aTargetBC,
+                                      nsDocShellLoadState* aLoadState,
+                                      bool aSetNavigating);
+  mozilla::ipc::IPCResult RecvInternalLoad(dom::BrowsingContext* aTargetBC,
+                                           nsDocShellLoadState* aLoadState);
   mozilla::ipc::IPCResult RecvUpdateDocumentURI(nsIURI* aURI);
   mozilla::ipc::IPCResult RecvSetIsInitialDocument(bool aIsInitialDocument) {
     mIsInitialDocument = aIsInitialDocument;
@@ -149,14 +149,16 @@ class WindowGlobalParent final : public WindowGlobalActor,
   mozilla::ipc::IPCResult RecvDestroy();
   mozilla::ipc::IPCResult RecvRawMessage(const JSWindowActorMessageMeta& aMeta,
                                          const ClonedMessageData& aData);
-  mozilla::ipc::IPCResult RecvDidEmbedBrowsingContext(
-      dom::BrowsingContext* aContext);
 
   void ActorDestroy(ActorDestroyReason aWhy) override;
 
   void DrawSnapshotInternal(gfx::CrossProcessPaint* aPaint,
                             const Maybe<IntRect>& aRect, float aScale,
-                            nscolor aBackgroundColor);
+                            nscolor aBackgroundColor, uint32_t aFlags);
+
+  // WebShare API - try to share
+  mozilla::ipc::IPCResult RecvShare(IPCWebShareData&& aData,
+                                    ShareResolver&& aResolver);
 
  private:
   ~WindowGlobalParent();
@@ -165,13 +167,11 @@ class WindowGlobalParent final : public WindowGlobalActor,
   // mutations which may have been made in the actual document.
   nsCOMPtr<nsIPrincipal> mDocumentPrincipal;
   nsCOMPtr<nsIURI> mDocumentURI;
-  RefPtr<nsFrameLoader> mFrameLoader;
   RefPtr<CanonicalBrowsingContext> mBrowsingContext;
   nsRefPtrHashtable<nsStringHashKey, JSWindowActorParent> mWindowActors;
   uint64_t mInnerWindowId;
   uint64_t mOuterWindowId;
   bool mInProcess;
-  bool mIPCClosed;
   bool mIsInitialDocument;
 
   // True if this window has a "beforeunload" event listener.

@@ -5,7 +5,7 @@
 "use strict";
 
 const { colorUtils } = require("devtools/shared/css/color");
-const { Spectrum } = require("devtools/client/shared/widgets/Spectrum");
+const Spectrum = require("devtools/client/shared/widgets/Spectrum");
 const SwatchBasedEditorTooltip = require("devtools/client/shared/widgets/tooltip/SwatchBasedEditorTooltip");
 const { LocalizationHelper } = require("devtools/shared/l10n");
 const L10N = new LocalizationHelper(
@@ -107,23 +107,24 @@ class SwatchColorPickerTooltip extends SwatchBasedEditorTooltip {
     const name = this.activeSwatch.dataset.propertyName;
 
     if (this.isContrastCompatible === undefined) {
-      const target = this.inspector.target;
+      const target = this.inspector.currentTarget;
       this.isContrastCompatible = await target.actorHasMethod(
         "domnode",
-        "getClosestBackgroundColor"
+        "getBackgroundColor"
       );
     }
 
-    // Only enable contrast and set spectrum text props if selected node is
+    // Only enable contrast and set text props and bg color if selected node is
     // contrast compatible and if the type of property is color.
     this.spectrum.contrastEnabled =
       name === "color" && this.isContrastCompatible;
-    this.spectrum.textProps = this.spectrum.contrastEnabled
-      ? await this.inspector.pageStyle.getComputed(
-          this.inspector.selection.nodeFront,
-          { filterProperties: ["font-size", "font-weight"] }
-        )
-      : null;
+    if (this.spectrum.contrastEnabled) {
+      this.spectrum.textProps = await this.inspector.pageStyle.getComputed(
+        this.inspector.selection.nodeFront,
+        { filterProperties: ["font-size", "font-weight", "opacity"] }
+      );
+      this.spectrum.backgroundColorData = await this.inspector.selection.nodeFront.getBackgroundColor();
+    }
 
     // Then set spectrum's color and listen to color changes to preview them
     if (this.activeSwatch) {
@@ -238,7 +239,10 @@ class SwatchColorPickerTooltip extends SwatchBasedEditorTooltip {
       .add(true);
 
     // cancelling picker(if it is already selected) on opening eye-dropper
-    inspectorFront.nodePicker.cancel();
+    toolbox.nodePicker.cancel();
+
+    // disable simulating touch events if RDM is active
+    toolbox.tellRDMAboutPickerState(true);
 
     // pickColorFromPage will focus the content document. If the devtools are in a
     // separate window, the colorpicker tooltip will be closed before pickColorFromPage
@@ -269,6 +273,9 @@ class SwatchColorPickerTooltip extends SwatchBasedEditorTooltip {
   }
 
   _onEyeDropperDone() {
+    // enable simulating touch events if RDM is active
+    this.inspector.toolbox.tellRDMAboutPickerState(false);
+
     this.eyedropperOpen = false;
     this.activeSwatch = null;
   }

@@ -2,64 +2,114 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { FilterExpressions } = ChromeUtils.import(
-  "resource://gre/modules/components-utils/FilterExpressions.jsm"
-);
+const SEARCH_REGION_PREF = "browser.search.region";
+const FXA_ENABLED_PREF = "identity.fxaccounts.enabled";
+
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
-ChromeUtils.defineModuleGetter(
+XPCOMUtils.defineLazyModuleGetters(this, {
+  ASRouterPreferences: "resource://activity-stream/lib/ASRouterPreferences.jsm",
+  AddonManager: "resource://gre/modules/AddonManager.jsm",
+  NewTabUtils: "resource://gre/modules/NewTabUtils.jsm",
+  ProfileAge: "resource://gre/modules/ProfileAge.jsm",
+  ShellService: "resource:///modules/ShellService.jsm",
+  TelemetryEnvironment: "resource://gre/modules/TelemetryEnvironment.jsm",
+  AppConstants: "resource://gre/modules/AppConstants.jsm",
+  AttributionCode: "resource:///modules/AttributionCode.jsm",
+  FilterExpressions:
+    "resource://gre/modules/components-utils/FilterExpressions.jsm",
+  fxAccounts: "resource://gre/modules/FxAccounts.jsm",
+});
+
+XPCOMUtils.defineLazyPreferenceGetter(
   this,
-  "ASRouterPreferences",
-  "resource://activity-stream/lib/ASRouterPreferences.jsm"
+  "cfrFeaturesUserPref",
+  "browser.newtabpage.activity-stream.asrouter.userprefs.cfr.features",
+  true
 );
-ChromeUtils.defineModuleGetter(
+XPCOMUtils.defineLazyPreferenceGetter(
   this,
-  "AddonManager",
-  "resource://gre/modules/AddonManager.jsm"
+  "cfrAddonsUserPref",
+  "browser.newtabpage.activity-stream.asrouter.userprefs.cfr.addons",
+  true
 );
-ChromeUtils.defineModuleGetter(
+XPCOMUtils.defineLazyPreferenceGetter(
   this,
-  "NewTabUtils",
-  "resource://gre/modules/NewTabUtils.jsm"
+  "isWhatsNewPanelEnabled",
+  "browser.messaging-system.whatsNewPanel.enabled",
+  false
 );
-ChromeUtils.defineModuleGetter(
+XPCOMUtils.defineLazyPreferenceGetter(
   this,
-  "ProfileAge",
-  "resource://gre/modules/ProfileAge.jsm"
+  "isFxABadgeEnabled",
+  "browser.messaging-system.fxatoolbarbadge.enabled",
+  true
 );
-ChromeUtils.defineModuleGetter(
+XPCOMUtils.defineLazyPreferenceGetter(
   this,
-  "ShellService",
-  "resource:///modules/ShellService.jsm"
+  "hasAccessedFxAPanel",
+  "identity.fxaccounts.toolbar.accessed",
+  false
 );
-ChromeUtils.defineModuleGetter(
+XPCOMUtils.defineLazyPreferenceGetter(
   this,
-  "TelemetryEnvironment",
-  "resource://gre/modules/TelemetryEnvironment.jsm"
+  "clientsDevicesDesktop",
+  "services.sync.clients.devices.desktop",
+  0
 );
-ChromeUtils.defineModuleGetter(
+XPCOMUtils.defineLazyPreferenceGetter(
   this,
-  "AppConstants",
-  "resource://gre/modules/AppConstants.jsm"
+  "clientsDevicesMobile",
+  "services.sync.clients.devices.mobile",
+  0
 );
-ChromeUtils.defineModuleGetter(
+XPCOMUtils.defineLazyPreferenceGetter(
   this,
-  "AttributionCode",
-  "resource:///modules/AttributionCode.jsm"
+  "syncNumClients",
+  "services.sync.numClients",
+  0
+);
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "devtoolsSelfXSSCount",
+  "devtools.selfxss.count",
+  0
+);
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "browserSearchRegion",
+  SEARCH_REGION_PREF,
+  ""
+);
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "isFxAEnabled",
+  FXA_ENABLED_PREF,
+  true
+);
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "isXPIInstallEnabled",
+  "xpinstall.enabled",
+  true
+);
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "snippetsUserPref",
+  "browser.newtabpage.activity-stream.feeds.snippets",
+  true
 );
 XPCOMUtils.defineLazyServiceGetter(
   this,
-  "UpdateManager",
-  "@mozilla.org/updates/update-manager;1",
-  "nsIUpdateManager"
+  "TrackingDBService",
+  "@mozilla.org/tracking-db-service;1",
+  "nsITrackingDBService"
 );
 
 const FXA_USERNAME_PREF = "services.sync.username";
-const FXA_ENABLED_PREF = "identity.fxaccounts.enabled";
-const SEARCH_REGION_PREF = "browser.search.region";
 const MOZ_JEXL_FILEPATH = "mozjexl";
 
 const { activityStreamProvider: asProvider } = NewTabUtils;
@@ -120,7 +170,7 @@ function CheckBrowserNeedsUpdate(
         const now = Date.now();
         const updateServiceListener = {
           onCheckComplete(request, updates) {
-            checker._value = updates.length > 0;
+            checker._value = !!updates.length;
             resolve(checker._value);
           },
           onError(request, update) {
@@ -162,6 +212,7 @@ const QueryCache = {
     }),
     TotalBookmarksCount: new CachedTargetingGetter("getTotalBookmarksCount"),
     CheckBrowserNeedsUpdate: new CheckBrowserNeedsUpdate(),
+    RecentBookmarks: new CachedTargetingGetter("getRecentBookmarks"),
   },
 };
 
@@ -276,24 +327,18 @@ const TargetingGetters = {
     return Services.prefs.prefHasUserValue(FXA_USERNAME_PREF);
   },
   get isFxAEnabled() {
-    return Services.prefs.getBoolPref(FXA_ENABLED_PREF, true);
+    return isFxAEnabled;
   },
   get sync() {
     return {
-      desktopDevices: Services.prefs.getIntPref(
-        "services.sync.clients.devices.desktop",
-        0
-      ),
-      mobileDevices: Services.prefs.getIntPref(
-        "services.sync.clients.devices.mobile",
-        0
-      ),
-      totalDevices: Services.prefs.getIntPref("services.sync.numClients", 0),
+      desktopDevices: clientsDevicesDesktop,
+      mobileDevices: clientsDevicesMobile,
+      totalDevices: syncNumClients,
     };
   },
   get xpinstallEnabled() {
     // This is needed for all add-on recommendations, to know if we allow xpi installs in the first place
-    return Services.prefs.getBoolPref("xpinstall.enabled", true);
+    return isXPIInstallEnabled;
   },
   get addonsInfo() {
     return AddonManager.getActiveAddons(["extension", "service"]).then(
@@ -341,7 +386,7 @@ const TargetingGetters = {
     return null;
   },
   get devToolsOpenedCount() {
-    return Services.prefs.getIntPref("devtools.selfxss.count");
+    return devtoolsSelfXSSCount;
   },
   get topFrecentSites() {
     return QueryCache.queries.TopFrecentSites.get().then(sites =>
@@ -352,6 +397,9 @@ const TargetingGetters = {
         lastVisitDate: site.lastVisitDate,
       }))
     );
+  },
+  get recentBookmarks() {
+    return QueryCache.queries.RecentBookmarks.get();
   },
   get pinnedSites() {
     return NewTabUtils.pinnedLinks.links.map(site =>
@@ -377,7 +425,7 @@ const TargetingGetters = {
     return parseInt(AppConstants.MOZ_APP_VERSION.match(/\d+/), 10);
   },
   get region() {
-    return Services.prefs.getStringPref(SEARCH_REGION_PREF, "");
+    return browserSearchRegion;
   },
   get needsUpdate() {
     return QueryCache.queries.CheckBrowserNeedsUpdate.get();
@@ -395,32 +443,29 @@ const TargetingGetters = {
     return false;
   },
   get hasAccessedFxAPanel() {
-    return Services.prefs.getBoolPref(
-      "identity.fxaccounts.toolbar.accessed",
-      true
-    );
+    return hasAccessedFxAPanel;
   },
   get isWhatsNewPanelEnabled() {
-    return Services.prefs.getBoolPref(
-      "browser.messaging-system.whatsNewPanel.enabled",
-      false
-    );
-  },
-  get earliestFirefoxVersion() {
-    if (UpdateManager.updateCount) {
-      const earliestFirefoxVersion = UpdateManager.getUpdateAt(
-        UpdateManager.updateCount - 1
-      ).previousAppVersion;
-      return parseInt(earliestFirefoxVersion.match(/\d+/), 10);
-    }
-
-    return null;
+    return isWhatsNewPanelEnabled;
   },
   get isFxABadgeEnabled() {
-    return Services.prefs.getBoolPref(
-      "browser.messaging-system.fxatoolbarbadge.enabled",
-      false
-    );
+    return isFxABadgeEnabled;
+  },
+  get userPrefs() {
+    return {
+      cfrFeatures: cfrFeaturesUserPref,
+      cfrAddons: cfrAddonsUserPref,
+      snippets: snippetsUserPref,
+    };
+  },
+  get totalBlockedCount() {
+    return TrackingDBService.sumAllEvents();
+  },
+  get attachedFxAOAuthClients() {
+    return this.usesFirefoxSync ? fxAccounts.listAttachedOAuthClients() : [];
+  },
+  get platformName() {
+    return AppConstants.platform;
   },
 };
 
@@ -479,8 +524,15 @@ this.ASRouterTargeting = {
 
     return (
       (candidateMessageTrigger.params &&
+        trigger.param.host &&
         candidateMessageTrigger.params.includes(trigger.param.host)) ||
+      (candidateMessageTrigger.params &&
+        trigger.param.type &&
+        candidateMessageTrigger.params.filter(
+          t => (t & trigger.param.type) === t
+        ).length) ||
       (candidateMessageTrigger.patterns &&
+        trigger.param.url &&
         new MatchPatternSet(candidateMessageTrigger.patterns).matches(
           trigger.param.url
         ))

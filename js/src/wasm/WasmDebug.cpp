@@ -43,6 +43,20 @@ DebugState::DebugState(const Code& code, const Module& module)
   MOZ_ASSERT(code.metadata().debugEnabled);
 }
 
+void DebugState::trace(JSTracer* trc) {
+  for (auto iter = breakpointSites_.iter(); !iter.done(); iter.next()) {
+    WasmBreakpointSite* site = iter.get().value();
+    site->trace(trc);
+  }
+}
+
+void DebugState::finalize(JSFreeOp* fop) {
+  for (auto iter = breakpointSites_.iter(); !iter.done(); iter.next()) {
+    WasmBreakpointSite* site = iter.get().value();
+    site->delete_(fop);
+  }
+}
+
 static const uint32_t DefaultBinarySourceColumnNumber = 1;
 
 static const CallSite* SlowCallSiteSearchByOffset(const MetadataTier& metadata,
@@ -56,8 +70,7 @@ static const CallSite* SlowCallSiteSearchByOffset(const MetadataTier& metadata,
   return nullptr;
 }
 
-bool DebugState::getLineOffsets(JSContext* cx, size_t lineno,
-                                Vector<uint32_t>* offsets) {
+bool DebugState::getLineOffsets(size_t lineno, Vector<uint32_t>* offsets) {
   const CallSite* callsite =
       SlowCallSiteSearchByOffset(metadata(Tier::Debug), lineno);
   if (callsite && !offsets->append(lineno)) {
@@ -66,7 +79,7 @@ bool DebugState::getLineOffsets(JSContext* cx, size_t lineno,
   return true;
 }
 
-bool DebugState::getAllColumnOffsets(JSContext* cx, Vector<ExprLoc>* offsets) {
+bool DebugState::getAllColumnOffsets(Vector<ExprLoc>* offsets) {
   for (const CallSite& callSite : metadata(Tier::Debug).callSites) {
     if (callSite.kind() != CallSite::Breakpoint) {
       continue;
@@ -113,7 +126,6 @@ bool DebugState::incrementStepperCount(JSContext* cx, uint32_t funcIndex) {
   AutoWritableJitCode awjc(
       cx->runtime(), code_->segment(Tier::Debug).base() + codeRange.begin(),
       codeRange.end() - codeRange.begin());
-  AutoFlushICache afc("Code::incrementStepperCount");
 
   for (const CallSite& callSite : callSites(Tier::Debug)) {
     if (callSite.kind() != CallSite::Breakpoint) {
@@ -127,7 +139,7 @@ bool DebugState::incrementStepperCount(JSContext* cx, uint32_t funcIndex) {
   return true;
 }
 
-bool DebugState::decrementStepperCount(FreeOp* fop, uint32_t funcIndex) {
+void DebugState::decrementStepperCount(JSFreeOp* fop, uint32_t funcIndex) {
   const CodeRange& codeRange =
       codeRanges(Tier::Debug)[funcToCodeRangeIndex(funcIndex)];
   MOZ_ASSERT(codeRange.isFunction());
@@ -136,7 +148,7 @@ bool DebugState::decrementStepperCount(FreeOp* fop, uint32_t funcIndex) {
   StepperCounters::Ptr p = stepperCounters_.lookup(funcIndex);
   MOZ_ASSERT(p);
   if (--p->value()) {
-    return true;
+    return;
   }
 
   stepperCounters_.remove(p);
@@ -144,7 +156,6 @@ bool DebugState::decrementStepperCount(FreeOp* fop, uint32_t funcIndex) {
   AutoWritableJitCode awjc(
       fop->runtime(), code_->segment(Tier::Debug).base() + codeRange.begin(),
       codeRange.end() - codeRange.begin());
-  AutoFlushICache afc("Code::decrementStepperCount");
 
   for (const CallSite& callSite : callSites(Tier::Debug)) {
     if (callSite.kind() != CallSite::Breakpoint) {
@@ -156,7 +167,6 @@ bool DebugState::decrementStepperCount(FreeOp* fop, uint32_t funcIndex) {
       toggleDebugTrap(offset, enabled);
     }
   }
-  return true;
 }
 
 bool DebugState::hasBreakpointTrapAtOffset(uint32_t offset) {
@@ -182,14 +192,10 @@ void DebugState::toggleBreakpointTrap(JSRuntime* rt, uint32_t offset,
   }
 
   AutoWritableJitCode awjc(rt, codeSegment.base(), codeSegment.length());
-  AutoFlushICache afc("Code::toggleBreakpointTrap");
-  AutoFlushICache::setRange(uintptr_t(codeSegment.base()),
-                            codeSegment.length());
   toggleDebugTrap(debugTrapOffset, enabled);
 }
 
-WasmBreakpointSite* DebugState::getBreakpointSite(JSContext* cx,
-                                                  uint32_t offset) const {
+WasmBreakpointSite* DebugState::getBreakpointSite(uint32_t offset) const {
   WasmBreakpointSiteMap::Ptr p = breakpointSites_.lookup(offset);
   if (!p) {
     return nullptr;
@@ -205,7 +211,7 @@ WasmBreakpointSite* DebugState::getOrCreateBreakpointSite(JSContext* cx,
 
   WasmBreakpointSiteMap::AddPtr p = breakpointSites_.lookupForAdd(offset);
   if (!p) {
-    site = cx->new_<WasmBreakpointSite>(instance, offset);
+    site = cx->new_<WasmBreakpointSite>(instance->object(), offset);
     if (!site) {
       return nullptr;
     }
@@ -218,6 +224,8 @@ WasmBreakpointSite* DebugState::getOrCreateBreakpointSite(JSContext* cx,
 
     AddCellMemory(instance->object(), sizeof(WasmBreakpointSite),
                   MemoryUse::BreakpointSite);
+
+    toggleBreakpointTrap(cx->runtime(), offset, true);
   } else {
     site = p->value();
   }
@@ -228,31 +236,39 @@ bool DebugState::hasBreakpointSite(uint32_t offset) {
   return breakpointSites_.has(offset);
 }
 
-void DebugState::destroyBreakpointSite(FreeOp* fop, Instance* instance,
+void DebugState::destroyBreakpointSite(JSFreeOp* fop, Instance* instance,
                                        uint32_t offset) {
   WasmBreakpointSiteMap::Ptr p = breakpointSites_.lookup(offset);
   MOZ_ASSERT(p);
   fop->delete_(instance->objectUnbarriered(), p->value(),
                MemoryUse::BreakpointSite);
   breakpointSites_.remove(p);
+  toggleBreakpointTrap(fop->runtime(), offset, false);
 }
 
-void DebugState::clearBreakpointsIn(FreeOp* fop, WasmInstanceObject* instance,
+void DebugState::clearBreakpointsIn(JSFreeOp* fop, WasmInstanceObject* instance,
                                     js::Debugger* dbg, JSObject* handler) {
   MOZ_ASSERT(instance);
+
+  // Breakpoints hold wrappers in the instance's compartment for the handler.
+  // Make sure we don't try to search for the unwrapped handler.
+  MOZ_ASSERT_IF(handler, instance->compartment() == handler->compartment());
+
   if (breakpointSites_.empty()) {
     return;
   }
   for (WasmBreakpointSiteMap::Enum e(breakpointSites_); !e.empty();
        e.popFront()) {
     WasmBreakpointSite* site = e.front().value();
+    MOZ_ASSERT(site->instanceObject == instance);
+
     Breakpoint* nextbp;
     for (Breakpoint* bp = site->firstBreakpoint(); bp; bp = nextbp) {
       nextbp = bp->nextInSite();
-      if (bp->asWasm()->wasmInstance == instance &&
-          (!dbg || bp->debugger == dbg) &&
+      MOZ_ASSERT(bp->site == site);
+      if ((!dbg || bp->debugger == dbg) &&
           (!handler || bp->getHandler() == handler)) {
-        bp->destroy(fop, Breakpoint::MayDestroySite::False);
+        bp->delete_(fop);
       }
     }
     if (site->isEmpty()) {
@@ -262,7 +278,7 @@ void DebugState::clearBreakpointsIn(FreeOp* fop, WasmInstanceObject* instance,
   }
 }
 
-void DebugState::clearAllBreakpoints(FreeOp* fop,
+void DebugState::clearAllBreakpoints(JSFreeOp* fop,
                                      WasmInstanceObject* instance) {
   clearBreakpointsIn(fop, instance, nullptr, nullptr);
 }
@@ -306,9 +322,6 @@ void DebugState::adjustEnterAndLeaveFrameTrapsState(JSContext* cx,
   const ModuleSegment& codeSegment = code_->segment(Tier::Debug);
   AutoWritableJitCode awjc(cx->runtime(), codeSegment.base(),
                            codeSegment.length());
-  AutoFlushICache afc("Code::adjustEnterAndLeaveFrameTrapsState");
-  AutoFlushICache::setRange(uintptr_t(codeSegment.base()),
-                            codeSegment.length());
   for (const CallSite& callSite : callSites(Tier::Debug)) {
     if (callSite.kind() != CallSite::EnterFrame &&
         callSite.kind() != CallSite::LeaveFrame) {
@@ -347,8 +360,9 @@ bool DebugState::debugGetLocalTypes(uint32_t funcIndex, ValTypeVector* locals,
   return DecodeValidatedLocalEntries(d, locals);
 }
 
-ExprType DebugState::debugGetResultType(uint32_t funcIndex) {
-  return metadata().debugFuncReturnTypes[funcIndex];
+bool DebugState::debugGetResultTypes(uint32_t funcIndex,
+                                     ValTypeVector* results) {
+  return results->appendAll(metadata().debugFuncReturnTypes[funcIndex]);
 }
 
 bool DebugState::getGlobal(Instance& instance, uint32_t globalIndex,
@@ -455,11 +469,9 @@ bool DebugState::getSourceMappingURL(JSContext* cx,
 
 void DebugState::addSizeOfMisc(MallocSizeOf mallocSizeOf,
                                Metadata::SeenSet* seenMetadata,
-                               ShareableBytes::SeenSet* seenBytes,
                                Code::SeenSet* seenCode, size_t* code,
                                size_t* data) const {
   code_->addSizeOfMiscIfNotSeen(mallocSizeOf, seenMetadata, seenCode, code,
                                 data);
-  module_->addSizeOfMisc(mallocSizeOf, seenMetadata, seenBytes, seenCode, code,
-                         data);
+  module_->addSizeOfMisc(mallocSizeOf, seenMetadata, seenCode, code, data);
 }

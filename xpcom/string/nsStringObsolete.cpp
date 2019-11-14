@@ -852,14 +852,13 @@ void nsTString<T>::ReplaceChar(const char* aSet, char16_t aNewChar) {
   }
 }
 
-/**
- * nsTString::Compare,CompareWithConversion,etc.
- */
+namespace mozilla {
+namespace detail {
 
 template <typename T>
 template <typename Q, typename EnableIfChar>
-int32_t nsTString<T>::Compare(const char_type* aString, bool aIgnoreCase,
-                              int32_t aCount) const {
+int32_t nsTStringRepr<T>::Compare(const char_type* aString, bool aIgnoreCase,
+                                  int32_t aCount) const {
   uint32_t strLen = char_traits::length(aString);
 
   int32_t maxCount = int32_t(XPCOM_MIN(this->mLength, strLen));
@@ -886,8 +885,8 @@ int32_t nsTString<T>::Compare(const char_type* aString, bool aIgnoreCase,
 
 template <typename T>
 template <typename Q, typename EnableIfChar16>
-bool nsTString<T>::EqualsIgnoreCase(const incompatible_char_type* aString,
-                                    int32_t aCount) const {
+bool nsTStringRepr<T>::EqualsIgnoreCase(const incompatible_char_type* aString,
+                                        int32_t aCount) const {
   uint32_t strLen = nsCharTraits<char>::length(aString);
 
   int32_t maxCount = int32_t(XPCOM_MIN(this->mLength, strLen));
@@ -913,27 +912,41 @@ bool nsTString<T>::EqualsIgnoreCase(const incompatible_char_type* aString,
   return result == 0;
 }
 
+}  // namespace detail
+}  // namespace mozilla
+
 /**
  * nsTString::ToDouble
  */
 
 template <>
-double nsTString<char>::ToDouble(nsresult* aErrorCode) const {
+double nsTString<char>::ToDouble(TrailingCharsPolicy aTrailingCharsPolicy,
+                                 nsresult* aErrorCode) const {
   double res = 0.0;
   if (this->mLength > 0) {
     char* conv_stopped;
     const char* str = this->mData;
     // Use PR_strtod, not strtod, since we don't want locale involved.
     res = PR_strtod(str, &conv_stopped);
-    if (conv_stopped == str + this->mLength)
+    if (aTrailingCharsPolicy == TrailingCharsPolicy::Allow &&
+        conv_stopped != str) {
       *aErrorCode = NS_OK;
-    else  // Not all the string was scanned
+    } else if (aTrailingCharsPolicy == TrailingCharsPolicy::Disallow &&
+               conv_stopped == str + this->mLength) {
+      *aErrorCode = NS_OK;
+    } else {
       *aErrorCode = NS_ERROR_ILLEGAL_VALUE;
+    }
   } else {
     // The string was too short (0 characters)
     *aErrorCode = NS_ERROR_ILLEGAL_VALUE;
   }
   return res;
+}
+
+template <>
+double nsTString<char>::ToDouble(nsresult* aErrorCode) const {
+  return ToDouble(TrailingCharsPolicy::Disallow, aErrorCode);
 }
 
 template <>
@@ -944,6 +957,23 @@ double nsTString<char16_t>::ToDouble(nsresult* aErrorCode) const {
 template <typename T>
 float nsTString<T>::ToFloat(nsresult* aErrorCode) const {
   return (float)ToDouble(aErrorCode);
+}
+
+template <>
+double nsTString<char>::ToDoubleAllowTrailingChars(nsresult* aErrorCode) const {
+  return ToDouble(TrailingCharsPolicy::Allow, aErrorCode);
+}
+
+template <>
+double nsTString<char16_t>::ToDoubleAllowTrailingChars(
+    nsresult* aErrorCode) const {
+  return NS_LossyConvertUTF16toASCII(*this).ToDoubleAllowTrailingChars(
+      aErrorCode);
+}
+
+template <typename T>
+float nsTString<T>::ToFloatAllowTrailingChars(nsresult* aErrorCode) const {
+  return (float)ToDoubleAllowTrailingChars(aErrorCode);
 }
 
 template class nsTString<char>;

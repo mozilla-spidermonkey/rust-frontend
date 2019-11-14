@@ -20,14 +20,15 @@
 -->
 
 <window xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+        xmlns:html="http://www.w3.org/1999/xhtml"
         id="main-window"
         align="stretch"
         title="&ldb.MainWindow.title;"
         titlemodifier="&ldb.MainWindow.title;"
-        contenttitlesetting="true"
         titlemenuseparator=" - "
         windowtype="mozapp:layoutdebug"
         onload="OnLDBLoad();"
+        onclose="OnLDBBeforeUnload(event);"
         onunload="OnLDBUnload();"
         width="1024" height="768"
         screenX="4" screenY="4"
@@ -75,11 +76,13 @@
             <menuitem type="checkbox" id="menu_crossingEventDumping" label="&ldb.crossingEventDumping.label;" accesskey="&ldb.crossingEventDumping.accesskey;" oncommand="toggle(this);" />
             <menuseparator />
             <menuitem type="checkbox" id="menu_reflowCounts" label="&ldb.reflowCounts.label;" accesskey="&ldb.reflowCounts.accesskey;" oncommand="toggle(this);" />
+            <menuitem type="checkbox" id="menu_pagedMode" label="&ldb.pagedMode.label;" accesskey="&ldb.pagedMode.accesskey;" oncommand="toggle(this);" />
           </menupopup>
         </menu>
         <menu label="&ldb.DumpMenu.label;"
               accesskey="&ldb.DumpMenu.accesskey;">
           <menupopup>
+            <menuitem id="menu_processIDs" label="Process IDs" accesskey="P" oncommand="gDebugger.dumpProcessIDs();" />
             <menuitem id="menu_dumpWebShells" label="&ldb.dumpWebShells.label;" accesskey="&ldb.dumpWebShells.accesskey;" oncommand="gDebugger.dumpWebShells();" />
             <menuitem id="menu_dumpContent" label="&ldb.dumpContent.label;" accesskey="&ldb.dumpContent.accesskey;" oncommand="gDebugger.dumpContent();" />
             <menuitem id="menu_dumpFrames" label="&ldb.dumpFrames.label;" accesskey="&ldb.dumpFrames.accesskey;" oncommand="gDebugger.dumpFrames();" />
@@ -112,7 +115,7 @@
                        label="&ldb.StopButton.label;"
                        oncommand="gBrowser.stop();" />
 
-        <textbox id="urlbar" flex="1" onkeypress="if (event.keyCode == 13) go();"/>
+        <html:input id="urlbar" style="-moz-box-flex: 1;" onkeypress="if (event.keyCode == 13) go();"/>
       </toolbar>
     </toolbox>
 

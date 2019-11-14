@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 use std::ffi::{CStr, CString};
 #[cfg(not(target_os = "macos"))]
 use std::ffi::OsString;
@@ -22,10 +26,10 @@ use gleam::gl;
 
 use webrender::{
     api::*, api::units::*, ApiRecordingReceiver, AsyncPropertySampler, AsyncScreenshotHandle,
-    BinaryRecorder, DebugFlags, Device, ExternalImage, ExternalImageHandler, ExternalImageSource,
-    PipelineInfo, ProfilerHooks, RecordedFrameHandle, Renderer, RendererOptions, RendererStats,
+    BinaryRecorder, Compositor, DebugFlags, Device, ExternalImage, ExternalImageHandler, ExternalImageSource,
+    NativeSurfaceId, PipelineInfo, ProfilerHooks, RecordedFrameHandle, Renderer, RendererOptions, RendererStats,
     SceneBuilderHooks, ShaderPrecacheFlags, Shaders, ThreadListener, UploadMethod, VertexUsageHint,
-    WrShaders, set_profiler_hooks,
+    WrShaders, set_profiler_hooks, CompositorConfig, NativeSurfaceInfo
 };
 use thread_profiler::register_thread_with_profiler;
 use moz2d_renderer::Moz2dBlobImageHandler;
@@ -367,22 +371,6 @@ impl<'a> Into<ImageDescriptor> for &'a WrImageDescriptor {
     }
 }
 
-/// cbindgen:field-names=[mHandle]
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct WrExternalImageId(pub u64);
-
-impl Into<ExternalImageId> for WrExternalImageId {
-    fn into(self) -> ExternalImageId {
-        ExternalImageId(self.0)
-    }
-}
-impl Into<WrExternalImageId> for ExternalImageId {
-    fn into(self) -> WrExternalImageId {
-        WrExternalImageId(self.0)
-    }
-}
-
 #[repr(u32)]
 #[allow(dead_code)]
 enum WrExternalImageType {
@@ -411,12 +399,12 @@ struct WrExternalImage {
 extern "C" {
     fn wr_renderer_lock_external_image(
         renderer: *mut c_void,
-        external_image_id: WrExternalImageId,
+        external_image_id: ExternalImageId,
         channel_index: u8,
         rendering: ImageRendering) -> WrExternalImage;
     fn wr_renderer_unlock_external_image(
         renderer: *mut c_void,
-        external_image_id: WrExternalImageId,
+        external_image_id: ExternalImageId,
         channel_index: u8);
 }
 
@@ -433,7 +421,7 @@ impl ExternalImageHandler for WrExternalImageHandler {
             rendering: ImageRendering)
             -> ExternalImage {
 
-        let image = unsafe { wr_renderer_lock_external_image(self.external_image_obj, id.into(), channel_index, rendering) };
+        let image = unsafe { wr_renderer_lock_external_image(self.external_image_obj, id, channel_index, rendering) };
         ExternalImage {
             uv: TexelRect::new(image.u0, image.v0, image.u1, image.v1),
             source: match image.image_type {
@@ -448,7 +436,7 @@ impl ExternalImageHandler for WrExternalImageHandler {
               id: ExternalImageId,
               channel_index: u8) {
         unsafe {
-            wr_renderer_unlock_external_image(self.external_image_obj, id.into(), channel_index);
+            wr_renderer_unlock_external_image(self.external_image_obj, id, channel_index);
         }
     }
 }
@@ -530,7 +518,7 @@ fn get_proc_address(glcontext_ptr: *mut c_void,
 pub enum TelemetryProbe {
     SceneBuildTime = 0,
     SceneSwapTime = 1,
-    RenderTime = 2,
+    FrameBuildTime = 2,
 }
 
 extern "C" {
@@ -598,7 +586,7 @@ impl RenderNotifier for CppNotifier {
                        render_time_ns: Option<u64>) {
         unsafe {
             if let Some(time) = render_time_ns {
-                record_telemetry_time(TelemetryProbe::RenderTime, time);
+                record_telemetry_time(TelemetryProbe::FrameBuildTime, time);
             }
             if composite_needed {
                 wr_notifier_new_frame_ready(self.window_id);
@@ -627,19 +615,34 @@ pub extern "C" fn wr_renderer_update(renderer: &mut Renderer) {
     renderer.update();
 }
 
+#[repr(C)]
+pub struct WrRenderResult {
+    result: bool,
+    dirty_rects: FfiVec<DeviceIntRect>,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn wr_render_result_delete(_result: WrRenderResult) {
+    // _result will be dropped here, and the drop impl on FfiVec will free
+    // the underlying vec memory
+}
+
 #[no_mangle]
 pub extern "C" fn wr_renderer_render(renderer: &mut Renderer,
                                      width: i32,
                                      height: i32,
                                      had_slow_frame: bool,
-                                     out_stats: &mut RendererStats) -> bool {
+                                     out_stats: &mut RendererStats) -> WrRenderResult {
     if had_slow_frame {
       renderer.notify_slow_frame();
     }
     match renderer.render(DeviceIntSize::new(width, height)) {
         Ok(results) => {
             *out_stats = results.stats;
-            true
+            WrRenderResult {
+                result: true,
+                dirty_rects: FfiVec::from_vec(results.dirty_rects),
+            }
         }
         Err(errors) => {
             for e in errors {
@@ -649,9 +652,17 @@ pub extern "C" fn wr_renderer_render(renderer: &mut Renderer,
                     gfx_critical_note(msg.as_ptr());
                 }
             }
-            false
+            WrRenderResult {
+                result: false,
+                dirty_rects: FfiVec::from_vec(vec![]),
+            }
         },
     }
+}
+
+#[no_mangle]
+pub extern "C" fn wr_renderer_force_redraw(renderer: &mut Renderer) {
+    renderer.force_redraw();
 }
 
 #[no_mangle]
@@ -1148,8 +1159,135 @@ fn wr_device_new(gl_context: *mut c_void, pc: Option<&mut WrProgramCache>)
       None => None,
     };
 
-    Device::new(gl, resource_override_path, upload_method, cached_programs, false, true, true, None)
+    Device::new(gl, resource_override_path, upload_method, cached_programs, false, true, true, None, false)
 }
+
+extern "C" {
+    fn wr_compositor_create_surface(
+        compositor: *mut c_void,
+        id: NativeSurfaceId,
+        size: DeviceIntSize,
+        is_opaque: bool,
+    );
+    fn wr_compositor_destroy_surface(
+        compositor: *mut c_void,
+        id: NativeSurfaceId,
+    );
+    fn wr_compositor_bind(
+        compositor: *mut c_void,
+        id: NativeSurfaceId,
+        offset: &mut DeviceIntPoint,
+        fbo_id: &mut u32,
+        dirty_rect: DeviceIntRect,
+    );
+    fn wr_compositor_unbind(compositor: *mut c_void);
+    fn wr_compositor_begin_frame(compositor: *mut c_void);
+    fn wr_compositor_add_surface(
+        compositor: *mut c_void,
+        id: NativeSurfaceId,
+        position: DeviceIntPoint,
+        clip_rect: DeviceIntRect,
+    );
+    fn wr_compositor_end_frame(compositor: *mut c_void);
+}
+
+pub struct WrCompositor(*mut c_void);
+
+impl Compositor for WrCompositor {
+    fn create_surface(
+        &mut self,
+        id: NativeSurfaceId,
+        size: DeviceIntSize,
+        is_opaque: bool,
+    ) {
+        unsafe {
+            wr_compositor_create_surface(
+                self.0,
+                id,
+                size,
+                is_opaque,
+            );
+        }
+    }
+
+    fn destroy_surface(
+        &mut self,
+        id: NativeSurfaceId,
+    ) {
+        unsafe {
+            wr_compositor_destroy_surface(
+                self.0,
+                id,
+            );
+        }
+    }
+
+    fn bind(
+        &mut self,
+        id: NativeSurfaceId,
+        dirty_rect: DeviceIntRect,
+    ) -> NativeSurfaceInfo {
+        let mut surface_info = NativeSurfaceInfo {
+            origin: DeviceIntPoint::zero(),
+            fbo_id: 0,
+        };
+
+        unsafe {
+            wr_compositor_bind(
+                self.0,
+                id,
+                &mut surface_info.origin,
+                &mut surface_info.fbo_id,
+                dirty_rect,
+            );
+        }
+
+        surface_info
+    }
+
+    fn unbind(
+        &mut self,
+    ) {
+        unsafe {
+            wr_compositor_unbind(
+                self.0,
+            );
+        }
+    }
+
+    fn begin_frame(&mut self) {
+        unsafe {
+            wr_compositor_begin_frame(
+                self.0,
+            );
+        }
+    }
+
+    fn add_surface(
+        &mut self,
+        id: NativeSurfaceId,
+        position: DeviceIntPoint,
+        clip_rect: DeviceIntRect,
+    ) {
+        unsafe {
+            wr_compositor_add_surface(
+                self.0,
+                id,
+                position,
+                clip_rect,
+            );
+        }
+    }
+
+    fn end_frame(&mut self) {
+        unsafe {
+            wr_compositor_end_frame(
+                self.0,
+            );
+        }
+    }
+}
+
 
 // Call MakeCurrent before this.
 #[no_mangle]
@@ -1157,18 +1295,24 @@ pub extern "C" fn wr_window_new(window_id: WrWindowId,
                                 window_width: i32,
                                 window_height: i32,
                                 support_low_priority_transactions: bool,
+                                allow_texture_swizzling: bool,
                                 enable_picture_caching: bool,
                                 start_debug_server: bool,
                                 gl_context: *mut c_void,
+                                surface_origin_is_top_left: bool,
                                 program_cache: Option<&mut WrProgramCache>,
                                 shaders: Option<&mut WrShaders>,
                                 thread_pool: *mut WrThreadPool,
                                 size_of_op: VoidPtrToSizeFn,
                                 enclosing_size_of_op: VoidPtrToSizeFn,
                                 document_id: u32,
+                                compositor: *mut c_void,
+                                max_update_rects: usize,
+                                max_partial_present_rects: usize,
                                 out_handle: &mut *mut DocumentHandle,
                                 out_renderer: &mut *mut Renderer,
-                                out_max_texture_size: *mut i32)
+                                out_max_texture_size: *mut i32,
+                                enable_gpu_markers: bool)
                                 -> bool {
     assert!(unsafe { is_in_render_thread() });
 
@@ -1218,10 +1362,23 @@ pub extern "C" fn wr_window_new(window_id: WrWindowId,
         ColorF::new(0.0, 0.0, 0.0, 0.0)
     };
 
+    let compositor_config = if compositor != ptr::null_mut() {
+        CompositorConfig::Native {
+            max_update_rects,
+            compositor: Box::new(WrCompositor(compositor)),
+        }
+    } else {
+        CompositorConfig::Draw {
+            max_partial_present_rects,
+        }
+    };
+
     let opts = RendererOptions {
         enable_aa: true,
+        force_subpixel_aa: false,
         enable_subpixel_aa: cfg!(not(target_os = "android")),
         support_low_priority_transactions,
+        allow_texture_swizzling,
         recorder: recorder,
         blob_image_handler: Some(Box::new(Moz2dBlobImageHandler::new(workers.clone()))),
         workers: Some(workers.clone()),
@@ -1251,6 +1408,9 @@ pub extern "C" fn wr_window_new(window_id: WrWindowId,
         enable_picture_caching,
         allow_pixel_local_storage_support: false,
         start_debug_server,
+        surface_origin_is_top_left,
+        compositor_config,
+        enable_gpu_markers,
         ..Default::default()
     };
 
@@ -1627,7 +1787,7 @@ pub extern "C" fn wr_resource_updates_add_external_image(
     txn: &mut Transaction,
     image_key: WrImageKey,
     descriptor: &WrImageDescriptor,
-    external_image_id: WrExternalImageId,
+    external_image_id: ExternalImageId,
     image_type: &ExternalImageType,
     channel_index: u8
 ) {
@@ -1636,7 +1796,7 @@ pub extern "C" fn wr_resource_updates_add_external_image(
         descriptor.into(),
         ImageData::External(
             ExternalImageData {
-                id: external_image_id.into(),
+                id: external_image_id,
                 channel_index: channel_index,
                 image_type: *image_type,
             }
@@ -1674,7 +1834,7 @@ pub extern "C" fn wr_resource_updates_update_external_image(
     txn: &mut Transaction,
     key: WrImageKey,
     descriptor: &WrImageDescriptor,
-    external_image_id: WrExternalImageId,
+    external_image_id: ExternalImageId,
     image_type: &ExternalImageType,
     channel_index: u8
 ) {
@@ -1683,7 +1843,7 @@ pub extern "C" fn wr_resource_updates_update_external_image(
         descriptor.into(),
         ImageData::External(
             ExternalImageData {
-                id: external_image_id.into(),
+                id: external_image_id,
                 channel_index,
                 image_type: *image_type,
             }
@@ -1697,7 +1857,7 @@ pub extern "C" fn wr_resource_updates_update_external_image_with_dirty_rect(
     txn: &mut Transaction,
     key: WrImageKey,
     descriptor: &WrImageDescriptor,
-    external_image_id: WrExternalImageId,
+    external_image_id: ExternalImageId,
     image_type: &ExternalImageType,
     channel_index: u8,
     dirty_rect: DeviceIntRect,
@@ -1707,7 +1867,7 @@ pub extern "C" fn wr_resource_updates_update_external_image_with_dirty_rect(
         descriptor.into(),
         ImageData::External(
             ExternalImageData {
-                id: external_image_id.into(),
+                id: external_image_id,
                 channel_index,
                 image_type: *image_type,
             }
@@ -1876,6 +2036,14 @@ pub extern "C" fn wr_api_capture(
 
     let bits = CaptureBits::from_bits(bits_raw as _).unwrap();
     dh.api.save_capture(path, bits);
+}
+
+#[no_mangle]
+pub extern "C" fn wr_api_set_transaction_logging(
+    dh: &mut DocumentHandle,
+    aValue: bool
+) {
+    dh.api.send_debug_cmd(DebugCommand::SetTransactionLogging(aValue));
 }
 
 #[cfg(target_os = "windows")]
@@ -2079,10 +2247,13 @@ pub struct WrStackingContextParams {
     pub transform_style: TransformStyle,
     pub reference_frame_kind: WrReferenceFrameKind,
     pub scrolling_relative_to: *const u64,
-    pub is_backface_visible: bool,
+    pub prim_flags: PrimitiveFlags,
     /// True if picture caching should be enabled for this stacking context.
     pub cache_tiles: bool,
     pub mix_blend_mode: MixBlendMode,
+    /// True if this stacking context is a backdrop root.
+    /// https://drafts.fxtf.org/filter-effects-2/#BackdropRoot
+    pub is_backdrop_root: bool,
 }
 
 #[no_mangle]
@@ -2196,7 +2367,7 @@ pub extern "C" fn wr_dp_push_stacking_context(
          .dl_builder
          .push_stacking_context(bounds.origin,
                                 wr_spatial_id,
-                                params.is_backface_visible,
+                                params.prim_flags,
                                 wr_clip_id,
                                 params.transform_style,
                                 params.mix_blend_mode,
@@ -2204,7 +2375,8 @@ pub extern "C" fn wr_dp_push_stacking_context(
                                 &r_filter_datas,
                                 &[],
                                 glyph_raster_space,
-                                params.cache_tiles);
+                                params.cache_tiles,
+                                params.is_backdrop_root);
 
     result
 }
@@ -2367,6 +2539,17 @@ pub extern "C" fn wr_dp_push_iframe(state: &mut WrState,
     );
 }
 
+// A helper fn to construct a PrimitiveFlags
+fn prim_flags(
+    is_backface_visible: bool,
+) -> PrimitiveFlags {
+    if is_backface_visible {
+        PrimitiveFlags::IS_BACKFACE_VISIBLE
+    } else {
+        PrimitiveFlags::empty()
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn wr_dp_push_rect(state: &mut WrState,
                                   rect: LayoutRect,
@@ -2386,7 +2569,7 @@ pub extern "C" fn wr_dp_push_rect(state: &mut WrState,
         clip_rect: clip_rect.unwrap_or(LayoutRect::zero()),
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible,
+        flags: prim_flags(is_backface_visible),
         hit_info: state.current_tag,
     };
 
@@ -2416,13 +2599,67 @@ pub extern "C" fn wr_dp_push_rect_with_parent_clip(
         clip_rect: clip_rect.unwrap(),
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible,
+        flags: prim_flags(is_backface_visible),
         hit_info: state.current_tag,
     };
 
     state.frame_builder.dl_builder.push_rect(
         &prim_info,
         color,
+    );
+}
+
+#[no_mangle]
+pub extern "C" fn wr_dp_push_backdrop_filter_with_parent_clip(
+    state: &mut WrState,
+    rect: LayoutRect,
+    clip: LayoutRect,
+    is_backface_visible: bool,
+    parent: &WrSpaceAndClip,
+    filters: *const FilterOp,
+    filter_count: usize,
+    filter_datas: *const WrFilterData,
+    filter_datas_count: usize,
+) {
+    debug_assert!(unsafe { !is_in_render_thread() });
+
+    let c_filters = unsafe { make_slice(filters, filter_count) };
+    let filters : Vec<FilterOp> = c_filters.iter()
+        .map(|c_filter| { c_filter.clone() })
+        .collect();
+
+    let c_filter_datas = unsafe { make_slice(filter_datas, filter_datas_count) };
+    let filter_datas : Vec<FilterData> = c_filter_datas.iter().map(|c_filter_data| {
+        FilterData {
+            func_r_type: c_filter_data.funcR_type,
+            r_values: unsafe { make_slice(c_filter_data.R_values, c_filter_data.R_values_count).to_vec() },
+            func_g_type: c_filter_data.funcG_type,
+            g_values: unsafe { make_slice(c_filter_data.G_values, c_filter_data.G_values_count).to_vec() },
+            func_b_type: c_filter_data.funcB_type,
+            b_values: unsafe { make_slice(c_filter_data.B_values, c_filter_data.B_values_count).to_vec() },
+            func_a_type: c_filter_data.funcA_type,
+            a_values: unsafe { make_slice(c_filter_data.A_values, c_filter_data.A_values_count).to_vec() },
+        }
+    }).collect();
+
+    let space_and_clip = parent.to_webrender(state.pipeline_id);
+
+    let clip_rect = clip.intersection(&rect);
+    if clip_rect.is_none() { return; }
+
+    let prim_info = CommonItemProperties {
+        clip_rect: clip_rect.unwrap(),
+        clip_id: space_and_clip.clip_id,
+        spatial_id: space_and_clip.spatial_id,
+        flags: prim_flags(is_backface_visible),
+        hit_info: state.current_tag,
+    };
+
+    state.frame_builder.dl_builder.push_backdrop_filter(
+        &prim_info,
+        &filters,
+        &filter_datas,
+        &[],
     );
 }
 
@@ -2442,7 +2679,7 @@ pub extern "C" fn wr_dp_push_clear_rect(state: &mut WrState,
         clip_rect: clip_rect.unwrap(),
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible: true,
+        flags: prim_flags(true),
         hit_info: state.current_tag,
     };
 
@@ -2468,7 +2705,7 @@ pub extern "C" fn wr_dp_push_hit_test(state: &mut WrState,
         clip_rect: clip_rect.unwrap(),
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible,
+        flags: prim_flags(is_backface_visible),
         hit_info: state.current_tag,
     };
 
@@ -2495,7 +2732,7 @@ pub extern "C" fn wr_dp_push_clear_rect_with_parent_clip(
         clip_rect: clip_rect.unwrap(),
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible: true,
+        flags: prim_flags(true),
         hit_info: state.current_tag,
     };
 
@@ -2510,8 +2747,6 @@ pub extern "C" fn wr_dp_push_image(state: &mut WrState,
                                    clip: LayoutRect,
                                    is_backface_visible: bool,
                                    parent: &WrSpaceAndClipChain,
-                                   stretch_size: LayoutSize,
-                                   tile_spacing: LayoutSize,
                                    image_rendering: ImageRendering,
                                    key: WrImageKey,
                                    premultiplied_alpha: bool,
@@ -2524,7 +2759,7 @@ pub extern "C" fn wr_dp_push_image(state: &mut WrState,
         clip_rect: clip,
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible,
+        flags: prim_flags(is_backface_visible),
         hit_info: state.current_tag,
     };
 
@@ -2538,12 +2773,52 @@ pub extern "C" fn wr_dp_push_image(state: &mut WrState,
          .dl_builder
          .push_image(&prim_info,
                      bounds,
-                     stretch_size,
-                     tile_spacing,
                      image_rendering,
                      alpha_type,
                      key,
                      color);
+}
+
+#[no_mangle]
+pub extern "C" fn wr_dp_push_repeating_image(state: &mut WrState,
+                                             bounds: LayoutRect,
+                                             clip: LayoutRect,
+                                             is_backface_visible: bool,
+                                             parent: &WrSpaceAndClipChain,
+                                             stretch_size: LayoutSize,
+                                             tile_spacing: LayoutSize,
+                                             image_rendering: ImageRendering,
+                                             key: WrImageKey,
+                                             premultiplied_alpha: bool,
+                                             color: ColorF) {
+    debug_assert!(unsafe { is_in_main_thread() || is_in_compositor_thread() });
+
+    let space_and_clip = parent.to_webrender(state.pipeline_id);
+
+    let prim_info = CommonItemProperties {
+        clip_rect: clip,
+        clip_id: space_and_clip.clip_id,
+        spatial_id: space_and_clip.spatial_id,
+        flags: prim_flags(is_backface_visible),
+        hit_info: state.current_tag,
+    };
+
+    let alpha_type = if premultiplied_alpha {
+        AlphaType::PremultipliedAlpha
+    } else {
+        AlphaType::Alpha
+    };
+
+    state.frame_builder
+         .dl_builder
+         .push_repeating_image(&prim_info,
+                               bounds,
+                               stretch_size,
+                               tile_spacing,
+                               image_rendering,
+                               alpha_type,
+                               key,
+                               color);
 }
 
 /// Push a 3 planar yuv image.
@@ -2568,7 +2843,7 @@ pub extern "C" fn wr_dp_push_yuv_planar_image(state: &mut WrState,
         clip_rect: clip,
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible,
+        flags: prim_flags(is_backface_visible),
         hit_info: state.current_tag,
     };
 
@@ -2604,7 +2879,7 @@ pub extern "C" fn wr_dp_push_yuv_NV12_image(state: &mut WrState,
         clip_rect: clip,
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible,
+        flags: prim_flags(is_backface_visible),
         hit_info: state.current_tag,
     };
 
@@ -2639,7 +2914,7 @@ pub extern "C" fn wr_dp_push_yuv_interleaved_image(state: &mut WrState,
         clip_rect: clip,
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible,
+        flags: prim_flags(is_backface_visible),
         hit_info: state.current_tag,
     };
 
@@ -2675,7 +2950,7 @@ pub extern "C" fn wr_dp_push_text(state: &mut WrState,
         clip_rect: clip,
         spatial_id: space_and_clip.spatial_id,
         clip_id: space_and_clip.clip_id,
-        is_backface_visible,
+        flags: prim_flags(is_backface_visible),
         hit_info: state.current_tag
     };
 
@@ -2731,7 +3006,7 @@ pub extern "C" fn wr_dp_push_line(state: &mut WrState,
         clip_rect: *clip,
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible,
+        flags: prim_flags(is_backface_visible),
         hit_info: state.current_tag,
     };
 
@@ -2776,7 +3051,7 @@ pub extern "C" fn wr_dp_push_border(state: &mut WrState,
         clip_rect: clip,
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible,
+        flags: prim_flags(is_backface_visible),
         hit_info: state.current_tag,
     };
 
@@ -2825,7 +3100,7 @@ pub extern "C" fn wr_dp_push_border_image(state: &mut WrState,
         clip_rect: clip,
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible,
+        flags: prim_flags(is_backface_visible),
         hit_info: state.current_tag,
     };
 
@@ -2883,7 +3158,7 @@ pub extern "C" fn wr_dp_push_border_gradient(state: &mut WrState,
         clip_rect: clip,
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible,
+        flags: prim_flags(is_backface_visible),
         hit_info: state.current_tag,
     };
 
@@ -2945,7 +3220,7 @@ pub extern "C" fn wr_dp_push_border_radial_gradient(state: &mut WrState,
         clip_rect: clip,
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible,
+        flags: prim_flags(is_backface_visible),
         hit_info: state.current_tag,
     };
 
@@ -2988,7 +3263,7 @@ pub extern "C" fn wr_dp_push_linear_gradient(state: &mut WrState,
         clip_rect: clip,
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible,
+        flags: prim_flags(is_backface_visible),
         hit_info: state.current_tag,
     };
 
@@ -3032,7 +3307,7 @@ pub extern "C" fn wr_dp_push_radial_gradient(state: &mut WrState,
         clip_rect: clip,
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible,
+        flags: prim_flags(is_backface_visible),
         hit_info: state.current_tag,
     };
 
@@ -3065,7 +3340,7 @@ pub extern "C" fn wr_dp_push_box_shadow(state: &mut WrState,
         clip_rect: clip,
         clip_id: space_and_clip.clip_id,
         spatial_id: space_and_clip.spatial_id,
-        is_backface_visible,
+        flags: prim_flags(is_backface_visible),
         hit_info: state.current_tag,
     };
 
@@ -3176,9 +3451,8 @@ pub unsafe extern "C" fn wr_dec_ref_arc(arc: *const VecU8) {
 extern "C" {
      // TODO: figure out the API for tiled blob images.
      pub fn wr_moz2d_render_cb(blob: ByteSlice,
-                               width: i32,
-                               height: i32,
                                format: ImageFormat,
+                               render_rect: &LayoutIntRect,
                                visible_rect: &DeviceIntRect,
                                tile_size: Option<&u16>,
                                tile_offset: Option<&TileOffset>,

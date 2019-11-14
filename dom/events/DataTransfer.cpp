@@ -236,7 +236,7 @@ DataTransfer::~DataTransfer() {}
 
 // static
 already_AddRefed<DataTransfer> DataTransfer::Constructor(
-    const GlobalObject& aGlobal, ErrorResult& aRv) {
+    const GlobalObject& aGlobal) {
   RefPtr<DataTransfer> transfer =
       new DataTransfer(aGlobal.GetAsSupports(), eCopy, /* is external */ false,
                        /* clipboard type */ -1);
@@ -316,6 +316,16 @@ void DataTransfer::GetMozTriggeringPrincipalURISpec(
   }
 
   CopyUTF8toUTF16(spec, aPrincipalURISpec);
+}
+
+nsIContentSecurityPolicy* DataTransfer::GetMozCSP() {
+  nsCOMPtr<nsIDragSession> dragSession = nsContentUtils::GetDragSession();
+  if (!dragSession) {
+    return nullptr;
+  }
+  nsCOMPtr<nsIContentSecurityPolicy> csp;
+  dragSession->GetCsp(getter_AddRefs(csp));
+  return csp;
 }
 
 already_AddRefed<FileList> DataTransfer::GetFiles(

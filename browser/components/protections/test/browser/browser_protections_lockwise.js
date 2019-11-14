@@ -104,6 +104,7 @@ add_task(async function() {
     const syncedDevicesStatusText = content.document.querySelector(
       ".synced-devices-text span"
     );
+    const syncLink = content.document.getElementById("turn-on-sync");
 
     ok(
       ContentTaskUtils.is_hidden(noLoginsContent),
@@ -123,9 +124,12 @@ add_task(async function() {
     );
     is(
       syncedDevicesStatusText.getAttribute("data-l10n-id"),
-      "lockwise-sync-not-syncing",
+      "lockwise-sync-not-syncing-devices",
       "Not syncing to other devices."
     );
+
+    info("Check that the link to turn on sync is visible.");
+    ok(ContentTaskUtils.is_visible(syncLink), "Sync link is visible.");
   });
 
   info(
@@ -164,11 +168,17 @@ add_task(async function() {
     const numberOfSyncedDevices = content.document.querySelector(
       ".number-of-synced-devices.block"
     );
+    const manageDevicesLink = content.document.getElementById("manage-devices");
 
     is(
       numberOfSyncedDevices.textContent,
       5,
       "Five synced devices should be displayed"
+    );
+    info("Check that the link to manage devices is visible.");
+    ok(
+      ContentTaskUtils.is_visible(manageDevicesLink),
+      "Manage devices link is visible."
     );
   });
 

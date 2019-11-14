@@ -27,6 +27,7 @@
 #include "prnetdb.h"
 #include "prtime.h"
 #include "ssl.h"
+#include "sslproto.h"
 
 namespace mozilla {
 namespace test {
@@ -140,9 +141,12 @@ static SECStatus AddKeyFromFile(const std::string& path,
   }
 
   SECKEYPrivateKey* privateKey = nullptr;
+  SECItem nick = {siBuffer,
+                  BitwiseCast<unsigned char*, const char*>(filename.data()),
+                  static_cast<unsigned int>(filename.size())};
   if (PK11_ImportDERPrivateKeyInfoAndReturnKey(
-          slot.get(), &item, nullptr, nullptr, true, false, KU_ALL,
-          &privateKey, nullptr) != SECSuccess) {
+          slot.get(), &item, &nick, nullptr, true, false, KU_ALL, &privateKey,
+          nullptr) != SECSuccess) {
     PrintPRError("PK11_ImportDERPrivateKeyInfoAndReturnKey failed");
     return SECFailure;
   }
@@ -571,6 +575,20 @@ int StartServer(int argc, char* argv[], SSLSNISocketConfig sniSocketConfig,
     return 1;
   }
 
+  SSLVersionRange range = {0, 0};
+  if (SSL_VersionRangeGet(modelSocket.get(), &range) != SECSuccess) {
+    PrintPRError("SSL_VersionRangeGet failed");
+    return 1;
+  }
+
+  if (range.max < SSL_LIBRARY_VERSION_TLS_1_3) {
+    range.max = SSL_LIBRARY_VERSION_TLS_1_3;
+    if (SSL_VersionRangeSet(modelSocket.get(), &range) != SECSuccess) {
+      PrintPRError("SSL_VersionRangeSet failed");
+      return 1;
+    }
+  }
+
   if (SSL_SNISocketConfigHook(modelSocket.get(), sniSocketConfig,
                               sniSocketConfigArg) != SECSuccess) {
     PrintPRError("SSL_SNISocketConfigHook failed");
@@ -580,9 +598,17 @@ int StartServer(int argc, char* argv[], SSLSNISocketConfig sniSocketConfig,
   // We have to configure the server with a certificate, but it's not one
   // we're actually going to end up using. In the SNI callback, we pick
   // the right certificate for the connection.
+  //
+  // Provide an empty |extra_data| to force config via SSL_ConfigServerCert.
+  // This is a temporary mechanism to work around inconsistent setting of
+  // |authType| in the deprecated API (preventing the default cert from
+  // being removed in favor of the SNI-selected cert). This may be removed
+  // after Bug 1569222 removes the deprecated mechanism.
+  SSLExtraServerCertData extra_data = {ssl_auth_null, nullptr, nullptr,
+                                       nullptr,       nullptr, nullptr};
   if (ConfigSecureServerWithNamedCert(modelSocket.get(), DEFAULT_CERT_NICKNAME,
                                       nullptr, nullptr,
-                                      nullptr) != SECSuccess) {
+                                      &extra_data) != SECSuccess) {
     return 1;
   }
 

@@ -1018,7 +1018,9 @@ nsresult nsBidiPresUtils::ResolveParagraph(BidiParagraphData* aBpd) {
           // Set the base level and embedding level of the current run even
           // on an empty frame. Otherwise frame reordering will not be correct.
           frame->AdjustOffsetsForBidi(0, 0);
-          // Nothing more to do for an empty frame.
+          // Nothing more to do for an empty frame, except update
+          // lastRealFrame like we do below.
+          lastRealFrame = frameInfo;
           continue;
         }
         nsLineList::iterator currentLine = aBpd->mCurrentResolveLine.GetLine();
@@ -2115,8 +2117,8 @@ void nsBidiPresUtils::CalculateCharType(nsBidi* aBidiEngine,
     } else if (IS_ARABIC_ALPHABETIC(ch)) {
       charType = eCharType_RightToLeftArabic;
     } else {
-      if (NS_IS_HIGH_SURROGATE(ch) && offset + 1 < aCharTypeLimit &&
-          NS_IS_LOW_SURROGATE(aText[offset + 1])) {
+      if (offset + 1 < aCharTypeLimit &&
+          NS_IS_SURROGATE_PAIR(ch, aText[offset + 1])) {
         ch = SURROGATE_TO_UCS4(ch, aText[offset + 1]);
         charLen = 2;
       }

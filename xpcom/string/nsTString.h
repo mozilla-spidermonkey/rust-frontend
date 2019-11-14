@@ -71,6 +71,9 @@ class nsTString : public nsTSubstring<T> {
     this->Assign(aData, aLength);
   }
 
+  explicit nsTString(mozilla::Span<const char_type> aData)
+      : nsTString(aData.Elements(), aData.Length()) {}
+
 #if defined(MOZ_USE_CHAR16_WRAPPER)
   template <typename Q = T, typename EnableIfChar16 = mozilla::Char16OnlyT<Q>>
   explicit nsTString(char16ptr_t aStr, size_type aLength = size_type(-1))
@@ -279,35 +282,6 @@ class nsTString : public nsTSubstring<T> {
   }
 
   /**
-   * Compares a given string to this string.
-   *
-   * @param   aString is the string to be compared
-   * @param   aIgnoreCase tells us how to treat case
-   * @param   aCount tells us how many chars to compare
-   * @return  -1,0,1
-   */
-  template <typename Q = T, typename EnableIfChar = mozilla::CharOnlyT<Q>>
-  int32_t Compare(const char_type* aString, bool aIgnoreCase = false,
-                  int32_t aCount = -1) const;
-
-  /**
-   * Equality check between given string and this string.
-   *
-   * @param   aString is the string to check
-   * @param   aIgnoreCase tells us how to treat case
-   * @param   aCount tells us how many chars to compare
-   * @return  boolean
-   */
-  template <typename Q = T, typename EnableIfChar = mozilla::CharOnlyT<Q>>
-  bool EqualsIgnoreCase(const char_type* aString, int32_t aCount = -1) const {
-    return Compare(aString, true, aCount) == 0;
-  }
-
-  template <typename Q = T, typename EnableIfChar16 = mozilla::Char16OnlyT<Q>>
-  bool EqualsIgnoreCase(const incompatible_char_type* aString,
-                        int32_t aCount = -1) const;
-
-  /**
    * Perform string to double-precision float conversion.
    *
    * @param   aErrorCode will contain error if one occurs
@@ -322,6 +296,13 @@ class nsTString : public nsTSubstring<T> {
    * @return  single-precision float rep of string value
    */
   float ToFloat(nsresult* aErrorCode) const;
+
+  /**
+   * Similar to above ToDouble and ToFloat but allows trailing characters that
+   * are not converted.
+   */
+  double ToDoubleAllowTrailingChars(nsresult* aErrorCode) const;
+  float ToFloatAllowTrailingChars(nsresult* aErrorCode) const;
 
   /**
    * |Left|, |Mid|, and |Right| are annoying signatures that seem better almost
@@ -472,6 +453,14 @@ class nsTString : public nsTSubstring<T> {
       : substring_type(char_traits::sEmptyBuffer, 0,
                        aDataFlags | DataFlags::TERMINATED,
                        ClassFlags::NULL_TERMINATED) {}
+
+  enum class TrailingCharsPolicy {
+    Disallow,
+    Allow,
+  };
+  // Utility function for ToDouble and ToDoubleAllowTrailingChars.
+  double ToDouble(TrailingCharsPolicy aTrailingCharsPolicy,
+                  nsresult* aErrorCode) const;
 
   struct Segment {
     uint32_t mBegin, mLength;
@@ -636,6 +625,11 @@ class nsTArrayElementTraits<nsTAutoString<T>> {
   template <class A>
   static Dont_Instantiate_nsTArray_of<nsTAutoString<T>>* Construct(
       Instead_Use_nsTArray_of<nsTString<T>>* aE, const A& aArg) {
+    return 0;
+  }
+  template <class... Args>
+  static Dont_Instantiate_nsTArray_of<nsTAutoString<T>>* Construct(
+      Instead_Use_nsTArray_of<nsTString<T>>* aE, Args&&... aArgs) {
     return 0;
   }
   static Dont_Instantiate_nsTArray_of<nsTAutoString<T>>* Destruct(

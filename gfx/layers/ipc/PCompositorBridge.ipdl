@@ -8,6 +8,7 @@
 include LayersSurfaces;
 include LayersMessages;
 include PlatformWidgetTypes;
+include PCompositorBridgeTypes;
 include protocol PAPZ;
 include protocol PAPZCTreeManager;
 include protocol PBrowser;
@@ -64,7 +65,6 @@ struct FrameStats {
   nsCString url;
 };
 
-
 /**
  * The PCompositorBridge protocol is a top-level protocol for the compositor.
  * There is an instance of the protocol for each compositor, plus one for each
@@ -90,7 +90,7 @@ struct FrameStats {
  * protocol, which is per-browser. A lot of the functions in the protocol are
  * basically multiplexing/demultiplexing stuff in PLayerTransaction.
  */
-sync protocol PCompositorBridge
+sync refcounted protocol PCompositorBridge
 {
   manager PCompositorManager;
 
@@ -258,6 +258,7 @@ parent:
   async PTexture(SurfaceDescriptor aSharedData, ReadLockDescriptor aReadLock, LayersBackend aBackend, TextureFlags aTextureFlags, LayersId id, uint64_t aSerial, MaybeExternalImageId aExternalImageId);
 
   async InitPCanvasParent(Endpoint<PCanvasParent> aEndpoint);
+  async ReleasePCanvasParent();
 
   sync SyncWithCompositor();
 
@@ -270,8 +271,14 @@ parent:
   async BeginRecording(TimeStamp aRecordingStart)
     returns (bool success);
 
-  sync EndRecording()
+  async EndRecordingToDisk()
     returns (bool success);
+
+  async EndRecordingToMemory()
+    returns (CollectedFramesParams? frames);
+
+  // To set up sharing the composited output to Firefox Reality on Desktop
+  async RequestFxrOutput();
 
 child:
   // Send back Compositor Frame Metrics from APZCs so tiled layers can

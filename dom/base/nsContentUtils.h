@@ -38,7 +38,6 @@
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/intl/LineBreaker.h"
 #include "mozilla/intl/WordBreaker.h"
-#include "mozilla/net/ReferrerPolicy.h"
 #include "mozilla/Logging.h"
 #include "mozilla/NotNull.h"
 #include "mozilla/Maybe.h"
@@ -547,8 +546,6 @@ class nsContentUtils {
    * Returns true if aChar is of class Ps, Pi, Po, Pf, or Pe.
    */
   static bool IsFirstLetterPunctuation(uint32_t aChar);
-  static bool IsFirstLetterPunctuationAt(const nsTextFragment* aFrag,
-                                         uint32_t aOffset);
 
   /**
    * Returns true if aChar is of class Lu, Ll, Lt, Lm, Lo, Nd, Nl or No
@@ -573,9 +570,9 @@ class nsContentUtils {
   static bool IsHTMLWhitespaceOrNBSP(char16_t aChar);
 
   /**
-   * Is the HTML local name a block element?
+   * https://developer.mozilla.org/en-US/docs/Web/HTML/Block-level_elements
    */
-  static bool IsHTMLBlock(nsIContent* aContent);
+  static bool IsHTMLBlockLevelElement(nsIContent* aContent);
 
   enum ParseHTMLIntegerResultFlags {
     eParseHTMLInteger_NoFlags = 0,
@@ -1088,7 +1085,6 @@ class nsContentUtils {
    */
   enum PropertiesFile {
     eCSS_PROPERTIES,
-    eXBL_PROPERTIES,
     eXUL_PROPERTIES,
     eLAYOUT_PROPERTIES,
     eFORMS_PROPERTIES,
@@ -1101,8 +1097,8 @@ class nsContentUtils {
     eMATHML_PROPERTIES,
     eSECURITY_PROPERTIES,
     eNECKO_PROPERTIES,
-    eFORMS_PROPERTIES_MAYBESPOOF,
     eFORMS_PROPERTIES_en_US,
+    eDOM_PROPERTIES_en_US,
     PropertiesFile_COUNT
   };
   static nsresult ReportToConsole(
@@ -1116,11 +1112,22 @@ class nsContentUtils {
 
   static void LogMessageToConsole(const char* aMsg);
 
+  static bool SpoofLocaleEnglish();
+
   /**
    * Get the localized string named |aKey| in properties file |aFile|.
    */
   static nsresult GetLocalizedString(PropertiesFile aFile, const char* aKey,
                                      nsAString& aResult);
+
+  /**
+   * Same as GetLocalizedString, except that it might use en-US locale depending
+   * on SpoofLocaleEnglish() and whether the document is a built-in browser
+   * page.
+   */
+  static nsresult GetMaybeLocalizedString(PropertiesFile aFile,
+                                          const char* aKey, Document* aDocument,
+                                          nsAString& aResult);
 
   /**
    * A helper function that parses a sandbox attribute (of an <iframe> or a CSP
@@ -1154,6 +1161,11 @@ class nsContentUtils {
    * Helper function that generates a UUID.
    */
   static nsresult GenerateUUIDInPlace(nsID& aUUID);
+
+  /**
+   * Infallable (with an assertion) helper function that generates a UUID.
+   */
+  static nsID GenerateUUID();
 
   static bool PrefetchPreloadEnabled(nsIDocShell* aDocShell);
 
@@ -1202,6 +1214,24 @@ class nsContentUtils {
   }
 
   /**
+   * Same as FormatLocalizedString template version, except that it might use
+   * en-US locale depending on SpoofLocaleEnglish() and whether the document is
+   * a built-in browser page.
+   */
+  template <typename... T>
+  static nsresult FormatMaybeLocalizedString(nsAString& aResult,
+                                             PropertiesFile aFile,
+                                             const char* aKey,
+                                             Document* aDocument,
+                                             const T&... aParams) {
+    static_assert(sizeof...(aParams) != 0, "Use GetMaybeLocalizedString()");
+    AutoTArray<nsString, sizeof...(aParams)> params = {
+        aParams...,
+    };
+    return FormatMaybeLocalizedString(aFile, aKey, aDocument, params, aResult);
+  }
+
+  /**
    * Fill (with the parameters given) the localized string named |aKey| in
    * properties file |aFile| consuming an nsTArray of nsString parameters rather
    * than a char16_t** for the sake of avoiding use-after-free errors involving
@@ -1210,6 +1240,15 @@ class nsContentUtils {
   static nsresult FormatLocalizedString(PropertiesFile aFile, const char* aKey,
                                         const nsTArray<nsString>& aParamArray,
                                         nsAString& aResult);
+
+  /**
+   * Same as FormatLocalizedString, except that it might use en-US locale
+   * depending on SpoofLocaleEnglish() and whether the document is a built-in
+   * browser page.
+   */
+  static nsresult FormatMaybeLocalizedString(
+      PropertiesFile aFile, const char* aKey, Document* aDocument,
+      const nsTArray<nsString>& aParamArray, nsAString& aResult);
 
   /**
    * Returns true if aDocument is a chrome document
@@ -1954,17 +1993,12 @@ class nsContentUtils {
   static bool OfflineAppAllowed(nsIPrincipal* aPrincipal);
 
   /**
-   * Determine whether the principal is allowed access to the localization
-   * system. We don't want the web to ever see this but all our UI including in
-   * content pages should pass this test.
+   * Determine whether the principal or document is allowed access to the
+   * localization system. We don't want the web to ever see this but all our UI
+   * including in content pages should pass this test.
    */
-  static bool PrincipalAllowsL10n(nsIPrincipal* aPrincipal);
-
-  /**
-   * If offline-apps.allow_by_default is true, we set offline-app permission
-   * for the principal and return true.  Otherwise false.
-   */
-  static bool MaybeAllowOfflineAppByDefault(nsIPrincipal* aPrincipal);
+  static bool PrincipalAllowsL10n(nsIPrincipal* aPrincipal,
+                                  nsIURI* aDocumentURI);
 
   /**
    * Increases the count of blockers preventing scripts from running.
@@ -2304,16 +2338,6 @@ class nsContentUtils {
   static bool IsFocusedContent(const nsIContent* aContent);
 
   /**
-   * Returns nullptr if requests for fullscreen are allowed in the current
-   * context. Requests are only allowed if the user initiated them (like with
-   * a mouse-click or key press), unless this check has been disabled by
-   * setting the pref "full-screen-api.allow-trusted-requests-only" to false.
-   * If fullscreen is not allowed, a key for the error message is returned.
-   */
-  static const char* CheckRequestFullscreenAllowed(
-      mozilla::dom::CallerType aCallerType);
-
-  /**
    * Returns true if calling execCommand with 'cut' or 'copy' arguments is
    * allowed for the given subject principal. These are only allowed if the user
    * initiated them (like with a mouse-click or key press).
@@ -2375,13 +2399,6 @@ class nsContentUtils {
    * have common scriptable top window.
    */
   static bool IsInPointerLockContext(nsPIDOMWindowOuter* aWin);
-
-  /**
-   * Returns the time limit on handling user input before
-   * EventStateManager::IsHandlingUserInput() stops returning true.
-   * This enables us to detect long running user-generated event handlers.
-   */
-  static TimeDuration HandlingUserInputTimeout();
 
   static void GetShiftText(nsAString& text);
   static void GetControlText(nsAString& text);
@@ -2468,10 +2485,12 @@ class nsContentUtils {
    * @param aValue    the string to check.
    * @param aPattern  the string defining the pattern.
    * @param aDocument the owner document of the element.
-   * @result          whether the given string is matches the pattern.
+   * @result          whether the given string is matches the pattern, or
+   *                  Nothing() if the pattern couldn't be evaluated.
    */
-  static bool IsPatternMatching(nsAString& aValue, nsAString& aPattern,
-                                const Document* aDocument);
+  static mozilla::Maybe<bool> IsPatternMatching(nsAString& aValue,
+                                                nsAString& aPattern,
+                                                const Document* aDocument);
 
   /**
    * Calling this adds support for
@@ -2645,6 +2664,13 @@ class nsContentUtils {
    */
   static mozilla::TextEditor* GetTextEditorFromAnonymousNodeWithoutCreation(
       nsIContent* aAnonymousContent);
+
+  /**
+   * Returns whether a node has an editable ancestor.
+   *
+   * @param aNode The node to test.
+   */
+  static bool IsNodeInEditableRegion(nsINode* aNode);
 
   /**
    * Returns a LogModule that dump calls from content script are logged to.
@@ -2823,14 +2849,15 @@ class nsContentUtils {
       bool* aPreventDefault, bool aIsDOMEventSynthesized,
       bool aIsWidgetEventSynthesized);
 
-  static void FirePageShowEvent(nsIDocShellTreeItem* aItem,
-                                mozilla::dom::EventTarget* aChromeEventHandler,
-                                bool aFireIfShowing,
-                                bool aOnlySystemGroup = false);
+  static void FirePageShowEventForFrameLoaderSwap(
+      nsIDocShellTreeItem* aItem,
+      mozilla::dom::EventTarget* aChromeEventHandler, bool aFireIfShowing,
+      bool aOnlySystemGroup = false);
 
-  static void FirePageHideEvent(nsIDocShellTreeItem* aItem,
-                                mozilla::dom::EventTarget* aChromeEventHandler,
-                                bool aOnlySystemGroup = false);
+  static void FirePageHideEventForFrameLoaderSwap(
+      nsIDocShellTreeItem* aItem,
+      mozilla::dom::EventTarget* aChromeEventHandler,
+      bool aOnlySystemGroup = false);
 
   static already_AddRefed<nsPIWindowRoot> GetWindowRoot(Document* aDoc);
 
@@ -2841,18 +2868,8 @@ class nsContentUtils {
    * @param the channel from which to get the Referrer-Policy header
    * @return referrer policy from the response header in aChannel
    */
-  static mozilla::net::ReferrerPolicy GetReferrerPolicyFromChannel(
+  static mozilla::dom::ReferrerPolicy GetReferrerPolicyFromChannel(
       nsIChannel* aChannel);
-
-  /*
-   * Parse a referrer policy from a Referrer-Policy header
-   * https://www.w3.org/TR/referrer-policy/#parse-referrer-policy-from-header
-   *
-   * @param aHeader the response's Referrer-Policy header to parse
-   * @return referrer policy from the response header.
-   */
-  static mozilla::net::ReferrerPolicy GetReferrerPolicyFromHeader(
-      const nsAString& aHeader);
 
   static bool IsNonSubresourceRequest(nsIChannel* aChannel);
 
@@ -2913,6 +2930,13 @@ class nsContentUtils {
    * https://fetch.spec.whatwg.org/#concept-response-https-state
    */
   static bool HttpsStateIsModern(Document* aDocument);
+
+  /**
+   * Returns true if the channel is for top-level window and is over secure
+   * context.
+   * https://github.com/whatwg/html/issues/4930 tracks the spec side of this.
+   */
+  static bool ComputeIsSecureContext(nsIChannel* aChannel);
 
   /**
    * Try to upgrade an element.
@@ -3069,6 +3093,19 @@ class nsContentUtils {
   static uint64_t GenerateBrowsingContextId();
 
   /**
+   * Generate an id using a range of serial numbers reserved for the current
+   * process. aId should be a counter that's incremented every time
+   * GenerateProcessSpecificId is called.
+   */
+  static uint64_t GenerateProcessSpecificId(uint64_t aId);
+
+  /**
+   * Generate a window ID which is unique across processes and will never be
+   * recycled.
+   */
+  static uint64_t GenerateWindowId();
+
+  /**
    * Determine whether or not the user is currently interacting with the web
    * browser. This method is safe to call from off of the main thread.
    */
@@ -3141,6 +3178,8 @@ class nsContentUtils {
    */
   static bool HighPriorityEventPendingForTopLevelDocumentBeforeContentfulPaint(
       Document* aDocument);
+
+  static nsGlobalWindowInner* CallerInnerWindow();
 
  private:
   static bool InitializeEventTable();

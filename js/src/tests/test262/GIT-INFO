@@ -1,9 +1,5 @@
-commit aeff2b0048c23d1959605086614de76144785064
-Author: Caio Lima <ticaiolima@gmail.com>
-Date:   Tue Jul 30 11:53:56 2019 -0700
+commit 21195de94cfc36eadbde00a825ca7efb3d9c3dde
+Author: Leo Balter <leonardo.balter@gmail.com>
+Date:   Thu Oct 17 10:32:00 2019 -0400
 
-    Adding case where PrivateName is used inside computed property. (#2241)
-    
-    * Adding case where PrivateName is used inside computed property.
-    
-    * Adding proper description to early errors on usage of undeclared private names inside computed property.
+    Inital commit for Intl.DisplayNames tests (#2404)

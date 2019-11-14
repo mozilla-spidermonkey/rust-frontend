@@ -19,6 +19,7 @@
 #include "js/Debug.h"
 #include "js/ForOfIterator.h"  // JS::ForOfIterator
 #include "js/PropertySpec.h"
+#include "util/Poison.h"
 #include "vm/AsyncFunction.h"
 #include "vm/AsyncIteration.h"
 #include "vm/GeneratorObject.h"
@@ -96,12 +97,10 @@ enum PromiseAllResolveElementFunctionSlots {
   PromiseAllResolveElementFunctionSlot_ElementIndex,
 };
 
-#ifdef NIGHTLY_BUILD
 enum PromiseAllSettledElementFunctionSlots {
   PromiseAllSettledElementFunctionSlot_Data = 0,
   PromiseAllSettledElementFunctionSlot_ElementIndex,
 };
-#endif
 
 enum ReactionJobSlots {
   ReactionJobSlot_ReactionRecord = 0,
@@ -152,9 +151,6 @@ struct PromiseCapability {
 
   PromiseCapability() = default;
 
-  static void trace(PromiseCapability* self, JSTracer* trc) {
-    self->trace(trc);
-  }
   void trace(JSTracer* trc);
 };
 
@@ -211,7 +207,7 @@ class MutableWrappedPtrOperations<PromiseCapability, Wrapper>
 
 class PromiseAllDataHolder : public NativeObject {
  public:
-  static const Class class_;
+  static const JSClass class_;
   JSObject* promiseObj() {
     return &getFixedSlot(PromiseAllDataHolderSlot_Promise).toObject();
   }
@@ -242,7 +238,7 @@ class PromiseAllDataHolder : public NativeObject {
   }
 };
 
-const Class PromiseAllDataHolder::class_ = {
+const JSClass PromiseAllDataHolder::class_ = {
     "PromiseAllDataHolder",
     JSCLASS_HAS_RESERVED_SLOTS(PromiseAllDataHolderSlots)};
 
@@ -301,7 +297,7 @@ class PromiseDebugInfo : public NativeObject {
   };
 
  public:
-  static const Class class_;
+  static const JSClass class_;
   static PromiseDebugInfo* create(
       JSContext* cx, Handle<PromiseObject*> promise,
       const mozilla::Maybe<mozilla::TimeStamp>& maybeNow) {
@@ -424,8 +420,8 @@ class PromiseDebugInfo : public NativeObject {
   }
 };
 
-const Class PromiseDebugInfo::class_ = {"PromiseDebugInfo",
-                                        JSCLASS_HAS_RESERVED_SLOTS(SlotCount)};
+const JSClass PromiseDebugInfo::class_ = {
+    "PromiseDebugInfo", JSCLASS_HAS_RESERVED_SLOTS(SlotCount)};
 
 double PromiseObject::allocationTime() {
   auto debugInfo = PromiseDebugInfo::FromPromise(this);
@@ -593,7 +589,7 @@ class PromiseReactionRecord : public NativeObject {
   }
 
  public:
-  static const Class class_;
+  static const JSClass class_;
 
   JSObject* promise() {
     return getFixedSlot(ReactionRecordSlot_Promise).toObjectOrNull();
@@ -689,7 +685,7 @@ class PromiseReactionRecord : public NativeObject {
   }
 };
 
-const Class PromiseReactionRecord::class_ = {
+const JSClass PromiseReactionRecord::class_ = {
     "PromiseReactionRecord", JSCLASS_HAS_RESERVED_SLOTS(ReactionRecordSlots)};
 
 static void AddPromiseFlags(PromiseObject& promise, int32_t flag) {
@@ -2124,7 +2120,7 @@ static bool PromiseConstructor(JSContext* cx, unsigned argc, Value* vp) {
     {
       AutoRealm ar(cx, newTarget);
       Handle<GlobalObject*> global = cx->global();
-      JSFunction* promiseCtor =
+      JSObject* promiseCtor =
           GlobalObject::getOrCreatePromiseConstructor(cx, global);
       if (!promiseCtor) {
         return false;
@@ -2278,23 +2274,15 @@ static MOZ_MUST_USE bool PerformPromiseAll(
     JSContext* cx, PromiseForOfIterator& iterator, HandleObject C,
     Handle<PromiseCapability> resultCapability, bool* done);
 
-#ifdef NIGHTLY_BUILD
 static MOZ_MUST_USE bool PerformPromiseAllSettled(
     JSContext* cx, PromiseForOfIterator& iterator, HandleObject C,
     Handle<PromiseCapability> resultCapability, bool* done);
-#endif
 
 static MOZ_MUST_USE bool PerformPromiseRace(
     JSContext* cx, PromiseForOfIterator& iterator, HandleObject C,
     Handle<PromiseCapability> resultCapability, bool* done);
 
-enum class IterationMode {
-  All,
-#ifdef NIGHTLY_BUILD
-  AllSettled,
-#endif
-  Race
-};
+enum class IterationMode { All, AllSettled, Race };
 
 // ES2020 draft rev dc1e21c454bd316810be1c0e7af0131a2d7f38e9
 //
@@ -2302,7 +2290,7 @@ enum class IterationMode {
 // 25.6.4.1 Promise.all ( iterable )
 // 25.6.4.3 Promise.race ( iterable )
 //
-// Promise.allSettled (Stage 3 proposal)
+// Promise.allSettled (Stage 4 proposal)
 // https://tc39.github.io/proposal-promise-allSettled/
 //
 // Promise.allSettled ( iterable )
@@ -2318,11 +2306,9 @@ static MOZ_MUST_USE bool CommonStaticAllRace(JSContext* cx, CallArgs& args,
       case IterationMode::All:
         message = "Receiver of Promise.all call";
         break;
-#ifdef NIGHTLY_BUILD
       case IterationMode::AllSettled:
         message = "Receiver of Promise.allSettled call";
         break;
-#endif
       case IterationMode::Race:
         message = "Receiver of Promise.race call";
         break;
@@ -2353,11 +2339,9 @@ static MOZ_MUST_USE bool CommonStaticAllRace(JSContext* cx, CallArgs& args,
       case IterationMode::All:
         message = "Argument of Promise.all";
         break;
-#ifdef NIGHTLY_BUILD
       case IterationMode::AllSettled:
         message = "Argument of Promise.allSettled";
         break;
-#endif
       case IterationMode::Race:
         message = "Argument of Promise.race";
         break;
@@ -2373,11 +2357,9 @@ static MOZ_MUST_USE bool CommonStaticAllRace(JSContext* cx, CallArgs& args,
     case IterationMode::All:
       result = PerformPromiseAll(cx, iter, C, promiseCapability, &done);
       break;
-#ifdef NIGHTLY_BUILD
     case IterationMode::AllSettled:
       result = PerformPromiseAllSettled(cx, iter, C, promiseCapability, &done);
       break;
-#endif
     case IterationMode::Race:
       result = PerformPromiseRace(cx, iter, C, promiseCapability, &done);
       break;
@@ -2620,7 +2602,7 @@ static bool IsPromiseSpecies(JSContext* cx, JSFunction* species);
 // 25.6.4.1.1 Runtime Semantics: PerformPromiseAll, steps 5-6 and step 8.
 // 25.6.4.3.1 Runtime Semantics: PerformPromiseRace, steps 3-5.
 //
-// Promise.allSettled (Stage 3 proposal)
+// Promise.allSettled (Stage 4 proposal)
 // https://tc39.github.io/proposal-promise-allSettled/
 // Runtime Semantics: PerformPromiseAllSettled, steps 5-6 and step 8.
 template <typename T>
@@ -3181,10 +3163,9 @@ static MOZ_MUST_USE bool PerformPromiseRace(
                                      isDefaultResolveFn, getResolveAndReject);
 }
 
-#ifdef NIGHTLY_BUILD
 enum class PromiseAllSettledElementFunctionKind { Resolve, Reject };
 
-// Promise.allSettled (Stage 3 proposal)
+// Promise.allSettled (Stage 4 proposal)
 // https://tc39.github.io/proposal-promise-allSettled/
 //
 // Promise.allSettled Resolve Element Functions
@@ -3193,7 +3174,7 @@ template <PromiseAllSettledElementFunctionKind Kind>
 static bool PromiseAllSettledElementFunction(JSContext* cx, unsigned argc,
                                              Value* vp);
 
-// Promise.allSettled (Stage 3 proposal)
+// Promise.allSettled (Stage 4 proposal)
 // https://tc39.github.io/proposal-promise-allSettled/
 //
 // Promise.allSettled ( iterable )
@@ -3202,7 +3183,7 @@ static bool Promise_static_allSettled(JSContext* cx, unsigned argc, Value* vp) {
   return CommonStaticAllRace(cx, args, IterationMode::AllSettled);
 }
 
-// Promise.allSettled (Stage 3 proposal)
+// Promise.allSettled (Stage 4 proposal)
 // https://tc39.github.io/proposal-promise-allSettled/
 //
 // PerformPromiseAllSettled ( iteratorRecord, constructor, resultCapability )
@@ -3346,7 +3327,7 @@ static MOZ_MUST_USE bool PerformPromiseAllSettled(
   return true;
 }
 
-// Promise.allSettled (Stage 3 proposal)
+// Promise.allSettled (Stage 4 proposal)
 // https://tc39.github.io/proposal-promise-allSettled/
 //
 // Promise.allSettled Resolve Element Functions
@@ -3460,7 +3441,6 @@ static bool PromiseAllSettledElementFunction(JSContext* cx, unsigned argc,
   args.rval().setUndefined();
   return true;
 }
-#endif  // NIGHTLY_BUILD
 
 // https://tc39.github.io/ecma262/#sec-promise.reject
 //
@@ -3899,9 +3879,20 @@ MOZ_MUST_USE PromiseObject* js::CreatePromiseObjectForAsync(JSContext* cx) {
   return promise;
 }
 
-bool js::IsPromiseForAsync(JSObject* promise) {
+bool js::IsPromiseForAsyncFunctionOrGenerator(JSObject* promise) {
   return promise->is<PromiseObject>() &&
          PromiseHasAnyFlag(promise->as<PromiseObject>(), PROMISE_FLAG_ASYNC);
+}
+
+static MOZ_MUST_USE PromiseObject* CreatePromiseObjectForAsyncGenerator(
+    JSContext* cx) {
+  PromiseObject* promise = CreatePromiseObjectWithoutResolutionFunctions(cx);
+  if (!promise) {
+    return nullptr;
+  }
+
+  AddPromiseFlags(*promise, PROMISE_FLAG_ASYNC);
+  return promise;
 }
 
 // ES2019 draft rev 7428c89bef626548084cd4e697a19ece7168f24c
@@ -4112,7 +4103,7 @@ bool js::AsyncFromSyncIteratorMethod(JSContext* cx, CallArgs& args,
       return true;
     }
   } else {
-    // throw() steps 5-7.
+    // noexcept(true) steps 5-7.
     MOZ_ASSERT(completionKind == CompletionKind::Throw);
 
     // Step 5: Let throw be GetMethod(syncIterator, "throw").
@@ -4492,7 +4483,7 @@ MOZ_MUST_USE bool js::AsyncGeneratorEnqueue(JSContext* cx,
 
   // Step 2.
   Rooted<PromiseObject*> resultPromise(
-      cx, CreatePromiseObjectWithoutResolutionFunctions(cx));
+      cx, CreatePromiseObjectForAsyncGenerator(cx));
   if (!resultPromise) {
     return false;
   }
@@ -5766,9 +5757,7 @@ static const JSPropertySpec promise_properties[] = {
 
 static const JSFunctionSpec promise_static_methods[] = {
     JS_FN("all", Promise_static_all, 1, 0),
-#ifdef NIGHTLY_BUILD
     JS_FN("allSettled", Promise_static_allSettled, 1, 0),
-#endif
     JS_FN("race", Promise_static_race, 1, 0),
     JS_FN("reject", Promise_reject, 1, 0),
     JS_FN("resolve", Promise_static_resolve, 1, 0),
@@ -5785,13 +5774,13 @@ static const ClassSpec PromiseObjectClassSpec = {
     promise_methods,
     promise_properties};
 
-const Class PromiseObject::class_ = {
+const JSClass PromiseObject::class_ = {
     "Promise",
     JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS) |
         JSCLASS_HAS_CACHED_PROTO(JSProto_Promise) |
         JSCLASS_HAS_XRAYED_CONSTRUCTOR,
     JS_NULL_CLASS_OPS, &PromiseObjectClassSpec};
 
-const Class PromiseObject::protoClass_ = {
+const JSClass PromiseObject::protoClass_ = {
     "PromiseProto", JSCLASS_HAS_CACHED_PROTO(JSProto_Promise),
     JS_NULL_CLASS_OPS, &PromiseObjectClassSpec};

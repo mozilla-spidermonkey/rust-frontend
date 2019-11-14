@@ -17,28 +17,28 @@
 #include "nsIContentPolicy.h"
 
 class nsIURI;
-class nsIContent;
+class nsINode;
 class nsIPrincipal;
 class imgRequestProxy;
 
 class nsIconLoaderService : public imgINotificationObserver {
  public:
-  nsIconLoaderService(nsIContent* aContent, nsIntRect* aImageRegionRect,
-                      RefPtr<nsIconLoaderObserver> aObserver,
-                      uint32_t aIconHeight, uint32_t aIconWidth);
+  // If aScaleFactor is not specified, then an image with both regular and
+  // HiDPI representations will be loaded.
+  nsIconLoaderService(nsINode* aContent, nsIntRect* aImageRegionRect,
+                      RefPtr<nsIconLoaderObserver> aObserver, uint32_t aIconHeight,
+                      uint32_t aIconWidth, CGFloat aScaleFactor = 0.0f);
 
  public:
   NS_DECL_ISUPPORTS
   NS_DECL_IMGINOTIFICATIONOBSERVER
 
-  // LoadIcon will set a placeholder image and start a load request for the
-  // icon.  The request may not complete until after LoadIcon returns.
+  // LoadIcon will start a load request for the icon.
+  // The request may not complete until after LoadIcon returns.
   nsresult LoadIcon(nsIURI* aIconURI);
 
-  // Unless we take precautions, we may outlive the object that created us
-  // (mMenuObject, which owns our native menu item (mNativeMenuItem)).
-  // Destroy() should be called from mMenuObject's destructor to prevent
-  // this from happening.  See bug 499600.
+  NSImage* GetNativeIconImage();
+
   void Destroy();
 
  protected:
@@ -47,7 +47,7 @@ class nsIconLoaderService : public imgINotificationObserver {
  private:
   nsresult OnFrameComplete(imgIRequest* aRequest);
 
-  nsCOMPtr<nsIContent> mContent;
+  nsCOMPtr<nsINode> mContent;
   nsContentPolicyType mContentType;
   RefPtr<imgRequestProxy> mIconRequest;
   nsIntRect* mImageRegionRect;
@@ -55,7 +55,7 @@ class nsIconLoaderService : public imgINotificationObserver {
   NSImage* mNativeIconImage;
   uint32_t mIconHeight;
   uint32_t mIconWidth;
+  CGFloat mScaleFactor;
   RefPtr<nsIconLoaderObserver> mCompletionHandler;
 };
-
 #endif  // nsIconLoaderService_h_

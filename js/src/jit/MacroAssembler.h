@@ -36,6 +36,7 @@
 #include "jit/JitRealm.h"
 #include "jit/TemplateObject.h"
 #include "jit/VMFunctions.h"
+#include "util/Memory.h"
 #include "vm/ProxyObject.h"
 #include "vm/Shape.h"
 #include "vm/TypedArrayObject.h"
@@ -473,10 +474,23 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   // Emit a nop that can be patched to and from a nop and a call with int32
   // relative displacement.
-  CodeOffset nopPatchableToCall(const wasm::CallSiteDesc& desc) PER_SHARED_ARCH;
+  CodeOffset nopPatchableToCall() PER_SHARED_ARCH;
+  void nopPatchableToCall(const wasm::CallSiteDesc& desc);
   static void patchNopToCall(uint8_t* callsite,
                              uint8_t* target) PER_SHARED_ARCH;
   static void patchCallToNop(uint8_t* callsite) PER_SHARED_ARCH;
+
+  // These methods are like movWithPatch/PatchDataWithValueCheck but allow
+  // using pc-relative addressing on certain platforms (RIP-relative LEA on x64,
+  // ADR instruction on arm64).
+  //
+  // Note: "Near" applies to ARM64 where the target must be within 1 MB (this is
+  // release-asserted).
+  CodeOffset moveNearAddressWithPatch(Register dest)
+      DEFINED_ON(x86, x64, arm, arm64, mips_shared);
+  static void patchNearAddressMove(CodeLocationLabel loc,
+                                   CodeLocationLabel target)
+      DEFINED_ON(x86, x64, arm, arm64, mips_shared);
 
  public:
   // ===============================================================
@@ -962,7 +976,7 @@ class MacroAssembler : public MacroAssemblerSpecific {
   inline void inc64(AbsoluteAddress dest) PER_ARCH;
 
   inline void neg32(Register reg) PER_SHARED_ARCH;
-  inline void neg64(Register64 reg) DEFINED_ON(x86, x64, arm, mips32, mips64);
+  inline void neg64(Register64 reg) PER_ARCH;
   inline void negPtr(Register reg) PER_ARCH;
 
   inline void negateFloat(FloatRegister reg) PER_SHARED_ARCH;
@@ -1102,6 +1116,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
   template <class L>
   inline void branch32(Condition cond, Register lhs, Imm32 rhs,
                        L label) PER_SHARED_ARCH;
+
+  inline void branch32(Condition cond, Register lhs, const Address& rhs,
+                       Label* label) DEFINED_ON(arm64);
 
   inline void branch32(Condition cond, const Address& lhs, Register rhs,
                        Label* label) PER_SHARED_ARCH;
@@ -1291,12 +1308,12 @@ class MacroAssembler : public MacroAssemblerSpecific {
   inline void branchIfTrueBool(Register reg, Label* label);
 
   inline void branchIfRope(Register str, Label* label);
-  inline void branchIfRopeOrExternal(Register str, Register temp, Label* label);
-
   inline void branchIfNotRope(Register str, Label* label);
 
   inline void branchLatin1String(Register string, Label* label);
   inline void branchTwoByteString(Register string, Label* label);
+
+  inline void branchIfNegativeBigInt(Register bigInt, Label* label);
 
   inline void branchTestFunctionFlags(Register fun, uint32_t flags,
                                       Condition cond, Label* label);
@@ -1306,6 +1323,10 @@ class MacroAssembler : public MacroAssemblerSpecific {
   inline void branchIfFunctionHasNoScript(Register fun, Label* label);
   inline void branchIfInterpreted(Register fun, bool isConstructing,
                                   Label* label);
+
+  inline void branchIfScriptHasJitScript(Register script, Label* label);
+  inline void branchIfScriptHasNoJitScript(Register script, Label* label);
+  inline void loadJitScript(Register script, Register dest);
 
   inline void branchFunctionKind(Condition cond,
                                  FunctionFlags::FunctionKind kind, Register fun,
@@ -1323,11 +1344,11 @@ class MacroAssembler : public MacroAssemblerSpecific {
   // register but the caller may pass a different register.
 
   inline void branchTestObjClass(Condition cond, Register obj,
-                                 const js::Class* clasp, Register scratch,
+                                 const JSClass* clasp, Register scratch,
                                  Register spectreRegToZero, Label* label);
   inline void branchTestObjClassNoSpectreMitigations(Condition cond,
                                                      Register obj,
-                                                     const js::Class* clasp,
+                                                     const JSClass* clasp,
                                                      Register scratch,
                                                      Label* label);
 
@@ -1644,6 +1665,10 @@ class MacroAssembler : public MacroAssemblerSpecific {
   inline void cmp32Load32(Condition cond, Register lhs, Register rhs,
                           const Address& src, Register dest)
       DEFINED_ON(arm, arm64, mips_shared, x86_shared);
+
+  inline void cmp32LoadPtr(Condition cond, const Address& lhs, Imm32 rhs,
+                           const Address& src, Register dest)
+      DEFINED_ON(arm, arm64, x86, x64);
 
   inline void cmp32MovePtr(Condition cond, Register lhs, Imm32 rhs,
                            Register src, Register dest)
@@ -2524,6 +2549,28 @@ class MacroAssembler : public MacroAssemblerSpecific {
    */
   void addToCharPtr(Register chars, Register index, CharEncoding encoding);
 
+ private:
+  void loadBigIntDigits(Register bigInt, Register digits);
+
+ public:
+  /**
+   * Load the first [u]int64 value from |bigInt| into |dest|.
+   */
+  void loadBigInt64(Register bigInt, Register64 dest);
+
+  /**
+   * Load the first digit from |bigInt| into |dest|. Handles the case when the
+   * BigInt digits length is zero.
+   *
+   * Note: A BigInt digit is a pointer-sized value.
+   */
+  void loadFirstBigIntDigitOrZero(Register bigInt, Register dest);
+
+  /**
+   * Initialize a BigInt from |dest|. Clobbers |val|!
+   */
+  void initializeBigInt64(Scalar::Type type, Register bigInt, Register64 val);
+
   void loadJSContext(Register dest);
 
   void switchToRealm(Register realm);
@@ -2699,6 +2746,10 @@ class MacroAssembler : public MacroAssemblerSpecific {
                           const ValueOperand& dest, bool allowDouble,
                           Register temp, Label* fail);
 
+  template <typename T>
+  void loadFromTypedBigIntArray(Scalar::Type arrayType, const T& src,
+                                Register bigInt, Register64 temp);
+
   template <typename S, typename T>
   void storeToTypedIntArray(Scalar::Type arrayType, const S& value,
                             const T& dest) {
@@ -2725,6 +2776,11 @@ class MacroAssembler : public MacroAssemblerSpecific {
                               const BaseIndex& dest);
   void storeToTypedFloatArray(Scalar::Type arrayType, FloatRegister value,
                               const Address& dest);
+
+  void storeToTypedBigIntArray(Scalar::Type arrayType, Register64 value,
+                               const BaseIndex& dest);
+  void storeToTypedBigIntArray(Scalar::Type arrayType, Register64 value,
+                               const Address& dest);
 
   void memoryBarrierBefore(const Synchronization& sync);
   void memoryBarrierAfter(const Synchronization& sync);
@@ -2836,6 +2892,8 @@ class MacroAssembler : public MacroAssemblerSpecific {
                    bool attemptNursery);
   void newGCFatInlineString(Register result, Register temp, Label* fail,
                             bool attemptNursery);
+
+  void newGCBigInt(Register result, Register temp, Label* fail);
 
   // Compares two strings for equality based on the JSOP.
   // This checks for identical pointers, atoms and length and fails for
@@ -3033,16 +3091,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   void convertValueToFloatingPoint(ValueOperand value, FloatRegister output,
                                    Label* fail, MIRType outputType);
-  MOZ_MUST_USE bool convertValueToFloatingPoint(JSContext* cx, const Value& v,
-                                                FloatRegister output,
-                                                Label* fail,
-                                                MIRType outputType);
-  MOZ_MUST_USE bool convertConstantOrRegisterToFloatingPoint(
-      JSContext* cx, const ConstantOrRegister& src, FloatRegister output,
-      Label* fail, MIRType outputType);
-  void convertTypedOrValueToFloatingPoint(TypedOrValueRegister src,
-                                          FloatRegister output, Label* fail,
-                                          MIRType outputType);
 
   void outOfLineTruncateSlow(FloatRegister src, Register dest,
                              bool widenFloatToDouble, bool compilingWasm,
@@ -3056,39 +3104,12 @@ class MacroAssembler : public MacroAssemblerSpecific {
                             Label* fail) {
     convertValueToFloatingPoint(value, output, fail, MIRType::Double);
   }
-  MOZ_MUST_USE bool convertValueToDouble(JSContext* cx, const Value& v,
-                                         FloatRegister output, Label* fail) {
-    return convertValueToFloatingPoint(cx, v, output, fail, MIRType::Double);
-  }
-  MOZ_MUST_USE bool convertConstantOrRegisterToDouble(
-      JSContext* cx, const ConstantOrRegister& src, FloatRegister output,
-      Label* fail) {
-    return convertConstantOrRegisterToFloatingPoint(cx, src, output, fail,
-                                                    MIRType::Double);
-  }
-  void convertTypedOrValueToDouble(TypedOrValueRegister src,
-                                   FloatRegister output, Label* fail) {
-    convertTypedOrValueToFloatingPoint(src, output, fail, MIRType::Double);
-  }
 
   void convertValueToFloat(ValueOperand value, FloatRegister output,
                            Label* fail) {
     convertValueToFloatingPoint(value, output, fail, MIRType::Float32);
   }
-  MOZ_MUST_USE bool convertValueToFloat(JSContext* cx, const Value& v,
-                                        FloatRegister output, Label* fail) {
-    return convertValueToFloatingPoint(cx, v, output, fail, MIRType::Float32);
-  }
-  MOZ_MUST_USE bool convertConstantOrRegisterToFloat(
-      JSContext* cx, const ConstantOrRegister& src, FloatRegister output,
-      Label* fail) {
-    return convertConstantOrRegisterToFloatingPoint(cx, src, output, fail,
-                                                    MIRType::Float32);
-  }
-  void convertTypedOrValueToFloat(TypedOrValueRegister src,
-                                  FloatRegister output, Label* fail) {
-    convertTypedOrValueToFloatingPoint(src, output, fail, MIRType::Float32);
-  }
+
   //
   // Functions for converting values to int.
   //
@@ -3106,21 +3127,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
       FloatRegister temp, Register output, Label* fail,
       IntConversionBehavior behavior,
       IntConversionInputKind conversion = IntConversionInputKind::Any);
-  void convertValueToInt(ValueOperand value, FloatRegister temp,
-                         Register output, Label* fail,
-                         IntConversionBehavior behavior) {
-    convertValueToInt(value, nullptr, nullptr, nullptr, nullptr, InvalidReg,
-                      temp, output, fail, behavior);
-  }
-  MOZ_MUST_USE bool convertValueToInt(JSContext* cx, const Value& v,
-                                      Register output, Label* fail,
-                                      IntConversionBehavior behavior);
-  MOZ_MUST_USE bool convertConstantOrRegisterToInt(
-      JSContext* cx, const ConstantOrRegister& src, FloatRegister temp,
-      Register output, Label* fail, IntConversionBehavior behavior);
-  void convertTypedOrValueToInt(TypedOrValueRegister src, FloatRegister temp,
-                                Register output, Label* fail,
-                                IntConversionBehavior behavior);
 
   // This carries over the MToNumberInt32 operation on the ValueOperand
   // input; see comment at the top of this class.
@@ -3152,11 +3158,14 @@ class MacroAssembler : public MacroAssemblerSpecific {
                          temp, output, fail);
   }
 
-  MOZ_MUST_USE bool truncateConstantOrRegisterToInt32(
-      JSContext* cx, const ConstantOrRegister& src, FloatRegister temp,
-      Register output, Label* fail) {
-    return convertConstantOrRegisterToInt(cx, src, temp, output, fail,
-                                          IntConversionBehavior::Truncate);
+  // Truncates, i.e. removes any fractional parts, but doesn't wrap around to
+  // the int32 range.
+  void truncateNoWrapValueToInt32(ValueOperand value, MDefinition* input,
+                                  FloatRegister temp, Register output,
+                                  Label* truncateDoubleSlow, Label* fail) {
+    convertValueToInt(value, input, nullptr, nullptr, truncateDoubleSlow,
+                      InvalidReg, temp, output, fail,
+                      IntConversionBehavior::TruncateNoWrap);
   }
 
   // Convenience functions for clamping values to uint8.
@@ -3167,13 +3176,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
     convertValueToInt(value, input, handleStringEntry, handleStringRejoin,
                       nullptr, stringReg, temp, output, fail,
                       IntConversionBehavior::ClampToUint8);
-  }
-
-  MOZ_MUST_USE bool clampConstantOrRegisterToUint8(
-      JSContext* cx, const ConstantOrRegister& src, FloatRegister temp,
-      Register output, Label* fail) {
-    return convertConstantOrRegisterToInt(cx, src, temp, output, fail,
-                                          IntConversionBehavior::ClampToUint8);
   }
 
   MOZ_MUST_USE bool icBuildOOLFakeExitFrame(void* fakeReturnAddr,
@@ -3331,11 +3333,13 @@ static inline MIRType ToMIRType(MIRType t) { return t; }
 static inline MIRType ToMIRType(ABIArgType argType) {
   switch (argType) {
     case ArgType_General:
-      return MIRType::Int32;
-    case ArgType_Double:
+      return MIRType::Pointer;
+    case ArgType_Float64:
       return MIRType::Double;
     case ArgType_Float32:
       return MIRType::Float32;
+    case ArgType_Int32:
+      return MIRType::Int32;
     case ArgType_Int64:
       return MIRType::Int64;
     default:

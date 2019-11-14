@@ -13,6 +13,7 @@
 #include "builtin/MapObject.h"
 #include "debugger/DebugAPI.h"
 #include "frontend/BytecodeCompiler.h"
+#include "gc/ClearEdgesTracer.h"
 #include "gc/GCInternals.h"
 #include "gc/Marking.h"
 #include "jit/MacroAssembler.h"
@@ -270,18 +271,22 @@ void js::gc::GCRuntime::traceRuntimeForMajorGC(JSTracer* trc,
                                                AutoGCSession& session) {
   MOZ_ASSERT(!TlsContext.get()->suppressGC);
 
-  // FinishRoots will have asserted that every root that we do not expect
-  // is gone, so we can simply skip traceRuntime here.
-  if (rt->isBeingDestroyed()) {
-    return;
-  }
-
   gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK_ROOTS);
   if (atomsZone->isCollecting()) {
     traceRuntimeAtoms(trc, session.checkAtomsAccess());
   }
   traceKeptAtoms(trc);
-  Compartment::traceIncomingCrossCompartmentEdgesForZoneGC(trc);
+
+  {
+    // Trace incoming cross compartment edges from uncollected compartments,
+    // skipping gray edges which are traced later.
+    gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK_CCWS);
+    Compartment::traceIncomingCrossCompartmentEdgesForZoneGC(
+        trc, Compartment::NonGrayEdges);
+  }
+
+  markFinalizationGroupData(trc);
+
   traceRuntimeCommon(trc, MarkRuntime);
 }
 
@@ -307,10 +312,18 @@ void js::TraceRuntime(JSTracer* trc) {
   MOZ_ASSERT(!trc->isMarkingTracer());
 
   JSRuntime* rt = trc->runtime();
-  rt->gc.evictNursery();
-  AutoPrepareForTracing prep(rt->mainContextFromOwnThread());
+  AutoEmptyNurseryAndPrepareForTracing prep(rt->mainContextFromOwnThread());
   gcstats::AutoPhase ap(rt->gc.stats(), gcstats::PhaseKind::TRACE_HEAP);
   rt->gc.traceRuntime(trc, prep);
+}
+
+void js::TraceRuntimeWithoutEviction(JSTracer* trc) {
+  MOZ_ASSERT(!trc->isMarkingTracer());
+
+  JSRuntime* rt = trc->runtime();
+  AutoTraceSession session(rt);
+  gcstats::AutoPhase ap(rt->gc.stats(), gcstats::PhaseKind::TRACE_HEAP);
+  rt->gc.traceRuntime(trc, session);
 }
 
 void js::gc::GCRuntime::traceRuntime(JSTracer* trc, AutoTraceSession& session) {
@@ -335,7 +348,7 @@ void js::gc::GCRuntime::traceKeptAtoms(JSTracer* trc) {
   // We don't have exact rooting information for atoms while parsing. When
   // this is happeninng we set a flag on the zone and trace all atoms in the
   // zone's cache.
-  for (GCZonesIter zone(trc->runtime()); !zone.done(); zone.next()) {
+  for (GCZonesIter zone(this); !zone.done(); zone.next()) {
     if (zone->hasKeptAtoms()) {
       zone->traceAtomCache(trc);
     }
@@ -371,8 +384,10 @@ void js::gc::GCRuntime::traceRuntimeCommon(JSTracer* trc,
   // Trace the self-hosting global compartment.
   rt->traceSelfHostingGlobal(trc);
 
+#ifdef ENABLE_INTL_API
   // Trace the shared Intl data.
   rt->traceSharedIntlData(trc);
+#endif
 
   // Trace the JSContext.
   rt->mainContextFromOwnThread()->trace(trc);
@@ -383,15 +398,26 @@ void js::gc::GCRuntime::traceRuntimeCommon(JSTracer* trc,
     r->traceRoots(trc, traceOrMark);
   }
 
+  // Trace zone script-table roots. See comment in
+  // Zone::traceScriptTableRoots() for justification re: calling this only
+  // during major (non-nursery) collections.
+  if (!JS::RuntimeHeapIsMinorCollecting()) {
+    for (ZonesIter zone(this, ZoneSelector::SkipAtoms); !zone.done();
+         zone.next()) {
+      zone->traceScriptTableRoots(trc);
+    }
+  }
+
   // Trace helper thread roots.
   HelperThreadState().trace(trc);
+
+  // Trace Debugger.Frames that have live hooks, since dropping them would be
+  // observable. In effect, they are rooted by the stack frames.
+  DebugAPI::traceFramesWithLiveHooks(trc);
 
   // Trace the embedding's black and gray roots.
   if (!JS::RuntimeHeapIsMinorCollecting()) {
     gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK_EMBEDDING);
-
-    // The analysis doesn't like the function pointers below.
-    JS::AutoSuppressGCAnalysis nogc;
 
     /*
      * The embedding can register additional roots here.
@@ -400,30 +426,44 @@ void js::gc::GCRuntime::traceRuntimeCommon(JSTracer* trc,
      * the nursery should be in the store buffer, and we want to avoid the
      * time taken to trace all these roots.
      */
-    for (size_t i = 0; i < blackRootTracers.ref().length(); i++) {
-      const Callback<JSTraceDataOp>& e = blackRootTracers.ref()[i];
-      (*e.op)(trc, e.data);
-    }
+    traceEmbeddingBlackRoots(trc);
 
     /* During GC, we don't trace gray roots at this stage. */
-    if (JSTraceDataOp op = grayRootTracer.op) {
-      if (traceOrMark == TraceRuntime) {
-        (*op)(trc, grayRootTracer.data);
-      }
+    if (traceOrMark == TraceRuntime) {
+      traceEmbeddingGrayRoots(trc);
     }
+  }
+}
+
+void GCRuntime::traceEmbeddingBlackRoots(JSTracer* trc) {
+  // The analysis doesn't like the function pointer below.
+  JS::AutoSuppressGCAnalysis nogc;
+
+  for (size_t i = 0; i < blackRootTracers.ref().length(); i++) {
+    const Callback<JSTraceDataOp>& e = blackRootTracers.ref()[i];
+    (*e.op)(trc, e.data);
+  }
+}
+
+void GCRuntime::traceEmbeddingGrayRoots(JSTracer* trc) {
+  // The analysis doesn't like the function pointer below.
+  JS::AutoSuppressGCAnalysis nogc;
+
+  if (JSTraceDataOp op = grayRootTracer.op) {
+    (*op)(trc, grayRootTracer.data);
   }
 }
 
 #ifdef DEBUG
 class AssertNoRootsTracer final : public JS::CallbackTracer {
   bool onChild(const JS::GCCellPtr& thing) override {
-    MOZ_CRASH("There should not be any roots after finishRoots");
+    MOZ_CRASH("There should not be any roots during runtime shutdown");
     return true;
   }
 
  public:
-  AssertNoRootsTracer(JSRuntime* rt, WeakMapTraceKind weakTraceKind)
-      : JS::CallbackTracer(rt, weakTraceKind) {}
+  explicit AssertNoRootsTracer(JSRuntime* rt)
+      : JS::CallbackTracer(rt, TraceWeakMapKeysValues) {}
 };
 #endif  // DEBUG
 
@@ -438,24 +478,26 @@ void js::gc::GCRuntime::finishRoots() {
 
   rt->finishSelfHosting();
 
-  for (RealmsIter r(rt); !r.done(); r.next()) {
-    r->finishRoots();
+  for (ZonesIter zone(rt, WithAtoms); !zone.done(); zone.next()) {
+    zone->finishRoots();
   }
 
+#ifdef JS_GC_ZEAL
+  clearSelectedForMarking();
+#endif
+
+  // Clear any remaining roots from the embedding (as otherwise they will be
+  // left dangling after we shut down) and remove the callbacks.
+  ClearEdgesTracer trc(rt);
+  traceEmbeddingBlackRoots(&trc);
+  traceEmbeddingGrayRoots(&trc);
+  clearBlackAndGrayRootTracers();
+}
+
+void js::gc::GCRuntime::checkNoRuntimeRoots(AutoGCSession& session) {
 #ifdef DEBUG
-  // The nsWrapperCache may not be empty before our shutdown GC, so we have
-  // to skip that table when verifying that we are fully unrooted.
-  auto prior = grayRootTracer;
-  grayRootTracer = Callback<JSTraceDataOp>(nullptr, nullptr);
-
-  AssertNoRootsTracer trc(rt, TraceWeakMapKeysValues);
-  AutoTraceSession session(rt);
-  gcstats::AutoPhase ap(rt->gc.stats(), gcstats::PhaseKind::TRACE_HEAP);
-  traceRuntime(&trc, session);
-
-  // Restore the wrapper tracing so that we leak instead of leaving dangling
-  // pointers.
-  grayRootTracer = prior;
+  AssertNoRootsTracer trc(rt);
+  traceRuntimeForMajorGC(&trc, session);
 #endif  // DEBUG
 }
 
@@ -503,14 +545,14 @@ void js::gc::GCRuntime::bufferGrayRoots() {
   // Precondition: the state has been reset to "unused" after the last GC
   //               and the zone's buffers have been cleared.
   MOZ_ASSERT(grayBufferState == GrayBufferState::Unused);
-  for (GCZonesIter zone(rt); !zone.done(); zone.next()) {
+  for (GCZonesIter zone(this); !zone.done(); zone.next()) {
     MOZ_ASSERT(zone->gcGrayRoots().IsEmpty());
   }
 
   BufferGrayRootsTracer grayBufferer(rt);
-  if (JSTraceDataOp op = grayRootTracer.op) {
-    (*op)(&grayBufferer, grayRootTracer.data);
-  }
+  traceEmbeddingGrayRoots(&grayBufferer);
+  Compartment::traceIncomingCrossCompartmentEdgesForZoneGC(
+      &grayBufferer, Compartment::GrayEdges);
 
   // Propagate the failure flag from the marker to the runtime.
   if (grayBufferer.failed()) {
@@ -577,11 +619,11 @@ void GCRuntime::markBufferedGrayRoots(JS::Zone* zone) {
   }
 }
 
-void GCRuntime::resetBufferedGrayRoots() const {
+void GCRuntime::resetBufferedGrayRoots() {
   MOZ_ASSERT(
       grayBufferState != GrayBufferState::Okay,
       "Do not clear the gray buffers unless we are Failed or becoming Unused");
-  for (GCZonesIter zone(rt); !zone.done(); zone.next()) {
+  for (GCZonesIter zone(this); !zone.done(); zone.next()) {
     zone->gcGrayRoots().Clear();
   }
 }

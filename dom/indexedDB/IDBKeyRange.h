@@ -87,15 +87,10 @@ class IDBKeyRange : public nsISupports {
 
   indexedDB::Key& Upper() { return mIsOnly ? mLower : mUpper; }
 
-  bool Includes(JSContext* aCx, JS::Handle<JS::Value> aKey,
+  bool Includes(JSContext* aCx, JS::Handle<JS::Value> aValue,
                 ErrorResult& aRv) const;
 
   bool IsOnly() const { return mIsOnly; }
-
-  void GetBindingClause(const nsACString& aKeyColumnName,
-                        nsACString& _retval) const;
-
-  nsresult BindToStatement(mozIStorageStatement* aStatement) const;
 
   void DropJSObjects();
 

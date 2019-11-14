@@ -11,6 +11,7 @@ from __future__ import absolute_import, print_function, unicode_literals
 import json
 import os
 import shutil
+import six
 import socket
 import subprocess
 import sys
@@ -24,7 +25,7 @@ from mozbuild.base import MachCommandConditions as Conditions
 HERE = os.path.dirname(os.path.realpath(__file__))
 
 BENCHMARK_REPOSITORY = 'https://github.com/mozilla/perf-automation'
-BENCHMARK_REVISION = '2720cdc790828952964524bb44ce8b4c14670e90'
+BENCHMARK_REVISION = 'e19a0865c946ae2f9a64dd25614b1c275a3996b2'
 
 FIREFOX_ANDROID_BROWSERS = ["fennec", "geckoview", "refbrow", "fenix"]
 
@@ -162,6 +163,9 @@ class RaptorRunner(MozbuildObject):
             import mach_commands as browsertime
             # We don't set `browsertime_{chromedriver,geckodriver} -- those will be found by
             # browsertime in its `node_modules` directory, which is appropriate for local builds.
+            # We don't set `browsertime_ffmpeg` yet: it will need to be on the path.  There is code
+            # to configure the environment including the path in
+            # `tools/browsertime/mach_commands.py` but integrating it here will take more effort.
             self.config.update({
                 'browsertime_node': browsertime.node_path(),
                 'browsertime_browsertimejs': browsertime.browsertime_path(),
@@ -201,10 +205,10 @@ def create_parser():
 
 @CommandProvider
 class MachRaptor(MachCommandBase):
-    @Command('raptor-test', category='testing',
-             description='Run raptor performance tests.',
+    @Command('raptor', category='testing',
+             description='Run Raptor performance tests.',
              parser=create_parser)
-    def run_raptor_test(self, **kwargs):
+    def run_raptor(self, **kwargs):
         build_obj = self
 
         is_android = Conditions.is_android(build_obj) or \
@@ -231,10 +235,10 @@ class MachRaptor(MachCommandBase):
                 adbhost = ADBHost(verbose=True)
                 device_serial = "{}:5555".format(device.get_ip_address())
                 device.command_output(["tcpip", "5555"])
-                raw_input("Please disconnect your device from USB then press Enter/return...")
+                six.input("Please disconnect your device from USB then press Enter/return...")
                 adbhost.command_output(["connect", device_serial])
                 while len(adbhost.devices()) > 1:
-                    raw_input("You must disconnect your device from USB before continuing.")
+                    six.input("You must disconnect your device from USB before continuing.")
                 # must reset the environment DEVICE_SERIAL which was set during
                 # verify_android_device to match our new tcpip value.
                 os.environ["DEVICE_SERIAL"] = device_serial
@@ -245,9 +249,15 @@ class MachRaptor(MachCommandBase):
         finally:
             try:
                 if is_android and kwargs['power_test']:
-                    raw_input("Connect device via USB and press Enter/return...")
+                    six.input("Connect device via USB and press Enter/return...")
                     device = ADBAndroid(device=device_serial, verbose=True)
                     device.command_output(["usb"])
                     adbhost.command_output(["disconnect", device_serial])
             except Exception:
                 adbhost.command_output(["kill-server"])
+
+    @Command('raptor-test', category='testing',
+             description='Run Raptor performance tests.',
+             parser=create_parser)
+    def run_raptor_test(self, **kwargs):
+        return self.run_raptor(**kwargs)

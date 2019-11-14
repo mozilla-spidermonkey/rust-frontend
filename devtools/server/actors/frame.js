@@ -1,5 +1,3 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2; js-indent-level: 2 -*- */
-/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -32,9 +30,10 @@ const FrameActor = ActorClassWithSpec(frameSpec, {
    * @param threadActor ThreadActor
    *        The parent thread actor for this frame.
    */
-  initialize: function(frame, threadActor) {
+  initialize: function(frame, threadActor, depth) {
     this.frame = frame;
     this.threadActor = threadActor;
+    this.depth = depth;
   },
 
   /**
@@ -83,7 +82,14 @@ const FrameActor = ActorClassWithSpec(frameSpec, {
    */
   form: function() {
     const threadActor = this.threadActor;
-    const form = { actor: this.actorID, type: this.frame.type };
+    const form = {
+      actor: this.actorID,
+      type: this.frame.type,
+    };
+
+    if (this.depth) {
+      form.depth = this.depth;
+    }
 
     // NOTE: ignoreFrameEnvironment lets the client explicitly avoid
     // populating form environments on pause.
@@ -104,6 +110,7 @@ const FrameActor = ActorClassWithSpec(frameSpec, {
 
     form.displayName = formatDisplayName(this.frame);
     form.arguments = this._args();
+
     if (this.frame.script) {
       const location = this.threadActor.sources.getFrameLocation(this.frame);
       form.where = {

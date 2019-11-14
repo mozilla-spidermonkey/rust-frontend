@@ -326,12 +326,6 @@ nsUnknownDecoder::GetMIMETypeFromContent(nsIRequest* aRequest,
                                          nsACString& type) {
   // This is only used by sniffer, therefore we do not need to lock anything
   // here.
-  nsCOMPtr<nsIChannel> channel(do_QueryInterface(aRequest));
-  nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
-  if (loadInfo->GetSkipContentSniffing()) {
-    return NS_OK;
-  }
-
   mBuffer = const_cast<char*>(reinterpret_cast<const char*>(aData));
   mBufferLen = aLength;
   DetermineContentType(aRequest);
@@ -360,17 +354,7 @@ bool nsUnknownDecoder::AllowSniffing(nsIRequest* aRequest) {
     return false;
   }
 
-  nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
-  if (loadInfo->GetSkipContentSniffing()) {
-    return false;
-  }
-
-  bool isLocalFile = false;
-  if (NS_FAILED(uri->SchemeIs("file", &isLocalFile)) || isLocalFile) {
-    return false;
-  }
-
-  return true;
+  return !uri->SchemeIs("file");
 }
 
 /**
@@ -411,18 +395,11 @@ void nsUnknownDecoder::DetermineContentType(nsIRequest* aRequest) {
     if (!mContentType.IsEmpty()) return;
   }
 
-  nsCOMPtr<nsIHttpChannel> channel(do_QueryInterface(aRequest));
-  if (channel) {
-    nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
-    if (loadInfo->GetSkipContentSniffing()) {
-      return;
-    }
-  }
-
   const char* testData = mBuffer;
   uint32_t testDataLen = mBufferLen;
   // Check if data are compressed.
   nsAutoCString decodedData;
+  nsCOMPtr<nsIChannel> channel(do_QueryInterface(aRequest));
 
   if (channel) {
     // ConvertEncodedData is always called only on a single thread for each
@@ -594,9 +571,6 @@ bool nsUnknownDecoder::SniffForXML(nsIRequest* aRequest) {
 bool nsUnknownDecoder::SniffURI(nsIRequest* aRequest) {
   nsCOMPtr<nsIChannel> channel(do_QueryInterface(aRequest));
   nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
-  if (loadInfo->GetSkipContentSniffing()) {
-    return false;
-  }
   nsCOMPtr<nsIMIMEService> mimeService(do_GetService("@mozilla.org/mime;1"));
   if (mimeService) {
     nsCOMPtr<nsIChannel> channel = do_QueryInterface(aRequest);
@@ -627,12 +601,6 @@ bool nsUnknownDecoder::SniffURI(nsIRequest* aRequest) {
 bool nsUnknownDecoder::LastDitchSniff(nsIRequest* aRequest) {
   // All we can do now is try to guess whether this is text/plain or
   // application/octet-stream
-
-  nsCOMPtr<nsIChannel> channel(do_QueryInterface(aRequest));
-  nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
-  if (loadInfo->GetSkipContentSniffing()) {
-    return false;
-  }
 
   MutexAutoLock lock(mMutex);
 
@@ -856,9 +824,6 @@ void nsBinaryDetector::DetermineContentType(nsIRequest* aRequest) {
   }
 
   nsCOMPtr<nsILoadInfo> loadInfo = httpChannel->LoadInfo();
-  if (loadInfo->GetSkipContentSniffing()) {
-    return;
-  }
   // It's an HTTP channel.  Check for the text/plain mess
   nsAutoCString contentTypeHdr;
   Unused << httpChannel->GetResponseHeader(NS_LITERAL_CSTRING("Content-Type"),

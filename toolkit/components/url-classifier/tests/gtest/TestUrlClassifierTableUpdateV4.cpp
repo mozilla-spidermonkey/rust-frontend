@@ -1,23 +1,19 @@
-/* Any copyright is dedicated to the Public Domain.
- * http://creativecommons.org/publicdomain/zero/1.0/ */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "Common.h"
 #include "Classifier.h"
 #include "HashStore.h"
+#include "mozilla/Components.h"
+#include "mozilla/Unused.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsIFile.h"
 #include "nsIThread.h"
-#include "string.h"
-#include "gtest/gtest.h"
 #include "nsThreadUtils.h"
-#include "mozilla/Components.h"
-#include "mozilla/Unused.h"
+#include "string.h"
 
-using namespace mozilla;
-using namespace mozilla::safebrowsing;
-
-typedef nsCString _Prefix;
-typedef nsTArray<_Prefix> _PrefixArray;
+#include "Common.h"
 
 #define GTEST_SAFEBROWSING_DIR NS_LITERAL_CSTRING("safebrowsing")
 #define GTEST_TABLE NS_LITERAL_CSTRING("gtest-malware-proto")
@@ -173,30 +169,18 @@ static void Clear() {
 }
 
 static void testUpdateFail(TableUpdateArray& tableUpdates) {
-  nsCOMPtr<nsIFile> file;
-  NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR, getter_AddRefs(file));
-
-  RefPtr<Classifier> classifier = new Classifier();
-  classifier->Open(*file);
-
-  nsresult rv = SyncApplyUpdates(classifier, tableUpdates);
+  nsresult rv = SyncApplyUpdates(tableUpdates);
   ASSERT_TRUE(NS_FAILED(rv));
 }
 
 static void testUpdate(TableUpdateArray& tableUpdates,
                        PrefixStringMap& expected) {
-  nsCOMPtr<nsIFile> file;
-  NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR, getter_AddRefs(file));
-
   // Force nsUrlClassifierUtils loading on main thread
   // because nsIUrlClassifierDBService will not run in advance
   // in gtest.
   nsUrlClassifierUtils::GetInstance();
 
-  RefPtr<Classifier> classifier = new Classifier();
-  classifier->Open(*file);
-
-  nsresult rv = SyncApplyUpdates(classifier, tableUpdates);
+  nsresult rv = SyncApplyUpdates(tableUpdates);
   ASSERT_TRUE(rv == NS_OK);
   VerifyPrefixSet(expected);
 }

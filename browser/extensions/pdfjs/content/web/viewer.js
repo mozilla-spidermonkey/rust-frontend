@@ -876,6 +876,7 @@ let PDFViewerApplication = {
     this.pdfLoadingTask = loadingTask;
 
     loadingTask.onPassword = (updateCallback, reason) => {
+      this.pdfLinkService.externalLinkEnabled = false;
       this.passwordPrompt.setUpdateCallback(updateCallback, reason);
       this.passwordPrompt.open();
     };
@@ -1063,7 +1064,7 @@ let PDFViewerApplication = {
         scrollMode: _ui_utils.ScrollMode.UNKNOWN,
         spreadMode: _ui_utils.SpreadMode.UNKNOWN
       }).catch(() => {});
-      Promise.all([storePromise, pageLayoutPromise, pageModePromise, openActionDestPromise]).then(async ([values = {}, pageLayout, pageMode, openActionDest]) => {
+      Promise.all([_ui_utils.animationStarted, storePromise, pageLayoutPromise, pageModePromise, openActionDestPromise]).then(async ([timeStamp, values = {}, pageLayout, pageMode, openActionDest]) => {
         const viewOnLoad = _app_options.AppOptions.get('viewOnLoad');
 
         this._initializePdfHistory({
@@ -1204,7 +1205,7 @@ let PDFViewerApplication = {
         }
       });
     });
-    Promise.all([onePageRendered, _ui_utils.animationStarted]).then(() => {
+    onePageRendered.then(() => {
       pdfDocument.getOutline().then(outline => {
         this.pdfOutlineViewer.render({
           outline
@@ -1250,8 +1251,8 @@ let PDFViewerApplication = {
         this.fallback(_pdfjsLib.UNSUPPORTED_FEATURES.forms);
       }
 
-      let versionId = String(info.PDFFormatVersion).slice(-1) | 0;
-      let generatorId = 0;
+      const versionId = `v${info.PDFFormatVersion.replace('.', '_')}`;
+      let generatorId = 'other';
       const KNOWN_GENERATORS = ['acrobat distiller', 'acrobat pdfwriter', 'adobe livecycle', 'adobe pdf library', 'adobe photoshop', 'ghostscript', 'tcpdf', 'cairo', 'dvipdfm', 'dvips', 'pdftex', 'pdfkit', 'itext', 'prince', 'quarkxpress', 'mac os x', 'microsoft', 'openoffice', 'oracle', 'luradocument', 'pdf-xchange', 'antenna house', 'aspose.cells', 'fpdf'];
 
       if (info.Producer) {
@@ -1260,7 +1261,7 @@ let PDFViewerApplication = {
             return false;
           }
 
-          generatorId = i + 1;
+          generatorId = s.replace(/[ .\-]/g, '_');
           return true;
         }.bind(null, info.Producer.toLowerCase()));
       }
@@ -1397,7 +1398,7 @@ let PDFViewerApplication = {
     });
   },
 
-  afterPrint: function pdfViewSetupAfterPrint() {
+  afterPrint() {
     if (this.printService) {
       this.printService.destroy();
       this.printService = null;
@@ -1638,9 +1639,6 @@ function webViewerInitialized() {
       });
     }
   }, true);
-  appConfig.sidebar.toggleButton.addEventListener('click', function () {
-    PDFViewerApplication.pdfSidebar.toggle();
-  });
 
   try {
     webViewerOpenFileViaURL(file);
@@ -1688,7 +1686,8 @@ function webViewerPageRendered(evt) {
   }
 
   PDFViewerApplication.externalServices.reportTelemetry({
-    type: 'pageInfo'
+    type: 'pageInfo',
+    timestamp: evt.timestamp
   });
   PDFViewerApplication.pdfDocument.getStats().then(function (stats) {
     PDFViewerApplication.externalServices.reportTelemetry({
@@ -2196,7 +2195,7 @@ function webViewerKeyDown(evt) {
   let curElement = document.activeElement || document.querySelector(':focus');
   let curElementTagName = curElement && curElement.tagName.toUpperCase();
 
-  if (curElementTagName === 'INPUT' || curElementTagName === 'TEXTAREA' || curElementTagName === 'SELECT') {
+  if (curElementTagName === 'INPUT' || curElementTagName === 'TEXTAREA' || curElementTagName === 'SELECT' || curElement && curElement.isContentEditable) {
     if (evt.keyCode !== 27) {
       return;
     }
@@ -2426,6 +2425,7 @@ exports.isValidScrollMode = isValidScrollMode;
 exports.isValidSpreadMode = isValidSpreadMode;
 exports.isPortraitOrientation = isPortraitOrientation;
 exports.getGlobalEventBus = getGlobalEventBus;
+exports.clamp = clamp;
 exports.getPDFFileNameFromURL = getPDFFileNameFromURL;
 exports.noContextMenuHandler = noContextMenuHandler;
 exports.parseQueryString = parseQueryString;
@@ -3310,10 +3310,6 @@ const defaultOptions = {
     value: false,
     kind: OptionKind.API
   },
-  postMessageTransfers: {
-    value: true,
-    kind: OptionKind.API
-  },
   verbosity: {
     value: 1,
     kind: OptionKind.API
@@ -4163,6 +4159,9 @@ class PDFSidebar {
       if (evt.target === this.viewerContainer) {
         this.outerContainer.classList.remove('sidebarMoving');
       }
+    });
+    this.toggleButton.addEventListener('click', () => {
+      this.toggle();
     });
     this.thumbnailButton.addEventListener('click', () => {
       this.switchView(SidebarView.THUMBS);
@@ -6406,11 +6405,13 @@ class PDFLinkService {
   constructor({
     eventBus,
     externalLinkTarget = null,
-    externalLinkRel = null
+    externalLinkRel = null,
+    externalLinkEnabled = true
   } = {}) {
     this.eventBus = eventBus || (0, _ui_utils.getGlobalEventBus)();
     this.externalLinkTarget = externalLinkTarget;
     this.externalLinkRel = externalLinkRel;
+    this.externalLinkEnabled = externalLinkEnabled;
     this.baseUrl = null;
     this.pdfDocument = null;
     this.pdfViewer = null;
@@ -6688,12 +6689,12 @@ class PDFLinkService {
       return;
     }
 
-    let refStr = pageRef.num + ' ' + pageRef.gen + ' R';
+    const refStr = pageRef.gen === 0 ? `${pageRef.num}R` : `${pageRef.num}R${pageRef.gen}`;
     this._pagesRefCache[refStr] = pageNum;
   }
 
   _cachedPageNumber(pageRef) {
-    let refStr = pageRef.num + ' ' + pageRef.gen + ' R';
+    const refStr = pageRef.gen === 0 ? `${pageRef.num}R` : `${pageRef.num}R${pageRef.gen}`;
     return this._pagesRefCache && this._pagesRefCache[refStr] || null;
   }
 
@@ -6778,6 +6779,7 @@ class SimpleLinkService {
   constructor() {
     this.externalLinkTarget = null;
     this.externalLinkRel = null;
+    this.externalLinkEnabled = true;
   }
 
   get pagesCount() {
@@ -6876,7 +6878,8 @@ class PDFOutlineViewer {
       (0, _pdfjsLib.addLinkAttributes)(element, {
         url,
         target: newWindow ? _pdfjsLib.LinkTarget.BLANK : linkService.externalLinkTarget,
-        rel: linkService.externalLinkRel
+        rel: linkService.externalLinkRel,
+        enabled: linkService.externalLinkEnabled
       });
       return;
     }
@@ -7458,12 +7461,6 @@ class PDFSidebarResizer {
     this.resizer = options.resizer;
     this.eventBus = eventBus;
     this.l10n = l10n;
-
-    if (typeof CSS === 'undefined' || typeof CSS.supports !== 'function' || !CSS.supports(SIDEBAR_WIDTH_VAR, `calc(-1 * ${SIDEBAR_MIN_WIDTH}px)`)) {
-      console.warn('PDFSidebarResizer: ' + 'The browser does not support resizing of the sidebar.');
-      return;
-    }
-
     this.enabled = true;
     this.resizer.classList.remove('hidden');
     this.l10n.getDirection().then(dir => {
@@ -7486,22 +7483,14 @@ class PDFSidebarResizer {
       return false;
     }
 
-    const maxWidth = Math.floor(this.outerContainerWidth / 2);
+    const newWidth = (0, _ui_utils.clamp)(width, SIDEBAR_MIN_WIDTH, Math.floor(this.outerContainerWidth / 2));
 
-    if (width > maxWidth) {
-      width = maxWidth;
-    }
-
-    if (width < SIDEBAR_MIN_WIDTH) {
-      width = SIDEBAR_MIN_WIDTH;
-    }
-
-    if (width === this._width) {
+    if (newWidth === this._width) {
       return false;
     }
 
-    this._width = width;
-    this.doc.style.setProperty(SIDEBAR_WIDTH_VAR, `${width}px`);
+    this._width = newWidth;
+    this.doc.style.setProperty(SIDEBAR_WIDTH_VAR, `${newWidth}px`);
     return true;
   }
 
@@ -7546,29 +7535,35 @@ class PDFSidebarResizer {
       this.sidebarOpen = !!(evt && evt.view);
     });
     this.eventBus.on('resize', evt => {
-      if (evt && evt.source === window) {
-        this._outerContainerWidth = null;
-
-        if (this._width) {
-          if (this.sidebarOpen) {
-            this.outerContainer.classList.add(SIDEBAR_RESIZING_CLASS);
-
-            let updated = this._updateWidth(this._width);
-
-            Promise.resolve().then(() => {
-              this.outerContainer.classList.remove(SIDEBAR_RESIZING_CLASS);
-
-              if (updated) {
-                this.eventBus.dispatch('resize', {
-                  source: this
-                });
-              }
-            });
-          } else {
-            this._updateWidth(this._width);
-          }
-        }
+      if (!evt || evt.source !== window) {
+        return;
       }
+
+      this._outerContainerWidth = null;
+
+      if (!this._width) {
+        return;
+      }
+
+      if (!this.sidebarOpen) {
+        this._updateWidth(this._width);
+
+        return;
+      }
+
+      this.outerContainer.classList.add(SIDEBAR_RESIZING_CLASS);
+
+      let updated = this._updateWidth(this._width);
+
+      Promise.resolve().then(() => {
+        this.outerContainer.classList.remove(SIDEBAR_RESIZING_CLASS);
+
+        if (updated) {
+          this.eventBus.dispatch('resize', {
+            source: this
+          });
+        }
+      });
     });
   }
 
@@ -8688,7 +8683,7 @@ class BaseViewer {
           this.findController.setDocument(pdfDocument);
         }
 
-        if (pdfDocument.loadingParams['disableAutoFetch']) {
+        if (pdfDocument.loadingParams['disableAutoFetch'] || pagesCount > 7500) {
           pagesCapability.resolve();
           return;
         }
@@ -10910,6 +10905,8 @@ class Toolbar {
     this.pageScale = _ui_utils.DEFAULT_SCALE;
 
     this._updateUIState(true);
+
+    this.updateLoadingIndicatorState();
   }
 
   _bindListeners() {
@@ -11278,14 +11275,14 @@ class DownloadManager {
   }
 
   download(blob, url, filename) {
-    let blobUrl = _pdfjsLib.URL.createObjectURL(blob);
+    let blobUrl = URL.createObjectURL(blob);
 
     let onResponse = err => {
       if (err && this.onerror) {
         this.onerror(err);
       }
 
-      _pdfjsLib.URL.revokeObjectURL(blobUrl);
+      URL.revokeObjectURL(blobUrl);
     };
 
     FirefoxCom.request('download', {

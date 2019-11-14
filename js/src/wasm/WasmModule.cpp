@@ -31,6 +31,7 @@
 #include "wasm/WasmIonCompile.h"
 #include "wasm/WasmJS.h"
 #include "wasm/WasmSerialize.h"
+#include "wasm/WasmUtility.h"
 
 #include "debugger/DebugAPI-inl.h"
 #include "vm/ArrayBufferObject-inl.h"
@@ -62,7 +63,6 @@ class Module::Tier2GeneratorTaskImpl : public Tier2GeneratorTask {
   void cancel() override { cancelled_ = true; }
 
   void runTask() override {
-    AutoSetHelperThreadContext usesContext;
     CompileTier2(*compileArgs_, bytecode_->bytes, *module_, &cancelled_);
   }
   ThreadType threadType() override {
@@ -346,7 +346,8 @@ bool wasm::GetOptimizedEncodingBuildId(JS::BuildIdCharVector* buildId) {
 
   uint32_t cpu = ObservedCPUFeatures();
 
-  if (!buildId->reserve(buildId->length() + 10 /* "()" + 8 nibbles */)) {
+  if (!buildId->reserve(buildId->length() +
+                        12 /* "()" + 8 nibbles + "m[+-]" */)) {
     return false;
   }
 
@@ -357,66 +358,15 @@ bool wasm::GetOptimizedEncodingBuildId(JS::BuildIdCharVector* buildId) {
   }
   buildId->infallibleAppend(')');
 
+  buildId->infallibleAppend('m');
+  buildId->infallibleAppend(wasm::IsHugeMemoryEnabled() ? '+' : '-');
+
   return true;
-}
-
-RefPtr<JS::WasmModule> wasm::DeserializeModule(const uint8_t* bytecode,
-                                               size_t bytecodeLength) {
-  // We have to compile new code here so if we're fundamentally unable to
-  // compile, we have to fail. If you change this code, update the
-  // MutableCompileArgs setting below.
-  if (!BaselineCanCompile() && !IonCanCompile()) {
-    return nullptr;
-  }
-
-  MutableBytes bytecodeCopy = js_new<ShareableBytes>();
-  if (!bytecodeCopy ||
-      !bytecodeCopy->bytes.initLengthUninitialized(bytecodeLength)) {
-    return nullptr;
-  }
-
-  memcpy(bytecodeCopy->bytes.begin(), bytecode, bytecodeLength);
-
-  ScriptedCaller scriptedCaller;
-  scriptedCaller.filename = nullptr;
-  scriptedCaller.line = 0;
-
-  MutableCompileArgs args = js_new<CompileArgs>(std::move(scriptedCaller));
-  if (!args) {
-    return nullptr;
-  }
-
-  // The true answer to whether various flags are enabled is provided by
-  // the JSContext that originated the call that caused this deserialization
-  // attempt to happen. We don't have that context here, so we assume that
-  // shared memory is enabled; we will catch a wrong assumption later, during
-  // instantiation.
-  //
-  // (We would prefer to store this value with the Assumptions when
-  // serializing, and for the caller of the deserialization machinery to
-  // provide the value from the originating context.)
-  //
-  // Note this is guarded at the top of this function.
-
-  args->ionEnabled = IonCanCompile();
-  args->baselineEnabled = BaselineCanCompile();
-  args->sharedMemoryEnabled = true;
-
-  UniqueChars error;
-  UniqueCharsVector warnings;
-  SharedModule module = CompileBuffer(*args, *bytecodeCopy, &error, &warnings);
-  if (!module) {
-    return nullptr;
-  }
-
-  // The public interface is effectively const.
-  return RefPtr<JS::WasmModule>(const_cast<Module*>(module.get()));
 }
 
 /* virtual */
 void Module::addSizeOfMisc(MallocSizeOf mallocSizeOf,
                            Metadata::SeenSet* seenMetadata,
-                           ShareableBytes::SeenSet* seenBytes,
                            Code::SeenSet* seenCode, size_t* code,
                            size_t* data) const {
   code_->addSizeOfMiscIfNotSeen(mallocSizeOf, seenMetadata, seenCode, code,
@@ -568,7 +518,8 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
   Instance& instance = instanceObj->instance();
   const SharedTableVector& tables = instance.tables();
 
-  // Bulk memory changes the error checking behavior: we may write partial data.
+  // Bulk memory changes the error checking behavior: we apply segments
+  // in-order and terminate if one has an out-of-bounds range.
   // We enable bulk memory semantics if shared memory is enabled.
 #ifdef ENABLE_WASM_BULKMEM_OPS
   const bool eagerBoundsCheck = false;
@@ -631,24 +582,17 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
         continue;
       }
 
-      bool fail = false;
       if (!eagerBoundsCheck) {
         uint32_t tableLength = tables[seg->tableIndex]->length();
-        if (offset > tableLength) {
-          fail = true;
-          count = 0;
-        } else if (tableLength - offset < count) {
-          fail = true;
-          count = tableLength - offset;
+        if (offset > tableLength || tableLength - offset < count) {
+          JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                                   JSMSG_WASM_BAD_FIT, "elem", "table");
+          return false;
         }
       }
-      if (count) {
-        instance.initElems(seg->tableIndex, *seg, offset, 0, count);
-      }
-      if (fail) {
-        JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                                 JSMSG_WASM_BAD_FIT, "elem", "table");
-        return false;
+
+      if (!instance.initElems(seg->tableIndex, *seg, offset, 0, count)) {
+        return false;  // OOM
       }
     }
   }
@@ -674,24 +618,14 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
         continue;
       }
 
-      bool fail = false;
       if (!eagerBoundsCheck) {
-        if (offset > memoryLength) {
-          fail = true;
-          count = 0;
-        } else if (memoryLength - offset < count) {
-          fail = true;
-          count = memoryLength - offset;
+        if (offset > memoryLength || memoryLength - offset < count) {
+          JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                                   JSMSG_WASM_BAD_FIT, "data", "memory");
+          return false;
         }
       }
-      if (count) {
-        memcpy(memoryBase + offset, seg->bytes.begin(), count);
-      }
-      if (fail) {
-        JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                                 JSMSG_WASM_BAD_FIT, "data", "memory");
-        return false;
-      }
+      memcpy(memoryBase + offset, seg->bytes.begin(), count);
     }
   }
 
@@ -847,6 +781,8 @@ bool Module::instantiateMemory(JSContext* cx,
       return false;
     }
   }
+
+  MOZ_RELEASE_ASSERT(memory->isHuge() == metadata().omitsBoundsChecks);
 
   return true;
 }

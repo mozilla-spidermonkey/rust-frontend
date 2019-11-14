@@ -151,7 +151,7 @@ LoginRecipesParent.prototype = {
     log.debug("Adding recipe:", recipe);
     let recipeKeys = Object.keys(recipe);
     let unknownKeys = recipeKeys.filter(key => !SUPPORTED_KEYS.includes(key));
-    if (unknownKeys.length > 0) {
+    if (unknownKeys.length) {
       throw new Error(
         "The following recipe keys aren't supported: " + unknownKeys.join(", ")
       );
@@ -160,7 +160,7 @@ LoginRecipesParent.prototype = {
     let missingRequiredKeys = REQUIRED_KEYS.filter(
       key => !recipeKeys.includes(key)
     );
-    if (missingRequiredKeys.length > 0) {
+    if (missingRequiredKeys.length) {
       throw new Error(
         "The following required recipe keys are missing: " +
           missingRequiredKeys.join(", ")
@@ -245,11 +245,12 @@ this.LoginRecipesContent = {
    * Tries to fetch recipes for a given host, using a local cache if possible.
    * Otherwise, the recipes are cached for later use.
    *
+   * @param {JSWindowActor} aActor - actor making request
    * @param {String} aHost (e.g. example.com:8080 [non-default port] or sub.example.com)
    * @param {Object} win - the window of the host
    * @return {Set} of recipes that apply to the host
    */
-  getRecipes(aHost, win) {
+  getRecipes(aActor, aHost, win) {
     let recipes;
     let recipeMap = this._recipeCache.get(win);
 
@@ -261,10 +262,8 @@ this.LoginRecipesContent = {
       }
     }
 
-    let mm = win.docShell.messageManager;
-
     log.warn("getRecipes: falling back to a synchronous message for:", aHost);
-    recipes = mm.sendSyncMessage("PasswordManager:findRecipes", {
+    recipes = Services.cpmm.sendSyncMessage("PasswordManager:findRecipes", {
       formOrigin: aHost,
     })[0];
     this.cacheRecipes(aHost, win, recipes);

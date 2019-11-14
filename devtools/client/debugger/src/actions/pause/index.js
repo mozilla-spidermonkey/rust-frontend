@@ -17,6 +17,7 @@ export {
   resume,
   rewind,
   reverseStepOver,
+  seekToPosition,
 } from "./commands";
 export { fetchScopes } from "./fetchScopes";
 export { paused } from "./paused";
@@ -26,6 +27,12 @@ export { breakOnNext } from "./breakOnNext";
 export { mapFrames } from "./mapFrames";
 export { pauseOnExceptions } from "./pauseOnExceptions";
 export { selectFrame } from "./selectFrame";
-export { toggleSkipPausing } from "./skipPausing";
+export { toggleSkipPausing, setSkipPausing } from "./skipPausing";
 export { toggleMapScopes } from "./mapScopes";
 export { setExpandedScope } from "./expandScopes";
+export { generateInlinePreview } from "./inlinePreview";
+export {
+  previewPausedLocation,
+  clearPreviewPausedLocation,
+} from "./previewPausedLocation";
+export { setFramePositions } from "./setFramePositions";

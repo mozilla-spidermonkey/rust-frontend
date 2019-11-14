@@ -10,7 +10,7 @@ from mozilla.prettyprinters import ptr_pretty_printer
 
 try:
     chr(10000)  # UPPER RIGHT PENCIL
-except ValueError as exc:  # yuck, we are in Python 2.x, so chr() is 8-bit
+except ValueError:  # yuck, we are in Python 2.x, so chr() is 8-bit
     chr = unichr  # replace with teh unicodes
 
 # Forget any printers from previous loads of this module.
@@ -43,10 +43,10 @@ class JSStringPtr(Common):
 
     def chars(self):
         d = self.value['d']
-        flags = d['flags_']
-        if 'length_' in d.type:
-            length = d['length_']
-        else:
+        flags = self.value['flags_']
+        try:
+            length = self.value['length_']
+        except gdb.error:
             # If we couldn't fetch the length directly, it must be stored
             # within `flags`.
             length = flags >> 32

@@ -38,7 +38,7 @@ static void print_usage() {
   printf("usage:\n");
   printf("Create a MAR file:\n");
   printf(
-      "  mar [-H MARChannelID] [-V ProductVersion] [-C workingDir] "
+      "  mar -H MARChannelID -V ProductVersion [-C workingDir] "
       "-c archive.mar [files...]\n");
 
   printf("Extract a MAR file:\n");
@@ -95,7 +95,7 @@ static void print_usage() {
 
   printf("Refresh the product information block of a MAR file:\n");
   printf(
-      "  mar [-H MARChannelID] [-V ProductVersion] [-C workingDir] "
+      "  mar -H MARChannelID -V ProductVersion [-C workingDir] "
       "-i unsigned_archive_to_refresh.mar\n");
 
   printf("Print executable version:\n");
@@ -125,8 +125,8 @@ static int mar_test(const char* path) {
 
 int main(int argc, char** argv) {
   const char* certNames[MAX_SIGNATURES];
-  char* MARChannelID = MAR_CHANNEL_ID;
-  char* productVersion = MOZ_APP_VERSION;
+  char* MARChannelID = NULL;
+  char* productVersion = NULL;
   int rv = -1;
 #if !defined(NO_SIGN_VERIFY)
   char* NSSConfigDir = NULL;
@@ -181,7 +181,7 @@ int main(int argc, char** argv) {
       argc -= 2;
     }
 #if !defined(NO_SIGN_VERIFY)
-#if (!defined(MAR_NSS) && defined(XP_WIN)) || defined(XP_MACOSX)
+#  if (!defined(MAR_NSS) && defined(XP_WIN)) || defined(XP_MACOSX)
     /* -D DERFilePath, also matches -D[index] DERFilePath
        We allow an index for verifying to be symmetric
        with the import and export command line arguments. */
@@ -195,7 +195,7 @@ int main(int argc, char** argv) {
       argv += 2;
       argc -= 2;
     }
-#endif
+#  endif
     /* -d NSSConfigdir */
     else if (argv[1][0] == '-' && argv[1][1] == 'd') {
       NSSConfigDir = argv[2];
@@ -246,11 +246,33 @@ int main(int argc, char** argv) {
   switch (argv[1][1]) {
     case 'c': {
       struct ProductInformationBlock infoBlock;
+      if (!productVersion) {
+        fprintf(stderr,
+                "ERROR: Version not specified (pass `-V <version>`).\n");
+        return -1;
+      }
+      if (!MARChannelID) {
+        fprintf(stderr,
+                "ERROR: MAR channel ID not specified (pass `-H "
+                "<mar-channel-id>`).\n");
+        return -1;
+      }
       infoBlock.MARChannelID = MARChannelID;
       infoBlock.productVersion = productVersion;
       return mar_create(argv[2], argc - 3, argv + 3, &infoBlock);
     }
     case 'i': {
+      if (!productVersion) {
+        fprintf(stderr,
+                "ERROR: Version not specified (pass `-V <version>`).\n");
+        return -1;
+      }
+      if (!MARChannelID) {
+        fprintf(stderr,
+                "ERROR: MAR channel ID not specified (pass `-H "
+                "<mar-channel-id>`).\n");
+        return -1;
+      }
       struct ProductInformationBlock infoBlock;
       infoBlock.MARChannelID = MARChannelID;
       infoBlock.productVersion = productVersion;

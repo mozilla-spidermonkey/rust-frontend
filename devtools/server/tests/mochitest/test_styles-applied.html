@@ -24,7 +24,7 @@ let gStyles = null;
 addTest(async function setup() {
   const url = document.getElementById("inspectorContent").href;
   const { target } = await attachURL(url);
-  const inspector = await target.getInspector();
+  const inspector = await target.getFront("inspector");
   gWalker = inspector.walker;
   gStyles = await inspector.getPageStyle();
   runNextTest();
@@ -82,7 +82,7 @@ addTest(function inheritedSystemStyles() {
     ok(!applied[1].rule.parentStyleSheet.system, "Entry 1 should be a system style");
     is(applied[1].rule.type, 1, "Entry 1 should be a rule style");
 
-    is(applied.length, 12, "Should have 12 rules.");
+    is(applied.length, 13, "Should have 13 rules.");
   }).then(runNextTest));
 });
 

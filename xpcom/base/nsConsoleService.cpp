@@ -24,6 +24,8 @@
 #include "nsProxyRelease.h"
 #include "nsIScriptError.h"
 #include "nsISupportsPrimitives.h"
+#include "mozilla/dom/WindowGlobalParent.h"
+#include "mozilla/dom/ContentParent.h"
 
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
@@ -157,6 +159,77 @@ nsresult nsConsoleService::Init() {
   return NS_OK;
 }
 
+nsresult nsConsoleService::MaybeForwardScriptError(nsIConsoleMessage* aMessage,
+                                                   bool* sent) {
+  *sent = false;
+
+  nsCOMPtr<nsIScriptError> scriptError = do_QueryInterface(aMessage);
+  if (!scriptError) {
+    // Not an nsIScriptError
+    return NS_OK;
+  }
+
+  uint64_t windowID;
+  nsresult rv;
+  rv = scriptError->GetInnerWindowID(&windowID);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (!windowID) {
+    // Does not set window id
+    return NS_OK;
+  }
+
+  RefPtr<mozilla::dom::WindowGlobalParent> windowGlobalParent =
+      mozilla::dom::WindowGlobalParent::GetByInnerWindowId(windowID);
+  if (!windowGlobalParent) {
+    // Could not find parent window by id
+    return NS_OK;
+  }
+
+  RefPtr<mozilla::dom::BrowserParent> browserParent =
+      windowGlobalParent->GetBrowserParent();
+  if (!browserParent) {
+    return NS_OK;
+  }
+
+  mozilla::dom::ContentParent* contentParent = browserParent->Manager();
+  if (!contentParent) {
+    return NS_ERROR_FAILURE;
+  }
+
+  nsAutoString msg, sourceName, sourceLine;
+  nsCString category;
+  uint32_t lineNum, colNum, flags;
+  uint64_t innerWindowId;
+  bool fromPrivateWindow, fromChromeContext;
+
+  rv = scriptError->GetErrorMessage(msg);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = scriptError->GetSourceName(sourceName);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = scriptError->GetSourceLine(sourceLine);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = scriptError->GetCategory(getter_Copies(category));
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = scriptError->GetLineNumber(&lineNum);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = scriptError->GetColumnNumber(&colNum);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = scriptError->GetFlags(&flags);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = scriptError->GetIsFromPrivateWindow(&fromPrivateWindow);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = scriptError->GetIsFromChromeContext(&fromChromeContext);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = scriptError->GetInnerWindowID(&innerWindowId);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  *sent = contentParent->SendScriptError(
+      msg, sourceName, sourceLine, lineNum, colNum, flags, category,
+      fromPrivateWindow, innerWindowId, fromChromeContext);
+  return NS_OK;
+}
+
 namespace {
 
 class LogMessageRunnable : public Runnable {
@@ -175,8 +248,6 @@ class LogMessageRunnable : public Runnable {
 
 NS_IMETHODIMP
 LogMessageRunnable::Run() {
-  MOZ_ASSERT(NS_IsMainThread());
-
   // Snapshot of listeners so that we don't reenter this hash during
   // enumeration.
   nsCOMArray<nsIConsoleListener> listeners;
@@ -223,6 +294,18 @@ nsresult nsConsoleService::LogMessageWithMode(
             msg.get())
             .get());
     return NS_ERROR_FAILURE;
+  }
+
+  if (XRE_IsParentProcess() && NS_IsMainThread()) {
+    // If mMessage is a scriptError with an innerWindowId set,
+    // forward it to the matching ContentParent
+    // This enables logging from parent to content process
+    bool sent;
+    nsresult rv = MaybeForwardScriptError(aMessage, &sent);
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (sent) {
+      return NS_OK;
+    }
   }
 
   RefPtr<LogMessageRunnable> r;

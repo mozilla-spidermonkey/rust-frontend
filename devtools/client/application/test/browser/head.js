@@ -81,3 +81,14 @@ async function waitForWorkerRegistration(swTab) {
     })
   );
 }
+
+function selectPage(panel, page) {
+  /**
+   * Select a page by simulating a user click in the sidebar.
+   * @param {string} page The page we want to select (see `PAGE_TYPES`)
+   **/
+  info(`Selecting application page: ${page}`);
+  const doc = panel.panelWin.document;
+  const navItem = doc.querySelector(`.js-sidebar-${page}`);
+  navItem.click();
+}

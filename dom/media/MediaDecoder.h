@@ -42,21 +42,15 @@ class MediaMemoryInfo;
 
 class AbstractThread;
 class DOMMediaStream;
+class DecoderBenchmark;
 class FrameStatistics;
 class VideoFrameContainer;
 class MediaFormatReader;
 class MediaDecoderStateMachine;
 struct MediaPlaybackEvent;
-class MediaStreamGraphImpl;
+struct SharedDummyTrack;
 
 enum class Visibility : uint8_t;
-
-// GetCurrentTime is defined in winbase.h as zero argument macro forwarding to
-// GetTickCount() and conflicts with MediaDecoder::GetCurrentTime
-// implementation.
-#  ifdef GetCurrentTime
-#    undef GetCurrentTime
-#  endif
 
 struct MOZ_STACK_CLASS MediaDecoderInit {
   MediaDecoderOwner* const mOwner;
@@ -167,7 +161,7 @@ class MediaDecoder : public DecoderDoctorLifeLogger<MediaDecoder> {
 
   // All MediaStream-related data is protected by mReentrantMonitor.
   // We have at most one DecodedStreamData per MediaDecoder. Its stream
-  // is used as the input for each ProcessedMediaStream created by calls to
+  // is used as the input for each ProcessedMediaTrack created by calls to
   // captureStream(UntilEnded). Seeking creates a new source stream, as does
   // replaying after the input as ended. In the latter case, the new source is
   // not connected to streams created by captureStreamUntilEnded.
@@ -175,7 +169,7 @@ class MediaDecoder : public DecoderDoctorLifeLogger<MediaDecoder> {
   // Add an output stream. All decoder output will be sent to the stream.
   // The stream is initially blocked. The decoder is responsible for unblocking
   // it while it is playing back.
-  void AddOutputStream(DOMMediaStream* aStream, MediaStreamGraphImpl* aGraph);
+  void AddOutputStream(DOMMediaStream* aStream, SharedDummyTrack* aDummyStream);
   // Remove an output stream added with AddOutputStream.
   void RemoveOutputStream(DOMMediaStream* aStream);
 
@@ -475,6 +469,8 @@ class MediaDecoder : public DecoderDoctorLifeLogger<MediaDecoder> {
 
   void OnNextFrameStatus(MediaDecoderOwner::NextFrameStatus);
 
+  void OnStoreDecoderBenchmark(const VideoInfo& aInfo);
+
   void FinishShutdown();
 
   void ConnectMirrors(MediaDecoderStateMachine* aObject);
@@ -494,7 +490,7 @@ class MediaDecoder : public DecoderDoctorLifeLogger<MediaDecoder> {
  protected:
   void NotifyReaderDataArrived();
   void DiscardOngoingSeekIfExists();
-  virtual void CallSeek(const SeekTarget& aTarget);
+  void CallSeek(const SeekTarget& aTarget);
 
   // Called by MediaResource when the principal of the resource has
   // changed. Called on main thread only.
@@ -516,6 +512,9 @@ class MediaDecoder : public DecoderDoctorLifeLogger<MediaDecoder> {
 
   // Counters related to decode and presentation of frames.
   const RefPtr<FrameStatistics> mFrameStats;
+
+  // Store a benchmark of the decoder based on FrameStatistics.
+  RefPtr<DecoderBenchmark> mDecoderBenchmark;
 
   RefPtr<VideoFrameContainer> mVideoFrameContainer;
 
@@ -576,6 +575,7 @@ class MediaDecoder : public DecoderDoctorLifeLogger<MediaDecoder> {
   MediaEventListener mOnWaitingForKey;
   MediaEventListener mOnDecodeWarning;
   MediaEventListener mOnNextFrameStatus;
+  MediaEventListener mOnStoreDecoderBenchmark;
 
   // True if we have suspended video decoding.
   bool mIsVideoDecodingSuspended = false;

@@ -9,7 +9,6 @@
 #ifndef mozilla_dom_BindContext_h__
 #define mozilla_dom_BindContext_h__
 
-#include "nsXBLBinding.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/AutoRestore.h"
 #include "mozilla/dom/Document.h"
@@ -96,17 +95,6 @@ struct MOZ_STACK_CLASS BindContext final {
                                                      aParentElement)) {
     MOZ_ASSERT(mInComposedDoc, "Binding NAC in a disconnected subtree?");
   }
-
-  // This is meant to be used to bind XBL anonymous content.
-  BindContext(nsXBLBinding& aBinding, Element& aParentElement)
-      : mDoc(*aParentElement.OwnerDoc()),
-        mBindingParent(aBinding.GetBoundElement()),
-        mInComposedDoc(aParentElement.IsInComposedDoc()),
-        mInUncomposedDoc(aParentElement.IsInUncomposedDoc()),
-        mSubtreeRootChanges(true),
-        mCollectingDisplayedNodeDataDuringLoad(
-            ShouldCollectDisplayedNodeDataDuringLoad(mInComposedDoc, mDoc,
-                                                     aParentElement)) {}
 
   bool CollectingDisplayedNodeDataDuringLoad() const {
     return mCollectingDisplayedNodeDataDuringLoad;

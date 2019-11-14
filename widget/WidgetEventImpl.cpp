@@ -11,6 +11,7 @@
 #include "mozilla/MouseEvents.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPrefs_mousewheel.h"
+#include "mozilla/StaticPrefs_ui.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
 #include "mozilla/dom/KeyboardEventBinding.h"
@@ -18,6 +19,10 @@
 #include "nsContentUtils.h"
 #include "nsIContent.h"
 #include "nsPrintfCString.h"
+
+#if defined(XP_WIN)
+#include "npapi.h"
+#endif
 
 namespace mozilla {
 
@@ -396,6 +401,15 @@ bool WidgetEvent::CanBeSentToRemoteProcess() const {
     case eDragExit:
     case eDrop:
       return true;
+#if defined(XP_WIN)
+    case ePluginInputEvent:
+      {
+        auto evt = static_cast<const NPEvent*>(AsPluginEvent()->mPluginEvent);
+        return evt && evt->event == WM_SETTINGCHANGE &&
+            (evt->wParam == SPI_SETWHEELSCROLLLINES ||
+             evt->wParam == SPI_SETWHEELSCROLLCHARS);
+      }
+#endif
     default:
       return false;
   }
@@ -736,24 +750,39 @@ void WidgetKeyboardEvent::InitAllEditCommands() {
   MOZ_ASSERT(!AreAllEditCommandsInitialized(),
              "Shouldn't be called two or more times");
 
-  InitEditCommandsFor(nsIWidget::NativeKeyBindingsForSingleLineEditor);
-  InitEditCommandsFor(nsIWidget::NativeKeyBindingsForMultiLineEditor);
-  InitEditCommandsFor(nsIWidget::NativeKeyBindingsForRichTextEditor);
+  DebugOnly<bool> okIgnored =
+      InitEditCommandsFor(nsIWidget::NativeKeyBindingsForSingleLineEditor);
+  NS_WARNING_ASSERTION(
+      okIgnored,
+      "InitEditCommandsFor(nsIWidget::NativeKeyBindingsForSingleLineEditor) "
+      "failed, but ignored");
+  okIgnored =
+      InitEditCommandsFor(nsIWidget::NativeKeyBindingsForMultiLineEditor);
+  NS_WARNING_ASSERTION(
+      okIgnored,
+      "InitEditCommandsFor(nsIWidget::NativeKeyBindingsForMultiLineEditor) "
+      "failed, but ignored");
+  okIgnored =
+      InitEditCommandsFor(nsIWidget::NativeKeyBindingsForRichTextEditor);
+  NS_WARNING_ASSERTION(
+      okIgnored,
+      "InitEditCommandsFor(nsIWidget::NativeKeyBindingsForRichTextEditor) "
+      "failed, but ignored");
 }
 
-void WidgetKeyboardEvent::InitEditCommandsFor(
+bool WidgetKeyboardEvent::InitEditCommandsFor(
     nsIWidget::NativeKeyBindingsType aType) {
   if (NS_WARN_IF(!mWidget) || NS_WARN_IF(!IsTrusted())) {
-    return;
+    return false;
   }
 
   bool& initialized = IsEditCommandsInitializedRef(aType);
   if (initialized) {
-    return;
+    return true;
   }
   nsTArray<CommandInt>& commands = EditCommandsRef(aType);
-  mWidget->GetEditCommands(aType, *this, commands);
-  initialized = true;
+  initialized = mWidget->GetEditCommands(aType, *this, commands);
+  return initialized;
 }
 
 bool WidgetKeyboardEvent::ExecuteEditCommands(
@@ -771,7 +800,9 @@ bool WidgetKeyboardEvent::ExecuteEditCommands(
     return false;
   }
 
-  InitEditCommandsFor(aType);
+  if (NS_WARN_IF(!InitEditCommandsFor(aType))) {
+    return false;
+  }
 
   const nsTArray<CommandInt>& commands = EditCommandsRef(aType);
   if (commands.IsEmpty()) {
@@ -1009,7 +1040,7 @@ Modifiers WidgetKeyboardEvent::ModifiersForAccessKeyMatching() const {
 
 /* static */
 Modifiers WidgetKeyboardEvent::AccessKeyModifiers(AccessKeyType aType) {
-  switch (GenericAccessModifierKeyPref()) {
+  switch (StaticPrefs::ui_key_generalAccessKey()) {
     case -1:
       break;  // use the individual prefs
     case NS_VK_SHIFT:
@@ -1028,45 +1059,12 @@ Modifiers WidgetKeyboardEvent::AccessKeyModifiers(AccessKeyType aType) {
 
   switch (aType) {
     case AccessKeyType::eChrome:
-      return PrefFlagsToModifiers(ChromeAccessModifierMaskPref());
+      return PrefFlagsToModifiers(StaticPrefs::ui_key_chromeAccess());
     case AccessKeyType::eContent:
-      return PrefFlagsToModifiers(ContentAccessModifierMaskPref());
+      return PrefFlagsToModifiers(StaticPrefs::ui_key_contentAccess());
     default:
       return MODIFIER_NONE;
   }
-}
-
-/* static */
-int32_t WidgetKeyboardEvent::GenericAccessModifierKeyPref() {
-  static bool sInitialized = false;
-  static int32_t sValue = -1;
-  if (!sInitialized) {
-    Preferences::AddIntVarCache(&sValue, "ui.key.generalAccessKey", sValue);
-    sInitialized = true;
-  }
-  return sValue;
-}
-
-/* static */
-int32_t WidgetKeyboardEvent::ChromeAccessModifierMaskPref() {
-  static bool sInitialized = false;
-  static int32_t sValue = 0;
-  if (!sInitialized) {
-    Preferences::AddIntVarCache(&sValue, "ui.key.chromeAccess", sValue);
-    sInitialized = true;
-  }
-  return sValue;
-}
-
-/* static */
-int32_t WidgetKeyboardEvent::ContentAccessModifierMaskPref() {
-  static bool sInitialized = false;
-  static int32_t sValue = 0;
-  if (!sInitialized) {
-    Preferences::AddIntVarCache(&sValue, "ui.key.contentAccess", sValue);
-    sInitialized = true;
-  }
-  return sValue;
 }
 
 /* static */

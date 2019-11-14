@@ -5,7 +5,7 @@
 const { require } = ChromeUtils.import("resource://devtools/shared/Loader.jsm");
 
 const { DebuggerClient } = require("devtools/shared/client/debugger-client");
-const { DebuggerServer } = require("devtools/server/main");
+const { DebuggerServer } = require("devtools/server/debugger-server");
 const { gDevTools } = require("devtools/client/framework/devtools");
 const { Toolbox } = require("devtools/client/framework/toolbox");
 
@@ -16,7 +16,7 @@ async function setupToolboxTest(extensionId) {
   const client = new DebuggerClient(transport);
   await client.connect();
   const addonFront = await client.mainRoot.getAddon({ id: extensionId });
-  const target = await addonFront.connect();
+  const target = await addonFront.getTarget();
   const toolbox = await gDevTools.showToolbox(
     target,
     null,
@@ -63,7 +63,7 @@ async function setupToolboxTest(extensionId) {
       filterRequest
     );
 
-    return requests.length > 0;
+    return !!requests.length;
   });
 
   // Call a function defined in the target extension to make assertions

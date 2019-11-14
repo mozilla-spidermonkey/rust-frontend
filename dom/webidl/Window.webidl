@@ -26,7 +26,183 @@ interface nsIDOMWindowUtils;
 typedef OfflineResourceList ApplicationCache;
 
 // http://www.whatwg.org/specs/web-apps/current-work/
-[PrimaryGlobal, LegacyUnenumerableNamedProperties, NeedResolve]
+[Global, LegacyUnenumerableNamedProperties, NeedResolve,
+ Exposed=Window,
+ InstrumentedProps=(AbsoluteOrientationSensor,
+                    Accelerometer,
+                    ApplicationCache,
+                    ApplicationCacheErrorEvent,
+                    Atomics,
+                    AudioParamMap,
+                    AudioWorklet,
+                    AudioWorkletNode,
+                    BackgroundFetchManager,
+                    BackgroundFetchRecord,
+                    BackgroundFetchRegistration,
+                    BeforeInstallPromptEvent,
+                    Bluetooth,
+                    BluetoothCharacteristicProperties,
+                    BluetoothDevice,
+                    BluetoothRemoteGATTCharacteristic,
+                    BluetoothRemoteGATTDescriptor,
+                    BluetoothRemoteGATTServer,
+                    BluetoothRemoteGATTService,
+                    BluetoothUUID,
+                    CanvasCaptureMediaStreamTrack,
+                    chrome,
+                    clientInformation,
+                    ClipboardItem,
+                    CSSImageValue,
+                    CSSKeywordValue,
+                    CSSMathInvert,
+                    CSSMathMax,
+                    CSSMathMin,
+                    CSSMathNegate,
+                    CSSMathProduct,
+                    CSSMathSum,
+                    CSSMathValue,
+                    CSSMatrixComponent,
+                    CSSNumericArray,
+                    CSSNumericValue,
+                    CSSPerspective,
+                    CSSPositionValue,
+                    CSSRotate,
+                    CSSScale,
+                    CSSSkew,
+                    CSSSkewX,
+                    CSSSkewY,
+                    CSSStyleValue,
+                    CSSTransformComponent,
+                    CSSTransformValue,
+                    CSSTranslate,
+                    CSSUnitValue,
+                    CSSUnparsedValue,
+                    CSSVariableReferenceValue,
+                    defaultStatus,
+                    // Unfortunately, our telemetry histogram name generator
+                    // (the one that generates TelemetryHistogramEnums.h) can't
+                    // handle two DOM methods with names that only differ in
+                    // case, because it forces everything to uppercase.
+                    //defaultstatus,
+                    DeviceMotionEventAcceleration,
+                    DeviceMotionEventRotationRate,
+                    DOMError,
+                    EnterPictureInPictureEvent,
+                    External,
+                    FederatedCredential,
+                    Gyroscope,
+                    HTMLContentElement,
+                    HTMLDialogElement,
+                    HTMLShadowElement,
+                    ImageCapture,
+                    InputDeviceCapabilities,
+                    InputDeviceInfo,
+                    Keyboard,
+                    KeyboardLayoutMap,
+                    LinearAccelerationSensor,
+                    Lock,
+                    LockManager,
+                    MediaMetadata,
+                    MediaSession,
+                    MediaSettingsRange,
+                    MIDIAccess,
+                    MIDIConnectionEvent,
+                    MIDIInput,
+                    MIDIInputMap,
+                    MIDIMessageEvent,
+                    MIDIOutput,
+                    MIDIOutputMap,
+                    MIDIPort,
+                    NavigationPreloadManager,
+                    NetworkInformation,
+                    offscreenBuffering,
+                    OffscreenCanvas,
+                    OffscreenCanvasRenderingContext2D,
+                    onappinstalled,
+                    onbeforeinstallprompt,
+                    oncancel,
+                    ondeviceorientationabsolute,
+                    onmousewheel,
+                    onsearch,
+                    onselectionchange,
+                    openDatabase,
+                    OrientationSensor,
+                    OverconstrainedError,
+                    PasswordCredential,
+                    PaymentAddress,
+                    PaymentInstruments,
+                    PaymentManager,
+                    PaymentMethodChangeEvent,
+                    PaymentRequest,
+                    PaymentRequestUpdateEvent,
+                    PaymentResponse,
+                    PerformanceEventTiming,
+                    PerformanceLongTaskTiming,
+                    PerformancePaintTiming,
+                    PhotoCapabilities,
+                    PictureInPictureWindow,
+                    Presentation,
+                    PresentationAvailability,
+                    PresentationConnection,
+                    PresentationConnectionAvailableEvent,
+                    PresentationConnectionCloseEvent,
+                    PresentationConnectionList,
+                    PresentationReceiver,
+                    PresentationRequest,
+                    RelativeOrientationSensor,
+                    RemotePlayback,
+                    ReportingObserver,
+                    RTCDtlsTransport,
+                    RTCError,
+                    RTCErrorEvent,
+                    RTCIceTransport,
+                    RTCSctpTransport,
+                    Sensor,
+                    SensorErrorEvent,
+                    _SharedArrayBuffer,
+                    styleMedia,
+                    StylePropertyMap,
+                    StylePropertyMapReadOnly,
+                    SVGDiscardElement,
+                    SyncManager,
+                    TaskAttributionTiming,
+                    TextDecoderStream,
+                    TextEncoderStream,
+                    TextEvent,
+                    Touch,
+                    TouchEvent,
+                    TouchList,
+                    TransformStream,
+                    USB,
+                    USBAlternateInterface,
+                    USBConfiguration,
+                    USBConnectionEvent,
+                    USBDevice,
+                    USBEndpoint,
+                    USBInterface,
+                    USBInTransferResult,
+                    USBIsochronousInTransferPacket,
+                    USBIsochronousInTransferResult,
+                    USBIsochronousOutTransferPacket,
+                    USBIsochronousOutTransferResult,
+                    USBOutTransferResult,
+                    UserActivation,
+                    visualViewport,
+                    webkitCancelAnimationFrame,
+                    webkitMediaStream,
+                    WebKitMutationObserver,
+                    webkitRequestAnimationFrame,
+                    webkitRequestFileSystem,
+                    webkitResolveLocalFileSystemURL,
+                    webkitRTCPeerConnection,
+                    webkitSpeechGrammar,
+                    webkitSpeechGrammarList,
+                    webkitSpeechRecognition,
+                    webkitSpeechRecognitionError,
+                    webkitSpeechRecognitionEvent,
+                    webkitStorageInfo,
+                    Worklet,
+                    WritableStream)]
 /*sealed*/ interface Window : EventTarget {
   // the current browsing context
   [Unforgeable, Constant, StoreInSlot,
@@ -71,25 +247,27 @@ typedef OfflineResourceList ApplicationCache;
 #ifdef HAVE_SIDEBAR
   [Replaceable, Throws] readonly attribute External external;
 #endif
-  [Throws, Pref="browser.cache.offline.enable", Func="nsGlobalWindowInner::OfflineCacheAllowedForContext"] readonly attribute ApplicationCache applicationCache;
+  [Throws, SecureContext, Pref="browser.cache.offline.enable"] readonly attribute ApplicationCache applicationCache;
 
   // user prompts
   [Throws, NeedsSubjectPrincipal] void alert();
   [Throws, NeedsSubjectPrincipal] void alert(DOMString message);
   [Throws, NeedsSubjectPrincipal] boolean confirm(optional DOMString message = "");
   [Throws, NeedsSubjectPrincipal] DOMString? prompt(optional DOMString message = "", optional DOMString default = "");
-  [Throws, Func="nsGlobalWindowInner::IsWindowPrintEnabled"]
+  [Throws, Pref="dom.enable_window_print"]
   void print();
 
-  [Throws, CrossOriginCallable, NeedsSubjectPrincipal]
+  [Throws, CrossOriginCallable, NeedsSubjectPrincipal,
+   BinaryName="postMessageMoz"]
   void postMessage(any message, DOMString targetOrigin, optional sequence<object> transfer = []);
-  [Throws, CrossOriginCallable, NeedsSubjectPrincipal]
+  [Throws, CrossOriginCallable, NeedsSubjectPrincipal,
+   BinaryName="postMessageMoz"]
   void postMessage(any message, optional WindowPostMessageOptions options = {});
 
   // also has obsolete members
 };
-Window implements GlobalEventHandlers;
-Window implements WindowEventHandlers;
+Window includes GlobalEventHandlers;
+Window includes WindowEventHandlers;
 
 // https://www.w3.org/TR/appmanifest/#onappinstalled-attribute
 partial interface Window {
@@ -98,19 +276,17 @@ partial interface Window {
 };
 
 // http://www.whatwg.org/specs/web-apps/current-work/
-[NoInterfaceObject]
-interface WindowSessionStorage {
+interface mixin WindowSessionStorage {
   //[Throws] readonly attribute Storage sessionStorage;
   [Throws] readonly attribute Storage? sessionStorage;
 };
-Window implements WindowSessionStorage;
+Window includes WindowSessionStorage;
 
 // http://www.whatwg.org/specs/web-apps/current-work/
-[NoInterfaceObject]
-interface WindowLocalStorage {
+interface mixin WindowLocalStorage {
   [Throws] readonly attribute Storage? localStorage;
 };
-Window implements WindowLocalStorage;
+Window includes WindowLocalStorage;
 
 // http://www.whatwg.org/specs/web-apps/current-work/
 partial interface Window {
@@ -219,19 +395,18 @@ partial interface Window {
 };
 
 // https://dvcs.w3.org/hg/webcrypto-api/raw-file/tip/spec/Overview.html
-Window implements GlobalCrypto;
+Window includes GlobalCrypto;
 
 // https://fidoalliance.org/specifications/download/
-Window implements GlobalU2F;
+Window includes GlobalU2F;
 
 #ifdef MOZ_WEBSPEECH
 // http://dvcs.w3.org/hg/speech-api/raw-file/tip/speechapi.html
-[NoInterfaceObject]
-interface SpeechSynthesisGetter {
+interface mixin SpeechSynthesisGetter {
   [Throws, Pref="media.webspeech.synth.enabled"] readonly attribute SpeechSynthesis speechSynthesis;
 };
 
-Window implements SpeechSynthesisGetter;
+Window includes SpeechSynthesisGetter;
 #endif
 
 // Mozilla-specific stuff
@@ -303,8 +478,10 @@ partial interface Window {
   /**
    * Returns the number of times this document for this window has
    * been painted to the screen.
+   *
+   * If you need this for tests use nsIDOMWindowUtils.paintCount instead.
    */
-  [Throws] readonly attribute unsigned long long mozPaintCount;
+  [Throws, Pref="dom.mozPaintCount.enabled"] readonly attribute unsigned long long mozPaintCount;
 
            attribute EventHandler ondevicemotion;
            attribute EventHandler ondeviceorientation;
@@ -323,7 +500,7 @@ partial interface Window {
 
   /**
    * This is the scriptable version of
-   * nsIDOMWindow::openDialog() that takes 3 optional
+   * nsPIDOMWindow::OpenDialog() that takes 3 optional
    * arguments, plus any additional arguments are passed on as
    * arguments on the dialog's window object (window.arguments).
    */
@@ -375,9 +552,9 @@ partial interface Window {
   WindowGlobalChild getWindowGlobalChild();
 };
 
-Window implements TouchEventHandlers;
+Window includes TouchEventHandlers;
 
-Window implements OnErrorEventHandlerForWindow;
+Window includes OnErrorEventHandlerForWindow;
 
 #if defined(MOZ_WIDGET_ANDROID)
 // https://compat.spec.whatwg.org/#windoworientation-interface
@@ -542,7 +719,7 @@ partial interface Window {
     readonly attribute Worklet paintWorklet;
 };
 
-Window implements WindowOrWorkerGlobalScope;
+Window includes WindowOrWorkerGlobalScope;
 
 partial interface Window {
   [Throws, Func="nsGlobalWindowInner::IsRequestIdleCallbackEnabled"]
@@ -601,8 +778,6 @@ partial interface Window {
   [Throws, Func="IsChromeOrXBLOrUAWidget"]
   readonly attribute IntlUtils intlUtils;
 };
-
-Window implements WebGPUProvider;
 
 partial interface Window {
   [SameObject, Pref="dom.visualviewport.enabled", Replaceable]

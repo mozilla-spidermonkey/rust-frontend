@@ -14,7 +14,6 @@
 #include "nsXULElement.h"
 #include "nsIDOMXULMenuListElement.h"
 #include "nsIDOMXULCommandDispatcher.h"
-#include "nsBindingManager.h"
 #include "nsCSSFrameConstructor.h"
 #include "nsGlobalWindow.h"
 #include "nsIContentInlines.h"
@@ -32,7 +31,6 @@
 #include "nsPIWindowRoot.h"
 #include "nsFrameManager.h"
 #include "nsIObserverService.h"
-#include "XULDocument.h"
 #include "mozilla/AnimationUtils.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "mozilla/dom/Element.h"
@@ -42,12 +40,13 @@
 #include "mozilla/dom/KeyboardEventBinding.h"
 #include "mozilla/dom/MouseEvent.h"
 #include "mozilla/dom/UIEvent.h"
+#include "mozilla/dom/UserActivation.h"
 #include "mozilla/EventDispatcher.h"
-#include "mozilla/EventStateManager.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/Services.h"
+#include "mozilla/StaticPrefs_ui.h"
 #include "mozilla/StaticPrefs_xul.h"
 #include "mozilla/widget/nsAutoRollup.h"
 
@@ -129,10 +128,6 @@ void nsMenuChainItem::CheckForAnchorChange() {
   }
 }
 
-bool nsXULPopupManager::sDevtoolsDisableAutoHide = false;
-
-const char kPrefDevtoolsDisableAutoHide[] = "ui.popup.disable_autohide";
-
 NS_IMPL_ISUPPORTS(nsXULPopupManager, nsIDOMEventListener, nsIObserver)
 
 nsXULPopupManager::nsXULPopupManager()
@@ -146,8 +141,6 @@ nsXULPopupManager::nsXULPopupManager()
   if (obs) {
     obs->AddObserver(this, "xpcom-shutdown", false);
   }
-  Preferences::AddBoolVarCache(&sDevtoolsDisableAutoHide,
-                               kPrefDevtoolsDisableAutoHide, false);
 }
 
 nsXULPopupManager::~nsXULPopupManager() {
@@ -199,7 +192,7 @@ bool nsXULPopupManager::Rollup(uint32_t aCount, bool aFlush,
   }
 
   // We can disable the autohide behavior via a pref to ease debugging.
-  if (nsXULPopupManager::sDevtoolsDisableAutoHide) {
+  if (StaticPrefs::ui_popup_disable_autohide()) {
     // Required on linux to allow events to work on other targets.
     if (mWidget) {
       mWidget->CaptureRollupEvents(nullptr, false);
@@ -1605,7 +1598,7 @@ bool nsXULPopupManager::MayShowPopup(nsMenuPopupFrame* aPopup) {
   if (!baseWin) return false;
 
   nsCOMPtr<nsIDocShellTreeItem> root;
-  dsti->GetRootTreeItem(getter_AddRefs(root));
+  dsti->GetInProcessRootTreeItem(getter_AddRefs(root));
   if (!root) {
     return false;
   }
@@ -2246,9 +2239,7 @@ static nsIContent* FindDefaultInsertionPoint(nsIContent* aParent) {
       return slot;
     }
   }
-  bool multiple = false;  // Unused
-  return aParent->OwnerDoc()->BindingManager()->FindNestedSingleInsertionPoint(
-      aParent, &multiple);
+  return aParent;
 }
 
 nsContainerFrame* nsXULPopupManager::ImmediateParentFrame(

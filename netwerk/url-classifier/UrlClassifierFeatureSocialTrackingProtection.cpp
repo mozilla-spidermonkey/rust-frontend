@@ -150,8 +150,7 @@ UrlClassifierFeatureSocialTrackingProtection::ProcessChannel(
   NS_ENSURE_ARG_POINTER(aChannel);
   NS_ENSURE_ARG_POINTER(aShouldContinue);
 
-  bool isAllowListed = UrlClassifierCommon::IsAllowListed(
-      aChannel, AntiTrackingCommon::eSocialTracking);
+  bool isAllowListed = UrlClassifierCommon::IsAllowListed(aChannel);
 
   // This is a blocking feature.
   *aShouldContinue = isAllowListed;
@@ -185,15 +184,19 @@ UrlClassifierFeatureSocialTrackingProtection::ProcessChannel(
 NS_IMETHODIMP
 UrlClassifierFeatureSocialTrackingProtection::GetURIByListType(
     nsIChannel* aChannel, nsIUrlClassifierFeature::listType aListType,
-    nsIURI** aURI) {
+    nsIUrlClassifierFeature::URIType* aURIType, nsIURI** aURI) {
   NS_ENSURE_ARG_POINTER(aChannel);
+  NS_ENSURE_ARG_POINTER(aURIType);
   NS_ENSURE_ARG_POINTER(aURI);
 
   if (aListType == nsIUrlClassifierFeature::blacklist) {
+    *aURIType = nsIUrlClassifierFeature::blacklistURI;
     return aChannel->GetURI(aURI);
   }
 
   MOZ_ASSERT(aListType == nsIUrlClassifierFeature::whitelist);
+
+  *aURIType = nsIUrlClassifierFeature::pairwiseWhitelistURI;
   return UrlClassifierCommon::CreatePairwiseWhiteListURI(aChannel, aURI);
 }
 

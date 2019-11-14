@@ -81,8 +81,7 @@ class imgFrame {
   nsresult InitWithDrawable(gfxDrawable* aDrawable, const nsIntSize& aSize,
                             const SurfaceFormat aFormat,
                             SamplingFilter aSamplingFilter,
-                            uint32_t aImageFlags, gfx::BackendType aBackend,
-                            DrawTarget* aTarget);
+                            uint32_t aImageFlags, gfx::BackendType aBackend);
 
   DrawableFrameRef DrawableRef();
 
@@ -171,7 +170,7 @@ class imgFrame {
   FrameTimeout GetTimeout() const { return mTimeout; }
   BlendMethod GetBlendMethod() const { return mBlendMethod; }
   DisposalMethod GetDisposalMethod() const { return mDisposalMethod; }
-  bool FormatHasAlpha() const { return mFormat == SurfaceFormat::B8G8R8A8; }
+  bool FormatHasAlpha() const { return mFormat == SurfaceFormat::OS_RGBA; }
   void GetImageData(uint8_t** aData, uint32_t* length) const;
   uint8_t* GetImageData() const;
 

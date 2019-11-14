@@ -22,7 +22,9 @@
 #include <setjmp.h>
 
 #include "builtin/AtomicsObject.h"
-#include "builtin/intl/SharedIntlData.h"
+#ifdef ENABLE_INTL_API
+#  include "builtin/intl/SharedIntlData.h"
+#endif
 #include "builtin/Promise.h"
 #include "frontend/BinASTRuntimeSupport.h"
 #include "frontend/NameCollections.h"
@@ -67,10 +69,6 @@ class EnterDebuggeeNoExecute;
 class TraceLoggerThread;
 #endif
 
-namespace gc {
-class AutoHeapSession;
-}
-
 }  // namespace js
 
 struct DtoaState;
@@ -101,7 +99,6 @@ namespace jit {
 class JitRuntime;
 class JitActivation;
 struct PcScriptCache;
-struct AutoFlushICache;
 class CompileRuntime;
 
 #ifdef JS_SIMULATOR_ARM64
@@ -387,10 +384,6 @@ struct JSRuntime {
   /* Call this to get the name of a realm. */
   js::MainThreadData<JS::RealmNameCallback> realmNameCallback;
 
-  /* Callback for doing memory reporting on external strings. */
-  js::MainThreadData<JSExternalStringSizeofCallback>
-      externalStringSizeofCallback;
-
   js::MainThreadData<mozilla::UniquePtr<js::SourceHook>> sourceHook;
 
   js::MainThreadData<const JSSecurityCallbacks*> securityCallbacks;
@@ -439,13 +432,11 @@ struct JSRuntime {
   js::MainThreadData<js::CTypesActivityCallback> ctypesActivityCallback;
 
  private:
-  js::WriteOnceData<const js::Class*> windowProxyClass_;
+  js::WriteOnceData<const JSClass*> windowProxyClass_;
 
  public:
-  const js::Class* maybeWindowProxyClass() const { return windowProxyClass_; }
-  void setWindowProxyClass(const js::Class* clasp) {
-    windowProxyClass_ = clasp;
-  }
+  const JSClass* maybeWindowProxyClass() const { return windowProxyClass_; }
+  void setWindowProxyClass(const JSClass* clasp) { windowProxyClass_ = clasp; }
 
  private:
   // List of non-ephemeron weak containers to sweep during
@@ -511,11 +502,6 @@ struct JSRuntime {
                   mozilla::recordreplay::Behavior::DontPreserve>
       numActiveHelperThreadZones;
 
-  // Any activity affecting the heap.
-  mozilla::Atomic<JS::HeapState, mozilla::SequentiallyConsistent,
-                  mozilla::recordreplay::Behavior::DontPreserve>
-      heapState_;
-
   friend class js::AutoLockScriptData;
 
  public:
@@ -540,7 +526,7 @@ struct JSRuntime {
   }
 #endif
 
-  JS::HeapState heapState() const { return heapState_; }
+  JS::HeapState heapState() const { return gc.heapState(); }
 
   // How many realms there are across all zones. This number includes
   // off-thread context realms, so it isn't necessarily equal to the
@@ -690,15 +676,15 @@ struct JSRuntime {
   js::WriteOnceData<js::PropertyName*> emptyString;
 
  private:
-  js::MainThreadData<js::FreeOp*> defaultFreeOp_;
+  js::MainThreadOrGCTaskData<JSFreeOp*> defaultFreeOp_;
 
  public:
-  js::FreeOp* defaultFreeOp() {
+  JSFreeOp* defaultFreeOp() {
     MOZ_ASSERT(defaultFreeOp_);
     return defaultFreeOp_;
   }
 
-#if !EXPOSE_INTL_API
+#if !ENABLE_INTL_API
   /* Number localization, used by jsnum.cpp. */
   js::WriteOnceData<const char*> thousandsSeparator;
   js::WriteOnceData<const char*> decimalSeparator;
@@ -818,10 +804,12 @@ struct JSRuntime {
   // these are shared with the parentRuntime, if any.
   js::WriteOnceData<js::WellKnownSymbols*> wellKnownSymbols;
 
+#ifdef ENABLE_INTL_API
   /* Shared Intl data for this runtime. */
   js::MainThreadData<js::intl::SharedIntlData> sharedIntlData;
 
   void traceSharedIntlData(JSTracer* trc);
+#endif
 
   // Table of bytecode and other data that may be shared across scripts
   // within the runtime. This may be modified by threads using
@@ -848,7 +836,7 @@ struct JSRuntime {
   // to JSContext remains valid. The final GC triggered here depends on this.
   void destroyRuntime();
 
-  bool init(JSContext* cx, uint32_t maxbytes, uint32_t maxNurseryBytes);
+  bool init(JSContext* cx, uint32_t maxbytes);
 
   JSRuntime* thisFromCtor() { return this; }
 
@@ -969,10 +957,6 @@ struct JSRuntime {
     MOZ_ASSERT(format != js::StackFormat::Default);
     stackFormat_ = format;
   }
-
-  // For inherited heap state accessors.
-  friend class js::gc::AutoHeapSession;
-  friend class JS::AutoEnterCycleCollection;
 
  private:
   js::MainThreadData<js::RuntimeCaches> caches_;
@@ -1102,6 +1086,8 @@ extern mozilla::Atomic<JS::LargeAllocationFailureCallback>
 // This callback is set by JS::SetBuildIdOp and may be null. See comment in
 // jsapi.h.
 extern mozilla::Atomic<JS::BuildIdOp> GetBuildId;
+
+extern JS::FilenameValidationCallback gFilenameValidationCallback;
 
 // This callback is set by js::SetHelperThreadTaskCallback and may be null.
 // See comment in jsapi.h.

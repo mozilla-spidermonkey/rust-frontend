@@ -18,7 +18,6 @@
 #include "gfxContext.h"
 #include "nsReadableUtils.h"
 #include "nsIComponentManager.h"
-#include "nsIDOMWindow.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIWebBrowserChrome.h"
@@ -38,6 +37,7 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/LoadURIOptionsBinding.h"
+#include "mozilla/dom/WindowGlobalChild.h"
 
 // for painting the background window
 #include "mozilla/LookAndFeel.h"
@@ -58,9 +58,7 @@ using namespace mozilla::layers;
 
 nsWebBrowser::nsWebBrowser(int aItemType)
     : mContentType(aItemType),
-      mActivating(false),
       mShouldEnableHistory(true),
-      mIsActive(true),
       mParentNativeWindow(nullptr),
       mProgressListener(nullptr),
       mWidgetListenerDelegate(this),
@@ -103,7 +101,11 @@ already_AddRefed<nsWebBrowser> nsWebBrowser::Create(
     nsIWebBrowserChrome* aContainerWindow, nsIWidget* aParentWidget,
     const OriginAttributes& aOriginAttributes,
     dom::BrowsingContext* aBrowsingContext,
+    dom::WindowGlobalChild* aInitialWindowChild,
     bool aDisableHistory /* = false */) {
+  MOZ_ASSERT_IF(aInitialWindowChild,
+                aInitialWindowChild->BrowsingContext() == aBrowsingContext);
+
   RefPtr<nsWebBrowser> browser = new nsWebBrowser(
       aBrowsingContext->IsContent() ? typeContentWrapper : typeChromeWrapper);
 
@@ -116,7 +118,11 @@ already_AddRefed<nsWebBrowser> nsWebBrowser::Create(
     return nullptr;
   }
 
-  RefPtr<nsDocShell> docShell = nsDocShell::Create(aBrowsingContext);
+  uint64_t outerWindowId =
+      aInitialWindowChild ? aInitialWindowChild->OuterWindowId() : 0;
+
+  RefPtr<nsDocShell> docShell =
+      nsDocShell::Create(aBrowsingContext, outerWindowId);
   if (NS_WARN_IF(!docShell)) {
     return nullptr;
   }
@@ -177,6 +183,10 @@ already_AddRefed<nsWebBrowser> nsWebBrowser::Create(
 
   docShellTreeOwner->AddToWatcher();  // evil twin of Remove in SetDocShell(0)
   docShellTreeOwner->AddChromeListeners();
+
+  if (aInitialWindowChild) {
+    docShell->CreateContentViewerForActor(aInitialWindowChild);
+  }
 
   return browser.forget();
 }
@@ -358,7 +368,7 @@ nsWebBrowser::GetInProcessSameTypeParent(nsIDocShellTreeItem** aParent) {
 }
 
 NS_IMETHODIMP
-nsWebBrowser::GetRootTreeItem(nsIDocShellTreeItem** aRootTreeItem) {
+nsWebBrowser::GetInProcessRootTreeItem(nsIDocShellTreeItem** aRootTreeItem) {
   NS_ENSURE_ARG_POINTER(aRootTreeItem);
   *aRootTreeItem = static_cast<nsIDocShellTreeItem*>(this);
 
@@ -394,26 +404,22 @@ nsWebBrowser::GetInProcessSameTypeRootTreeItem(
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsWebBrowser::FindItemWithName(const nsAString& aName,
-                               nsIDocShellTreeItem* aRequestor,
-                               nsIDocShellTreeItem* aOriginalRequestor,
-                               bool aSkipTabGroup,
-                               nsIDocShellTreeItem** aResult) {
-  NS_ENSURE_STATE(mDocShell);
-  NS_ASSERTION(mDocShellTreeOwner,
-               "This should always be set when in this situation");
-
-  return mDocShell->FindItemWithName(aName, aRequestor, aOriginalRequestor,
-                                     aSkipTabGroup, aResult);
-}
-
 dom::Document* nsWebBrowser::GetDocument() {
   return mDocShell ? mDocShell->GetDocument() : nullptr;
 }
 
 nsPIDOMWindowOuter* nsWebBrowser::GetWindow() {
   return mDocShell ? mDocShell->GetWindow() : nullptr;
+}
+
+NS_IMETHODIMP
+nsWebBrowser::GetBrowsingContextXPCOM(dom::BrowsingContext** aBrowsingContext) {
+  NS_ENSURE_STATE(mDocShell);
+  return mDocShell->GetBrowsingContextXPCOM(aBrowsingContext);
+}
+
+dom::BrowsingContext* nsWebBrowser::GetBrowsingContext() {
+  return mDocShell->GetBrowsingContext();
 }
 
 NS_IMETHODIMP
@@ -1073,7 +1079,7 @@ nsWebBrowser::SetParentNativeWindow(nativeWindow aParentNativeWindow) {
 
 NS_IMETHODIMP
 nsWebBrowser::GetNativeHandle(nsAString& aNativeHandle) {
-  // the nativeHandle should be accessed from nsIXULWindow
+  // the nativeHandle should be accessed from nsIAppWindow
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -1226,12 +1232,6 @@ nsWebBrowser::SetDocShell(nsIDocShell* aDocShell) {
     // By default, do not allow DNS prefetch, so we don't break our frozen
     // API.  Embeddors who decide to enable it should do so manually.
     mDocShell->SetAllowDNSPrefetch(false);
-
-    // It's possible to call setIsActive() on us before we have a docshell.
-    // If we're getting a docshell now, pass along our desired value. The
-    // default here (true) matches the default of the docshell, so this is
-    // a no-op unless setIsActive(false) has been called on us.
-    mDocShell->SetIsActive(mIsActive);
   } else {
     if (mDocShellTreeOwner) {
       mDocShellTreeOwner->RemoveFromWatcher();  // evil twin of Add in Create()

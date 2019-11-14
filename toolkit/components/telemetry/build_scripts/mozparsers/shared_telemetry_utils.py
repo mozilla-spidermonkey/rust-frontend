@@ -24,11 +24,14 @@ KNOWN_PROCESS_FLAGS = {
     'all_childs': 'AllChildren',  # Supporting files from before bug 1363725
 }
 
+GECKOVIEW_STREAMING_PRODUCT = 'geckoview_streaming'
+
 SUPPORTED_PRODUCTS = {
     'firefox': 'Firefox',
     'fennec': 'Fennec',
     'geckoview': 'Geckoview',
-    'geckoview_streaming': 'GeckoviewStreaming',
+    GECKOVIEW_STREAMING_PRODUCT: 'GeckoviewStreaming',
+    'thunderbird': 'Thunderbird',
 }
 
 SUPPORTED_OPERATING_SYSTEMS = [
@@ -105,6 +108,10 @@ def process_name_to_enum(name):
 
 def is_valid_product(name):
     return (name in SUPPORTED_PRODUCTS)
+
+
+def is_geckoview_streaming_product(name):
+    return (name == GECKOVIEW_STREAMING_PRODUCT)
 
 
 def is_valid_os(name):
@@ -244,8 +251,8 @@ def load_yaml_file(filename):
     try:
         with open(filename, 'r') as f:
             return yaml.safe_load(f)
-    except IOError, e:
+    except IOError as e:
         raise ParserError('Error opening ' + filename + ': ' + e.message)
-    except ValueError, e:
+    except ValueError as e:
         raise ParserError('Error parsing processes in {}: {}'
                           .format(filename, e.message))

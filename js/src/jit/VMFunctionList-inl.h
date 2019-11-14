@@ -9,6 +9,7 @@
 
 #include "builtin/Eval.h"
 #include "builtin/RegExp.h"
+#include "builtin/String.h"
 #include "jit/BaselineIC.h"
 #include "jit/IonIC.h"
 #include "jit/JitRealm.h"
@@ -47,6 +48,29 @@ namespace jit {
   _(BaselineGetFunctionThis, js::jit::BaselineGetFunctionThis)                 \
   _(BaselineThrowInitializedThis, js::jit::BaselineThrowInitializedThis)       \
   _(BaselineThrowUninitializedThis, js::jit::BaselineThrowUninitializedThis)   \
+  _(BigIntAdd, js::jit::BigIntAdd)                                             \
+  _(BigIntBitAnd, js::jit::BigIntBitAnd)                                       \
+  _(BigIntBitNot, js::jit::BigIntBitNot)                                       \
+  _(BigIntBitOr, js::jit::BigIntBitOr)                                         \
+  _(BigIntBitXor, js::jit::BigIntBitXor)                                       \
+  _(BigIntDec, js::jit::BigIntDec)                                             \
+  _(BigIntDiv, js::jit::BigIntDiv)                                             \
+  _(BigIntInc, js::jit::BigIntInc)                                             \
+  _(BigIntLeftShift, js::jit::BigIntLeftShift)                                 \
+  _(BigIntMod, js::jit::BigIntMod)                                             \
+  _(BigIntMul, js::jit::BigIntMul)                                             \
+  _(BigIntNeg, js::jit::BigIntNeg)                                             \
+  _(BigIntPow, js::jit::BigIntPow)                                             \
+  _(BigIntRightShift, js::jit::BigIntRightShift)                               \
+  _(BigIntStringEqual,                                                         \
+    js::jit::BigIntStringEqual<js::jit::EqualityKind::Equal>)                  \
+  _(BigIntStringGreaterThanOrEqual,                                            \
+    js::jit::BigIntStringCompare<js::jit::ComparisonKind::GreaterThanOrEqual>) \
+  _(BigIntStringLessThan,                                                      \
+    js::jit::BigIntStringCompare<js::jit::ComparisonKind::LessThan>)           \
+  _(BigIntStringNotEqual,                                                      \
+    js::jit::BigIntStringEqual<js::jit::EqualityKind::NotEqual>)               \
+  _(BigIntSub, js::jit::BigIntSub)                                             \
   _(BindVarOperation, js::BindVarOperation)                                    \
   _(BitAnd, js::BitAnd)                                                        \
   _(BitLsh, js::BitLsh)                                                        \
@@ -102,12 +126,12 @@ namespace jit {
   _(DoToNumber, js::jit::DoToNumber)                                           \
   _(DoToNumeric, js::jit::DoToNumeric)                                         \
   _(DoTypeUpdateFallback, js::jit::DoTypeUpdateFallback)                       \
-  _(DoWarmUpCounterFallbackOSR, js::jit::DoWarmUpCounterFallbackOSR)           \
   _(EnterWith, js::jit::EnterWith)                                             \
   _(FinalSuspend, js::jit::FinalSuspend)                                       \
   _(FinishBoundFunctionInit, JSFunction::finishBoundFunctionInit)              \
   _(FreshenLexicalEnv, js::jit::FreshenLexicalEnv)                             \
   _(FunWithProtoOperation, js::FunWithProtoOperation)                          \
+  _(GeneratorThrowOrReturn, js::jit::GeneratorThrowOrReturn)                   \
   _(GetAndClearException, js::GetAndClearException)                            \
   _(GetElementOperation, js::GetElementOperation)                              \
   _(GetFirstDollarIndexRaw, js::GetFirstDollarIndexRaw)                        \
@@ -143,7 +167,9 @@ namespace jit {
   _(IonBinaryArithICUpdate, js::jit::IonBinaryArithIC::update)                 \
   _(IonBindNameICUpdate, js::jit::IonBindNameIC::update)                       \
   _(IonCompareICUpdate, js::jit::IonCompareIC::update)                         \
-  _(IonCompileScriptForBaseline, js::jit::IonCompileScriptForBaseline)         \
+  _(IonCompileScriptForBaselineAtEntry,                                        \
+    js::jit::IonCompileScriptForBaselineAtEntry)                               \
+  _(IonCompileScriptForBaselineOSR, js::jit::IonCompileScriptForBaselineOSR)   \
   _(IonForcedInvalidation, js::jit::IonForcedInvalidation)                     \
   _(IonForcedRecompile, js::jit::IonForcedRecompile)                           \
   _(IonGetIteratorICUpdate, js::jit::IonGetIteratorIC::update)                 \
@@ -227,6 +253,10 @@ namespace jit {
   _(StartDynamicModuleImport, js::StartDynamicModuleImport)                    \
   _(StrictlyEqual, js::jit::StrictlyEqual<js::jit::EqualityKind::Equal>)       \
   _(StrictlyNotEqual, js::jit::StrictlyEqual<js::jit::EqualityKind::NotEqual>) \
+  _(StringBigIntGreaterThanOrEqual,                                            \
+    js::jit::StringBigIntCompare<js::jit::ComparisonKind::GreaterThanOrEqual>) \
+  _(StringBigIntLessThan,                                                      \
+    js::jit::StringBigIntCompare<js::jit::ComparisonKind::LessThan>)           \
   _(StringFlatReplaceString, js::StringFlatReplaceString)                      \
   _(StringFromCharCode, js::jit::StringFromCharCode)                           \
   _(StringFromCodePoint, js::jit::StringFromCodePoint)                         \
@@ -281,8 +311,7 @@ namespace jit {
   _(DoToBoolFallback, js::jit::DoToBoolFallback, 0)             \
   _(DoTypeMonitorFallback, js::jit::DoTypeMonitorFallback, 0)   \
   _(DoTypeOfFallback, js::jit::DoTypeOfFallback, 0)             \
-  _(DoUnaryArithFallback, js::jit::DoUnaryArithFallback, 1)     \
-  _(GeneratorThrowOrReturn, js::jit::GeneratorThrowOrReturn, 0)
+  _(DoUnaryArithFallback, js::jit::DoUnaryArithFallback, 1)
 
 #define DEF_ID(name, ...) name,
 enum class VMFunctionId { VMFUNCTION_LIST(DEF_ID) Count };

@@ -22,6 +22,12 @@
     "resource://gre/actors/BrowserElementParent.jsm"
   );
 
+  ChromeUtils.defineModuleGetter(
+    LazyModules,
+    "E10SUtils",
+    "resource://gre/modules/E10SUtils.jsm"
+  );
+
   const elementsToDestroyOnUnload = new Set();
 
   window.addEventListener(
@@ -47,11 +53,11 @@
       //
       // Only do this when the rebuild frameloaders pref is off. This update isn't
       // required when we rebuild the frameloaders in the backend.
+      let rebuildFrameLoaders =
+        LazyModules.E10SUtils.rebuildFrameloadersOnRemotenessChange ||
+        this.ownerGlobal.docShell.nsILoadContext.useRemoteSubframes;
       if (
-        !Services.prefs.getBoolPref(
-          "fission.rebuild_frameloaders_on_remoteness_change",
-          false
-        ) &&
+        !rebuildFrameLoaders &&
         name === "remote" &&
         oldValue != newValue &&
         this.isConnectedAndReady
@@ -79,10 +85,19 @@
       this.mIconURL = null;
       this.lastURI = null;
 
+      // Track progress listeners added to this <browser>. These need to persist
+      // between calls to destroy().
+      this.progressListeners = [];
+
       this.addEventListener(
         "keypress",
         event => {
           if (event.keyCode != KeyEvent.DOM_VK_F7) {
+            return;
+          }
+
+          // shift + F7 is the default DevTools shortcut for the Style Editor.
+          if (event.shiftKey) {
             return;
           }
 
@@ -303,6 +318,8 @@
       this._contentPrincipal = null;
 
       this._contentStoragePrincipal = null;
+
+      this._contentBlockingAllowListPrincipal = null;
 
       this._csp = null;
 
@@ -605,12 +622,6 @@
     get finder() {
       if (this.isRemoteBrowser) {
         if (!this._remoteFinder) {
-          // Don't attempt to create the remote finder if the
-          // messageManager has already gone away
-          if (!this.messageManager) {
-            return null;
-          }
-
           let jsm = "resource://gre/modules/FinderParent.jsm";
           let { FinderParent } = ChromeUtils.import(jsm, {});
           this._remoteFinder = new FinderParent(this);
@@ -674,7 +685,10 @@
     }
 
     get browsingContext() {
-      return this.frameLoader.browsingContext;
+      if (this.frameLoader) {
+        return this.frameLoader.browsingContext;
+      }
+      return null;
     }
     /**
      * Note that this overrides webNavigation on XULFrameElement, and duplicates the return value for the non-remote case
@@ -762,6 +776,12 @@
         : this.contentDocument.effectiveStoragePrincipal;
     }
 
+    get contentBlockingAllowListPrincipal() {
+      return this.isRemoteBrowser
+        ? this._contentBlockingAllowListPrincipal
+        : this.contentDocument.contentBlockingAllowListPrincipal;
+    }
+
     get csp() {
       return this.isRemoteBrowser ? this._csp : this.contentDocument.csp;
     }
@@ -775,18 +795,6 @@
       } catch (e) {
         return null;
       }
-    }
-
-    set showWindowResizer(val) {
-      if (val) {
-        this.setAttribute("showresizer", "true");
-      } else {
-        this.removeAttribute("showresizer");
-      }
-    }
-
-    get showWindowResizer() {
-      return this.getAttribute("showresizer") == "true";
     }
 
     set fullZoom(val) {
@@ -849,10 +857,7 @@
     }
 
     get hasContentOpener() {
-      if (this.isRemoteBrowser) {
-        return this.frameLoader.remoteTab.hasContentOpener;
-      }
-      return !!this.contentWindow.opener;
+      return !!this.browsingContext.opener;
     }
 
     get mStrBundle() {
@@ -1036,16 +1041,6 @@
       }
     }
 
-    forceRepaint() {
-      if (!this.isRemoteBrowser) {
-        return;
-      }
-      let { frameLoader } = this;
-      if (frameLoader && frameLoader.remoteTab) {
-        frameLoader.remoteTab.forceRepaint();
-      }
-    }
-
     getTabBrowser() {
       if (
         this.ownerGlobal.gBrowser &&
@@ -1061,11 +1056,40 @@
       if (!aNotifyMask) {
         aNotifyMask = Ci.nsIWebProgress.NOTIFY_ALL;
       }
+
+      this.progressListeners.push({
+        weakListener: Cu.getWeakReference(aListener),
+        mask: aNotifyMask,
+      });
+
       this.webProgress.addProgressListener(aListener, aNotifyMask);
     }
 
     removeProgressListener(aListener) {
       this.webProgress.removeProgressListener(aListener);
+
+      // Remove aListener from our progress listener list, and clear out dead
+      // weak references while we're at it.
+      this.progressListeners = this.progressListeners.filter(
+        ({ weakListener }) =>
+          weakListener.get() && weakListener.get() !== aListener
+      );
+    }
+
+    /**
+     * Move the previously-tracked web progress listeners to this <browser>'s
+     * current WebProgress.
+     */
+    restoreProgressListeners() {
+      let listeners = this.progressListeners;
+      this.progressListeners = [];
+
+      for (let { weakListener, mask } of listeners) {
+        let listener = weakListener.get();
+        if (listener) {
+          this.addProgressListener(listener, mask);
+        }
+      }
     }
 
     onPageHide(aEvent) {
@@ -1161,12 +1185,14 @@
       if (!transientState) {
         this._audioMuted = true;
       }
-      this.frameLoader.browsingContext.notifyMediaMutedChanged(true);
+      let context = this.frameLoader.browsingContext;
+      context.notifyMediaMutedChanged(true);
     }
 
     unmute() {
       this._audioMuted = false;
-      this.frameLoader.browsingContext.notifyMediaMutedChanged(false);
+      let context = this.frameLoader.browsingContext;
+      context.notifyMediaMutedChanged(false);
     }
 
     pauseMedia(disposable) {
@@ -1177,15 +1203,21 @@
         suspendedReason = "lostAudioFocusTransiently";
       }
 
-      this.messageManager.sendAsyncMessage("AudioPlayback", {
-        type: suspendedReason,
-      });
+      this.sendMessageToActor(
+        "AudioPlayback",
+        { type: suspendedReason },
+        "AudioPlayback",
+        true
+      );
     }
 
     stopMedia() {
-      this.messageManager.sendAsyncMessage("AudioPlayback", {
-        type: "mediaControlStopped",
-      });
+      this.sendMessageToActor(
+        "AudioPlayback",
+        { type: "mediaControlStopped" },
+        "AudioPlayback",
+        true
+      );
     }
 
     resumeMedia() {
@@ -1248,8 +1280,6 @@
         this.messageManager.addMessageListener("DOMTitleChanged", this);
         this.messageManager.addMessageListener("ImageDocumentLoaded", this);
 
-        // browser-child messages, such as Content:LocationChange, are handled in
-        // RemoteWebProgress, ensure it is loaded and ready.
         let jsm = "resource://gre/modules/RemoteWebProgress.jsm";
         let { RemoteWebProgressManager } = ChromeUtils.import(jsm, {});
 
@@ -1263,6 +1293,13 @@
         }
 
         this._remoteWebProgress = this._remoteWebProgressManager.topLevelWebProgress;
+
+        if (!oldManager) {
+          // If we didn't have a manager, then we're transitioning from local to
+          // remote. Add all listeners from the previous <browser> to the new
+          // RemoteWebProgress.
+          this.restoreProgressListeners();
+        }
 
         this.messageManager.loadFrameScript(
           "chrome://global/content/browser-child.js",
@@ -1328,10 +1365,12 @@
       }
 
       if (!this.isRemoteBrowser) {
-        // If we've transitioned from remote to non-remote, we'll give up trying to
-        // keep the web progress listeners persisted during the transition.
-        delete this._remoteWebProgressManager;
-        delete this._remoteWebProgress;
+        // If we've transitioned from remote to non-remote, we no longer need
+        // our RemoteWebProgress or its associated manager, but we'll need to
+        // add the progress listeners to the new non-remote WebProgress.
+        this._remoteWebProgressManager = null;
+        this._remoteWebProgress = null;
+        this.restoreProgressListeners();
 
         this.addEventListener("pagehide", this.onPageHide, true);
       }
@@ -1343,16 +1382,6 @@
         );
         this.messageManager.addMessageListener("Autoscroll:Start", this);
         this.messageManager.addMessageListener("Autoscroll:Cancel", this);
-        this.messageManager.addMessageListener("AudioPlayback:Start", this);
-        this.messageManager.addMessageListener("AudioPlayback:Stop", this);
-        this.messageManager.addMessageListener(
-          "AudioPlayback:ActiveMediaBlockStart",
-          this
-        );
-        this.messageManager.addMessageListener(
-          "AudioPlayback:ActiveMediaBlockStop",
-          this
-        );
         this.messageManager.addMessageListener(
           "UnselectedTabHover:Toggle",
           this
@@ -1460,18 +1489,6 @@
         case "Autoscroll:Cancel":
           this._autoScrollPopup.hidePopup();
           break;
-        case "AudioPlayback:Start":
-          this.audioPlaybackStarted();
-          break;
-        case "AudioPlayback:Stop":
-          this.audioPlaybackStopped();
-          break;
-        case "AudioPlayback:ActiveMediaBlockStart":
-          this.activeMediaBlockStarted();
-          break;
-        case "AudioPlayback:ActiveMediaBlockStop":
-          this.activeMediaBlockStopped();
-          break;
         case "UnselectedTabHover:Toggle":
           this._shouldSendUnselectedTabHover = data.enable
             ? ++this._unselectedTabHoverMessageListenerCount > 0
@@ -1517,6 +1534,16 @@
           aEnabledCommands,
           aDisabledCommands
         );
+      }
+    }
+
+    updateSecurityUIForSecurityChange(aSecurityInfo, aState, aIsSecureContext) {
+      if (this.isRemoteBrowser && this.messageManager) {
+        // Invoking this getter triggers the generation of the underlying object,
+        // which we need to access with ._securityUI, because .securityUI returns
+        // a wrapper that makes _update inaccessible.
+        void this.securityUI;
+        this._securityUI._update(aSecurityInfo, aState, aIsSecureContext);
       }
     }
 
@@ -1567,6 +1594,7 @@
       aTitle,
       aContentPrincipal,
       aContentStoragePrincipal,
+      aContentBlockingAllowListPrincipal,
       aCSP,
       aReferrerInfo,
       aIsSynthetic,
@@ -1588,10 +1616,11 @@
 
         this._remoteWebNavigationImpl._currentURI = aLocation;
         this._documentURI = aDocumentURI;
-        this._contentTile = aTitle;
+        this._contentTitle = aTitle;
         this._imageDocument = null;
         this._contentPrincipal = aContentPrincipal;
         this._contentStoragePrincipal = aContentStoragePrincipal;
+        this._contentBlockingAllowListPrincipal = aContentBlockingAllowListPrincipal;
         this._csp = aCSP;
         this._referrerInfo = aReferrerInfo;
         this._isSyntheticDocument = aIsSynthetic;
@@ -1604,19 +1633,22 @@
 
     purgeSessionHistory() {
       if (this.isRemoteBrowser) {
-        try {
-          this.messageManager.sendAsyncMessage("Browser:PurgeSessionHistory");
-        } catch (ex) {
-          // This can throw if the browser has started to go away.
-          if (ex.result != Cr.NS_ERROR_NOT_INITIALIZED) {
-            throw ex;
-          }
-        }
         this._remoteWebNavigationImpl.canGoBack = false;
         this._remoteWebNavigationImpl.canGoForward = false;
-        return;
       }
-      this.messageManager.sendAsyncMessage("Browser:PurgeSessionHistory");
+      try {
+        this.sendMessageToActor(
+          "Browser:PurgeSessionHistory",
+          {},
+          "PurgeSessionHistory",
+          true
+        );
+      } catch (ex) {
+        // This can throw if the browser has started to go away.
+        if (ex.result != Cr.NS_ERROR_NOT_INITIALIZED) {
+          throw ex;
+        }
+      }
     }
 
     createAboutBlankContentViewer(aPrincipal, aStoragePrincipal) {
@@ -1840,6 +1872,7 @@
             }
             // don't break here. we need to eat keydown events.
           }
+          // fall through
           case "keypress":
           case "keyup": {
             // All keyevents should be eaten here during autoscrolling.
@@ -1936,6 +1969,8 @@
             "_mayEnableCharacterEncodingMenu",
             "_charsetAutodetected",
             "_contentPrincipal",
+            "_contentStoragePrincipal",
+            "_contentBlockingAllowListPrincipal",
             "_imageDocument",
             "_fullZoom",
             "_textZoom",
@@ -2054,11 +2089,17 @@
       );
     }
 
-    drawSnapshot(x, y, w, h, scale, backgroundColor) {
-      if (!this.frameLoader) {
-        throw Components.Exception("No frame loader.", Cr.NS_ERROR_FAILURE);
+    async drawSnapshot(x, y, w, h, scale, backgroundColor) {
+      let rect = new DOMRect(x, y, w, h);
+      try {
+        return this.browsingContext.currentWindowGlobal.drawSnapshot(
+          rect,
+          scale,
+          backgroundColor
+        );
+      } catch (e) {
+        return false;
       }
-      return this.frameLoader.drawSnapshot(x, y, w, h, scale, backgroundColor);
     }
 
     dropLinks(aLinks, aTriggeringPrincipal) {
@@ -2129,6 +2170,21 @@
 
     leaveModalState() {
       this.sendMessageToActor("LeaveModalState", {}, "BrowserElement", true);
+    }
+
+    getDevicePermissionOrigins(key) {
+      if (typeof key !== "string" || key.length === 0) {
+        throw new Error("Key must be non empty string.");
+      }
+      if (!this._devicePermissionOrigins) {
+        this._devicePermissionOrigins = new Map();
+      }
+      let origins = this._devicePermissionOrigins.get(key);
+      if (!origins) {
+        origins = new Set();
+        this._devicePermissionOrigins.set(key, origins);
+      }
+      return origins;
     }
   }
 

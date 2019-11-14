@@ -6,8 +6,6 @@ var { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
-const MAX_FOLDER_ITEM_IN_MENU_LIST = 5;
-
 var gEditItemOverlay = {
   // Array of PlacesTransactions accumulated by internal changes. It can be used
   // to wait for completion.
@@ -188,7 +186,7 @@ var gEditItemOverlay = {
       await PlacesUtils.keywords.fetch({ url: this._paneInfo.uri.spec }, e =>
         entries.push(e)
       );
-      if (entries.length > 0) {
+      if (entries.length) {
         // We show an existing keyword if either POST data was not provided, or
         // if the POST data is the same.
         let existingKeyword = entries[0].keyword;
@@ -328,7 +326,7 @@ var gEditItemOverlay = {
       // The focusedElement possible values are:
       //  * preferred: focus the field that the user touched first the last
       //    time the pane was shown (either namePicker or tagsField)
-      //  * first: focus the first non collapsed textbox
+      //  * first: focus the first non collapsed input
       // Note: since all controls are collapsed by default, we don't get the
       // default XUL dialog behavior, that selects the first control, so we set
       // the focus explicitly.
@@ -340,7 +338,7 @@ var gEditItemOverlay = {
           )
         );
       } else if (focusedElement === "first") {
-        elt = document.querySelector("textbox:not([collapsed=true])");
+        elt = document.querySelector("vbox:not([collapsed=true]) > input");
       }
       if (elt) {
         elt.focus();
@@ -474,7 +472,7 @@ var gEditItemOverlay = {
     }
 
     var numberOfItems = Math.min(
-      MAX_FOLDER_ITEM_IN_MENU_LIST,
+      PlacesUIUtils.maxRecentFolders,
       this._recentFolders.length
     );
     for (let i = 0; i < numberOfItems; i++) {
@@ -580,13 +578,13 @@ var gEditItemOverlay = {
     let inputTags = this._getTagsArrayFromTagsInputField();
 
     // Optimize the trivial cases (which are actually the most common).
-    if (inputTags.length == 0 && aCurrentTags.length == 0) {
+    if (!inputTags.length && !aCurrentTags.length) {
       return { newTags: [], removedTags: [] };
     }
-    if (inputTags.length == 0) {
+    if (!inputTags.length) {
       return { newTags: [], removedTags: aCurrentTags };
     }
-    if (aCurrentTags.length == 0) {
+    if (!aCurrentTags.length) {
       return { newTags: inputTags, removedTags: [] };
     }
 
@@ -609,7 +607,7 @@ var gEditItemOverlay = {
 
     let setTags = async () => {
       let promises = [];
-      if (removedTags.length > 0) {
+      if (removedTags.length) {
         let promise = PlacesTransactions.Untag({
           urls: aURIs,
           tags: removedTags,
@@ -619,7 +617,7 @@ var gEditItemOverlay = {
         this.transactionPromises.push(promise);
         promises.push(promise);
       }
-      if (newTags.length > 0) {
+      if (newTags.length) {
         let promise = PlacesTransactions.Tag({ urls: aURIs, tags: newTags })
           .transact()
           .catch(Cu.reportError);
@@ -809,8 +807,9 @@ var gEditItemOverlay = {
   /**
    * Get the corresponding menu-item in the folder-menu-list for a bookmarks
    * folder if such an item exists. Otherwise, this creates a menu-item for the
-   * folder. If the items-count limit (see MAX_FOLDERS_IN_MENU_LIST) is reached,
-   * the new item replaces the last menu-item.
+   * folder. If the items-count limit (see
+   * browser.bookmarks.editDialog.maxRecentFolders preference) is reached, the
+   * new item replaces the last menu-item.
    * @param aFolderGuid
    *        The identifier of the bookmarks folder.
    * @param aTitle
@@ -828,7 +827,7 @@ var gEditItemOverlay = {
     }
 
     // 3 special folders + separator + folder-items-count limit
-    if (menupopup.children.length == 4 + MAX_FOLDER_ITEM_IN_MENU_LIST) {
+    if (menupopup.children.length == 4 + PlacesUIUtils.maxRecentFolders) {
       menupopup.removeChild(menupopup.lastElementChild);
     }
 
@@ -995,7 +994,7 @@ var gEditItemOverlay = {
     return tags
       .trim()
       .split(/\s*,\s*/) // Split on commas and remove spaces.
-      .filter(tag => tag.length > 0); // Kill empty tags.
+      .filter(tag => !!tag.length); // Kill empty tags.
   },
 
   async newFolder() {

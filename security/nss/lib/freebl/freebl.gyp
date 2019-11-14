@@ -133,6 +133,35 @@
       ]
     },
     {
+      'target_name': 'armv8_c_lib',
+      'type': 'static_library',
+      'sources': [
+        'aes-armv8.c',
+      ],
+      'dependencies': [
+        '<(DEPTH)/exports.gyp:nss_exports'
+      ],
+      'conditions': [
+        [ 'target_arch=="arm"', {
+          'cflags': [
+            '-march=armv8-a',
+            '-mfpu=crypto-neon-fp-armv8'
+          ],
+          'cflags_mozilla': [
+            '-march=armv8-a',
+            '-mfpu=crypto-neon-fp-armv8'
+          ],
+        }, 'target_arch=="arm64" or target_arch=="aarch64"', {
+          'cflags': [
+            '-march=armv8-a+crypto'
+          ],
+          'cflags_mozilla': [
+            '-march=armv8-a+crypto'
+          ],
+        }]
+      ]
+    },
+    {
       'target_name': 'freebl',
       'type': 'static_library',
       'sources': [
@@ -159,6 +188,10 @@
         [ 'target_arch=="ia32" or target_arch=="x64"', {
           'dependencies': [
             'gcm-aes-x86_c_lib',
+          ],
+        }, 'disable_arm_hw_aes==0 and (target_arch=="arm" or target_arch=="arm64" or target_arch=="aarch64")', {
+          'dependencies': [
+            'armv8_c_lib'
           ],
         }],
         [ 'target_arch=="arm64" or target_arch=="aarch64"', {
@@ -202,6 +235,10 @@
           'dependencies': [
             'gcm-aes-x86_c_lib',
           ]
+        }, 'target_arch=="arm" or target_arch=="arm64" or target_arch=="aarch64"', {
+          'dependencies': [
+            'armv8_c_lib',
+          ],
         }],
         [ 'target_arch=="arm64" or target_arch=="aarch64"', {
           'dependencies': [
@@ -324,15 +361,6 @@
       'MP_API_COMPATIBLE'
     ],
     'conditions': [
-      [ 'OS=="mac"', {
-        'xcode_settings': {
-          # I'm not sure since when this is supported.
-          # But I hope that doesn't matter. We also assume this is x86/x64.
-          'OTHER_CFLAGS': [
-            '-std=gnu99',
-          ],
-        },
-      }],
       [ 'OS=="win" and target_arch=="ia32"', {
         'msvs_settings': {
           'VCCLCompilerTool': {
@@ -387,14 +415,6 @@
           'FREEBL_LOWHASH',
           'FREEBL_NO_DEPEND',
         ],
-        'cflags': [
-          '-std=gnu99',
-        ],
-      }],
-      [ 'OS=="dragonfly" or OS=="freebsd" or OS=="netbsd" or OS=="openbsd"', {
-        'cflags': [
-          '-std=gnu99',
-        ],
       }],
       [ 'OS=="linux" or OS=="android"', {
         'conditions': [
@@ -429,6 +449,11 @@
               'MP_USE_UINT_DIGIT',
               'SHA_NO_LONG_LONG',
               'ARMHF',
+            ],
+          }],
+          [ 'disable_arm_hw_aes==0 and (target_arch=="arm" or target_arch=="arm64" or target_arch=="aarch64")', {
+            'defines': [
+              'USE_HW_AES',
             ],
           }],
         ],

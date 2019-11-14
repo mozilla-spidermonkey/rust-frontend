@@ -40,6 +40,7 @@
 #include "mozilla/dom/quota/ActorsParent.h"
 #include "mozilla/dom/simpledb/ActorsParent.h"
 #include "mozilla/dom/RemoteWorkerParent.h"
+#include "mozilla/dom/RemoteWorkerControllerParent.h"
 #include "mozilla/dom/RemoteWorkerServiceParent.h"
 #include "mozilla/dom/ReportingHeader.h"
 #include "mozilla/dom/SharedWorkerParent.h"
@@ -49,6 +50,7 @@
 #include "mozilla/dom/MIDIPlatformService.h"
 #include "mozilla/ipc/BackgroundParent.h"
 #include "mozilla/ipc/BackgroundUtils.h"
+#include "mozilla/ipc/IdleSchedulerParent.h"
 #include "mozilla/ipc/IPCStreamAlloc.h"
 #include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "mozilla/ipc/PBackgroundTestParent.h"
@@ -469,6 +471,13 @@ bool BackgroundParentImpl::DeallocPBackgroundStorageParent(
   return mozilla::dom::DeallocPBackgroundStorageParent(aActor);
 }
 
+already_AddRefed<PIdleSchedulerParent>
+BackgroundParentImpl::AllocPIdleSchedulerParent() {
+  AssertIsOnBackgroundThread();
+  RefPtr<IdleSchedulerParent> actor = new IdleSchedulerParent();
+  return actor.forget();
+}
+
 mozilla::dom::PPendingIPCBlobParent*
 BackgroundParentImpl::AllocPPendingIPCBlobParent(const IPCBlob& aBlob) {
   MOZ_CRASH("PPendingIPCBlobParent actors should be manually constructed!");
@@ -494,6 +503,29 @@ bool BackgroundParentImpl::DeallocPRemoteWorkerParent(
     mozilla::dom::PRemoteWorkerParent* aActor) {
   RefPtr<mozilla::dom::RemoteWorkerParent> actor =
       dont_AddRef(static_cast<mozilla::dom::RemoteWorkerParent*>(aActor));
+  return true;
+}
+
+dom::PRemoteWorkerControllerParent*
+BackgroundParentImpl::AllocPRemoteWorkerControllerParent(
+    const dom::RemoteWorkerData& aRemoteWorkerData) {
+  RefPtr<dom::RemoteWorkerControllerParent> actor =
+      new dom::RemoteWorkerControllerParent(aRemoteWorkerData);
+  return actor.forget().take();
+}
+
+IPCResult BackgroundParentImpl::RecvPRemoteWorkerControllerConstructor(
+    dom::PRemoteWorkerControllerParent* aActor,
+    const dom::RemoteWorkerData& aRemoteWorkerData) {
+  MOZ_ASSERT(aActor);
+
+  return IPC_OK();
+}
+
+bool BackgroundParentImpl::DeallocPRemoteWorkerControllerParent(
+    dom::PRemoteWorkerControllerParent* aActor) {
+  RefPtr<dom::RemoteWorkerControllerParent> actor =
+      dont_AddRef(static_cast<dom::RemoteWorkerControllerParent*>(aActor));
   return true;
 }
 
@@ -605,7 +637,7 @@ bool BackgroundParentImpl::DeallocPTemporaryIPCBlobParent(
   return true;
 }
 
-dom::PIPCBlobInputStreamParent*
+already_AddRefed<dom::PIPCBlobInputStreamParent>
 BackgroundParentImpl::AllocPIPCBlobInputStreamParent(const nsID& aID,
                                                      const uint64_t& aSize) {
   AssertIsInMainOrSocketProcess();
@@ -613,7 +645,7 @@ BackgroundParentImpl::AllocPIPCBlobInputStreamParent(const nsID& aID,
 
   RefPtr<dom::IPCBlobInputStreamParent> actor =
       dom::IPCBlobInputStreamParent::Create(aID, aSize, this);
-  return actor.forget().take();
+  return actor.forget();
 }
 
 mozilla::ipc::IPCResult
@@ -625,17 +657,6 @@ BackgroundParentImpl::RecvPIPCBlobInputStreamConstructor(
   }
 
   return IPC_OK();
-}
-
-bool BackgroundParentImpl::DeallocPIPCBlobInputStreamParent(
-    dom::PIPCBlobInputStreamParent* aActor) {
-  AssertIsInMainOrSocketProcess();
-  AssertIsOnBackgroundThread();
-  MOZ_ASSERT(aActor);
-
-  RefPtr<dom::IPCBlobInputStreamParent> actor =
-      dont_AddRef(static_cast<dom::IPCBlobInputStreamParent*>(aActor));
-  return true;
 }
 
 PFileDescriptorSetParent* BackgroundParentImpl::AllocPFileDescriptorSetParent(
@@ -1027,7 +1048,7 @@ mozilla::ipc::IPCResult BackgroundParentImpl::RecvShutdownQuotaManager() {
   return IPC_OK();
 }
 
-dom::PFileSystemRequestParent*
+already_AddRefed<dom::PFileSystemRequestParent>
 BackgroundParentImpl::AllocPFileSystemRequestParent(
     const FileSystemParams& aParams) {
   AssertIsInMainOrSocketProcess();
@@ -1039,23 +1060,13 @@ BackgroundParentImpl::AllocPFileSystemRequestParent(
     return nullptr;
   }
 
-  return result.forget().take();
+  return result.forget();
 }
 
 mozilla::ipc::IPCResult BackgroundParentImpl::RecvPFileSystemRequestConstructor(
     PFileSystemRequestParent* aActor, const FileSystemParams& params) {
   static_cast<FileSystemRequestParent*>(aActor)->Start();
   return IPC_OK();
-}
-
-bool BackgroundParentImpl::DeallocPFileSystemRequestParent(
-    PFileSystemRequestParent* aDoomed) {
-  AssertIsInMainOrSocketProcess();
-  AssertIsOnBackgroundThread();
-
-  RefPtr<FileSystemRequestParent> parent =
-      dont_AddRef(static_cast<FileSystemRequestParent*>(aDoomed));
-  return true;
 }
 
 // Gamepad API Background IPC
@@ -1103,7 +1114,7 @@ bool BackgroundParentImpl::DeallocPWebAuthnTransactionParent(
   return true;
 }
 
-net::PHttpBackgroundChannelParent*
+already_AddRefed<net::PHttpBackgroundChannelParent>
 BackgroundParentImpl::AllocPHttpBackgroundChannelParent(
     const uint64_t& aChannelId) {
   AssertIsInMainOrSocketProcess();
@@ -1111,9 +1122,7 @@ BackgroundParentImpl::AllocPHttpBackgroundChannelParent(
 
   RefPtr<net::HttpBackgroundChannelParent> actor =
       new net::HttpBackgroundChannelParent();
-
-  // hold extra refcount for IPDL
-  return actor.forget().take();
+  return actor.forget();
 }
 
 mozilla::ipc::IPCResult
@@ -1131,19 +1140,6 @@ BackgroundParentImpl::RecvPHttpBackgroundChannelConstructor(
   }
 
   return IPC_OK();
-}
-
-bool BackgroundParentImpl::DeallocPHttpBackgroundChannelParent(
-    net::PHttpBackgroundChannelParent* aActor) {
-  MOZ_ASSERT(aActor);
-  AssertIsInMainOrSocketProcess();
-  AssertIsOnBackgroundThread();
-
-  // release extra refcount hold by AllocPHttpBackgroundChannelParent
-  RefPtr<net::HttpBackgroundChannelParent> actor =
-      dont_AddRef(static_cast<net::HttpBackgroundChannelParent*>(aActor));
-
-  return true;
 }
 
 PMIDIPortParent* BackgroundParentImpl::AllocPMIDIPortParent(

@@ -53,7 +53,6 @@
 #include "nsICompressConvStats.h"
 #include "nsIDeprecationWarner.h"
 #include "mozilla/dom/Document.h"
-#include "nsIDOMWindowUtils.h"
 #include "nsIEventTarget.h"
 #include "nsIScriptError.h"
 #include "nsRedirectHistoryEntry.h"
@@ -933,19 +932,10 @@ void HttpChannelChild::DoOnStatus(nsIRequest* aRequest, nsresult status) {
   // cache the progress sink so we don't have to query for it each time.
   if (!mProgressSink) GetCallback(mProgressSink);
 
-  // Temporary fix for bug 1116124
-  // See 1124971 - Child removes LOAD_BACKGROUND flag from channel
-  if (status == NS_OK) return;
-
   // block status/progress after Cancel or OnStopRequest has been called,
   // or if channel has LOAD_BACKGROUND set.
   if (mProgressSink && NS_SUCCEEDED(mStatus) && mIsPending &&
       !(mLoadFlags & LOAD_BACKGROUND)) {
-    // OnStatus
-    //
-    MOZ_ASSERT(status == NS_NET_STATUS_RECEIVING_FROM ||
-               status == NS_NET_STATUS_READING);
-
     nsAutoCString host;
     mURI->GetHost(host);
     mProgressSink->OnStatus(aRequest, nullptr, status,
@@ -965,8 +955,7 @@ void HttpChannelChild::DoOnProgress(nsIRequest* aRequest, int64_t progress,
 
   // block status/progress after Cancel or OnStopRequest has been called,
   // or if channel has LOAD_BACKGROUND set.
-  if (mProgressSink && NS_SUCCEEDED(mStatus) && mIsPending &&
-      !(mLoadFlags & LOAD_BACKGROUND)) {
+  if (mProgressSink && NS_SUCCEEDED(mStatus) && mIsPending) {
     // OnProgress
     //
     if (progress > 0) {
@@ -1114,13 +1103,13 @@ void HttpChannelChild::OnStopRequest(
   mCacheReadEnd = timing.cacheReadEnd;
 
 #ifdef MOZ_GECKO_PROFILER
-  if (profiler_is_active()) {
+  if (profiler_can_accept_markers()) {
     int32_t priority = PRIORITY_NORMAL;
     GetPriority(&priority);
-    profiler_add_network_marker(mURI, priority, mChannelId,
-                                NetworkLoadType::LOAD_STOP, mLastStatusReported,
-                                TimeStamp::Now(), mTransferSize, kCacheUnknown,
-                                &mTransactionTimings);
+    profiler_add_network_marker(
+        mURI, priority, mChannelId, NetworkLoadType::LOAD_STOP,
+        mLastStatusReported, TimeStamp::Now(), mTransferSize, kCacheUnknown,
+        &mTransactionTimings, nullptr, std::move(mSource));
   }
 #endif
 
@@ -1284,41 +1273,20 @@ class ProgressEvent : public NeckoTargetChannelEvent<HttpChannelChild> {
         mProgress(progress),
         mProgressMax(progressMax) {}
 
-  void Run() override { mChild->OnProgress(mProgress, mProgressMax); }
+  void Run() override {
+    AutoEventEnqueuer ensureSerialDispatch(mChild->mEventQ);
+    mChild->DoOnProgress(mChild, mProgress, mProgressMax);
+  }
 
  private:
   int64_t mProgress, mProgressMax;
 };
 
-void HttpChannelChild::ProcessOnProgress(const int64_t& aProgress,
-                                         const int64_t& aProgressMax) {
-  LOG(("HttpChannelChild::ProcessOnProgress [this=%p]\n", this));
-  MOZ_ASSERT(OnSocketThread());
+mozilla::ipc::IPCResult HttpChannelChild::RecvOnProgress(
+    const int64_t& aProgress, const int64_t& aProgressMax) {
+  LOG(("HttpChannelChild::RecvOnProgress [this=%p]\n", this));
   mEventQ->RunOrEnqueue(new ProgressEvent(this, aProgress, aProgressMax));
-}
-
-void HttpChannelChild::OnProgress(const int64_t& progress,
-                                  const int64_t& progressMax) {
-  AUTO_PROFILER_LABEL("HttpChannelChild::OnProgress", NETWORK);
-  LOG(("HttpChannelChild::OnProgress [this=%p progress=%" PRId64 "/%" PRId64
-       "]\n",
-       this, progress, progressMax));
-
-  if (mCanceled) return;
-
-  // cache the progress sink so we don't have to query for it each time.
-  if (!mProgressSink) {
-    GetCallback(mProgressSink);
-  }
-
-  AutoEventEnqueuer ensureSerialDispatch(mEventQ);
-
-  // Block socket status event after Cancel or OnStopRequest has been called.
-  if (mProgressSink && NS_SUCCEEDED(mStatus) && mIsPending) {
-    if (progress > 0) {
-      mProgressSink->OnProgress(this, nullptr, progress, progressMax);
-    }
-  }
+  return IPC_OK();
 }
 
 class StatusEvent : public NeckoTargetChannelEvent<HttpChannelChild> {
@@ -1326,39 +1294,20 @@ class StatusEvent : public NeckoTargetChannelEvent<HttpChannelChild> {
   StatusEvent(HttpChannelChild* child, const nsresult& status)
       : NeckoTargetChannelEvent<HttpChannelChild>(child), mStatus(status) {}
 
-  void Run() override { mChild->OnStatus(mStatus); }
+  void Run() override {
+    AutoEventEnqueuer ensureSerialDispatch(mChild->mEventQ);
+    mChild->DoOnStatus(mChild, mStatus);
+  }
 
  private:
   nsresult mStatus;
 };
 
-void HttpChannelChild::ProcessOnStatus(const nsresult& aStatus) {
-  LOG(("HttpChannelChild::ProcessOnStatus [this=%p]\n", this));
-  MOZ_ASSERT(OnSocketThread());
+mozilla::ipc::IPCResult HttpChannelChild::RecvOnStatus(
+    const nsresult& aStatus) {
+  LOG(("HttpChannelChild::RecvOnStatus [this=%p]\n", this));
   mEventQ->RunOrEnqueue(new StatusEvent(this, aStatus));
-}
-
-void HttpChannelChild::OnStatus(const nsresult& status) {
-  AUTO_PROFILER_LABEL("HttpChannelChild::OnStatus", NETWORK);
-  LOG(("HttpChannelChild::OnStatus [this=%p status=%" PRIx32 "]\n", this,
-       static_cast<uint32_t>(status)));
-
-  if (mCanceled) return;
-
-  // cache the progress sink so we don't have to query for it each time.
-  if (!mProgressSink) GetCallback(mProgressSink);
-
-  AutoEventEnqueuer ensureSerialDispatch(mEventQ);
-
-  // block socket status event after Cancel or OnStopRequest has been called,
-  // or if channel has LOAD_BACKGROUND set
-  if (mProgressSink && NS_SUCCEEDED(mStatus) && mIsPending &&
-      !(mLoadFlags & LOAD_BACKGROUND)) {
-    nsAutoCString host;
-    mURI->GetHost(host);
-    mProgressSink->OnStatus(this, nullptr, status,
-                            NS_ConvertUTF8toUTF16(host).get());
-  }
+  return IPC_OK();
 }
 
 class FailedAsyncOpenEvent : public NeckoTargetChannelEvent<HttpChannelChild> {
@@ -1785,10 +1734,10 @@ void HttpChannelChild::Redirect1Begin(
   nsCOMPtr<nsIURI> uri = DeserializeURI(newOriginalURI);
 
   mTransactionTimings = timing;
-  PROFILER_ADD_NETWORK_MARKER(mURI, mPriority, mChannelId,
-                              NetworkLoadType::LOAD_REDIRECT,
-                              mLastStatusReported, TimeStamp::Now(), 0,
-                              kCacheUnknown, &mTransactionTimings, uri);
+  PROFILER_ADD_NETWORK_MARKER(
+      mURI, mPriority, mChannelId, NetworkLoadType::LOAD_REDIRECT,
+      mLastStatusReported, TimeStamp::Now(), 0, kCacheUnknown,
+      &mTransactionTimings, uri, std::move(mSource));
 
   if (!securityInfoSerialization.IsEmpty()) {
     rv = NS_DeserializeObject(securityInfoSerialization,
@@ -2166,10 +2115,6 @@ HttpChannelChild::ConnectParent(uint32_t registrarId) {
 
   HttpBaseChannel::SetDocshellUserAgentOverride();
 
-  // The socket transport in the chrome process now holds a logical ref to us
-  // until OnStopRequest, or we do a redirect, or we hit an IPDL error.
-  AddRef();
-
   // This must happen before the constructor message is sent. Otherwise messages
   // from the parent could arrive quickly and be delivered to the wrong event
   // target.
@@ -2389,19 +2334,25 @@ HttpChannelChild::OnRedirectVerifyCallback(nsresult result) {
     appCacheChannel->GetChooseApplicationCache(&chooseAppcache);
   }
 
+  uint32_t sourceRequestBlockingReason = 0;
+  if (mLoadInfo) {
+    mLoadInfo->GetRequestBlockingReason(&sourceRequestBlockingReason);
+  }
+
   nsCOMPtr<nsILoadInfo> newChannelLoadInfo = nullptr;
   nsCOMPtr<nsIChannel> newChannel = do_QueryInterface(mRedirectChannelChild);
   if (newChannel) {
     newChannelLoadInfo = newChannel->LoadInfo();
   }
 
-  ChildLoadInfoForwarderArgs loadInfoForwarder;
-  LoadInfoToChildLoadInfoForwarder(newChannelLoadInfo, &loadInfoForwarder);
+  ChildLoadInfoForwarderArgs targetLoadInfoForwarder;
+  LoadInfoToChildLoadInfoForwarder(newChannelLoadInfo,
+                                   &targetLoadInfoForwarder);
 
   if (CanSend())
-    SendRedirect2Verify(result, *headerTuples, loadInfoForwarder, loadFlags,
-                        referrerInfo, redirectURI, corsPreflightArgs,
-                        chooseAppcache);
+    SendRedirect2Verify(result, *headerTuples, sourceRequestBlockingReason,
+                        targetLoadInfoForwarder, loadFlags, referrerInfo,
+                        redirectURI, corsPreflightArgs, chooseAppcache);
 
   return NS_OK;
 }
@@ -2840,11 +2791,17 @@ nsresult HttpChannelChild::ContinueAsyncOpen() {
   Maybe<CorsPreflightArgs> optionalCorsPreflightArgs;
   GetClientSetCorsPreflightParameters(optionalCorsPreflightArgs);
 
-  // NB: This call forces us to cache mTopWindowURI if we haven't already.
+  // NB: This call forces us to cache mTopWindowURI and
+  // mContentBlockingAllowListPrincipal if we haven't already.
   nsCOMPtr<nsIURI> uri;
   GetTopWindowURI(mURI, getter_AddRefs(uri));
 
   SerializeURI(mTopWindowURI, openArgs.topWindowURI());
+
+  openArgs.contentBlockingAllowListPrincipal() =
+      mContentBlockingAllowListPrincipal
+          ? Some(RefPtr<nsIPrincipal>(mContentBlockingAllowListPrincipal))
+          : Nothing();
 
   openArgs.preflightArgs() = optionalCorsPreflightArgs;
 
@@ -2870,6 +2827,7 @@ nsresult HttpChannelChild::ContinueAsyncOpen() {
   openArgs.blockAuthPrompt() = mBlockAuthPrompt;
 
   openArgs.allowStaleCacheContent() = mAllowStaleCacheContent;
+  openArgs.preferCacheLoadOverBypass() = mPreferCacheLoadOverBypass;
 
   openArgs.contentTypeHint() = mContentTypeHint;
 
@@ -2912,17 +2870,12 @@ nsresult HttpChannelChild::ContinueAsyncOpen() {
   openArgs.forceMainDocumentChannel() = mForceMainDocumentChannel;
 
   openArgs.navigationStartTimeStamp() = navigationStartTimeStamp;
-  openArgs.hasSandboxedAuxiliaryNavigations() =
-      GetHasSandboxedAuxiliaryNavigations();
+  openArgs.hasNonEmptySandboxingFlag() = GetHasNonEmptySandboxingFlag();
 
   // This must happen before the constructor message is sent. Otherwise messages
   // from the parent could arrive quickly and be delivered to the wrong event
   // target.
   SetEventTarget();
-
-  // The socket transport in the chrome process now holds a logical ref to us
-  // until OnStopRequest, or we do a redirect, or we hit an IPDL error.
-  AddRef();
 
   PBrowserOrId browser = cc->GetBrowserOrId(browserChild);
   if (!gNeckoChild->SendPHttpChannelConstructor(
@@ -3183,6 +3136,30 @@ HttpChannelChild::GetAllowStaleCacheContent(bool* aAllowStaleCacheContent) {
 }
 
 NS_IMETHODIMP
+HttpChannelChild::SetPreferCacheLoadOverBypass(
+    bool aPreferCacheLoadOverBypass) {
+  if (mSynthesizedCacheInfo) {
+    return mSynthesizedCacheInfo->SetPreferCacheLoadOverBypass(
+        aPreferCacheLoadOverBypass);
+  }
+
+  mPreferCacheLoadOverBypass = aPreferCacheLoadOverBypass;
+  return NS_OK;
+}
+NS_IMETHODIMP
+HttpChannelChild::GetPreferCacheLoadOverBypass(
+    bool* aPreferCacheLoadOverBypass) {
+  if (mSynthesizedCacheInfo) {
+    return mSynthesizedCacheInfo->GetPreferCacheLoadOverBypass(
+        aPreferCacheLoadOverBypass);
+  }
+
+  NS_ENSURE_ARG(aPreferCacheLoadOverBypass);
+  *aPreferCacheLoadOverBypass = mPreferCacheLoadOverBypass;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 HttpChannelChild::PreferAlternativeDataType(const nsACString& aType,
                                             const nsACString& aContentType,
                                             bool aDeliverAltData) {
@@ -3306,6 +3283,19 @@ mozilla::ipc::IPCResult HttpChannelChild::RecvAltDataCacheInputStreamAvailable(
   if (receiver) {
     receiver->OnInputStreamReady(stream);
   }
+
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+HttpChannelChild::RecvOverrideReferrerInfoDuringBeginConnect(
+    nsIReferrerInfo* aReferrerInfo) {
+  // The arguments passed to SetReferrerInfoInternal here should mirror the
+  // arguments passed in
+  // nsHttpChannel::ReEvaluateReferrerAfterTrackingStatusIsKnown(), except for
+  // aRespectBeforeConnect which we pass false here since we're intentionally
+  // overriding the referrer after BeginConnect().
+  Unused << SetReferrerInfoInternal(aReferrerInfo, false, true, false);
 
   return IPC_OK();
 }
@@ -3738,11 +3728,14 @@ nsresult HttpChannelChild::AsyncCallImpl(
   return rv;
 }
 
-nsresult HttpChannelChild::SetReferrerHeader(const nsACString& aReferrer) {
+nsresult HttpChannelChild::SetReferrerHeader(const nsACString& aReferrer,
+                                             bool aRespectBeforeConnect) {
   // Normally this would be ENSURE_CALLED_BEFORE_CONNECT, but since the
   // "connect" is done in the main process, and mRequestObserversCalled is never
   // set in the ChannelChild, before connect basically means before asyncOpen.
-  ENSURE_CALLED_BEFORE_ASYNC_OPEN();
+  if (aRespectBeforeConnect) {
+    ENSURE_CALLED_BEFORE_ASYNC_OPEN();
+  }
 
   // remove old referrer if any, loop backwards
   for (int i = mClientSetRequestHeaders.Length() - 1; i >= 0; --i) {
@@ -3752,7 +3745,7 @@ nsresult HttpChannelChild::SetReferrerHeader(const nsACString& aReferrer) {
     }
   }
 
-  return HttpBaseChannel::SetReferrerHeader(aReferrer);
+  return HttpBaseChannel::SetReferrerHeader(aReferrer, aRespectBeforeConnect);
 }
 
 class CancelEvent final : public NeckoTargetChannelEvent<HttpChannelChild> {
@@ -3927,20 +3920,17 @@ mozilla::ipc::IPCResult HttpChannelChild::RecvIssueDeprecationWarning(
 }
 
 bool HttpChannelChild::ShouldInterceptURI(nsIURI* aURI, bool& aShouldUpgrade) {
-  bool isHttps = false;
-  nsresult rv = aURI->SchemeIs("https", &isHttps);
-  NS_ENSURE_SUCCESS(rv, false);
   nsCOMPtr<nsIPrincipal> resultPrincipal;
-  if (!isHttps && mLoadInfo) {
+  if (!aURI->SchemeIs("https") && mLoadInfo) {
     nsContentUtils::GetSecurityManager()->GetChannelResultPrincipal(
         this, getter_AddRefs(resultPrincipal));
   }
   OriginAttributes originAttributes;
   NS_ENSURE_TRUE(NS_GetOriginAttributes(this, originAttributes), false);
   bool notused = false;
-  rv = NS_ShouldSecureUpgrade(aURI, mLoadInfo, resultPrincipal,
-                              mPrivateBrowsing, mAllowSTS, originAttributes,
-                              aShouldUpgrade, nullptr, notused);
+  nsresult rv = NS_ShouldSecureUpgrade(
+      aURI, mLoadInfo, resultPrincipal, mPrivateBrowsing, mAllowSTS,
+      originAttributes, aShouldUpgrade, nullptr, notused);
   NS_ENSURE_SUCCESS(rv, false);
 
   nsCOMPtr<nsIURI> upgradedURI;
@@ -4061,16 +4051,11 @@ nsresult HttpChannelChild::CrossProcessRedirectFinished(nsresult aStatus) {
     return NS_BINDING_FAILED;
   }
 
-  // The loadInfo is updated in nsDocShell::OpenInitializedChannel to have the
-  // correct attributes (such as browsingContextID).
-  // We need to send it to the parent channel so the two match, which is done
-  nsCOMPtr<nsILoadInfo> loadInfo;
-  MOZ_ALWAYS_SUCCEEDS(GetLoadInfo(getter_AddRefs(loadInfo)));
-  Maybe<LoadInfoArgs> loadInfoArgs;
-  MOZ_ALWAYS_SUCCEEDS(
-      mozilla::ipc::LoadInfoToLoadInfoArgs(loadInfo, &loadInfoArgs));
-  Unused << SendCrossProcessRedirectDone(aStatus, loadInfoArgs);
-  return NS_OK;
+  if (!mCanceled && NS_SUCCEEDED(mStatus)) {
+    mStatus = aStatus;
+  }
+
+  return mStatus;
 }
 
 }  // namespace net

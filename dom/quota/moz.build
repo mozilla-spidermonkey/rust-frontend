@@ -5,7 +5,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 with Files("**"):
-    BUG_COMPONENT = ("Core", "DOM: Quota Manager")
+    BUG_COMPONENT = ("Core", "Storage: Quota Manager")
 
 MOCHITEST_MANIFESTS += ['test/mochitest.ini']
 
@@ -57,6 +57,7 @@ XPCOM_MANIFESTS += [
 UNIFIED_SOURCES += [
     'ActorsChild.cpp',
     'ActorsParent.cpp',
+    'Client.cpp',
     'FileStreams.cpp',
     'MemoryOutputStream.cpp',
     'nsIndexedDBProtocolHandler.cpp',

@@ -16,8 +16,7 @@
 #include <stdint.h>  // intptr_t, uintptr_t, uint8_t, uint32_t
 #include <stdio.h>   // FILE
 
-#include "jstypes.h"  // JS_BITS_PER_WORD
-#include "jsutil.h"   // JS_CRASH_DIAGNOSTICS
+#include "jstypes.h"  // JS_BITS_PER_WORD, JS_PUBLIC_API
 
 #include "jit/IonTypes.h"      // jit::MIRType
 #include "js/GCAnnotations.h"  // JS_HAZ_GC_POINTER
@@ -27,16 +26,17 @@
 #include "js/Utility.h"      // UniqueChars
 #include "js/Value.h"        // JSVAL_TYPE_*
 #include "js/Vector.h"       // js::Vector
+#include "util/DiagnosticAssertions.h"
 #include "vm/TaggedProto.h"  // js::TaggedProto
 
-struct JSContext;
-class JSObject;
+struct JS_PUBLIC_API JSContext;
+class JS_PUBLIC_API JSObject;
 
 namespace JS {
 
-class Compartment;
-class Realm;
-class Zone;
+class JS_PUBLIC_API Compartment;
+class JS_PUBLIC_API Realm;
+class JS_PUBLIC_API Zone;
 
 }  // namespace JS
 
@@ -52,7 +52,6 @@ class TempAllocator;
 class AutoClearTypeInferenceStateOnOOM;
 class AutoSweepBase;
 class AutoSweepObjectGroup;
-struct Class;
 class CompilerConstraintList;
 class HeapTypeSetKey;
 class LifoAlloc;
@@ -291,7 +290,7 @@ class TypeSet {
     inline ObjectGroup* groupNoBarrier();
     inline JSObject* singletonNoBarrier();
 
-    const Class* clasp();
+    const JSClass* clasp();
     TaggedProto proto();
     TypeNewScript* newScript();
 
@@ -484,7 +483,7 @@ class TypeSet {
   inline ObjectGroup* getGroupNoBarrier(unsigned i) const;
 
   /* The Class of an object in this set. */
-  inline const Class* getObjectClass(unsigned i) const;
+  inline const JSClass* getObjectClass(unsigned i) const;
 
   bool canSetDefinite(unsigned slot) {
     // Note: the cast is required to work around an MSVC issue.
@@ -790,7 +789,7 @@ class TemporaryTypeSet : public TypeSet {
                       ObjectGroupFlags flags);
 
   /* Get the class shared by all objects in this set, or nullptr. */
-  const Class* getKnownClass(CompilerConstraintList* constraints);
+  const JSClass* getKnownClass(CompilerConstraintList* constraints);
 
   /*
    * Get the realm shared by all objects in this set, or nullptr. Returns
@@ -813,7 +812,7 @@ class TemporaryTypeSet : public TypeSet {
    * The iteration may end early if the result becomes known early.
    */
   ForAllResult forAllClasses(CompilerConstraintList* constraints,
-                             bool (*func)(const Class* clasp));
+                             bool (*func)(const JSClass* clasp));
 
   /*
    * Returns true if all objects in this set have the same prototype, and

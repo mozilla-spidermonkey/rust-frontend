@@ -14,6 +14,7 @@
 #include "gc/Nursery.h"
 #include "jit/JitRealm.h"
 #include "threading/CpuCount.h"
+#include "util/Poison.h"
 #include "vm/JSContext.h"
 #include "vm/Runtime.h"
 #include "vm/StringType.h"
@@ -32,7 +33,7 @@ using namespace gc;
 template <AllowGC allowGC /* = CanGC */>
 JSObject* js::AllocateObject(JSContext* cx, AllocKind kind,
                              size_t nDynamicSlots, InitialHeap heap,
-                             const Class* clasp) {
+                             const JSClass* clasp) {
   MOZ_ASSERT(IsObjectAllocKind(kind));
   size_t thingSize = Arena::thingSize(kind);
 
@@ -83,11 +84,11 @@ JSObject* js::AllocateObject(JSContext* cx, AllocKind kind,
 template JSObject* js::AllocateObject<NoGC>(JSContext* cx, gc::AllocKind kind,
                                             size_t nDynamicSlots,
                                             gc::InitialHeap heap,
-                                            const Class* clasp);
+                                            const JSClass* clasp);
 template JSObject* js::AllocateObject<CanGC>(JSContext* cx, gc::AllocKind kind,
                                              size_t nDynamicSlots,
                                              gc::InitialHeap heap,
-                                             const Class* clasp);
+                                             const JSClass* clasp);
 
 // Attempt to allocate a new JSObject out of the nursery. If there is not
 // enough room in the nursery or there is an OOM, this method will return
@@ -95,7 +96,7 @@ template JSObject* js::AllocateObject<CanGC>(JSContext* cx, gc::AllocKind kind,
 template <AllowGC allowGC>
 JSObject* GCRuntime::tryNewNurseryObject(JSContext* cx, size_t thingSize,
                                          size_t nDynamicSlots,
-                                         const Class* clasp) {
+                                         const JSClass* clasp) {
   MOZ_RELEASE_ASSERT(!cx->isHelperThreadContext());
 
   MOZ_ASSERT(cx->isNurseryAllocAllowed());
@@ -368,12 +369,13 @@ bool GCRuntime::gcIfNeededAtAllocation(JSContext* cx) {
     gcIfRequested();
   }
 
-  // If we have grown past our GC heap threshold while in the middle of
-  // an incremental GC, we're growing faster than we're GCing, so stop
+  // If we have grown past our non-incremental heap threshold while in the
+  // middle of an incremental GC, we're growing faster than we're GCing, so stop
   // the world and do a full, non-incremental GC right now, if possible.
   Zone* zone = cx->zone();
   if (isIncrementalGCInProgress() &&
-      zone->zoneSize.gcBytes() > zone->threshold.gcTriggerBytes()) {
+      zone->gcHeapSize.bytes() >
+          zone->gcHeapThreshold.nonIncrementalTriggerBytes(tunables)) {
     PrepareZoneForGC(cx->zone());
     gc(GC_NORMAL, JS::GCReason::INCREMENTAL_TOO_SLOW);
   }
@@ -413,17 +415,14 @@ TenuredCell* js::gc::AllocateCellInGC(Zone* zone, AllocKind thingKind) {
 
 // ///////////  Arena -> Thing Allocator  //////////////////////////////////////
 
-bool GCRuntime::startBackgroundAllocTaskIfIdle() {
-  AutoLockHelperThreadState helperLock;
-  if (allocTask.isRunningWithLockHeld(helperLock)) {
-    return true;
+void GCRuntime::startBackgroundAllocTaskIfIdle() {
+  AutoLockHelperThreadState lock;
+  if (!allocTask.wasStarted(lock)) {
+    // Join the previous invocation of the task. This will return immediately
+    // if the thread has never been started.
+    allocTask.joinWithLockHeld(lock);
+    allocTask.startWithLockHeld(lock);
   }
-
-  // Join the previous invocation of the task. This will return immediately
-  // if the thread has never been started.
-  allocTask.joinWithLockHeld(helperLock);
-
-  return allocTask.startWithLockHeld(helperLock);
 }
 
 /* static */
@@ -595,11 +594,11 @@ Arena* GCRuntime::allocateArena(Chunk* chunk, Zone* zone, AllocKind thingKind,
 
   // Fail the allocation if we are over our heap size limits.
   if ((checkThresholds != ShouldCheckThresholds::DontCheckThresholds) &&
-      (heapSize.gcBytes() >= tunables.gcMaxBytes()))
+      (heapSize.bytes() >= tunables.gcMaxBytes()))
     return nullptr;
 
-  Arena* arena = chunk->allocateArena(rt, zone, thingKind, lock);
-  zone->zoneSize.addGCArena();
+  Arena* arena = chunk->allocateArena(this, zone, thingKind, lock);
+  zone->gcHeapSize.addGCArena();
 
   // Trigger an incremental slice if needed.
   if (checkThresholds != ShouldCheckThresholds::DontCheckThresholds) {
@@ -609,12 +608,12 @@ Arena* GCRuntime::allocateArena(Chunk* chunk, Zone* zone, AllocKind thingKind,
   return arena;
 }
 
-Arena* Chunk::allocateArena(JSRuntime* rt, Zone* zone, AllocKind thingKind,
+Arena* Chunk::allocateArena(GCRuntime* gc, Zone* zone, AllocKind thingKind,
                             const AutoLockGC& lock) {
-  Arena* arena = info.numArenasFreeCommitted > 0 ? fetchNextFreeArena(rt)
+  Arena* arena = info.numArenasFreeCommitted > 0 ? fetchNextFreeArena(gc)
                                                  : fetchNextDecommittedArena();
   arena->init(zone, thingKind, lock);
-  updateChunkListAfterAlloc(rt, lock);
+  updateChunkListAfterAlloc(gc, lock);
   return arena;
 }
 
@@ -623,7 +622,7 @@ inline void GCRuntime::updateOnFreeArenaAlloc(const ChunkInfo& info) {
   --numArenasFreeCommitted;
 }
 
-Arena* Chunk::fetchNextFreeArena(JSRuntime* rt) {
+Arena* Chunk::fetchNextFreeArena(GCRuntime* gc) {
   MOZ_ASSERT(info.numArenasFreeCommitted > 0);
   MOZ_ASSERT(info.numArenasFreeCommitted <= info.numArenasFree);
 
@@ -631,7 +630,7 @@ Arena* Chunk::fetchNextFreeArena(JSRuntime* rt) {
   info.freeArenasHead = arena->next;
   --info.numArenasFreeCommitted;
   --info.numArenasFree;
-  rt->gc.updateOnFreeArenaAlloc(info);
+  gc->updateOnFreeArenaAlloc(info);
 
   return arena;
 }
@@ -678,7 +677,7 @@ uint32_t Chunk::findDecommittedArenaOffset() {
 Chunk* GCRuntime::getOrAllocChunk(AutoLockGCBgAlloc& lock) {
   Chunk* chunk = emptyChunks(lock).pop();
   if (!chunk) {
-    chunk = Chunk::allocate(rt);
+    chunk = Chunk::allocate(this);
     if (!chunk) {
       return nullptr;
     }
@@ -708,7 +707,7 @@ Chunk* GCRuntime::pickChunk(AutoLockGCBgAlloc& lock) {
     return nullptr;
   }
 
-  chunk->init(rt);
+  chunk->init(this);
   MOZ_ASSERT(chunk->info.numArenasFreeCommitted == 0);
   MOZ_ASSERT(chunk->unused());
   MOZ_ASSERT(!fullChunks(lock).contains(chunk));
@@ -721,8 +720,8 @@ Chunk* GCRuntime::pickChunk(AutoLockGCBgAlloc& lock) {
   return chunk;
 }
 
-BackgroundAllocTask::BackgroundAllocTask(JSRuntime* rt, ChunkPool& pool)
-    : GCParallelTaskHelper(rt),
+BackgroundAllocTask::BackgroundAllocTask(GCRuntime* gc, ChunkPool& pool)
+    : GCParallelTaskHelper(gc),
       chunkPool_(pool),
       enabled_(CanUseExtraThreads() && GetCPUCount() >= 2) {}
 
@@ -730,32 +729,32 @@ void BackgroundAllocTask::run() {
   TraceLoggerThread* logger = TraceLoggerForCurrentThread();
   AutoTraceLog logAllocation(logger, TraceLogger_GCAllocation);
 
-  AutoLockGC lock(runtime());
-  while (!cancel_ && runtime()->gc.wantBackgroundAllocation(lock)) {
+  AutoLockGC lock(gc);
+  while (!cancel_ && gc->wantBackgroundAllocation(lock)) {
     Chunk* chunk;
     {
       AutoUnlockGC unlock(lock);
-      chunk = Chunk::allocate(runtime());
+      chunk = Chunk::allocate(gc);
       if (!chunk) {
         break;
       }
-      chunk->init(runtime());
+      chunk->init(gc);
     }
     chunkPool_.ref().push(chunk);
   }
 }
 
 /* static */
-Chunk* Chunk::allocate(JSRuntime* rt) {
+Chunk* Chunk::allocate(GCRuntime* gc) {
   Chunk* chunk = static_cast<Chunk*>(MapAlignedPages(ChunkSize, ChunkSize));
   if (!chunk) {
     return nullptr;
   }
-  rt->gc.stats().count(gcstats::COUNT_NEW_CHUNK);
+  gc->stats().count(gcstats::COUNT_NEW_CHUNK);
   return chunk;
 }
 
-void Chunk::init(JSRuntime* rt) {
+void Chunk::init(GCRuntime* gc) {
   /* The chunk may still have some regions marked as no-access. */
   MOZ_MAKE_MEM_UNDEFINED(this, ChunkSize);
 
@@ -780,7 +779,7 @@ void Chunk::init(JSRuntime* rt) {
 
   /* Initialize the chunk info. */
   info.init();
-  new (&trailer) ChunkTrailer(rt);
+  new (&trailer) ChunkTrailer(gc->rt);
 
   /* The rest of info fields are initialized in pickChunk. */
 }

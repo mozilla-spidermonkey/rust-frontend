@@ -7,30 +7,74 @@
 #ifndef debugger_Debugger_h
 #define debugger_Debugger_h
 
-#include "mozilla/DoublyLinkedList.h"
-#include "mozilla/GuardObjects.h"
-#include "mozilla/LinkedList.h"
-#include "mozilla/Range.h"
-#include "mozilla/TimeStamp.h"
-#include "mozilla/Vector.h"
+#include "mozilla/Assertions.h"        // for MOZ_ASSERT_HELPER1
+#include "mozilla/Attributes.h"        // for MOZ_MUST_USE, MOZ_RAII
+#include "mozilla/DoublyLinkedList.h"  // for DoublyLinkedListElement
+#include "mozilla/HashTable.h"         // for HashSet, DefaultHasher (ptr only)
+#include "mozilla/LinkedList.h"        // for LinkedList (ptr only)
+#include "mozilla/Maybe.h"             // for Maybe, Nothing
+#include "mozilla/Move.h"              // for std::move
+#include "mozilla/Range.h"             // for Range
+#include "mozilla/Result.h"            // for Result
+#include "mozilla/TimeStamp.h"         // for TimeStamp
+#include "mozilla/Variant.h"           // for Variant
 
-#include "debugger/DebugAPI.h"
-#include "ds/TraceableFifo.h"
-#include "gc/Barrier.h"
-#include "gc/WeakMap.h"
-#include "js/Debug.h"
-#include "js/GCVariant.h"
-#include "js/HashTable.h"
-#include "js/Promise.h"
-#include "js/Result.h"
-#include "js/RootingAPI.h"
-#include "js/Utility.h"
-#include "js/Wrapper.h"
-#include "proxy/DeadObjectProxy.h"
-#include "vm/GeneratorObject.h"
-#include "vm/Realm.h"
-#include "vm/SavedStacks.h"
-#include "vm/Stack.h"
+#include <stddef.h>  // for size_t
+#include <stdint.h>  // for uint32_t, uint64_t, uintptr_t
+
+#include "jsapi.h"    // for Handle, UnsafeTraceRoot
+#include "jstypes.h"  // for JS_GC_ZEAL
+
+#include "NamespaceImports.h"       // for Value, HandleObject
+#include "debugger/DebugAPI.h"      // for DebugAPI
+#include "debugger/Object.h"        // for DebuggerObject
+#include "ds/TraceableFifo.h"       // for TraceableFifo
+#include "gc/Barrier.h"             // for WeakHeapPtrGlobalObject, HeapPtr
+#include "gc/Marking.h"             // for IsAboutToBeFinalized, ToMarkable
+#include "gc/Rooting.h"             // for HandleSavedFrame, HandleAtom
+#include "gc/Tracer.h"              // for TraceNullableEdge, TraceEdge
+#include "gc/WeakMap.h"             // for WeakMap
+#include "gc/ZoneAllocator.h"       // for ZoneAllocPolicy
+#include "js/GCAPI.h"               // for GarbageCollectionEvent
+#include "js/Proxy.h"               // for PropertyDescriptor
+#include "js/Wrapper.h"             // for UncheckedUnwrap
+#include "proxy/DeadObjectProxy.h"  // for IsDeadProxyObject
+#include "vm/GeneratorObject.h"     // for AbstractGeneratorObject
+#include "vm/GlobalObject.h"        // for GlobalObject
+#include "vm/JSContext.h"           // for JSContext
+#include "vm/JSObject.h"            // for JSObject
+#include "vm/JSScript.h"            // for JSScript, ScriptSourceObject
+#include "vm/NativeObject.h"        // for NativeObject
+#include "vm/Runtime.h"             // for JSRuntime
+#include "vm/SavedFrame.h"          // for SavedFrame
+#include "vm/Stack.h"               // for AbstractFramePtr, FrameIter
+#include "vm/StringType.h"          // for JSAtom
+#include "wasm/WasmJS.h"            // for WasmInstanceObject
+
+class JS_PUBLIC_API JSFunction;
+
+namespace JS {
+class AutoStableStringChars;
+class JS_PUBLIC_API Compartment;
+class JS_PUBLIC_API Realm;
+class JS_PUBLIC_API Zone;
+} /* namespace JS */
+
+namespace js {
+class AutoRealm;
+class CrossCompartmentKey;
+class Debugger;
+class DebuggerEnvironment;
+class PromiseObject;
+namespace gc {
+struct Cell;
+}
+namespace wasm {
+class Instance;
+}
+template <typename T>
+struct GCManagedDeletePolicy;
+} /* namespace js */
 
 /*
  * Windows 3.x used a cooperative multitasking model, with a Yield macro that
@@ -44,10 +88,10 @@ namespace js {
 class Breakpoint;
 class DebuggerFrame;
 class DebuggerScript;
+class DebuggerSource;
 class DebuggerMemory;
 class ScriptedOnStepHandler;
 class ScriptedOnPopHandler;
-class WasmInstanceObject;
 
 /**
  * A completion value, describing how some sort of JavaScript evaluation
@@ -257,24 +301,21 @@ extern void CheckDebuggeeThing(JSObject* obj, bool invisibleOk);
  * because they are not deleted when a compartment is no longer a debuggee: the
  * values need to maintain object identity across add/remove/add
  * transitions. (Frames are an exception to the rule. Existing Debugger.Frame
- * objects are killed when debugging is disabled for their compartment, and if
- * it's re-enabled later, new Frame objects are created.)
+ * objects are killed if their realm is removed as a debugger; if the realm
+ * beacomes a debuggee again later, new Frame objects are created.)
  */
-template <class UnbarrieredKey, bool InvisibleKeysOk = false>
-class DebuggerWeakMap
-    : private WeakMap<HeapPtr<UnbarrieredKey>, HeapPtr<JSObject*>> {
+template <class Referent, class Wrapper, bool InvisibleKeysOk = false>
+class DebuggerWeakMap : private WeakMap<HeapPtr<Referent*>, HeapPtr<Wrapper*>> {
  private:
-  typedef HeapPtr<UnbarrieredKey> Key;
-  typedef HeapPtr<JSObject*> Value;
-
-  typedef HashMap<JS::Zone*, uintptr_t, DefaultHasher<JS::Zone*>,
-                  ZoneAllocPolicy>
-      CountMap;
+  typedef HeapPtr<Referent*> Key;
+  typedef HeapPtr<Wrapper*> Value;
 
   JS::Compartment* compartment;
 
  public:
   typedef WeakMap<Key, Value> Base;
+  using ReferentType = Referent;
+  using WrapperType = Wrapper;
 
   explicit DebuggerWeakMap(JSContext* cx)
       : Base(cx), compartment(cx->compartment()) {}
@@ -297,6 +338,7 @@ class DebuggerWeakMap
   using Base::lookupForAdd;
   using Base::remove;
   using Base::trace;
+  using Base::zone;
 #ifdef DEBUG
   using Base::hasEntry;
 #endif
@@ -318,10 +360,9 @@ class DebuggerWeakMap
   }
 
  public:
-  template <void(traceValueEdges)(JSTracer*, JSObject*)>
   void traceCrossCompartmentEdges(JSTracer* tracer) {
     for (Enum e(*this); !e.empty(); e.popFront()) {
-      traceValueEdges(tracer, e.front().value());
+      e.front().value()->trace(tracer);
       Key key = e.front().key();
       TraceEdge(tracer, &key, "Debugger WeakMap key");
       if (key != e.front().key()) {
@@ -331,7 +372,7 @@ class DebuggerWeakMap
     }
   }
 
-  bool findSweepGroupEdges(JS::Zone* debuggerZone);
+  bool findSweepGroupEdges() override;
 
  private:
 #ifdef JS_GC_ZEAL
@@ -422,6 +463,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
     OnExceptionUnwind,
     OnNewScript,
     OnEnterFrame,
+    OnNativeCall,
     OnNewGlobalObject,
     OnNewPromise,
     OnPromiseSettled,
@@ -464,8 +506,6 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
   bool debuggeeIsBeingCollected(uint64_t majorGCNumber) {
     return observedGCs.put(majorGCNumber);
   }
-
-  bool isEnabled() const { return enabled; }
 
   static SavedFrame* getObjectAllocationSite(JSObject& obj);
 
@@ -512,7 +552,6 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
       debuggees; /* Debuggee globals. Cross-compartment weak references. */
   JS::ZoneSet debuggeeZones; /* Set of zones that we have debuggees in. */
   js::GCPtrObject uncaughtExceptionHook; /* Strong reference. */
-  bool enabled;
   bool allowUnobservedAsmJS;
 
   // Whether to enable code coverage on the Debuggee.
@@ -566,7 +605,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
   /*
    * Add allocations tracking for objects allocated within the given
    * debuggee's compartment. The given debuggee global must be observed by at
-   * least one Debugger that is enabled and tracking allocations.
+   * least one Debugger that is tracking allocations.
    */
   static MOZ_MUST_USE bool addAllocationsTracking(
       JSContext* cx, Handle<GlobalObject*> debuggee);
@@ -585,7 +624,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
   void removeAllocationsTrackingForAllDebuggees();
 
   /*
-   * If this Debugger is enabled, and has a onNewGlobalObject handler, then
+   * If this Debugger has a onNewGlobalObject handler, then
    * this link is inserted into the list headed by
    * JSRuntime::onNewGlobalObjectWatchers.
    */
@@ -622,9 +661,10 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
    * onEnterFrame handler on resume, and to retain onStep and onPop hooks.
    *
    * An entry is present in this table when:
-   * -   both the debuggee generator object and the Debugger.Frame object exist
-   * -   the Debugger.Frame's owner is still an enabled debugger of
-   *     the debuggee compartment
+   *  - both the debuggee generator object and the Debugger.Frame object exists
+   *  - the debuggee generator object belongs to a relam that is a debuggee of
+   *    the Debugger.Frame's owner.
+   *
    * regardless of whether the frame is currently suspended. (This list is
    * meant to explain why we update the table in the particular places where
    * we do so.)
@@ -632,38 +672,44 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
    * An entry in this table exists if and only if the Debugger.Frame's
    * GENERATOR_INFO_SLOT is set.
    */
-  typedef DebuggerWeakMap<JSObject*> GeneratorWeakMap;
+  typedef DebuggerWeakMap<AbstractGeneratorObject, DebuggerFrame>
+      GeneratorWeakMap;
   GeneratorWeakMap generatorFrames;
 
   /* An ephemeral map from JSScript* to Debugger.Script instances. */
-  typedef DebuggerWeakMap<JSScript*> ScriptWeakMap;
+  typedef DebuggerWeakMap<JSScript, DebuggerScript> ScriptWeakMap;
   ScriptWeakMap scripts;
 
-  using LazyScriptWeakMap = DebuggerWeakMap<LazyScript*>;
+  using LazyScriptWeakMap = DebuggerWeakMap<LazyScript, DebuggerScript>;
   LazyScriptWeakMap lazyScripts;
 
   using LazyScriptVector = JS::GCVector<LazyScript*>;
 
   // The map from debuggee source script objects to their Debugger.Source
   // instances.
-  typedef DebuggerWeakMap<JSObject*, true> SourceWeakMap;
+  typedef DebuggerWeakMap<ScriptSourceObject, DebuggerSource, true>
+      SourceWeakMap;
   SourceWeakMap sources;
 
   // The map from debuggee objects to their Debugger.Object instances.
-  typedef DebuggerWeakMap<JSObject*> ObjectWeakMap;
+  typedef DebuggerWeakMap<JSObject, DebuggerObject> ObjectWeakMap;
   ObjectWeakMap objects;
 
   // The map from debuggee Envs to Debugger.Environment instances.
-  ObjectWeakMap environments;
+  typedef DebuggerWeakMap<JSObject, DebuggerEnvironment> EnvironmentWeakMap;
+  EnvironmentWeakMap environments;
 
   // The map from WasmInstanceObjects to synthesized Debugger.Script
   // instances.
-  typedef DebuggerWeakMap<WasmInstanceObject*> WasmInstanceWeakMap;
-  WasmInstanceWeakMap wasmInstanceScripts;
+  typedef DebuggerWeakMap<WasmInstanceObject, DebuggerScript>
+      WasmInstanceScriptWeakMap;
+  WasmInstanceScriptWeakMap wasmInstanceScripts;
 
   // The map from WasmInstanceObjects to synthesized Debugger.Source
   // instances.
-  WasmInstanceWeakMap wasmInstanceSources;
+  typedef DebuggerWeakMap<WasmInstanceObject, DebuggerSource>
+      WasmInstanceSourceWeakMap;
+  WasmInstanceSourceWeakMap wasmInstanceSources;
 
   // Keep track of tracelogger last drained identifiers to know if there are
   // lost events.
@@ -682,7 +728,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
   enum class FromSweep { No, Yes };
 
   MOZ_MUST_USE bool addDebuggeeGlobal(JSContext* cx, Handle<GlobalObject*> obj);
-  void removeDebuggeeGlobal(FreeOp* fop, GlobalObject* global,
+  void removeDebuggeeGlobal(JSFreeOp* fop, GlobalObject* global,
                             WeakGlobalObjectSet::Enum* debugEnum,
                             FromSweep fromSweep);
 
@@ -784,69 +830,26 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
   void traceForMovingGC(JSTracer* trc);
   void traceCrossCompartmentEdges(JSTracer* tracer);
 
-  static const ClassOps classOps_;
+  static const JSClassOps classOps_;
 
  public:
-  static const Class class_;
+  static const JSClass class_;
 
  private:
-  static MOZ_MUST_USE bool getHookImpl(JSContext* cx, CallArgs& args,
+  template <typename F>
+  void forEachWeakMap(const F& f);
+
+  static MOZ_MUST_USE bool getHookImpl(JSContext* cx, const CallArgs& args,
                                        Debugger& dbg, Hook which);
-  static MOZ_MUST_USE bool setHookImpl(JSContext* cx, CallArgs& args,
+  static MOZ_MUST_USE bool setHookImpl(JSContext* cx, const CallArgs& args,
                                        Debugger& dbg, Hook which);
 
-  static bool getEnabled(JSContext* cx, unsigned argc, Value* vp);
-  static bool setEnabled(JSContext* cx, unsigned argc, Value* vp);
-  static bool getOnDebuggerStatement(JSContext* cx, unsigned argc, Value* vp);
-  static bool setOnDebuggerStatement(JSContext* cx, unsigned argc, Value* vp);
-  static bool getOnExceptionUnwind(JSContext* cx, unsigned argc, Value* vp);
-  static bool setOnExceptionUnwind(JSContext* cx, unsigned argc, Value* vp);
-  static bool getOnNewScript(JSContext* cx, unsigned argc, Value* vp);
-  static bool setOnNewScript(JSContext* cx, unsigned argc, Value* vp);
-  static bool getOnEnterFrame(JSContext* cx, unsigned argc, Value* vp);
-  static bool setOnEnterFrame(JSContext* cx, unsigned argc, Value* vp);
-  static bool getOnNewGlobalObject(JSContext* cx, unsigned argc, Value* vp);
-  static bool setOnNewGlobalObject(JSContext* cx, unsigned argc, Value* vp);
-  static bool getOnNewPromise(JSContext* cx, unsigned argc, Value* vp);
-  static bool setOnNewPromise(JSContext* cx, unsigned argc, Value* vp);
-  static bool getOnPromiseSettled(JSContext* cx, unsigned argc, Value* vp);
-  static bool setOnPromiseSettled(JSContext* cx, unsigned argc, Value* vp);
-  static bool getUncaughtExceptionHook(JSContext* cx, unsigned argc, Value* vp);
-  static bool setUncaughtExceptionHook(JSContext* cx, unsigned argc, Value* vp);
-  static bool getAllowUnobservedAsmJS(JSContext* cx, unsigned argc, Value* vp);
-  static bool setAllowUnobservedAsmJS(JSContext* cx, unsigned argc, Value* vp);
-  static bool getCollectCoverageInfo(JSContext* cx, unsigned argc, Value* vp);
-  static bool setCollectCoverageInfo(JSContext* cx, unsigned argc, Value* vp);
-  static bool getMemory(JSContext* cx, unsigned argc, Value* vp);
-  static bool addDebuggee(JSContext* cx, unsigned argc, Value* vp);
-  static bool addAllGlobalsAsDebuggees(JSContext* cx, unsigned argc, Value* vp);
-  static bool removeDebuggee(JSContext* cx, unsigned argc, Value* vp);
-  static bool removeAllDebuggees(JSContext* cx, unsigned argc, Value* vp);
-  static bool hasDebuggee(JSContext* cx, unsigned argc, Value* vp);
-  static bool getDebuggees(JSContext* cx, unsigned argc, Value* vp);
-  static bool getNewestFrame(JSContext* cx, unsigned argc, Value* vp);
-  static bool clearAllBreakpoints(JSContext* cx, unsigned argc, Value* vp);
-  static bool findScripts(JSContext* cx, unsigned argc, Value* vp);
-  static bool findSources(JSContext* cx, unsigned argc, Value* vp);
-  static bool findObjects(JSContext* cx, unsigned argc, Value* vp);
-  static bool findAllGlobals(JSContext* cx, unsigned argc, Value* vp);
-  static bool makeGlobalObjectReference(JSContext* cx, unsigned argc,
-                                        Value* vp);
-  static bool setupTraceLoggerScriptCalls(JSContext* cx, unsigned argc,
-                                          Value* vp);
-  static bool drainTraceLoggerScriptCalls(JSContext* cx, unsigned argc,
-                                          Value* vp);
-  static bool startTraceLogger(JSContext* cx, unsigned argc, Value* vp);
-  static bool endTraceLogger(JSContext* cx, unsigned argc, Value* vp);
   static bool isCompilableUnit(JSContext* cx, unsigned argc, Value* vp);
   static bool recordReplayProcessKind(JSContext* cx, unsigned argc, Value* vp);
-#ifdef NIGHTLY_BUILD
-  static bool setupTraceLogger(JSContext* cx, unsigned argc, Value* vp);
-  static bool drainTraceLogger(JSContext* cx, unsigned argc, Value* vp);
-#endif
-  static bool adoptDebuggeeValue(JSContext* cx, unsigned argc, Value* vp);
-  static bool adoptSource(JSContext* cx, unsigned argc, Value* vp);
   static bool construct(JSContext* cx, unsigned argc, Value* vp);
+
+  struct CallData;
+
   static const JSPropertySpec properties[];
   static const JSFunctionSpec methods[];
   static const JSFunctionSpec static_methods[];
@@ -893,6 +896,9 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
   // execution.
   IsObserving observesCoverage() const;
 
+  // Whether the Debugger instance needs to observe native call invocations.
+  IsObserving observesNativeCalls() const;
+
  private:
   static MOZ_MUST_USE bool ensureExecutionObservabilityOfFrame(
       JSContext* cx, AbstractFramePtr frame);
@@ -903,8 +909,8 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
 
   MOZ_MUST_USE bool updateObservesAllExecutionOnDebuggees(
       JSContext* cx, IsObserving observing);
-  MOZ_MUST_USE bool updateObservesCoverageOnDebuggees(
-      JSContext* cx, IsObserving observing);
+  MOZ_MUST_USE bool updateObservesCoverageOnDebuggees(JSContext* cx,
+                                                      IsObserving observing);
   void updateObservesAsmJSOnDebuggees(IsObserving observing);
 
   JSObject* getHook(Hook hook) const;
@@ -921,6 +927,8 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
   ResumeMode fireDebuggerStatement(JSContext* cx, MutableHandleValue vp);
   ResumeMode fireExceptionUnwind(JSContext* cx, MutableHandleValue vp);
   ResumeMode fireEnterFrame(JSContext* cx, MutableHandleValue vp);
+  ResumeMode fireNativeCall(JSContext* cx, const CallArgs& args,
+                            CallReason reason, MutableHandleValue vp);
   ResumeMode fireNewGlobalObject(JSContext* cx, Handle<GlobalObject*> global,
                                  MutableHandleValue vp);
   ResumeMode firePromiseHook(JSContext* cx, Hook hook, HandleObject promise,
@@ -930,8 +938,8 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
                                     Handle<DebuggerScriptReferent> referent) {
     return newDebuggerScript(cx, referent);
   }
-  NativeObject* newVariantWrapper(JSContext* cx,
-                                  Handle<DebuggerSourceReferent> referent) {
+  DebuggerSource* newVariantWrapper(JSContext* cx,
+                                    Handle<DebuggerSourceReferent> referent) {
     return newDebuggerSource(cx, referent);
   }
 
@@ -943,14 +951,14 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
    * Prefer using wrapScript, wrapWasmScript, wrapSource, and wrapWasmSource
    * whenever possible.
    */
-  template <typename Wrapper, typename ReferentVariant, typename Referent,
-            typename Map>
-  Wrapper* wrapVariantReferent(JSContext* cx, Map& map,
-                               Handle<ReferentVariant> referent);
+  template <typename Map>
+  typename Map::WrapperType* wrapVariantReferent(
+      JSContext* cx, Map& map,
+      Handle<typename Map::WrapperType::ReferentVariant> referent);
   DebuggerScript* wrapVariantReferent(JSContext* cx,
                                       Handle<DebuggerScriptReferent> referent);
-  JSObject* wrapVariantReferent(JSContext* cx,
-                                Handle<DebuggerSourceReferent> referent);
+  DebuggerSource* wrapVariantReferent(JSContext* cx,
+                                      Handle<DebuggerSourceReferent> referent);
 
   /*
    * Allocate and initialize a Debugger.Script instance whose referent is
@@ -963,8 +971,8 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
    * Allocate and initialize a Debugger.Source instance whose referent is
    * |referent|.
    */
-  NativeObject* newDebuggerSource(JSContext* cx,
-                                  Handle<DebuggerSourceReferent> referent);
+  DebuggerSource* newDebuggerSource(JSContext* cx,
+                                    Handle<DebuggerSourceReferent> referent);
 
   /*
    * Receive a "new script" event from the engine. A new script was compiled
@@ -1007,7 +1015,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
 
   WeakGlobalObjectSet::Range allDebuggees() const { return debuggees.all(); }
 
-  static void detachAllDebuggersFromGlobal(FreeOp* fop, GlobalObject* global);
+  static void detachAllDebuggersFromGlobal(JSFreeOp* fop, GlobalObject* global);
 #ifdef DEBUG
   static bool isDebuggerCrossCompartmentEdge(JSObject* obj,
                                              const js::gc::Cell* cell);
@@ -1128,7 +1136,8 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
    * needed. The context |cx| must be in the debugger compartment; |source|
    * must be a script source object in a debuggee realm.
    */
-  JSObject* wrapSource(JSContext* cx, js::HandleScriptSourceObject source);
+  DebuggerSource* wrapSource(JSContext* cx,
+                             js::HandleScriptSourceObject source);
 
   /*
    * Return the Debugger.Source object for |wasmInstance| (the entire module),
@@ -1136,8 +1145,8 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
    * debugger compartment; |wasmInstance| must be a WasmInstanceObject in the
    * debuggee realm.
    */
-  JSObject* wrapWasmSource(JSContext* cx,
-                           Handle<WasmInstanceObject*> wasmInstance);
+  DebuggerSource* wrapWasmSource(JSContext* cx,
+                                 Handle<WasmInstanceObject*> wasmInstance);
 
  private:
   Debugger(const Debugger&) = delete;
@@ -1184,7 +1193,7 @@ struct Handler {
   virtual void hold(JSObject* owner) = 0;
 
   /* Report that this Handler is no longer held by owner. See comment above. */
-  virtual void drop(js::FreeOp* fop, JSObject* owner) = 0;
+  virtual void drop(JSFreeOp* fop, JSObject* owner) = 0;
 
   /*
    * Trace the reference to the handler. This method will be called by the
@@ -1197,20 +1206,47 @@ struct Handler {
 };
 
 class JSBreakpointSite;
-class WasmBreakpoint;
 class WasmBreakpointSite;
 
+/**
+ * Breakpoint GC rules:
+ *
+ * BreakpointSites and Breakpoints are owned by the code in which they are set.
+ * Tracing a JSScript or WasmInstance traces all BreakpointSites set in it,
+ * which traces all Breakpoints; and if the code is garbage collected, the
+ * BreakpointSite and the Breakpoints set at it are freed as well. Doing so is
+ * not observable to JS, since the handlers would never fire, and there is no
+ * way to enumerate all breakpoints without specifying a specific script, in
+ * which case it must not have been GC'd.
+ *
+ * Although BreakpointSites and Breakpoints are not GC things, they should be
+ * treated as belonging to the code's compartment. This means that the
+ * BreakpointSite concrete subclasses' pointers to the code are not
+ * cross-compartment references, but a Breakpoint's pointers to its handler and
+ * owning Debugger are cross-compartment references, and go through
+ * cross-compartment wrappers.
+ */
+
+/**
+ * A location in a JSScript or WasmInstance at which we have breakpoints. A
+ * BreakpointSite owns a linked list of all the breakpoints set at its location.
+ * In general, this list contains breakpoints set by multiple Debuggers in
+ * various compartments.
+ *
+ * BreakpointSites are created only as needed, for locations at which
+ * breakpoints are currently set. When the last breakpoint is removed from a
+ * location, the BreakpointSite is removed as well.
+ *
+ * This is an abstract base class, with subclasses specialized for the different
+ * sorts of code a breakpoint might be set in. JSBreakpointSite manages sites in
+ * JSScripts, and WasmBreakpointSite manages sites in WasmInstances.
+ */
 class BreakpointSite {
   friend class DebugAPI;
   friend class Breakpoint;
   friend class Debugger;
 
- public:
-  enum class Type { JS, Wasm };
-
  private:
-  Type type_;
-
   template <typename T>
   struct SiteLinkAccess {
     static mozilla::DoublyLinkedListElement<T>& Get(T* aThis) {
@@ -1222,48 +1258,32 @@ class BreakpointSite {
   using BreakpointList =
       mozilla::DoublyLinkedList<js::Breakpoint, SiteLinkAccess<js::Breakpoint>>;
   BreakpointList breakpoints;
-  size_t enabledCount; /* number of breakpoints in the list that are enabled */
-
-  gc::Cell* owningCellUnbarriered();
-  size_t allocSize();
 
  protected:
-  virtual void recompile(FreeOp* fop) = 0;
-  bool isEnabled() const { return enabledCount > 0; }
+  BreakpointSite(){};
+  virtual ~BreakpointSite() {}
+  void finalize(JSFreeOp* fop);
+  virtual gc::Cell* owningCell() = 0;
 
  public:
-  BreakpointSite(Type type);
   Breakpoint* firstBreakpoint() const;
-  virtual ~BreakpointSite() {}
   bool hasBreakpoint(Breakpoint* bp);
-  Type type() const { return type_; }
 
-  void inc(FreeOp* fop);
-  void dec(FreeOp* fop);
   bool isEmpty() const;
-  virtual void destroyIfEmpty(FreeOp* fop) = 0;
-
-  inline JSBreakpointSite* asJS();
-  inline WasmBreakpointSite* asWasm();
+  virtual void trace(JSTracer* trc);
+  virtual void remove(JSFreeOp* fop) = 0;
+  void destroyIfEmpty(JSFreeOp* fop) {
+    if (isEmpty()) {
+      remove(fop);
+    }
+  }
+  virtual Realm* realm() const = 0;
 };
 
 /*
- * Each Breakpoint is a member of two linked lists: its debugger's list and its
- * site's list.
- *
- * GC rules:
- *   - script is live, breakpoint exists, and debugger is enabled
- *      ==> debugger is live
- *   - script is live, breakpoint exists, and debugger is live
- *      ==> retain the breakpoint and the handler object is live
- *
- * Debugger::markIteratively implements these two rules. It uses
- * Debugger::hasAnyLiveHooks to check for rule 1.
- *
- * Nothing else causes a breakpoint to be retained, so if its script or
- * debugger is collected, the breakpoint is destroyed during GC sweep phase,
- * even if the debugger compartment isn't being GC'd. This is implemented in
- * Zone::sweepBreakpoints.
+ * A breakpoint set at a given BreakpointSite, indicating the owning debugger
+ * and the handler object. A Breakpoint is a member of two linked lists: its
+ * owning debugger's list and its site's list.
  */
 class Breakpoint {
   friend class DebugAPI;
@@ -1271,15 +1291,35 @@ class Breakpoint {
   friend class BreakpointSite;
 
  public:
+  /* Our owning debugger. */
   Debugger* const debugger;
+
+  /**
+   * A cross-compartment wrapper for our owning debugger's object, a CCW in the
+   * code's compartment to the Debugger object in its own compartment. Holding
+   * this lets the GC know about the effective cross-compartment reference from
+   * the code to the debugger; see "Breakpoint GC Rules", above.
+   *
+   * This is almost redundant with the `debugger` field, except that we need
+   * access to our owning `Debugger` regardless of the relative privilege levels
+   * of debugger and debuggee, regardless of whether we're in the midst of a GC,
+   * and so on - unwrapping is just too entangled.
+   */
+  const HeapPtr<JSObject*> wrappedDebugger;
+
+  /* The site at which we're inserted. */
   BreakpointSite* const site;
 
  private:
-  /*
-   * |handler| is marked unconditionally during minor GC so a post barrier is
-   * not required.
+  /**
+   * The breakpoint handler object, via a cross-compartment wrapper in the
+   * code's compartment.
+   *
+   * Although eventually we would like this to be a `js::Handler` instance, for
+   * now it is just cross-compartment wrapper for the JS object supplied to
+   * `setBreakpoint`, hopefully with a callable `hit` property.
    */
-  js::PreBarrieredObject handler;
+  const HeapPtr<JSObject*> handler;
 
   /**
    * Link elements for each list this breakpoint can be in.
@@ -1287,72 +1327,70 @@ class Breakpoint {
   mozilla::DoublyLinkedListElement<Breakpoint> debuggerLink;
   mozilla::DoublyLinkedListElement<Breakpoint> siteLink;
 
+  void trace(JSTracer* trc);
+
  public:
-  Breakpoint(Debugger* debugger, BreakpointSite* site, JSObject* handler);
+  Breakpoint(Debugger* debugger, HandleObject wrappedDebugger,
+             BreakpointSite* site, HandleObject handler);
 
   enum MayDestroySite { False, True };
-  void destroy(FreeOp* fop,
-               MayDestroySite mayDestroySite = MayDestroySite::True);
+
+  /**
+   * Unlink this breakpoint from its Debugger's and and BreakpointSite's lists,
+   * and free its memory.
+   *
+   * This is the low-level primitive shared by breakpoint removal and script
+   * finalization code. It is only concerned with cleaning up this Breakpoint;
+   * it does not check for now-empty BreakpointSites, unneeded DebugScripts, or
+   * the like.
+   */
+  void delete_(JSFreeOp* fop);
+
+  /**
+   * Remove this breakpoint. Unlink it from its Debugger's and BreakpointSite's
+   * lists, and if the BreakpointSite is now empty, clean that up and update JIT
+   * code as necessary.
+   */
+  void remove(JSFreeOp* fop);
 
   Breakpoint* nextInDebugger();
   Breakpoint* nextInSite();
   JSObject* getHandler() const { return handler; }
-  PreBarrieredObject& getHandlerRef() { return handler; }
-
-  inline WasmBreakpoint* asWasm();
 };
 
 class JSBreakpointSite : public BreakpointSite {
  public:
-  JSScript* script;
+  const HeapPtr<JSScript*> script;
   jsbytecode* const pc;
-
- protected:
-  void recompile(FreeOp* fop) override;
 
  public:
   JSBreakpointSite(JSScript* script, jsbytecode* pc);
 
-  void destroyIfEmpty(FreeOp* fop) override;
-};
+  void trace(JSTracer* trc) override;
+  void delete_(JSFreeOp* fop);
+  void remove(JSFreeOp* fop) override;
+  Realm* realm() const override;
 
-inline JSBreakpointSite* BreakpointSite::asJS() {
-  MOZ_ASSERT(type() == Type::JS);
-  return static_cast<JSBreakpointSite*>(this);
-}
+ private:
+  gc::Cell* owningCell() override;
+};
 
 class WasmBreakpointSite : public BreakpointSite {
  public:
-  wasm::Instance* instance;
+  const HeapPtr<WasmInstanceObject*> instanceObject;
   uint32_t offset;
 
+ public:
+  WasmBreakpointSite(WasmInstanceObject* instanceObject, uint32_t offset);
+
+  void trace(JSTracer* trc) override;
+  void delete_(JSFreeOp* fop);
+  void remove(JSFreeOp* fop) override;
+  Realm* realm() const override;
+
  private:
-  void recompile(FreeOp* fop) override;
-
- public:
-  WasmBreakpointSite(wasm::Instance* instance, uint32_t offset);
-
-  void destroyIfEmpty(FreeOp* fop) override;
+  gc::Cell* owningCell() override;
 };
-
-inline WasmBreakpointSite* BreakpointSite::asWasm() {
-  MOZ_ASSERT(type() == Type::Wasm);
-  return static_cast<WasmBreakpointSite*>(this);
-}
-
-class WasmBreakpoint : public Breakpoint {
- public:
-  WasmInstanceObject* wasmInstance;
-
-  WasmBreakpoint(Debugger* debugger, WasmBreakpointSite* site,
-                 JSObject* handler, WasmInstanceObject* wasmInstance_)
-      : Breakpoint(debugger, site, handler), wasmInstance(wasmInstance_) {}
-};
-
-inline WasmBreakpoint* Breakpoint::asWasm() {
-  MOZ_ASSERT(site && site->type() == BreakpointSite::Type::Wasm);
-  return static_cast<WasmBreakpoint*>(this);
-}
 
 Breakpoint* Debugger::firstBreakpoint() const {
   if (breakpoints.isEmpty()) {
@@ -1371,16 +1409,12 @@ js::GCPtrNativeObject& Debugger::toJSObjectRef() {
   return object;
 }
 
-bool Debugger::observesEnterFrame() const {
-  return enabled && getHook(OnEnterFrame);
-}
+bool Debugger::observesEnterFrame() const { return getHook(OnEnterFrame); }
 
-bool Debugger::observesNewScript() const {
-  return enabled && getHook(OnNewScript);
-}
+bool Debugger::observesNewScript() const { return getHook(OnNewScript); }
 
 bool Debugger::observesNewGlobalObject() const {
-  return enabled && getHook(OnNewGlobalObject);
+  return getHook(OnNewGlobalObject);
 }
 
 bool Debugger::observesGlobal(GlobalObject* global) const {
@@ -1406,6 +1440,16 @@ Result<Completion> DebuggerGenericEval(
 
 bool ParseResumptionValue(JSContext* cx, HandleValue rval,
                           ResumeMode& resumeMode, MutableHandleValue vp);
+
+#define JS_DEBUG_PSG(Name, Getter) \
+  JS_PSG(Name, CallData::ToNative<&CallData::Getter>, 0)
+
+#define JS_DEBUG_PSGS(Name, Getter, Setter)            \
+  JS_PSGS(Name, CallData::ToNative<&CallData::Getter>, \
+          CallData::ToNative<&CallData::Setter>, 0)
+
+#define JS_DEBUG_FN(Name, Method, NumArgs) \
+  JS_FN(Name, CallData::ToNative<&CallData::Method>, NumArgs, 0)
 
 } /* namespace js */
 

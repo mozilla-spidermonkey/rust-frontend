@@ -49,7 +49,8 @@ function ReadManifest(aURL, aFilter)
                      .getService(Ci.nsIScriptSecurityManager);
 
     var listURL = aURL;
-    var channel = NetUtil.newChannel({uri: aURL, loadUsingSystemPrincipal: true});
+    var channel = NetUtil.newChannel({uri: aURL,
+                                      loadUsingSystemPrincipal: true});
     var inputStream = channel.open();
     if (channel instanceof Ci.nsIHttpChannel
         && channel.responseStatus != 200) {
@@ -59,13 +60,21 @@ function ReadManifest(aURL, aFilter)
     inputStream.close();
     var lines = streamBuf.split(/\n|\r|\r\n/);
 
-    // Build the sandbox for fails-if(), etc., condition evaluation.
-    var sandbox = BuildConditionSandbox(aURL);
+    // The sandbox for fails-if(), etc., condition evaluation. This is not
+    // always required and so is created on demand.
+    var sandbox;
+    function GetOrCreateSandbox() {
+        if (!sandbox) {
+            sandbox = BuildConditionSandbox(aURL);
+        }
+        return sandbox;
+    }
+
     var lineNo = 0;
     var urlprefix = "";
     var defaultTestPrefSettings = [], defaultRefPrefSettings = [];
     if (g.compareRetainedDisplayLists) {
-        AddRetainedDisplayListTestPrefs(sandbox, defaultTestPrefSettings,
+        AddRetainedDisplayListTestPrefs(GetOrCreateSandbox(), defaultTestPrefSettings,
                                         defaultRefPrefSettings);
     }
     for (var str of lines) {
@@ -98,12 +107,15 @@ function ReadManifest(aURL, aFilter)
                 if (!(m = item.match(RE_PREF_ITEM))) {
                     throw "Unexpected item in default-preferences list in manifest file " + aURL.spec + " line " + lineNo;
                 }
-                if (!AddPrefSettings(m[1], m[2], m[3], sandbox, defaultTestPrefSettings, defaultRefPrefSettings)) {
+                if (!AddPrefSettings(m[1], m[2], m[3], GetOrCreateSandbox(),
+                                     defaultTestPrefSettings,
+                                     defaultRefPrefSettings)) {
                     throw "Error in pref value in manifest file " + aURL.spec + " line " + lineNo;
                 }
             }
             if (g.compareRetainedDisplayLists) {
-                AddRetainedDisplayListTestPrefs(sandbox, defaultTestPrefSettings,
+                AddRetainedDisplayListTestPrefs(GetOrCreateSandbox(),
+                                                defaultTestPrefSettings,
                                                 defaultRefPrefSettings);
             }
             continue;
@@ -132,7 +144,7 @@ function ReadManifest(aURL, aFilter)
             if (m) {
                 stat = m[1];
                 // Note: m[2] contains the parentheses, and we want them.
-                cond = Cu.evalInSandbox(m[2], sandbox);
+                cond = Cu.evalInSandbox(m[2], GetOrCreateSandbox());
             } else if (item.match(/^(fails|random|skip)$/)) {
                 stat = item;
                 cond = true;
@@ -146,7 +158,7 @@ function ReadManifest(aURL, aFilter)
                                                  : Number(m[2].substring(1));
             } else if ((m = item.match(/^asserts-if\((.*?),(\d+)(-\d+)?\)$/))) {
                 cond = false;
-                if (Cu.evalInSandbox("(" + m[1] + ")", sandbox)) {
+                if (Cu.evalInSandbox("(" + m[1] + ")", GetOrCreateSandbox())) {
                     minAsserts = Number(m[2]);
                     maxAsserts =
                       (m[3] == undefined) ? minAsserts
@@ -181,14 +193,15 @@ function ReadManifest(aURL, aFilter)
                 }
             } else if ((m = item.match(/^slow-if\((.*?)\)$/))) {
                 cond = false;
-                if (Cu.evalInSandbox("(" + m[1] + ")", sandbox))
+                if (Cu.evalInSandbox("(" + m[1] + ")", GetOrCreateSandbox()))
                     slow = true;
             } else if (item == "silentfail") {
                 cond = false;
                 allow_silent_fail = true;
             } else if ((m = item.match(RE_PREF_ITEM))) {
                 cond = false;
-                if (!AddPrefSettings(m[1], m[2], m[3], sandbox, testPrefSettings, refPrefSettings)) {
+                if (!AddPrefSettings(m[1], m[2], m[3], GetOrCreateSandbox(),
+                                     testPrefSettings, refPrefSettings)) {
                     throw "Error in pref value in manifest file " + aURL.spec + " line " + lineNo;
                 }
             } else if ((m = item.match(/^fuzzy\((\d+)-(\d+),(\d+)-(\d+)\)$/))) {
@@ -198,7 +211,7 @@ function ReadManifest(aURL, aFilter)
               fuzzy_pixels = ExtractRange(m, 3);
             } else if ((m = item.match(/^fuzzy-if\((.*?),(\d+)-(\d+),(\d+)-(\d+)\)$/))) {
               cond = false;
-              if (Cu.evalInSandbox("(" + m[1] + ")", sandbox)) {
+              if (Cu.evalInSandbox("(" + m[1] + ")", GetOrCreateSandbox())) {
                 expected_status = EXPECTED_FUZZY;
                 fuzzy_delta = ExtractRange(m, 2);
                 fuzzy_pixels = ExtractRange(m, 4);
@@ -442,6 +455,8 @@ function BuildConditionSandbox(aURL) {
     sandbox.contentSameGfxBackendAsCanvas = contentBackend == canvasBackend
                                             || (contentBackend == "none" && canvasBackend == "cairo");
 
+    sandbox.remoteCanvas = prefs.getBoolPref("gfx.canvas.remote") && sandbox.d2d && sandbox.gpuProcess;
+
     sandbox.layersGPUAccelerated =
       g.windowUtils.layerManagerType != "Basic";
     sandbox.d3d11 =
@@ -461,10 +476,12 @@ function BuildConditionSandbox(aURL) {
     sandbox.retainedDisplayList =
       prefs.getBoolPref("layout.display-list.retain");
 
+    sandbox.usesOverlayScrollbars = g.windowUtils.usesOverlayScrollbars;
+
     // Shortcuts for widget toolkits.
     sandbox.Android = xr.OS == "Android";
     sandbox.cocoaWidget = xr.widgetToolkit == "cocoa";
-    sandbox.gtkWidget = xr.widgetToolkit == "gtk3";
+    sandbox.gtkWidget = xr.widgetToolkit == "gtk";
     sandbox.qtWidget = xr.widgetToolkit == "qt";
     sandbox.winWidget = xr.widgetToolkit == "windows";
 
@@ -475,7 +492,7 @@ function BuildConditionSandbox(aURL) {
     sandbox.geckoview = (sandbox.Android && g.browserIsRemote);
 
     // Scrollbars that are semi-transparent. See bug 1169666.
-    sandbox.transparentScrollbars = xr.widgetToolkit == "gtk3";
+    sandbox.transparentScrollbars = xr.widgetToolkit == "gtk";
 
     if (sandbox.Android) {
         var sysInfo = Cc["@mozilla.org/system-info;1"].getService(Ci.nsIPropertyBag2);
@@ -483,6 +500,9 @@ function BuildConditionSandbox(aURL) {
         // This is currently used to distinguish Android 4.0.3 (SDK version 15)
         // and later from Android 2.x
         sandbox.AndroidVersion = sysInfo.getPropertyAsInt32("version");
+
+        sandbox.emulator = readGfxInfo(gfxInfo, "adapterDeviceID").includes("Android Emulator");
+        sandbox.device = !sandbox.emulator;
     }
 
 #if MOZ_ASAN
@@ -496,6 +516,8 @@ function BuildConditionSandbox(aURL) {
 #else
     sandbox.webrtc = false;
 #endif
+
+    sandbox.xbl = false; // Keep this until all xbl reftests are removed in Bug 1587142.
 
 let retainedDisplayListsEnabled = prefs.getBoolPref("layout.display-list.retain", false);
 sandbox.retainedDisplayLists = retainedDisplayListsEnabled && !g.compareRetainedDisplayLists;
@@ -532,7 +554,7 @@ sandbox.compareRetainedDisplayLists = g.compareRetainedDisplayLists;
     sandbox.windowsDefaultTheme = g.containingWindow.matchMedia("(-moz-windows-default-theme)").matches;
 
     try {
-        sandbox.nativeThemePref = !prefs.getBoolPref("mozilla.widget.disable-native-theme");
+        sandbox.nativeThemePref = !prefs.getBoolPref("widget.disable-native-theme");
     } catch (e) {
         sandbox.nativeThemePref = true;
     }
@@ -643,9 +665,10 @@ function ServeTestBase(aURL, depth) {
 
     var testbase = g.ioService.newURI("http://localhost:" + g.httpServerPort +
                                      path + dirPath);
+    var testBasePrincipal = secMan.createContentPrincipal(testbase, {});
 
     // Give the testbase URI access to XUL and XBL
-    Services.perms.add(testbase, "allowXULXBL", Services.perms.ALLOW_ACTION);
+    Services.perms.addFromPrincipal(testBasePrincipal, "allowXULXBL", Services.perms.ALLOW_ACTION);
     return testbase;
 }
 

@@ -1260,15 +1260,12 @@ class GeckoSessionTestRuleTest : BaseSessionTest(noErrorCollector = true) {
         assertThat("Callback count should be correct", counter, equalTo(2))
     }
 
-    @WithDisplay(width = 10, height = 10)
+    @WithDisplay(width = 100, height = 100)
     @Test fun synthesizeTap() {
-        // synthesizeTap is unreliable under e10s.
-        assumeThat(sessionRule.env.isMultiprocess, equalTo(false))
-
         sessionRule.session.loadTestPath(CLICK_TO_RELOAD_HTML_PATH)
         sessionRule.session.waitForPageStop()
 
-        sessionRule.session.synthesizeTap(5, 5)
+        sessionRule.session.synthesizeTap(50, 50)
         sessionRule.session.waitForPageStop()
     }
 
@@ -1368,9 +1365,10 @@ class GeckoSessionTestRuleTest : BaseSessionTest(noErrorCollector = true) {
         sessionRule.session.loadTestPath(HELLO_HTML_PATH)
         sessionRule.session.waitForPageStop()
         sessionRule.session.delegateUntilTestEnd(object : Callbacks.PromptDelegate {
-            override fun onAlert(session: GeckoSession, title: String?, msg: String?,
-                                 callback: GeckoSession.PromptDelegate.AlertCallback) {
-                // Do nothing for the alert, so it hangs forever.
+            override fun onAlertPrompt(session: GeckoSession, prompt: GeckoSession.PromptDelegate.AlertPrompt): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                // Return a GeckoResult that we will never complete, so it hangs.
+                val res = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                return res
             }
         })
         sessionRule.session.evaluateJS("alert()")
@@ -1510,8 +1508,8 @@ class GeckoSessionTestRuleTest : BaseSessionTest(noErrorCollector = true) {
 
         sessionRule.session.forCallbacksDuringWait(object : Callbacks.PromptDelegate {
             @AssertCalled(count = 1)
-            override fun onAlert(session: GeckoSession, title: String?, msg: String?,
-                                 callback: GeckoSession.PromptDelegate.AlertCallback) {
+            override fun onAlertPrompt(session: GeckoSession, prompt: GeckoSession.PromptDelegate.AlertPrompt): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? {
+                return null;
             }
         })
     }
@@ -1530,10 +1528,9 @@ class GeckoSessionTestRuleTest : BaseSessionTest(noErrorCollector = true) {
 
         var count = 0
         sessionRule.session.delegateDuringNextWait(object : Callbacks.PromptDelegate {
-            override fun onAlert(session: GeckoSession, title: String?, msg: String?,
-                                 callback: GeckoSession.PromptDelegate.AlertCallback) {
+            override fun onAlertPrompt(session: GeckoSession, prompt: GeckoSession.PromptDelegate.AlertPrompt): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
                 count++
-                callback.dismiss()
+                return GeckoResult.fromValue(prompt.dismiss())
             }
         })
 

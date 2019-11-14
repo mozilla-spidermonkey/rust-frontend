@@ -451,9 +451,6 @@ function testtag_tree_TreeSelection(tree, testid, multiple) {
     []
   );
 
-  // XXXndeakin invertSelection isn't implemented
-  //  selection.invertSelection();
-
   is(selection.shiftSelectPivot, -1, testid + "shiftSelectPivot set to -1");
 
   // rangedSelect and clearRange set the currentIndex to the endIndex. The
@@ -1312,7 +1309,7 @@ function testtag_tree_TreeView_rows(tree, testid, rowInfo, startRow) {
       return false;
     },
     isContainerEmpty(row) {
-      return row.children != null && row.children.rows.length == 0;
+      return row.children != null && !row.children.rows.length;
     },
     isSeparator(row) {
       return row.separator;

@@ -148,7 +148,7 @@ class PluginModuleParent : public PPluginModuleParent,
 
  protected:
   void SetChildTimeout(const int32_t aChildTimeout);
-  static void TimeoutChanged(const char* aPref, PluginModuleParent* aModule);
+  static void TimeoutChanged(const char* aPref, void* aModule);
 
   virtual void UpdatePluginTimeout() {}
 
@@ -420,7 +420,7 @@ class PluginModuleChromeParent : public PluginModuleParent,
   virtual bool ShouldContinueFromReplyTimeout() override;
 
   void ProcessFirstMinidump();
-  void WriteExtraDataForMinidump();
+  void AddCrashAnnotations();
 
   PluginProcessParent* Process() const { return mSubprocess; }
   base::ProcessHandle ChildProcessHandle() {
@@ -457,8 +457,7 @@ class PluginModuleChromeParent : public PluginModuleParent,
 
   mozilla::ipc::IPCResult RecvNotifyContentModuleDestroyed() override;
 
-  static void CachedSettingChanged(const char* aPref,
-                                   PluginModuleChromeParent* aModule);
+  static void CachedSettingChanged(const char* aPref, void* aModule);
 
   mozilla::ipc::IPCResult
   AnswerNPN_SetValue_NPPVpluginRequiresAudioDeviceChanges(

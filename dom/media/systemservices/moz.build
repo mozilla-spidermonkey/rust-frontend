@@ -15,7 +15,6 @@ if CONFIG['MOZ_WEBRTC']:
     UNIFIED_SOURCES += [
         'CamerasChild.cpp',
         'CamerasParent.cpp',
-        'ShmemPool.cpp',
         'VideoEngine.cpp',
         'VideoFrameUtils.cpp'
     ]
@@ -51,7 +50,6 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'cocoa':
 EXPORTS.mozilla += ['ShmemPool.h',]
 
 EXPORTS.mozilla.media += ['CamerasTypes.h',
-                          'DeviceChangeCallback.h',
                           'MediaChild.h',
                           'MediaParent.h',
                           'MediaSystemResourceClient.h',
@@ -73,6 +71,7 @@ UNIFIED_SOURCES += [
     'MediaSystemResourceManagerParent.cpp',
     'MediaSystemResourceService.cpp',
     'MediaUtils.cpp',
+    'ShmemPool.cpp',
 ]
 IPDL_SOURCES += [
     'PCameras.ipdl',

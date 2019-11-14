@@ -7,6 +7,8 @@
 #ifndef mozilla_dom_serviceworkerregistrationinfo_h
 #define mozilla_dom_serviceworkerregistrationinfo_h
 
+#include <functional>
+
 #include "mozilla/dom/ServiceWorkerInfo.h"
 #include "mozilla/dom/ServiceWorkerRegistrationBinding.h"
 #include "mozilla/dom/ServiceWorkerRegistrationDescriptor.h"
@@ -34,6 +36,8 @@ class ServiceWorkerRegistrationInfo final
         : mDescriptor(aDescriptor), mTimeStamp(TimeStamp::Now()) {}
   };
   nsTArray<UniquePtr<VersionEntry>> mVersionList;
+
+  const nsID mAgentClusterId = nsContentUtils::GenerateUUID();
 
   uint32_t mControlledClientsCounter;
   uint32_t mDelayMultiplier;
@@ -67,6 +71,8 @@ class ServiceWorkerRegistrationInfo final
  public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSISERVICEWORKERREGISTRATIONINFO
+
+  typedef std::function<void()> TryToActivateCallback;
 
   ServiceWorkerRegistrationInfo(const nsACString& aScope,
                                 nsIPrincipal* aPrincipal,
@@ -114,15 +120,19 @@ class ServiceWorkerRegistrationInfo final
     return mActiveWorker && mControlledClientsCounter;
   }
 
+  // As a side effect, this nullifies
+  // `m{Evaluating,Installing,Waiting,Active}Worker`s.
+  void ShutdownWorkers();
+
   void Clear();
 
   void ClearAsCorrupt();
 
   bool IsCorrupt() const;
 
-  void TryToActivateAsync();
+  void TryToActivateAsync(TryToActivateCallback&& aCallback = nullptr);
 
-  void TryToActivate();
+  void TryToActivate(TryToActivateCallback&& aCallback);
 
   void Activate();
 
@@ -197,13 +207,15 @@ class ServiceWorkerRegistrationInfo final
 
   uint64_t Version() const;
 
-  uint32_t GetUpdateDelay();
+  uint32_t GetUpdateDelay(const bool aWithMultiplier = true);
 
   void FireUpdateFound();
 
   void NotifyCleared();
 
   void ClearWhenIdle();
+
+  const nsID& AgentClusterId() const;
 
  private:
   // Roughly equivalent to [[Update Registration State algorithm]]. Make sure
@@ -223,6 +235,13 @@ class ServiceWorkerRegistrationInfo final
   static uint64_t GetNextId();
 
   static uint64_t GetNextVersion();
+
+  // `aFunc`'s argument will be a reference to
+  // `m{Evaluating,Installing,Waiting,Active}Worker` (not to copy of them).
+  // Additionally, a null check will be performed for each worker before each
+  // call to `aFunc`, so `aFunc` will always get a reference to a non-null
+  // pointer.
+  void ForEachWorker(void (*aFunc)(RefPtr<ServiceWorkerInfo>&));
 };
 
 }  // namespace dom

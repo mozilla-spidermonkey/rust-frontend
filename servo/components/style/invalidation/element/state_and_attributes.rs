@@ -16,7 +16,7 @@ use crate::invalidation::element::invalidator::{Invalidation, InvalidationProces
 use crate::invalidation::element::restyle_hints::RestyleHint;
 use crate::selector_map::SelectorMap;
 use crate::selector_parser::Snapshot;
-use crate::stylesheets::origin::{Origin, OriginSet};
+use crate::stylesheets::origin::OriginSet;
 use crate::{Atom, WeakAtom};
 use selectors::attr::CaseSensitivity;
 use selectors::matching::matches_selector;
@@ -158,7 +158,11 @@ where
         // If we the visited state changed, we force a restyle here. Matching
         // doesn't depend on the actual visited state at all, so we can't look
         // at matching results to decide what to do for this case.
-        if state_changes.intersects(ElementState::IN_VISITED_OR_UNVISITED_STATE) {
+        //
+        // TODO(emilio): This piece of code should be removed when
+        // layout.css.always-repaint-on-unvisited is true, since we cannot get
+        // into this situation in that case.
+        if state_changes.contains(ElementState::IN_VISITED_OR_UNVISITED_STATE) {
             trace!(" > visitedness change, force subtree restyle");
             // We can't just return here because there may also be attribute
             // changes as well that imply additional hints for siblings.
@@ -246,7 +250,7 @@ where
             };
 
             let document_origins = if !matches_document_author_rules {
-                Origin::UserAgent.into()
+                OriginSet::ORIGIN_USER_AGENT | OriginSet::ORIGIN_USER
             } else {
                 OriginSet::all()
             };

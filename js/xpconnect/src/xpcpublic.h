@@ -86,6 +86,11 @@ JSObject* TransplantObjectRetainingXrayExpandos(JSContext* cx,
                                                 JS::HandleObject origobj,
                                                 JS::HandleObject target);
 
+// If origObj has an xray waiver, nuke it before transplant.
+JSObject* TransplantObjectNukingXrayWaiver(JSContext* cx,
+                                           JS::HandleObject origObj,
+                                           JS::HandleObject target);
+
 bool IsContentXBLCompartment(JS::Compartment* compartment);
 bool IsContentXBLScope(JS::Realm* realm);
 bool IsInContentXBLScope(JSObject* obj);
@@ -242,9 +247,9 @@ class XPCStringConvert {
                                                     uint32_t length,
                                                     JS::MutableHandleValue rval,
                                                     bool* sharedBuffer) {
-    JSString* str =
-        JS_NewMaybeExternalString(cx, static_cast<char16_t*>(buf->Data()),
-                                  length, &sDOMStringFinalizer, sharedBuffer);
+    JSString* str = JS_NewMaybeExternalString(
+        cx, static_cast<char16_t*>(buf->Data()), length,
+        &sDOMStringExternalString, sharedBuffer);
     if (!str) {
       return false;
     }
@@ -257,8 +262,8 @@ class XPCStringConvert {
                                           uint32_t length,
                                           JS::MutableHandleValue rval) {
     bool ignored;
-    JSString* str = JS_NewMaybeExternalString(cx, literal, length,
-                                              &sLiteralFinalizer, &ignored);
+    JSString* str = JS_NewMaybeExternalString(
+        cx, literal, length, &sLiteralExternalString, &ignored);
     if (!str) {
       return false;
     }
@@ -271,7 +276,7 @@ class XPCStringConvert {
     bool sharedAtom;
     JSString* str =
         JS_NewMaybeExternalString(cx, atom->GetUTF16String(), atom->GetLength(),
-                                  &sDynamicAtomFinalizer, &sharedAtom);
+                                  &sDynamicAtomExternalString, &sharedAtom);
     if (!str) {
       return false;
     }
@@ -286,26 +291,45 @@ class XPCStringConvert {
     return true;
   }
 
-  static MOZ_ALWAYS_INLINE bool IsLiteral(JSString* str) {
-    return JS_IsExternalString(str) &&
-           JS_GetExternalStringFinalizer(str) == &sLiteralFinalizer;
+  static MOZ_ALWAYS_INLINE bool MaybeGetExternalStringChars(
+      JSString* str, const JSExternalStringCallbacks* desiredCallbacks,
+      const char16_t** chars) {
+    const JSExternalStringCallbacks* callbacks;
+    return js::IsExternalString(str, &callbacks, chars) &&
+           callbacks == desiredCallbacks;
   }
 
-  static MOZ_ALWAYS_INLINE bool IsDOMString(JSString* str) {
-    return JS_IsExternalString(str) &&
-           JS_GetExternalStringFinalizer(str) == &sDOMStringFinalizer;
+  // Returns non-null chars if the given string is a literal external string.
+  static MOZ_ALWAYS_INLINE bool MaybeGetLiteralStringChars(
+      JSString* str, const char16_t** chars) {
+    return MaybeGetExternalStringChars(str, &sLiteralExternalString, chars);
+  }
+
+  // Returns non-null chars if the given string is a DOM external string.
+  static MOZ_ALWAYS_INLINE bool MaybeGetDOMStringChars(JSString* str,
+                                                       const char16_t** chars) {
+    return MaybeGetExternalStringChars(str, &sDOMStringExternalString, chars);
   }
 
  private:
-  static const JSStringFinalizer sLiteralFinalizer, sDOMStringFinalizer,
-      sDynamicAtomFinalizer;
-
-  static void FinalizeLiteral(const JSStringFinalizer* fin, char16_t* chars);
-
-  static void FinalizeDOMString(const JSStringFinalizer* fin, char16_t* chars);
-
-  static void FinalizeDynamicAtom(const JSStringFinalizer* fin,
-                                  char16_t* chars);
+  struct LiteralExternalString : public JSExternalStringCallbacks {
+    void finalize(char16_t* aChars) const override;
+    size_t sizeOfBuffer(const char16_t* aChars,
+                        mozilla::MallocSizeOf aMallocSizeOf) const override;
+  };
+  struct DOMStringExternalString : public JSExternalStringCallbacks {
+    void finalize(char16_t* aChars) const override;
+    size_t sizeOfBuffer(const char16_t* aChars,
+                        mozilla::MallocSizeOf aMallocSizeOf) const override;
+  };
+  struct DynamicAtomExternalString : public JSExternalStringCallbacks {
+    void finalize(char16_t* aChars) const override;
+    size_t sizeOfBuffer(const char16_t* aChars,
+                        mozilla::MallocSizeOf aMallocSizeOf) const override;
+  };
+  static const LiteralExternalString sLiteralExternalString;
+  static const DOMStringExternalString sDOMStringExternalString;
+  static const DynamicAtomExternalString sDynamicAtomExternalString;
 
   XPCStringConvert() = delete;
 };
@@ -674,29 +698,17 @@ inline bool AreNonLocalConnectionsDisabled() {
   return disabledForTest;
 }
 
+void CacheAutomationPref(bool* aPref);
+
 inline bool IsInAutomation() {
-  static bool sAutomationPrefIsSet;
+  static bool sAutomationPrefIsSet = false;
   static bool sPrefCacheAdded = false;
   if (!sPrefCacheAdded) {
-    mozilla::Preferences::AddBoolVarCache(
-        &sAutomationPrefIsSet,
-        "security.turn_off_all_security_so_that_viruses_can_take_over_this_"
-        "computer",
-        false);
+    CacheAutomationPref(&sAutomationPrefIsSet);
     sPrefCacheAdded = true;
   }
   return sAutomationPrefIsSet && AreNonLocalConnectionsDisabled();
 }
-
-void CreateCooperativeContext();
-
-void DestroyCooperativeContext();
-
-// Please see JS_YieldCooperativeContext in jsapi.h.
-void YieldCooperativeContext();
-
-// Please see JS_ResumeCooperativeContext in jsapi.h.
-void ResumeCooperativeContext();
 
 /**
  * Extract the native nsID object from a JS ID, IfaceID, ClassID, or ContractID

@@ -22,7 +22,6 @@ class Promise;
 class GamepadManager;
 class Navigator;
 class VRDisplay;
-class VREventObserver;
 }  // namespace dom
 namespace layers {
 class SyncObjectClient;
@@ -30,6 +29,22 @@ class SyncObjectClient;
 namespace gfx {
 class VRLayerChild;
 class VRDisplayClient;
+
+class VRManagerEventObserver {
+ public:
+  NS_INLINE_DECL_PURE_VIRTUAL_REFCOUNTING
+  virtual void NotifyVRDisplayMounted(uint32_t aDisplayID) = 0;
+  virtual void NotifyVRDisplayUnmounted(uint32_t aDisplayID) = 0;
+  virtual void NotifyVRDisplayConnect(uint32_t aDisplayID) = 0;
+  virtual void NotifyVRDisplayDisconnect(uint32_t aDisplayID) = 0;
+  virtual void NotifyVRDisplayPresentChange(uint32_t aDisplayID) = 0;
+  virtual void NotifyPresentationGenerationChanged(uint32_t aDisplayID) = 0;
+  virtual bool GetStopActivityStatus() const = 0;
+  virtual void NotifyEnumerationCompleted() = 0;
+
+ protected:
+  virtual ~VRManagerEventObserver() = default;
+};
 
 class VRManagerChild : public PVRManagerChild {
   friend class PVRManagerChild;
@@ -40,14 +55,15 @@ class VRManagerChild : public PVRManagerChild {
   static VRManagerChild* Get();
 
   // Indicate that an observer wants to receive VR events.
-  void AddListener(dom::VREventObserver* aObserver);
+  void AddListener(VRManagerEventObserver* aObserver);
   // Indicate that an observer should no longer receive VR events.
-  void RemoveListener(dom::VREventObserver* aObserver);
+  void RemoveListener(VRManagerEventObserver* aObserver);
   void StartActivity();
   void StopActivity();
 
-  bool GetVRDisplays(nsTArray<RefPtr<VRDisplayClient>>& aDisplays);
+  void GetVRDisplays(nsTArray<RefPtr<VRDisplayClient>>& aDisplays);
   bool RefreshVRDisplaysWithCallback(uint64_t aWindowId);
+  bool EnumerateVRDisplays();
   void AddPromise(const uint32_t& aID, dom::Promise* aPromise);
 
   static void InitSameProcess();
@@ -57,6 +73,7 @@ class VRManagerChild : public PVRManagerChild {
   static void ShutDown();
 
   static bool IsCreated();
+  static bool IsPresenting();
 
   PVRLayerChild* CreateVRLayer(uint32_t aDisplayID, nsIEventTarget* aTarget,
                                uint32_t aGroup);
@@ -80,7 +97,7 @@ class VRManagerChild : public PVRManagerChild {
   void FireDOMVRDisplayConnectEvent(uint32_t aDisplayID);
   void FireDOMVRDisplayDisconnectEvent(uint32_t aDisplayID);
   void FireDOMVRDisplayPresentChangeEvent(uint32_t aDisplayID);
-  void FireDOMVRDisplayConnectEventsForLoad(dom::VREventObserver* aObserver);
+  void FireDOMVRDisplayConnectEventsForLoad(VRManagerEventObserver* aObserver);
 
   virtual void HandleFatalError(const char* aMsg) const override;
 
@@ -120,8 +137,9 @@ class VRManagerChild : public PVRManagerChild {
   void FireDOMVRDisplayDisconnectEventInternal(uint32_t aDisplayID);
   void FireDOMVRDisplayPresentChangeEventInternal(uint32_t aDisplayID);
   void FireDOMVRDisplayConnectEventsForLoadInternal(
-      uint32_t aDisplayID, dom::VREventObserver* aObserver);
+      uint32_t aDisplayID, VRManagerEventObserver* aObserver);
   void NotifyPresentationGenerationChangedInternal(uint32_t aDisplayID);
+  void NotifyEnumerationCompletedInternal();
 
   nsTArray<RefPtr<VRDisplayClient>> mDisplays;
   bool mDisplaysInitialized;
@@ -138,7 +156,8 @@ class VRManagerChild : public PVRManagerChild {
   int32_t mFrameRequestCallbackCounter;
   mozilla::TimeStamp mStartTimeStamp;
 
-  nsTArray<RefPtr<dom::VREventObserver>> mListeners;
+  nsTArray<RefPtr<VRManagerEventObserver>> mListeners;
+  bool mWaitingForEnumeration;
 
   layers::LayersBackend mBackend;
   RefPtr<layers::SyncObjectClient> mSyncObject;

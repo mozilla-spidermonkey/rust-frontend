@@ -1,4 +1,8 @@
-.overlay {
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+ .overlay {
   position: fixed;
   z-index: 1;
   top: 0;
@@ -14,10 +18,8 @@
 .container {
   z-index: 2;
   position: relative;
-
   display: flex;
   flex-direction: column;
-
   min-width: 250px;
   max-width: 500px;
   min-height: 200px;
@@ -25,6 +27,8 @@
   background: var(--in-content-page-background);
   color: var(--in-content-page-color);
   box-shadow: var(--shadow-30);
+  /* show a border in high contrast mode */
+  outline: 1px solid transparent;
 }
 
 .title {
@@ -39,7 +43,7 @@
   margin-bottom: 0;
 }
 
-button.dismiss-button {
+.dismiss-button {
   position: absolute;
   top: 0;
   inset-inline-end: 0;
@@ -47,7 +51,10 @@ button.dismiss-button {
   min-height: 20px;
   margin: 16px;
   padding: 0;
-  background: url(chrome://global/skin/icons/close.svg) no-repeat center;
+  line-height: 0;
+}
+
+.dismiss-icon {
   -moz-context-properties: fill, fill-opacity;
   fill: currentColor;
   fill-opacity: 0;
@@ -65,6 +72,15 @@ button.dismiss-button {
 .buttons {
   text-align: center;
   padding: 16px 32px;
+}
+
+.buttons {
+  display: flex;
+  justify-content: space-between;
+}
+
+.buttons.macosx > .confirm-button {
+  order: 1;
 }
 
 .buttons > button {

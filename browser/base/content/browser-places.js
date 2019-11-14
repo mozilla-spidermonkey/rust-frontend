@@ -155,8 +155,7 @@ var StarUI = {
           break;
         }
         this._isComposing = true;
-      // Explicit fall-through, during composition, panel shouldn't be
-      // hidden automatically.
+      // Explicit fall-through, during composition, panel shouldn't be hidden automatically.
       case "input":
       // Might have edited some text without keyboard events nor composition
       // events. Fall-through to cancel auto close in such case.
@@ -315,7 +314,9 @@ var StarUI = {
     }
 
     let canvas = PageThumbs.createCanvas(window);
-    PageThumbs.captureToCanvas(gBrowser.selectedBrowser, canvas);
+    PageThumbs.captureToCanvas(gBrowser.selectedBrowser, canvas).catch(e =>
+      Cu.reportError(e)
+    );
     document.mozSetImageElement("editBookmarkPanelImageCanvas", canvas);
   },
 
@@ -382,7 +383,7 @@ var StarUI = {
     } else if (index == -1) {
       lastUsedFolderGuids.unshift(selectedFolderGuid);
     }
-    if (lastUsedFolderGuids.length > 5) {
+    while (lastUsedFolderGuids.length > PlacesUIUtils.maxRecentFolders) {
       lastUsedFolderGuids.pop();
     }
 
@@ -975,7 +976,7 @@ var PlacesMenuDNDHandler = {
     }
 
     PlacesControllerDragHelper.currentDropTarget = event.target;
-    let popup = event.target.lastChild;
+    let popup = event.target.menupopup;
     if (
       this._loadTimer ||
       popup.state === "showing" ||
@@ -1017,7 +1018,7 @@ var PlacesMenuDNDHandler = {
     }
 
     PlacesControllerDragHelper.currentDropTarget = null;
-    let popup = event.target.lastChild;
+    let popup = event.target.menupopup;
 
     if (this._loadTimer) {
       this._loadTimer.cancel();
@@ -1057,8 +1058,8 @@ var PlacesMenuDNDHandler = {
         node.getAttribute("type") == "menu");
     let isStatic =
       !("_placesNode" in node) &&
-      node.lastChild &&
-      node.lastChild.hasAttribute("placespopup") &&
+      node.menupopup &&
+      node.menupopup.hasAttribute("placespopup") &&
       !node.parentNode.hasAttribute("placespopup");
     return isMenu && isStatic;
   },

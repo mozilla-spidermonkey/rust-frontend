@@ -15,9 +15,9 @@
 #include "nsContentCreatorFunctions.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/dom/BindingDeclarations.h"
+#include "mozilla/dom/Element.h"
 #include "mozilla/dom/DOMRect.h"
 #include "mozilla/dom/ValidityState.h"
-#include "mozilla/dom/Element.h"
 
 class nsDOMTokenList;
 class nsIFormControlFrame;
@@ -35,6 +35,7 @@ class EventStates;
 class TextEditor;
 class PresState;
 namespace dom {
+class ElementInternals;
 class HTMLFormElement;
 class HTMLMenuElement;
 }  // namespace dom
@@ -225,6 +226,10 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
   inline bool IsAnyOfHTMLElements(First aFirst, Args... aArgs) const {
     return IsNodeInternal(aFirst, aArgs...);
   }
+
+  // https://html.spec.whatwg.org/multipage/custom-elements.html#dom-attachinternals
+  already_AddRefed<mozilla::dom::ElementInternals> AttachInternals(
+      ErrorResult& aRv);
 
  protected:
   virtual ~nsGenericHTMLElement() {}
@@ -482,15 +487,16 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
    */
   static void MapImageMarginAttributeInto(const nsMappedAttributes* aAttributes,
                                           mozilla::MappedDeclarations&);
+
+  // Whether to map the width and height attributes to aspect-ratio.
+  enum class MapAspectRatio { No, Yes };
+
   /**
    * Helper to map the image position attribute into a style struct.
-   *
-   * @param aAttributes the list of attributes to map
-   * @param aData the returned rule data [INOUT]
-   * @see GetAttributeMappingFunction
    */
-  static void MapImageSizeAttributesInto(const nsMappedAttributes* aAttributes,
-                                         mozilla::MappedDeclarations&);
+  static void MapImageSizeAttributesInto(const nsMappedAttributes*,
+                                         mozilla::MappedDeclarations&,
+                                         MapAspectRatio = MapAspectRatio::No);
 
   /**
    * Helper to map `width` attribute into a style struct.

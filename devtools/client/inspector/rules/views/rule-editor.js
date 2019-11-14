@@ -253,7 +253,7 @@ RuleEditor.prototype = {
         this._ruleViewIsEditing = this.ruleView.isEditing;
       });
 
-      code.addEventListener("click", () => {
+      code.addEventListener("click", event => {
         const selection = this.doc.defaultView.getSelection();
         if (selection.isCollapsed && !this._ruleViewIsEditing) {
           this.newProperty();
@@ -303,7 +303,7 @@ RuleEditor.prototype = {
       return;
     }
 
-    const target = this.ruleView.inspector.target;
+    const target = this.ruleView.inspector.currentTarget;
     if (Tools.styleEditor.isTargetSupported(target)) {
       gDevTools.showToolbox(target, "styleeditor").then(toolbox => {
         const { url, line, column } = this._currentLocation;

@@ -19,16 +19,6 @@ XPCOMUtils.defineLazyGlobalGetters(this, ["URL"]);
 
 ChromeUtils.defineModuleGetter(
   this,
-  "AutoCompletePopup",
-  "resource://gre/modules/AutoCompletePopup.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "DeferredTask",
-  "resource://gre/modules/DeferredTask.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
   "LoginHelper",
   "resource://gre/modules/LoginHelper.jsm"
 );
@@ -57,29 +47,89 @@ XPCOMUtils.defineLazyPreferenceGetter(
 
 const EXPORTED_SYMBOLS = ["LoginManagerParent"];
 
-this.LoginManagerParent = {
-  /**
-   * A map of a principal's origin (including suffixes) to a generated password string and filled flag
-   * so that we can offer the same password later (e.g. in a confirmation field).
-   *
-   * We don't currently evict from this cache so entries should last until the end of the browser
-   * session. That may change later but for now a typical session would max out at a few entries.
-   */
-  _generatedPasswordsByPrincipalOrigin: new Map(),
+/**
+ * A listener for notifications to tests.
+ */
+let gListenerForTests = null;
 
-  /**
-   * Reference to the default LoginRecipesParent (instead of the initialization promise) for
-   * synchronous access. This is a temporary hack and new consumers should yield on
-   * recipeParentPromise instead.
-   *
-   * @type LoginRecipesParent
-   * @deprecated
-   */
-  _recipeManager: null,
+/**
+ * A map of a principal's origin (including suffixes) to a generated password string and filled flag
+ * so that we can offer the same password later (e.g. in a confirmation field).
+ *
+ * We don't currently evict from this cache so entries should last until the end of the browser
+ * session. That may change later but for now a typical session would max out at a few entries.
+ */
+let gGeneratedPasswordsByPrincipalOrigin = new Map();
 
-  // Tracks the last time the user cancelled the master password prompt,
-  // to avoid spamming master password prompts on autocomplete searches.
-  _lastMPLoginCancelled: Math.NEGATIVE_INFINITY,
+/**
+ * Reference to the default LoginRecipesParent (instead of the initialization promise) for
+ * synchronous access. This is a temporary hack and new consumers should yield on
+ * recipeParentPromise instead.
+ *
+ * @type LoginRecipesParent
+ * @deprecated
+ */
+let gRecipeManager = null;
+
+/**
+ * Tracks the last time the user cancelled the master password prompt,
+ *  to avoid spamming master password prompts on autocomplete searches.
+ */
+let gLastMPLoginCancelled = Math.NEGATIVE_INFINITY;
+
+let gGeneratedPasswordObserver = {
+  addedObserver: false,
+
+  observe(subject, topic, data) {
+    if (
+      topic == "passwordmgr-autosaved-login-merged" ||
+      (topic == "passwordmgr-storage-changed" && data == "removeLogin")
+    ) {
+      let { origin, guid } = subject;
+      let generatedPW = gGeneratedPasswordsByPrincipalOrigin.get(origin);
+
+      // in the case where an autosaved login removed or merged into an existing login,
+      // clear the guid associated with the generated-password cache entry
+      if (
+        generatedPW &&
+        (guid == generatedPW.storageGUID ||
+          topic == "passwordmgr-autosaved-login-merged")
+      ) {
+        log(
+          "Removing storageGUID for generated-password cache entry on origin:",
+          origin
+        );
+        generatedPW.storageGUID = null;
+      }
+    }
+  },
+};
+
+Services.ppmm.addMessageListener("PasswordManager:findRecipes", message => {
+  let formHost = new URL(message.data.formOrigin).host;
+  return gRecipeManager.getRecipesForHost(formHost);
+});
+
+class LoginManagerParent extends JSWindowActorParent {
+  // This is used by tests to listen to form submission.
+  static setListenerForTests(listener) {
+    gListenerForTests = listener;
+  }
+
+  // Some unit tests need to access this.
+  static getGeneratedPasswordsByPrincipalOrigin() {
+    return gGeneratedPasswordsByPrincipalOrigin;
+  }
+
+  getRootBrowser() {
+    let browsingContext = null;
+    if (this._overrideBrowsingContextId) {
+      browsingContext = BrowsingContext.get(this._overrideBrowsingContextId);
+    } else {
+      browsingContext = this.browsingContext.top;
+    }
+    return browsingContext.embedderElement;
+  }
 
   /**
    * @param {origin} formOrigin
@@ -118,7 +168,7 @@ this.LoginManagerParent = {
       // to avoid spamming them with MP prompts for autocomplete.
       if (e.result == Cr.NS_ERROR_ABORT) {
         log("User cancelled master password prompt.");
-        this._lastMPLoginCancelled = Date.now();
+        gLastMPLoginCancelled = Date.now();
         return [];
       }
       throw e;
@@ -139,33 +189,27 @@ this.LoginManagerParent = {
       formOrigin,
       formActionOrigin
     );
-  },
+  }
 
-  // Listeners are added in BrowserGlue.jsm on desktop
-  // and in BrowserCLH.js on mobile.
   receiveMessage(msg) {
     let data = msg.data;
     switch (msg.name) {
       case "PasswordManager:findLogins": {
-        // TODO Verify msg.target's principals against the formOrigin?
-        this.sendLoginDataToChild(
+        // TODO Verify the target's principals against the formOrigin?
+        return this.sendLoginDataToChild(
           data.formOrigin,
           data.actionOrigin,
-          data.requestId,
-          msg.target.messageManager,
           data.options
         );
-        break;
-      }
-
-      case "PasswordManager:findRecipes": {
-        let formHost = new URL(data.formOrigin).host;
-        return this._recipeManager.getRecipesForHost(formHost);
       }
 
       case "PasswordManager:onFormSubmit": {
         // TODO Verify msg.target's principals against the formOrigin?
-        this.onFormSubmit(msg.target, data);
+        let browser = this.getRootBrowser();
+        this.onFormSubmit(browser, data);
+        if (gListenerForTests) {
+          gListenerForTests("FormSubmit", data);
+        }
         break;
       }
 
@@ -174,37 +218,49 @@ this.LoginManagerParent = {
         break;
       }
 
-      case "PasswordManager:insecureLoginFormPresent": {
-        this.setHasInsecureLoginForms(msg.target, data.hasInsecureLoginForms);
-        break;
-      }
-
       case "PasswordManager:autoCompleteLogins": {
-        this.doAutocompleteSearch(data, msg.target);
-        break;
+        return this.doAutocompleteSearch(data);
       }
 
       case "PasswordManager:removeLogin": {
         let login = LoginHelper.vanillaObjectToLogin(data.login);
-        AutoCompletePopup.removeLogin(login);
+        Services.logins.removeLogin(login);
         break;
       }
 
       case "PasswordManager:OpenPreferences": {
-        LoginHelper.openPasswordManager(msg.target.ownerGlobal, {
+        let window = this.getRootBrowser().ownerGlobal;
+        LoginHelper.openPasswordManager(window, {
           filterString: msg.data.hostname,
           entryPoint: msg.data.entryPoint,
         });
         break;
       }
+
+      // Used by tests to detect that a form-fill has occurred. This redirects
+      // to the top-level browsing context.
+      case "PasswordManager:formProcessed": {
+        let topActor = this.browsingContext.top.currentWindowGlobal.getActor(
+          "LoginManager"
+        );
+        topActor.sendAsyncMessage("PasswordManager:formProcessed", {
+          formid: data.formid,
+        });
+        if (gListenerForTests) {
+          gListenerForTests("FormProcessed", {
+            browsingContext: this.browsingContext,
+          });
+        }
+        break;
+      }
     }
 
     return undefined;
-  },
+  }
 
   /**
    * Trigger a login form fill and send relevant data (e.g. logins and recipes)
-   * to the child process (LoginManagerContent).
+   * to the child process (LoginManagerChild).
    */
   async fillForm({ browser, loginFormOrigin, login, inputElementIdentifier }) {
     let recipes = [];
@@ -212,7 +268,7 @@ this.LoginManagerParent = {
       let formHost;
       try {
         formHost = new URL(loginFormOrigin).host;
-        let recipeManager = await this.recipeParentPromise;
+        let recipeManager = await LoginManagerParent.recipeParentPromise;
         recipes = recipeManager.getRecipesForHost(formHost);
       } catch (ex) {
         // Some schemes e.g. chrome aren't supported by URL
@@ -223,22 +279,25 @@ this.LoginManagerParent = {
     // doesn't support structured cloning.
     let jsLogins = [LoginHelper.loginToVanillaObject(login)];
 
-    browser.messageManager.sendAsyncMessage("PasswordManager:fillForm", {
+    let browserURI = browser.currentURI.spec;
+    let originMatches =
+      LoginHelper.getLoginOrigin(browserURI) == loginFormOrigin;
+
+    this.sendAsyncMessage("PasswordManager:fillForm", {
       inputElementIdentifier,
       loginFormOrigin,
+      originMatches,
       logins: jsLogins,
       recipes,
     });
-  },
+  }
 
   /**
-   * Send relevant data (e.g. logins and recipes) to the child process (LoginManagerContent).
+   * Send relevant data (e.g. logins and recipes) to the child process (LoginManagerChild).
    */
   async sendLoginDataToChild(
     formOrigin,
     actionOrigin,
-    requestId,
-    target,
     { guid, showMasterPassword }
   ) {
     let recipes = [];
@@ -246,7 +305,7 @@ this.LoginManagerParent = {
       let formHost;
       try {
         formHost = new URL(formOrigin).host;
-        let recipeManager = await this.recipeParentPromise;
+        let recipeManager = await LoginManagerParent.recipeParentPromise;
         recipes = recipeManager.getRecipesForHost(formHost);
       } catch (ex) {
         // Some schemes e.g. chrome aren't supported by URL
@@ -254,22 +313,19 @@ this.LoginManagerParent = {
     }
 
     if (!showMasterPassword && !Services.logins.isLoggedIn) {
-      try {
-        target.sendAsyncMessage("PasswordManager:loginsFound", {
-          requestId,
-          logins: [],
-          recipes,
-        });
-      } catch (e) {
-        log("error sending message to target", e);
-      }
-      return;
+      return { logins: [], recipes };
     }
 
     // If we're currently displaying a master password prompt, defer
     // processing this form until the user handles the prompt.
     if (Services.logins.uiBusy) {
       log("deferring sendLoginDataToChild for", formOrigin);
+
+      let uiBusyPromiseResolve;
+      let uiBusyPromise = new Promise(resolve => {
+        uiBusyPromiseResolve = resolve;
+      });
+
       let self = this;
       let observer = {
         QueryInterface: ChromeUtils.generateQI([
@@ -283,23 +339,14 @@ this.LoginManagerParent = {
           Services.obs.removeObserver(this, "passwordmgr-crypto-login");
           Services.obs.removeObserver(this, "passwordmgr-crypto-loginCanceled");
           if (topic == "passwordmgr-crypto-loginCanceled") {
-            target.sendAsyncMessage("PasswordManager:loginsFound", {
-              requestId,
-              logins: [],
-              recipes,
-            });
+            uiBusyPromiseResolve({ logins: [], recipes });
             return;
           }
 
-          self.sendLoginDataToChild(
-            formOrigin,
-            actionOrigin,
-            requestId,
-            target,
-            {
-              showMasterPassword,
-            }
-          );
+          let result = self.sendLoginDataToChild(formOrigin, actionOrigin, {
+            showMasterPassword,
+          });
+          uiBusyPromiseResolve(result);
         },
       };
 
@@ -310,7 +357,8 @@ this.LoginManagerParent = {
       // See bug XXX.
       Services.obs.addObserver(observer, "passwordmgr-crypto-login");
       Services.obs.addObserver(observer, "passwordmgr-crypto-loginCanceled");
-      return;
+
+      return uiBusyPromise;
     }
 
     // Autocomplete results do not need to match actionOrigin or exact origin.
@@ -323,7 +371,7 @@ this.LoginManagerParent = {
       logins = this._searchAndDedupeLogins(formOrigin, {
         formActionOrigin: actionOrigin,
         ignoreActionAndRealm: true,
-        acceptDifferentSubdomains: INCLUDE_OTHER_SUBDOMAINS_IN_LOOKUP, // TODO: for TAB case
+        acceptDifferentSubdomains: INCLUDE_OTHER_SUBDOMAINS_IN_LOOKUP,
       });
     }
 
@@ -331,50 +379,43 @@ this.LoginManagerParent = {
     // Convert the array of nsILoginInfo to vanilla JS objects since nsILoginInfo
     // doesn't support structured cloning.
     let jsLogins = LoginHelper.loginsToVanillaObjects(logins);
-    target.sendAsyncMessage("PasswordManager:loginsFound", {
-      requestId,
-      logins: jsLogins,
-      recipes,
-    });
-  },
+    return { logins: jsLogins, recipes };
+  }
 
-  doAutocompleteSearch(
-    {
-      autocompleteInfo,
-      browsingContextId,
-      formOrigin,
-      actionOrigin,
-      searchString,
-      previousResult,
-      requestId,
-      isSecure,
-      isPasswordField,
-    },
-    target
-  ) {
+  doAutocompleteSearch({
+    autocompleteInfo,
+    formOrigin,
+    actionOrigin,
+    searchString,
+    previousResult,
+    isSecure,
+    isPasswordField,
+  }) {
     // Note: previousResult is a regular object, not an
     // nsIAutoCompleteResult.
 
-    // Cancel if we unsuccessfully prompted for the master password too recently.
+    // Cancel if the master password prompt is already showing or we unsuccessfully prompted for it too recently.
     if (!Services.logins.isLoggedIn) {
-      let timeDiff = Date.now() - this._lastMPLoginCancelled;
-      if (timeDiff < this._repromptTimeout) {
+      if (Services.logins.uiBusy) {
+        log(
+          "Not searching logins for autocomplete since the master password prompt is already showing"
+        );
+        // Return an empty array to make LoginManagerChild clear the
+        // outstanding request it has temporarily saved.
+        return { logins: [] };
+      }
+
+      let timeDiff = Date.now() - gLastMPLoginCancelled;
+      if (timeDiff < LoginManagerParent._repromptTimeout) {
         log(
           "Not searching logins for autocomplete since the master password " +
             `prompt was last cancelled ${Math.round(
               timeDiff / 1000
             )} seconds ago.`
         );
-        // Send an empty array to make LoginManagerContent clear the
+        // Return an empty array to make LoginManagerChild clear the
         // outstanding request it has temporarily saved.
-        target.messageManager.sendAsyncMessage(
-          "PasswordManager:loginsAutoCompleted",
-          {
-            requestId,
-            logins: [],
-          }
-        );
-        return;
+        return { logins: [] };
       }
     }
 
@@ -412,37 +453,45 @@ this.LoginManagerParent = {
       return match && match.toLowerCase().startsWith(searchStringLower);
     });
 
+    let browser = this.getRootBrowser();
+
     let generatedPassword = null;
     if (
       isPasswordField &&
       autocompleteInfo.fieldName == "new-password" &&
       Services.logins.getLoginSavingEnabled(formOrigin) &&
-      !PrivateBrowsingUtils.isWindowPrivate(target.ownerGlobal)
+      (!browser || !PrivateBrowsingUtils.isWindowPrivate(browser.ownerGlobal))
     ) {
-      generatedPassword = this.getGeneratedPassword(browsingContextId);
+      generatedPassword = this.getGeneratedPassword();
     }
 
     // Convert the array of nsILoginInfo to vanilla JS objects since nsILoginInfo
     // doesn't support structured cloning.
     let jsLogins = LoginHelper.loginsToVanillaObjects(matchingLogins);
-    target.messageManager.sendAsyncMessage(
-      "PasswordManager:loginsAutoCompleted",
-      {
-        requestId,
-        generatedPassword,
-        logins: jsLogins,
-      }
-    );
-  },
+    return { generatedPassword, logins: jsLogins };
+  }
 
   /**
    * Expose `BrowsingContext` so we can stub it in tests.
    */
-  get _browsingContextGlobal() {
+  static get _browsingContextGlobal() {
     return BrowsingContext;
-  },
+  }
 
-  getGeneratedPassword(browsingContextId) {
+  // Set an override context within a test.
+  useBrowsingContext(browsingContextId = 0) {
+    this._overrideBrowsingContextId = browsingContextId;
+  }
+
+  getBrowsingContextToUse() {
+    if (this._overrideBrowsingContextId) {
+      return BrowsingContext.get(this._overrideBrowsingContextId);
+    }
+
+    return this.browsingContext;
+  }
+
+  getGeneratedPassword() {
     if (
       !LoginHelper.enabled ||
       !LoginHelper.generationAvailable ||
@@ -451,7 +500,7 @@ this.LoginManagerParent = {
       return null;
     }
 
-    let browsingContext = BrowsingContext.get(browsingContextId);
+    let browsingContext = this.getBrowsingContextToUse();
     if (!browsingContext) {
       return null;
     }
@@ -459,7 +508,7 @@ this.LoginManagerParent = {
       browsingContext.currentWindowGlobal.documentPrincipal.origin;
     // Use the same password if we already generated one for this origin so that it doesn't change
     // with each search/keystroke and the user can easily re-enter a password in a confirmation field.
-    let generatedPW = this._generatedPasswordsByPrincipalOrigin.get(
+    let generatedPW = gGeneratedPasswordsByPrincipalOrigin.get(
       framePrincipalOrigin
     );
     if (generatedPW) {
@@ -478,33 +527,38 @@ this.LoginManagerParent = {
       storageGUID: null,
       value: PasswordGenerator.generatePassword(),
     };
-    this._generatedPasswordsByPrincipalOrigin.set(
-      framePrincipalOrigin,
-      generatedPW
-    );
-    return generatedPW.value;
-  },
 
-  _getPrompter(browser, openerTopWindowID) {
+    // Add these observers when a password is assigned.
+    if (!gGeneratedPasswordObserver.addedObserver) {
+      Services.obs.addObserver(
+        gGeneratedPasswordObserver,
+        "passwordmgr-autosaved-login-merged"
+      );
+      Services.obs.addObserver(
+        gGeneratedPasswordObserver,
+        "passwordmgr-storage-changed"
+      );
+      gGeneratedPasswordObserver.addedObserver = true;
+    }
+
+    gGeneratedPasswordsByPrincipalOrigin.set(framePrincipalOrigin, generatedPW);
+    return generatedPW.value;
+  }
+
+  _getPrompter(browser) {
     let prompterSvc = Cc[
       "@mozilla.org/login-manager/prompter;1"
     ].createInstance(Ci.nsILoginManagerPrompter);
     prompterSvc.init(browser.ownerGlobal);
     prompterSvc.browser = browser;
 
-    for (let win of Services.wm.getEnumerator(null)) {
-      let tabbrowser = win.gBrowser;
-      if (tabbrowser) {
-        let browser = tabbrowser.getBrowserForOuterWindowID(openerTopWindowID);
-        if (browser) {
-          prompterSvc.openerBrowser = browser;
-          break;
-        }
-      }
+    let opener = this.browsingContext.opener;
+    if (opener) {
+      prompterSvc.openerBrowser = opener.top.embedderElement;
     }
 
     return prompterSvc;
-  },
+  }
 
   onFormSubmit(
     browser,
@@ -515,7 +569,6 @@ this.LoginManagerParent = {
       usernameField,
       newPasswordField,
       oldPasswordField,
-      openerTopWindowID,
       dismissedPrompt,
     }
   ) {
@@ -531,6 +584,11 @@ this.LoginManagerParent = {
       propBag.setProperty("timeLastUsed", Date.now());
       propBag.setProperty("timesUsedIncrement", 1);
       Services.logins.modifyLogin(login, propBag);
+    }
+
+    // If password storage is disabled, bail out.
+    if (!LoginHelper.storageEnabled) {
+      return;
     }
 
     if (!Services.logins.getLoginSavingEnabled(origin)) {
@@ -570,18 +628,17 @@ this.LoginManagerParent = {
       formActionOrigin,
     });
 
+    let generatedPW = gGeneratedPasswordsByPrincipalOrigin.get(origin);
+    let autoSavedStorageGUID = "";
+    if (generatedPW && generatedPW.storageGUID) {
+      autoSavedStorageGUID = generatedPW.storageGUID;
+    }
+
     // If we didn't find a username field, but seem to be changing a
     // password, allow the user to select from a list of applicable
     // logins to update the password for.
-    if (!usernameField && oldPasswordField && logins.length > 0) {
-      let prompter = this._getPrompter(browser, openerTopWindowID);
-
-      let { browsingContext } = browser;
-      let framePrincipalOrigin =
-        browsingContext.currentWindowGlobal.documentPrincipal.origin;
-      let generatedPW = this._generatedPasswordsByPrincipalOrigin.get(
-        framePrincipalOrigin
-      );
+    if (!usernameField && oldPasswordField && logins.length) {
+      let prompter = this._getPrompter(browser);
 
       if (logins.length == 1) {
         let oldLogin = logins[0];
@@ -598,7 +655,13 @@ this.LoginManagerParent = {
         formLogin.username = oldLogin.username;
         formLogin.usernameField = oldLogin.usernameField;
 
-        prompter.promptToChangePassword(oldLogin, formLogin, dismissedPrompt);
+        prompter.promptToChangePassword(
+          oldLogin,
+          formLogin,
+          dismissedPrompt,
+          false, // notifySaved
+          autoSavedStorageGUID
+        );
         return;
       } else if (!generatedPW || generatedPW.value != newPasswordField.value) {
         // Note: It's possible that that we already have the correct u+p saved
@@ -652,19 +715,23 @@ this.LoginManagerParent = {
       // Change password if needed.
       if (existingLogin.password != formLogin.password) {
         log("...passwords differ, prompting to change.");
-        let prompter = this._getPrompter(browser, openerTopWindowID);
+        let prompter = this._getPrompter(browser);
         prompter.promptToChangePassword(
           existingLogin,
           formLogin,
-          dismissedPrompt
+          dismissedPrompt,
+          false, // notifySaved
+          autoSavedStorageGUID
         );
       } else if (!existingLogin.username && formLogin.username) {
         log("...empty username update, prompting to change.");
-        let prompter = this._getPrompter(browser, openerTopWindowID);
+        let prompter = this._getPrompter(browser);
         prompter.promptToChangePassword(
           existingLogin,
           formLogin,
-          dismissedPrompt
+          dismissedPrompt,
+          false, // notifySaved
+          autoSavedStorageGUID
         );
       } else {
         recordLoginUse(existingLogin);
@@ -674,25 +741,31 @@ this.LoginManagerParent = {
     }
 
     // Prompt user to save login (via dialog or notification bar)
-    let prompter = this._getPrompter(browser, openerTopWindowID);
+    let prompter = this._getPrompter(browser);
     prompter.promptToSavePassword(formLogin, dismissedPrompt);
-  },
+  }
 
   _onGeneratedPasswordFilledOrEdited({
-    browsingContextId,
     formActionOrigin,
-    openerTopWindowID,
     password,
     username = "",
   }) {
     log("_onGeneratedPasswordFilledOrEdited");
+
+    if (gListenerForTests) {
+      gListenerForTests("PasswordFilledOrEdited", {});
+    }
 
     if (!password) {
       log("_onGeneratedPasswordFilledOrEdited: The password field is empty");
       return;
     }
 
-    let browsingContext = BrowsingContext.get(browsingContextId);
+    let browsingContext = this.getBrowsingContextToUse();
+    if (!browsingContext) {
+      return;
+    }
+
     let {
       originNoSuffix,
     } = browsingContext.currentWindowGlobal.documentPrincipal;
@@ -718,12 +791,13 @@ this.LoginManagerParent = {
 
     let framePrincipalOrigin =
       browsingContext.currentWindowGlobal.documentPrincipal.origin;
-    let generatedPW = this._generatedPasswordsByPrincipalOrigin.get(
+    let generatedPW = gGeneratedPasswordsByPrincipalOrigin.get(
       framePrincipalOrigin
     );
 
-    let autoSaveLogin = true;
+    let shouldAutoSaveLogin = true;
     let loginToChange = null;
+    let autoSavedLogin = null;
 
     if (password != generatedPW.value) {
       // The user edited the field after generation to a non-empty value.
@@ -748,7 +822,11 @@ this.LoginManagerParent = {
         });
 
         if (existingLogins.length) {
+          log(
+            "_onGeneratedPasswordFilledOrEdited: login to change is the auto-saved login"
+          );
           loginToChange = existingLogins[0];
+          autoSavedLogin = loginToChange;
         }
         // The generated password login may have been deleted in the meantime.
         // Proceed to maybe save a new login below.
@@ -804,7 +882,7 @@ this.LoginManagerParent = {
         formLoginWithoutUsername.matches(login, true)
       );
       if (matchedLogin) {
-        autoSaveLogin = false;
+        shouldAutoSaveLogin = false;
         if (matchedLogin.password == formLoginWithoutUsername.password) {
           // This login is already saved so show no new UI.
           log(
@@ -825,10 +903,10 @@ this.LoginManagerParent = {
       }
     }
 
-    if (autoSaveLogin) {
-      if (loginToChange) {
+    if (shouldAutoSaveLogin) {
+      if (loginToChange && loginToChange == autoSavedLogin) {
         log(
-          "_onGeneratedPasswordFilledOrEdited: auto-updating login with generated password"
+          "_onGeneratedPasswordFilledOrEdited: updating auto-saved login with changed password"
         );
 
         Services.logins.modifyLogin(
@@ -854,98 +932,54 @@ this.LoginManagerParent = {
         "_onGeneratedPasswordFilledOrEdited: not auto-saving/updating this login"
       );
     }
-    let browser = browsingContext.top.embedderElement;
-    let prompter = this._getPrompter(browser, openerTopWindowID);
+    let browser = this.getRootBrowser();
+    let prompter = this._getPrompter(browser);
 
     if (loginToChange) {
       // Show a change doorhanger to allow modifying an already-saved login
       // e.g. to add a username or update the password.
+      let autoSavedStorageGUID = "";
+      if (
+        generatedPW.value == loginToChange.password &&
+        generatedPW.storageGUID == loginToChange.guid
+      ) {
+        autoSavedStorageGUID = generatedPW.storageGUID;
+      }
+
+      log(
+        "_onGeneratedPasswordFilledOrEdited: promptToChangePassword with autoSavedStorageGUID: " +
+          autoSavedStorageGUID
+      );
       prompter.promptToChangePassword(
         loginToChange,
         formLogin,
-        true, // dimissed prompt
-        autoSaveLogin // notifySaved
+        true, // dismissed prompt
+        shouldAutoSaveLogin, // notifySaved
+        autoSavedStorageGUID // autoSavedLoginGuid
       );
       return;
     }
     log("_onGeneratedPasswordFilledOrEdited: no matching login to save/update");
     prompter.promptToSavePassword(
       formLogin,
-      true, // dimissed prompt
-      autoSaveLogin // notifySaved
+      true, // dismissed prompt
+      shouldAutoSaveLogin // notifySaved
     );
-  },
-
-  /**
-   * Maps all the <browser> elements for tabs in the parent process to the
-   * current state used to display tab-specific UI.
-   *
-   * This mapping is not updated in case a web page is moved to a different
-   * chrome window by the swapDocShells method. In this case, it is possible
-   * that a UI update just requested for the login fill doorhanger and then
-   * delayed by a few hundred milliseconds will be lost. Later requests would
-   * use the new browser reference instead.
-   *
-   * Given that the case above is rare, and it would not cause any origin
-   * mismatch at the time of filling because the origin is checked later in the
-   * content process, this case is left unhandled.
-   */
-  loginFormStateByBrowser: new WeakMap(),
-
-  /**
-   * Retrieves a reference to the state object associated with the given
-   * browser. This is initialized to an empty object.
-   */
-  stateForBrowser(browser) {
-    let loginFormState = this.loginFormStateByBrowser.get(browser);
-    if (!loginFormState) {
-      loginFormState = {};
-      this.loginFormStateByBrowser.set(browser, loginFormState);
-    }
-    return loginFormState;
-  },
-
-  /**
-   * Returns true if the page currently loaded in the given browser element has
-   * insecure login forms. This state may be updated asynchronously, in which
-   * case a custom event named InsecureLoginFormsStateChange will be dispatched
-   * on the browser element.
-   */
-  hasInsecureLoginForms(browser) {
-    return !!this.stateForBrowser(browser).hasInsecureLoginForms;
-  },
-
-  /**
-   * Called to indicate whether an insecure password field is present so
-   * insecure password UI can know when to show.
-   */
-  setHasInsecureLoginForms(browser, hasInsecureLoginForms) {
-    let state = this.stateForBrowser(browser);
-
-    // Update the data to use to the latest known values. Since messages are
-    // processed in order, this will always be the latest version to use.
-    state.hasInsecureLoginForms = hasInsecureLoginForms;
-
-    // Report the insecure login form state immediately.
-    browser.dispatchEvent(
-      new browser.ownerGlobal.CustomEvent("InsecureLoginFormsStateChange")
-    );
-  },
-};
-
-XPCOMUtils.defineLazyGetter(
-  LoginManagerParent,
-  "recipeParentPromise",
-  function() {
-    const { LoginRecipesParent } = ChromeUtils.import(
-      "resource://gre/modules/LoginRecipes.jsm"
-    );
-    this._recipeManager = new LoginRecipesParent({
-      defaults: Services.prefs.getStringPref("signon.recipes.path"),
-    });
-    return this._recipeManager.initializationPromise;
   }
-);
+
+  static get recipeParentPromise() {
+    if (!gRecipeManager) {
+      const { LoginRecipesParent } = ChromeUtils.import(
+        "resource://gre/modules/LoginRecipes.jsm"
+      );
+      gRecipeManager = new LoginRecipesParent({
+        defaults: Services.prefs.getStringPref("signon.recipes.path"),
+      });
+    }
+
+    return gRecipeManager.initializationPromise;
+  }
+}
 
 XPCOMUtils.defineLazyPreferenceGetter(
   LoginManagerParent,

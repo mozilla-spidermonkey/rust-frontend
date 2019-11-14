@@ -471,17 +471,17 @@ impl NoCalcLength {
             // viewport percentages
             "vw" if !context.in_page_rule() => {
                 NoCalcLength::ViewportPercentage(ViewportPercentageLength::Vw(value))
-            }
+            },
             "vh" if !context.in_page_rule() => {
                 NoCalcLength::ViewportPercentage(ViewportPercentageLength::Vh(value))
-            }
+            },
             "vmin" if !context.in_page_rule() => {
                 NoCalcLength::ViewportPercentage(ViewportPercentageLength::Vmin(value))
-            }
+            },
             "vmax" if !context.in_page_rule() => {
                 NoCalcLength::ViewportPercentage(ViewportPercentageLength::Vmax(value))
-            }
-            _ => return Err(())
+            },
+            _ => return Err(()),
         })
     }
 
@@ -704,14 +704,14 @@ impl Parse for NonNegativeLength {
 impl From<NoCalcLength> for NonNegativeLength {
     #[inline]
     fn from(len: NoCalcLength) -> Self {
-        NonNegative::<Length>(Length::NoCalc(len))
+        NonNegative(Length::NoCalc(len))
     }
 }
 
 impl From<Length> for NonNegativeLength {
     #[inline]
     fn from(len: Length) -> Self {
-        NonNegative::<Length>(len)
+        NonNegative(len)
     }
 }
 

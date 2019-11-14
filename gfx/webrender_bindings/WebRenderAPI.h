@@ -264,16 +264,30 @@ class WebRenderAPI final {
   layers::SyncHandle GetSyncHandle() const { return mSyncHandle; }
 
   void Capture();
+  void SetTransactionLogging(bool aValue);
 
   void SetCompositionRecorder(
       UniquePtr<layers::WebRenderCompositionRecorder> aRecorder);
+
+  typedef MozPromise<bool, nsresult, true> WriteCollectedFramesPromise;
+  typedef MozPromise<layers::CollectedFrames, nsresult, true>
+      GetCollectedFramesPromise;
 
   /**
    * Write the frames collected by the |WebRenderCompositionRecorder| to disk.
    *
    * If there is not currently a recorder, this is a no-op.
    */
-  void WriteCollectedFrames();
+  RefPtr<WriteCollectedFramesPromise> WriteCollectedFrames();
+
+  /**
+   * Return the frames collected by the |WebRenderCompositionRecorder| encoded
+   * as data URIs.
+   *
+   * If there is not currently a recorder, this is a no-op and the promise will
+   * be rejected.
+   */
+  RefPtr<GetCollectedFramesPromise> GetCollectedFrames();
 
  protected:
   WebRenderAPI(wr::DocumentHandle* aHandle, wr::WindowId aId,
@@ -336,15 +350,17 @@ class MOZ_RAII AutoTransactionSender {
  */
 struct MOZ_STACK_CLASS StackingContextParams : public WrStackingContextParams {
   StackingContextParams()
-      : WrStackingContextParams{WrStackingContextClip::None(),
-                                nullptr,
-                                nullptr,
-                                wr::TransformStyle::Flat,
-                                wr::WrReferenceFrameKind::Transform,
-                                nullptr,
-                                /* is_backface_visible = */ true,
-                                /* cache_tiles = */ false,
-                                wr::MixBlendMode::Normal} {}
+      : WrStackingContextParams{
+            WrStackingContextClip::None(),
+            nullptr,
+            nullptr,
+            wr::TransformStyle::Flat,
+            wr::WrReferenceFrameKind::Transform,
+            nullptr,
+            /* prim_flags = */ wr::PrimitiveFlags_IS_BACKFACE_VISIBLE,
+            /* cache_tiles = */ false,
+            wr::MixBlendMode::Normal,
+            /* is_backdrop_root = */ false} {}
 
   void SetPreserve3D(bool aPreserve) {
     transform_style =
@@ -449,6 +465,12 @@ class DisplayListBuilder final {
   void PushClearRectWithComplexRegion(const wr::LayoutRect& aBounds,
                                       const wr::ComplexClipRegion& aRegion);
 
+  void PushBackdropFilter(const wr::LayoutRect& aBounds,
+                          const wr::ComplexClipRegion& aRegion,
+                          const nsTArray<wr::FilterOp>& aFilters,
+                          const nsTArray<wr::WrFilterData>& aFilterDatas,
+                          bool aIsBackfaceVisible);
+
   void PushLinearGradient(const wr::LayoutRect& aBounds,
                           const wr::LayoutRect& aClip, bool aIsBackfaceVisible,
                           const wr::LayoutPoint& aStartPoint,
@@ -472,11 +494,12 @@ class DisplayListBuilder final {
                  wr::ImageKey aImage, bool aPremultipliedAlpha = true,
                  const wr::ColorF& aColor = wr::ColorF{1.0f, 1.0f, 1.0f, 1.0f});
 
-  void PushImage(const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
-                 bool aIsBackfaceVisible, const wr::LayoutSize& aStretchSize,
-                 const wr::LayoutSize& aTileSpacing, wr::ImageRendering aFilter,
-                 wr::ImageKey aImage, bool aPremultipliedAlpha = true,
-                 const wr::ColorF& aColor = wr::ColorF{1.0f, 1.0f, 1.0f, 1.0f});
+  void PushRepeatingImage(
+      const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
+      bool aIsBackfaceVisible, const wr::LayoutSize& aStretchSize,
+      const wr::LayoutSize& aTileSpacing, wr::ImageRendering aFilter,
+      wr::ImageKey aImage, bool aPremultipliedAlpha = true,
+      const wr::ColorF& aColor = wr::ColorF{1.0f, 1.0f, 1.0f, 1.0f});
 
   void PushYCbCrPlanarImage(
       const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,

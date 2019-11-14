@@ -25,8 +25,7 @@ const STATE_CANCELED = 3;
 // NOTE: Copied from nsSandboxFlags.h
 /**
  * This flag prevents content from creating new auxiliary browsing contexts,
- * e.g. using the target attribute, the window.open() method, or the
- * showModalDialog() method.
+ * e.g. using the target attribute, or the window.open() method.
  */
 const SANDBOXED_AUXILIARY_NAVIGATION = 0x2;
 
@@ -50,7 +49,9 @@ const backgroundPageThumbsContent = {
       Ci.nsIRequest.INHIBIT_CACHING |
       Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_HISTORY;
     docShell.defaultLoadFlags = defaultFlags;
-    docShell.sandboxFlags |= SANDBOXED_AUXILIARY_NAVIGATION;
+    BrowsingContext.getFromWindow(
+      content
+    ).sandboxFlags |= SANDBOXED_AUXILIARY_NAVIGATION;
     docShell.useTrackingProtection = true;
 
     addMessageListener(

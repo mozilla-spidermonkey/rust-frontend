@@ -6,7 +6,7 @@
         style="background:black; -moz-appearance:none;">
   <script src="chrome://mochikit/content/tests/SimpleTest/WindowSnapshot.js"></script>
 
-  <stack style="height:300px; width:200px;">
+  <stack style="align-items: center; height: 300px; width: 200px;">
     <!-- the bottom 100px is a strip of black that should be vixible through the content iframe -->
     <vbox style="background:pink; border-bottom:100px solid black"/>
     <!-- the middle 100px is a strip of black in the content iframe -->
@@ -22,9 +22,9 @@
     <![CDATA[
     var imports = [ "SimpleTest", "is", "isnot", "ok", "SpecialPowers" ];
     for (var name of imports) {
-      window[name] = window.opener.wrappedJSObject[name];
+      window[name] = window.arguments[0][name];
     }
-    
+
     function runTests() {
       var testCanvas = snapshotWindow(window);
 

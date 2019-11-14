@@ -7,7 +7,7 @@
 include('../templates.mozbuild')
 
 DIRS += [
-    'aboutdebugging-new',
+    'aboutdebugging',
     'accessibility',
     'application',
     'debugger',
@@ -21,14 +21,12 @@ DIRS += [
     'performance',
     'performance-new',
     'preferences',
-    'responsive.html',
-    'scratchpad',
+    'responsive',
     'shared',
     'storage',
     'styleeditor',
     'themes',
     'webconsole',
-    'webide',
     'webreplay',
 ]
 
@@ -38,6 +36,11 @@ DevToolsModules(
     'definitions.js',
     'menus.js',
 )
+
+if not CONFIG['MOZILLA_OFFICIAL']:
+    DevToolsModules(
+        'devtools-fission-prefs.js',
+    )
 
 with Files('**'):
     BUG_COMPONENT = ('DevTools', 'General')

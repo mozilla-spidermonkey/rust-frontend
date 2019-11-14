@@ -341,9 +341,10 @@ void nsTableColGroupFrame::Reflow(nsPresContext* aPresContext,
                                LogicalSize(kidFrame->GetWritingMode()));
 
     nsReflowStatus status;
-    ReflowChild(kidFrame, aPresContext, kidSize, kidReflowInput, 0, 0, 0,
-                status);
-    FinishReflowChild(kidFrame, aPresContext, kidSize, nullptr, 0, 0, 0);
+    ReflowChild(kidFrame, aPresContext, kidSize, kidReflowInput, 0, 0,
+                ReflowChildFlags::Default, status);
+    FinishReflowChild(kidFrame, aPresContext, kidSize, &kidReflowInput, 0, 0,
+                      ReflowChildFlags::Default);
   }
 
   aDesiredSize.ClearSize();
@@ -383,7 +384,7 @@ nsTableColFrame* nsTableColGroupFrame::GetNextColumn(nsIFrame* aChildFrame) {
   return result;
 }
 
-int32_t nsTableColGroupFrame::GetSpan() { return StyleTable()->mSpan; }
+int32_t nsTableColGroupFrame::GetSpan() { return StyleTable()->mXSpan; }
 
 void nsTableColGroupFrame::SetContinuousBCBorderWidth(LogicalSide aForSide,
                                                       BCPixelSize aPixelValue) {

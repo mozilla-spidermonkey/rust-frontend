@@ -10,8 +10,10 @@ import re
 import sys
 import subprocess
 import traceback
+from textwrap import dedent
 
 from mozpack import path as mozpath
+from mozbuild.util import system_encoding
 
 
 MOZ_MYCONFIG_ERROR = '''
@@ -53,6 +55,20 @@ class MozconfigLoadException(Exception):
     def __init__(self, path, message, output=None):
         self.path = path
         self.output = output
+
+        message = dedent("""
+        Error loading mozconfig: {path}
+
+        {message}
+        """).format(path=self.path, message=message).lstrip()
+
+        if self.output:
+            message += dedent("""
+            mozconfig output:
+
+            {output}
+            """).format(output="\n".join(self.output))
+
         Exception.__init__(self, message)
 
 
@@ -356,8 +372,7 @@ class MozconfigLoader(object):
             # XXX This is an ugly hack. Data may be lost from things
             # like environment variable values.
             # See https://bugzilla.mozilla.org/show_bug.cgi?id=831381
-            line = line.decode('mbcs' if sys.platform == 'win32' else 'utf-8',
-                               'ignore')
+            line = line.decode(system_encoding, 'ignore')
 
             if not line:
                 continue

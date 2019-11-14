@@ -1,5 +1,3 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 /* eslint-disable no-undef */
@@ -11,24 +9,30 @@ add_task(async function() {
   const dbg = await attachRecordingDebugger("doc_rr_basic.html", {
     waitForRecording: true,
   });
-  const { threadFront } = dbg;
 
-  await threadFront.interrupt();
-  const bp = await setBreakpoint(threadFront, "doc_rr_basic.html", 22);
-  await rewindToLine(threadFront, 22);
-  await stepInToLine(threadFront, 25);
-  await stepOverToLine(threadFront, 26);
-  await stepOverToLine(threadFront, 27);
-  await reverseStepOverToLine(threadFront, 26);
-  await stepInToLine(threadFront, 30);
-  await stepOverToLine(threadFront, 31);
-  await stepOverToLine(threadFront, 32);
-  await stepOverToLine(threadFront, 33);
-  await reverseStepOverToLine(threadFront, 32);
-  await stepOutToLine(threadFront, 27);
-  await reverseStepOverToLine(threadFront, 26);
-  await reverseStepOverToLine(threadFront, 25);
+  await addBreakpoint(dbg, "doc_rr_basic.html", 22);
+  await rewindToLine(dbg, 22);
+  await stepInToLine(dbg, 25);
+  await stepOverToLine(dbg, 26);
+  await stepOverToLine(dbg, 27);
+  await reverseStepOverToLine(dbg, 26);
+  await stepInToLine(dbg, 30);
+  await stepOverToLine(dbg, 31);
+  await stepOverToLine(dbg, 32);
 
-  await threadFront.removeBreakpoint(bp);
+  // Check that the scopes pane shows the value of the local variable.
+  for (let i = 1; ; i++) {
+    if (getScopeLabel(dbg, i) == "c") {
+      is("NaN", getScopeValue(dbg, i));
+      break;
+    }
+  }
+
+  await stepOverToLine(dbg, 33);
+  await reverseStepOverToLine(dbg, 32);
+  await stepOutToLine(dbg, 27);
+  await reverseStepOverToLine(dbg, 26);
+  await reverseStepOverToLine(dbg, 25);
+
   await shutdownDebugger(dbg);
 });

@@ -196,7 +196,7 @@ extern const char XPC_XPCONNECT_CONTRACTID[];
 
 // If IS_WN_CLASS for the JSClass of an object is true, the object is a
 // wrappednative wrapper, holding the XPCWrappedNative in its private slot.
-static inline bool IS_WN_CLASS(const js::Class* clazz) {
+static inline bool IS_WN_CLASS(const JSClass* clazz) {
   return clazz->isWrappedNative();
 }
 
@@ -313,7 +313,7 @@ class XPCJSContext final : public mozilla::CycleCollectedJSContext,
                            public mozilla::LinkedListElement<XPCJSContext> {
  public:
   static void InitTLS();
-  static XPCJSContext* NewXPCJSContext(XPCJSContext* aPrimaryContext);
+  static XPCJSContext* NewXPCJSContext();
   static XPCJSContext* Get();
 
   XPCJSRuntime* Runtime() const;
@@ -425,7 +425,7 @@ class XPCJSContext final : public mozilla::CycleCollectedJSContext,
   XPCJSContext();
 
   MOZ_IS_CLASS_INIT
-  nsresult Initialize(XPCJSContext* aPrimaryContext);
+  nsresult Initialize();
 
   XPCCallContext* mCallContext;
   AutoMarkingPtr* mAutoRoots;
@@ -507,10 +507,10 @@ class XPCJSRuntime final : public mozilla::CycleCollectedJSRuntime {
 
   bool InitializeStrings(JSContext* cx);
 
-  virtual bool DescribeCustomObjects(JSObject* aObject, const js::Class* aClasp,
+  virtual bool DescribeCustomObjects(JSObject* aObject, const JSClass* aClasp,
                                      char (&aName)[72]) const override;
   virtual bool NoteCustomGCThingXPCOMChildren(
-      const js::Class* aClasp, JSObject* aObj,
+      const JSClass* aClasp, JSObject* aObj,
       nsCycleCollectionTraversalCallback& aCb) const override;
 
   /**
@@ -793,12 +793,12 @@ class MOZ_STACK_CLASS XPCCallContext final {
 // These are the various JSClasses and callbacks whose use that required
 // visibility from more than one .cpp file.
 
-extern const js::Class XPC_WN_NoHelper_JSClass;
-extern const js::Class XPC_WN_Proto_JSClass;
-extern const js::Class XPC_WN_Tearoff_JSClass;
+extern const JSClass XPC_WN_NoHelper_JSClass;
+extern const JSClass XPC_WN_Proto_JSClass;
+extern const JSClass XPC_WN_Tearoff_JSClass;
 #define XPC_WN_TEAROFF_RESERVED_SLOTS 1
 #define XPC_WN_TEAROFF_FLAT_OBJECT_SLOT 0
-extern const js::Class XPC_WN_NoHelper_Proto_JSClass;
+extern const JSClass XPC_WN_NoHelper_Proto_JSClass;
 
 extern bool XPC_WN_CallMethod(JSContext* cx, unsigned argc, JS::Value* vp);
 
@@ -1084,7 +1084,7 @@ class XPCNativeInterface final {
       : mInfo(aInfo), mName(aName), mMemberCount(0) {}
   ~XPCNativeInterface();
 
-  void* operator new(size_t, void* p) CPP_THROW_NEW { return p; }
+  void* operator new(size_t, void* p) noexcept(true) { return p; }
 
   XPCNativeInterface(const XPCNativeInterface& r) = delete;
   XPCNativeInterface& operator=(const XPCNativeInterface& r) = delete;
@@ -1205,7 +1205,7 @@ class XPCNativeSet final {
 
   XPCNativeSet() : mMemberCount(0), mInterfaceCount(0) {}
   ~XPCNativeSet();
-  void* operator new(size_t, void* p) CPP_THROW_NEW { return p; }
+  void* operator new(size_t, void* p) noexcept(true) { return p; }
 
   static void DestroyInstance(XPCNativeSet* inst);
 
@@ -1244,7 +1244,7 @@ class XPCWrappedNativeProto final {
 
   nsIXPCScriptable* GetScriptable() const { return mScriptable; }
 
-  void JSProtoObjectFinalized(js::FreeOp* fop, JSObject* obj);
+  void JSProtoObjectFinalized(JSFreeOp* fop, JSObject* obj);
   void JSProtoObjectMoved(JSObject* obj, const JSObject* old);
 
   void SystemIsBeingShutDown();
@@ -1553,7 +1553,7 @@ class XPCWrappedNative final : public nsIXPConnectWrappedNative {
  private:
   enum {
     // Flags bits for mFlatJSObject:
-    FLAT_JS_OBJECT_VALID = JS_BIT(0)
+    FLAT_JS_OBJECT_VALID = js::Bit(0)
   };
 
   bool Init(JSContext* cx, nsIXPCScriptable* scriptable);

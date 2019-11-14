@@ -129,17 +129,16 @@ class HttpChannelParent final : public nsIInterfaceRequestor,
 
   base::ProcessId OtherPid() const;
 
-  // Calling this method will cancel the HttpChannelChild because the consumer
-  // needs to be relocated to another process.
-  // Any OnStart/Stop/DataAvailable calls that follow will not be sent to the
-  // child channel.
-  void CancelChildCrossProcessRedirect();
+  // Called by nsHttpChannel when a process switch is about to start.
+  // aChannel: nsIHttpChannel caller.
+  // aIdentifier: identifier from SessionStore to be passed to the childChannel
+  //              in order to identify it.
+  nsresult TriggerCrossProcessSwitch(nsIHttpChannel* aChannel,
+                                     uint64_t aIdentifier);
 
-  already_AddRefed<ParentChannelListener> GetParentListener();
-
-  nsresult TriggerCrossProcessRedirect(nsIChannel* oldChannel,
-                                       nsILoadInfo* aLoadInfo,
-                                       uint64_t aIdentifier);
+  // Inform the child actor that our referrer info was modified late during
+  // BeginConnect.
+  void OverrideReferrerInfoDuringBeginConnect(nsIReferrerInfo* aReferrerInfo);
 
  protected:
   // used to connect redirected-to channel in parent with just created
@@ -151,24 +150,26 @@ class HttpChannelParent final : public nsIInterfaceRequestor,
       const URIParams& uri, const Maybe<URIParams>& originalUri,
       const Maybe<URIParams>& docUri, nsIReferrerInfo* aReferrerInfo,
       const Maybe<URIParams>& internalRedirectUri,
-      const Maybe<URIParams>& topWindowUri, const uint32_t& loadFlags,
-      const RequestHeaderTuples& requestHeaders, const nsCString& requestMethod,
-      const Maybe<IPCStream>& uploadStream, const bool& uploadStreamHasHeaders,
-      const int16_t& priority, const uint32_t& classOfService,
-      const uint8_t& redirectionLimit, const bool& allowSTS,
-      const uint32_t& thirdPartyFlags, const bool& doResumeAt,
-      const uint64_t& startPos, const nsCString& entityID,
-      const bool& chooseApplicationCache, const nsCString& appCacheClientID,
-      const bool& allowSpdy, const bool& allowAltSvc,
-      const bool& beConservative, const uint32_t& tlsFlags,
-      const Maybe<LoadInfoArgs>& aLoadInfoArgs,
+      const Maybe<URIParams>& topWindowUri,
+      nsIPrincipal* aContentBlockingAllowListPrincipal,
+      const uint32_t& loadFlags, const RequestHeaderTuples& requestHeaders,
+      const nsCString& requestMethod, const Maybe<IPCStream>& uploadStream,
+      const bool& uploadStreamHasHeaders, const int16_t& priority,
+      const uint32_t& classOfService, const uint8_t& redirectionLimit,
+      const bool& allowSTS, const uint32_t& thirdPartyFlags,
+      const bool& doResumeAt, const uint64_t& startPos,
+      const nsCString& entityID, const bool& chooseApplicationCache,
+      const nsCString& appCacheClientID, const bool& allowSpdy,
+      const bool& allowAltSvc, const bool& beConservative,
+      const uint32_t& tlsFlags, const Maybe<LoadInfoArgs>& aLoadInfoArgs,
       const Maybe<nsHttpResponseHead>& aSynthesizedResponseHead,
       const nsCString& aSecurityInfoSerialization, const uint32_t& aCacheKey,
       const uint64_t& aRequestContextID,
       const Maybe<CorsPreflightArgs>& aCorsPreflightArgs,
       const uint32_t& aInitialRwin, const bool& aBlockAuthPrompt,
       const bool& aSuspendAfterSynthesizeResponse,
-      const bool& aAllowStaleCacheContent, const nsCString& aContentTypeHint,
+      const bool& aAllowStaleCacheContent,
+      const bool& aPreferCacheLoadOverBypass, const nsCString& aContentTypeHint,
       const uint32_t& aCorsMode, const uint32_t& aRedirectMode,
       const uint64_t& aChannelId, const nsString& aIntegrityMetadata,
       const uint64_t& aContentWindowId,
@@ -183,7 +184,7 @@ class HttpChannelParent final : public nsIInterfaceRequestor,
       const TimeStamp& aHandleFetchEventEnd,
       const bool& aForceMainDocumentChannel,
       const TimeStamp& aNavigationStartTimeStamp,
-      const bool& hasSandboxedAuxiliaryNavigations);
+      const bool& hasNonEmptySandboxingFlag);
 
   virtual mozilla::ipc::IPCResult RecvSetPriority(
       const int16_t& priority) override;
@@ -196,7 +197,8 @@ class HttpChannelParent final : public nsIInterfaceRequestor,
   virtual mozilla::ipc::IPCResult RecvCancel(const nsresult& status) override;
   virtual mozilla::ipc::IPCResult RecvRedirect2Verify(
       const nsresult& result, const RequestHeaderTuples& changedHeaders,
-      const ChildLoadInfoForwarderArgs& aLoadInfoForwarder,
+      const uint32_t& aSourceRequestBlockingReason,
+      const ChildLoadInfoForwarderArgs& aTargetLoadInfoForwarder,
       const uint32_t& loadFlags, nsIReferrerInfo* aReferrerInfo,
       const Maybe<URIParams>& apiRedirectUri,
       const Maybe<CorsPreflightArgs>& aCorsPreflightArgs,
@@ -210,9 +212,6 @@ class HttpChannelParent final : public nsIInterfaceRequestor,
   virtual mozilla::ipc::IPCResult RecvDivertOnStopRequest(
       const nsresult& statusCode) override;
   virtual mozilla::ipc::IPCResult RecvDivertComplete() override;
-  virtual mozilla::ipc::IPCResult RecvCrossProcessRedirectDone(
-      const nsresult& aResult,
-      const mozilla::Maybe<LoadInfoArgs>& aLoadInfoArgs) override;
   virtual mozilla::ipc::IPCResult RecvRemoveCorsPreflightCacheEntry(
       const URIParams& uri,
       const mozilla::ipc::PrincipalInfo& requestingPrincipal) override;
@@ -255,6 +254,11 @@ class HttpChannelParent final : public nsIInterfaceRequestor,
   void DivertComplete();
   void MaybeFlushPendingDiversion();
   void ResponseSynthesized();
+
+  void CrossProcessRedirectDone(
+      const nsresult& aResult,
+      const mozilla::Maybe<LoadInfoArgs>& aLoadInfoArgs);
+  void FinishCrossProcessSwitch(nsHttpChannel* aChannel, nsresult aStatus);
 
   // final step for Redirect2Verify procedure, will be invoked while both
   // redirecting and redirected channel are ready or any error happened.

@@ -12,6 +12,8 @@
 #include "jit/JitRealm.h"
 #include "jit/MacroAssembler.h"
 #include "jit/MoveEmitter.h"
+#include "util/Memory.h"
+#include "vm/JitActivation.h"  // js::jit::JitActivation
 
 #include "jit/MacroAssembler-inl.h"
 
@@ -1052,6 +1054,18 @@ void MacroAssembler::atomicFetchOp64(const Synchronization& sync, AtomicOp op,
                                      Register64 value, const Address& mem,
                                      Register64 temp, Register64 output) {
   AtomicFetchOp64(*this, nullptr, op, value.reg, mem, temp.reg, output.reg);
+}
+
+CodeOffset MacroAssembler::moveNearAddressWithPatch(Register dest) {
+  return leaRipRelative(dest);
+}
+
+void MacroAssembler::patchNearAddressMove(CodeLocationLabel loc,
+                                          CodeLocationLabel target) {
+  ptrdiff_t off = target - loc;
+  MOZ_ASSERT(off > ptrdiff_t(INT32_MIN));
+  MOZ_ASSERT(off < ptrdiff_t(INT32_MAX));
+  PatchWrite_Imm32(loc, Imm32(off));
 }
 
 //}}} check_macroassembler_style

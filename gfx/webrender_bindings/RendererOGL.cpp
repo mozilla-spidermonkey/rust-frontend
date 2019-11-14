@@ -12,6 +12,7 @@
 #include "mozilla/layers/CompositorBridgeParent.h"
 #include "mozilla/layers/CompositorThread.h"
 #include "mozilla/layers/LayersTypes.h"
+#include "mozilla/layers/ProfilerScreenshots.h"
 #include "mozilla/webrender/RenderCompositor.h"
 #include "mozilla/webrender/RenderTextureHost.h"
 #include "mozilla/widget/CompositorWidget.h"
@@ -19,8 +20,25 @@
 namespace mozilla {
 namespace wr {
 
+class MOZ_STACK_CLASS AutoWrRenderResult {
+ public:
+  explicit AutoWrRenderResult(WrRenderResult&& aResult) : mResult(aResult) {}
+
+  ~AutoWrRenderResult() { wr_render_result_delete(mResult); }
+
+  bool Result() const { return mResult.result; }
+
+  FfiVec<DeviceIntRect> DirtyRects() const { return mResult.dirty_rects; }
+
+ private:
+  const WrRenderResult mResult;
+
+  AutoWrRenderResult(const AutoWrRenderResult&) = delete;
+  AutoWrRenderResult& operator=(const AutoWrRenderResult&) = delete;
+};
+
 wr::WrExternalImage wr_renderer_lock_external_image(
-    void* aObj, wr::WrExternalImageId aId, uint8_t aChannelIndex,
+    void* aObj, wr::ExternalImageId aId, uint8_t aChannelIndex,
     wr::ImageRendering aRendering) {
   RendererOGL* renderer = reinterpret_cast<RendererOGL*>(aObj);
   RenderTextureHost* texture = renderer->GetRenderTexture(aId);
@@ -33,7 +51,7 @@ wr::WrExternalImage wr_renderer_lock_external_image(
   return texture->Lock(aChannelIndex, renderer->gl(), aRendering);
 }
 
-void wr_renderer_unlock_external_image(void* aObj, wr::WrExternalImageId aId,
+void wr_renderer_unlock_external_image(void* aObj, wr::ExternalImageId aId,
                                        uint8_t aChannelIndex) {
   RendererOGL* renderer = reinterpret_cast<RendererOGL*>(aObj);
   RenderTextureHost* texture = renderer->GetRenderTexture(aId);
@@ -78,6 +96,7 @@ wr::WrExternalImageHandler RendererOGL::GetExternalImageHandler() {
 }
 
 void RendererOGL::Update() {
+  mCompositor->Update();
   if (mCompositor->MakeCurrent()) {
     wr_renderer_update(mRenderer);
   }
@@ -88,11 +107,11 @@ static void DoNotifyWebRenderContextPurge(
   aBridge->NotifyWebRenderContextPurge();
 }
 
-bool RendererOGL::UpdateAndRender(const Maybe<gfx::IntSize>& aReadbackSize,
-                                  const Maybe<wr::ImageFormat>& aReadbackFormat,
-                                  const Maybe<Range<uint8_t>>& aReadbackBuffer,
-                                  bool aHadSlowFrame,
-                                  RendererStats* aOutStats) {
+RenderedFrameId RendererOGL::UpdateAndRender(
+    const Maybe<gfx::IntSize>& aReadbackSize,
+    const Maybe<wr::ImageFormat>& aReadbackFormat,
+    const Maybe<Range<uint8_t>>& aReadbackBuffer, bool aHadSlowFrame,
+    RendererStats* aOutStats) {
   mozilla::widget::WidgetRenderingContext widgetContext;
 
 #if defined(XP_MACOSX)
@@ -105,7 +124,8 @@ bool RendererOGL::UpdateAndRender(const Maybe<gfx::IntSize>& aReadbackSize,
   if (!mCompositor->GetWidget()->PreRender(&widgetContext)) {
     // XXX This could cause oom in webrender since pending_texture_updates is
     // not handled. It needs to be addressed.
-    return false;
+    return RenderedFrameId();
+    ;
   }
   // XXX set clear color if MOZ_WIDGET_ANDROID is defined.
 
@@ -113,17 +133,30 @@ bool RendererOGL::UpdateAndRender(const Maybe<gfx::IntSize>& aReadbackSize,
     if (mCompositor->IsContextLost()) {
       RenderThread::Get()->HandleDeviceReset("BeginFrame", /* aNotify */ true);
     }
-    return false;
+    mCompositor->GetWidget()->PostRender(&widgetContext);
+    return RenderedFrameId();
   }
 
   wr_renderer_update(mRenderer);
 
+  bool fullRender = mCompositor->RequestFullRender();
+  // When we're rendering to an external target, we want to render everything.
+  if (mCompositor->UsePartialPresent() &&
+      (aReadbackBuffer.isSome() || layers::ProfilerScreenshots::IsEnabled())) {
+    fullRender = true;
+  }
+  if (fullRender) {
+    wr_renderer_force_redraw(mRenderer);
+  }
+
   auto size = mCompositor->GetBufferSize();
 
-  if (!wr_renderer_render(mRenderer, size.width, size.height, aHadSlowFrame,
-                          aOutStats)) {
+  AutoWrRenderResult result(wr_renderer_render(
+      mRenderer, size.width, size.height, aHadSlowFrame, aOutStats));
+  if (!result.Result()) {
     RenderThread::Get()->HandleWebRenderError(WebRenderError::RENDER);
-    return false;
+    mCompositor->GetWidget()->PostRender(&widgetContext);
+    return RenderedFrameId();
   }
 
   if (aReadbackBuffer.isSome()) {
@@ -137,7 +170,7 @@ bool RendererOGL::UpdateAndRender(const Maybe<gfx::IntSize>& aReadbackSize,
 
   mScreenshotGrabber.MaybeGrabScreenshot(mRenderer, size.ToUnknownSize());
 
-  mCompositor->EndFrame();
+  RenderedFrameId frameId = mCompositor->EndFrame(result.DirtyRects());
 
   mCompositor->GetWidget()->PostRender(&widgetContext);
 
@@ -156,7 +189,7 @@ bool RendererOGL::UpdateAndRender(const Maybe<gfx::IntSize>& aReadbackSize,
   // TODO: Flush pending actions such as texture deletions/unlocks and
   //       textureHosts recycling.
 
-  return true;
+  return frameId;
 }
 
 void RendererOGL::CheckGraphicsResetStatus() {
@@ -181,6 +214,10 @@ void RendererOGL::WaitForGPU() {
       RenderThread::Get()->HandleDeviceReset("WaitForGPU", /* aNotify */ true);
     }
   }
+}
+
+RenderedFrameId RendererOGL::GetLastCompletedFrameId() {
+  return mCompositor->GetLastCompletedFrameId();
 }
 
 void RendererOGL::Pause() { mCompositor->Pause(); }
@@ -208,7 +245,7 @@ RefPtr<WebRenderPipelineInfo> RendererOGL::FlushPipelineInfo() {
 }
 
 RenderTextureHost* RendererOGL::GetRenderTexture(
-    wr::WrExternalImageId aExternalImageId) {
+    wr::ExternalImageId aExternalImageId) {
   return mThread->GetRenderTexture(aExternalImageId);
 }
 

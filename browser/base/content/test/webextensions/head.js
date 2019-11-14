@@ -27,6 +27,10 @@ ChromeUtils.import(
 );
 let gCUITestUtils = new CustomizableUITestUtils(window);
 
+const { PermissionTestUtils } = ChromeUtils.import(
+  "resource://testing-common/PermissionTestUtils.jsm"
+);
+
 /**
  * Wait for the given PopupNotification to display
  *
@@ -171,6 +175,16 @@ async function waitForUpdate(addon) {
   return newAddon;
 }
 
+/**
+ * Trigger an action from the page options menu.
+ */
+function triggerPageOptionsAction(win, action) {
+  win
+    .getHtmlBrowser()
+    .contentDocument.querySelector(`#page-options [action="${action}"]`)
+    .click();
+}
+
 function isDefaultIcon(icon) {
   // These are basically the same icon, but code within webextensions
   // generates references to the former and generic add-ons manager code
@@ -251,7 +265,7 @@ function checkNotification(panel, checkIcon, permissions) {
     permissions.length,
     `Permissions list has ${permissions.length} entries`
   );
-  if (permissions.length == 0) {
+  if (!permissions.length) {
     is(header.getAttribute("hidden"), "true", "Permissions header is hidden");
     is(
       learnMoreLink.getAttribute("hidden"),
@@ -309,8 +323,8 @@ async function testInstallMethod(installFn, telemetryBase) {
   }
 
   let testURI = makeURI("https://example.com/");
-  Services.perms.add(testURI, "install", Services.perms.ALLOW_ACTION);
-  registerCleanupFunction(() => Services.perms.remove(testURI, "install"));
+  PermissionTestUtils.add(testURI, "install", Services.perms.ALLOW_ACTION);
+  registerCleanupFunction(() => PermissionTestUtils.remove(testURI, "install"));
 
   async function runOnce(filename, cancel) {
     let tab = await BrowserTestUtils.openNewForegroundTab(gBrowser);
@@ -470,12 +484,20 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
     if (manualUpdatePromise) {
       await manualUpdatePromise;
 
-      const availableUpdates = win.document.getElementById(
-        "updates-manualUpdatesFound-btn"
-      );
-      availableUpdates.click();
       let doc = win.getHtmlBrowser().contentDocument;
-      let card = await BrowserTestUtils.waitForCondition(() => {
+      if (win.gViewController.currentViewId !== "addons://updates/available") {
+        let showUpdatesBtn = doc.querySelector("addon-updates-message").button;
+        await TestUtils.waitForCondition(() => {
+          return !showUpdatesBtn.hidden;
+        }, "Wait for show updates button");
+        let viewChanged = BrowserTestUtils.waitForEvent(
+          win.document,
+          "ViewChanged"
+        );
+        showUpdatesBtn.click();
+        await viewChanged;
+      }
+      let card = await TestUtils.waitForCondition(() => {
         return doc.querySelector(`addon-card[addon-id="${ID}"]`);
       }, `Wait addon card for "${ID}"`);
       let updateBtn = card.querySelector('panel-item[action="install-update"]');
@@ -499,6 +521,8 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
   is(addon.version, "1.0", "Version 1 of the addon is installed");
 
   let win = await BrowserOpenAddonsMgr("addons://list/extension");
+
+  await BrowserTestUtils.waitForEvent(win.document, "ViewChanged");
 
   // Trigger an update check
   let popupPromise = promisePopupNotificationShown("addon-webext-permissions");

@@ -4,13 +4,27 @@
 
 "use strict";
 
-var EXPORTED_SYMBOLS = ["PictureInPicture"];
+var EXPORTED_SYMBOLS = [
+  "PictureInPicture",
+  "PictureInPictureParent",
+  "PictureInPictureToggleParent",
+];
 
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { AppConstants } = ChromeUtils.import(
+  "resource://gre/modules/AppConstants.jsm"
+);
 
 const PLAYER_URI = "chrome://global/content/pictureinpicture/player.xhtml";
-const PLAYER_FEATURES = `chrome,titlebar=no,alwaysontop,lockaspectratio,resizable`;
+var PLAYER_FEATURES =
+  "chrome,titlebar=yes,alwaysontop,lockaspectratio,resizable";
+/* Don't use dialog on Gtk as it adds extra border and titlebar to PIP window */
+if (!AppConstants.MOZ_WIDGET_GTK) {
+  PLAYER_FEATURES += ",dialog";
+}
 const WINDOW_TYPE = "Toolkit:PictureInPicture";
+const TOGGLE_ENABLED_PREF =
+  "media.videocontrols.picture-in-picture.video-toggle.enabled";
 
 /**
  * If closing the Picture-in-Picture player window occurred for a reason that
@@ -26,20 +40,34 @@ let gCloseReasons = new WeakMap();
  */
 let gNextWindowID = 0;
 
+class PictureInPictureToggleParent extends JSWindowActorParent {
+  receiveMessage(aMessage) {
+    let browsingContext = aMessage.target.browsingContext;
+    let browser = browsingContext.top.embedderElement;
+    switch (aMessage.name) {
+      case "PictureInPicture:OpenToggleContextMenu": {
+        let win = browser.ownerGlobal;
+        PictureInPicture.openToggleContextMenu(win, aMessage.data);
+        break;
+      }
+    }
+  }
+}
+
 /**
  * This module is responsible for creating a Picture in Picture window to host
  * a clone of a video element running in web content.
  */
 
-var PictureInPicture = {
-  // Listeners are added in nsBrowserGlue.js lazily
+class PictureInPictureParent extends JSWindowActorParent {
   receiveMessage(aMessage) {
-    let browser = aMessage.target;
+    let browsingContext = aMessage.target.browsingContext;
+    let browser = browsingContext.top.embedderElement;
 
     switch (aMessage.name) {
       case "PictureInPicture:Request": {
         let videoData = aMessage.data;
-        this.handlePictureInPictureRequest(browser, videoData);
+        PictureInPicture.handlePictureInPictureRequest(browser, videoData);
         break;
       }
       case "PictureInPicture:Close": {
@@ -47,24 +75,81 @@ var PictureInPicture = {
          * Content has requested that its Picture in Picture window go away.
          */
         let reason = aMessage.data.reason;
-        this.closePipWindow({ reason });
+        PictureInPicture.closePipWindow({ reason });
         break;
       }
       case "PictureInPicture:Playing": {
-        let player = this.weakPipPlayer && this.weakPipPlayer.get();
+        let player = PictureInPicture.getWeakPipPlayer();
         if (player) {
           player.setIsPlayingState(true);
         }
         break;
       }
       case "PictureInPicture:Paused": {
-        let player = this.weakPipPlayer && this.weakPipPlayer.get();
+        let player = PictureInPicture.getWeakPipPlayer();
         if (player) {
           player.setIsPlayingState(false);
         }
         break;
       }
+      case "PictureInPicture:Muting": {
+        let player = PictureInPicture.getWeakPipPlayer();
+        if (player) {
+          player.setIsMutedState(true);
+        }
+        break;
+      }
+      case "PictureInPicture:Unmuting": {
+        let player = PictureInPicture.getWeakPipPlayer();
+        if (player) {
+          player.setIsMutedState(false);
+        }
+        break;
+      }
     }
+  }
+}
+
+/**
+ * This module is responsible for creating a Picture in Picture window to host
+ * a clone of a video element running in web content.
+ */
+
+var PictureInPicture = {
+  /**
+   * Returns the player window if one exists and if it hasn't yet been closed.
+   *
+   * @return {DOM Window} the player window if it exists and is not in the
+   * process of being closed. Returns null otherwise.
+   */
+  getWeakPipPlayer() {
+    let weakRef = this._weakPipPlayer;
+    if (weakRef) {
+      let playerWin;
+
+      // Bug 800957 - Accessing weakrefs at the wrong time can cause us to
+      // throw NS_ERROR_XPC_BAD_CONVERT_NATIVE
+      try {
+        playerWin = weakRef.get();
+      } catch (e) {
+        return null;
+      }
+
+      if (!playerWin.closed) {
+        return playerWin;
+      }
+    }
+    return null;
+  },
+
+  /**
+   * Called when the browser UI handles the View:PictureInPicture command via
+   * the keyboard.
+   */
+  onCommand(event) {
+    let win = event.target.ownerGlobal;
+    let browser = win.gBrowser.selectedBrowser;
+    browser.messageManager.sendAsyncMessage("PictureInPicture:KeyToggle");
   },
 
   async focusTabAndClosePip() {
@@ -131,8 +216,9 @@ var PictureInPicture = {
     let parentWin = browser.ownerGlobal;
     this.browser = browser;
     let win = await this.openPipWindow(parentWin, videoData);
-    this.weakPipPlayer = Cu.getWeakReference(win);
+    this._weakPipPlayer = Cu.getWeakReference(win);
     win.setIsPlayingState(videoData.playing);
+    win.setIsMutedState(videoData.isMuted);
 
     // set attribute which shows pip icon in tab
     let tab = parentWin.gBrowser.getTabForBrowser(browser);
@@ -160,7 +246,7 @@ var PictureInPicture = {
     );
 
     this.clearPipTabIcon();
-    delete this.weakPipPlayer;
+    delete this._weakPipPlayer;
     delete this.browser;
   },
 
@@ -296,5 +382,38 @@ var PictureInPicture = {
         { once: true }
       );
     });
+  },
+
+  openToggleContextMenu(window, data) {
+    let document = window.document;
+    let popup = document.getElementById("pictureInPictureToggleContextMenu");
+
+    // We synthesize a new MouseEvent to propagate the inputSource to the
+    // subsequently triggered popupshowing event.
+    let newEvent = document.createEvent("MouseEvent");
+    newEvent.initNSMouseEvent(
+      "contextmenu",
+      true,
+      true,
+      null,
+      0,
+      data.screenX,
+      data.screenY,
+      0,
+      0,
+      false,
+      false,
+      false,
+      false,
+      0,
+      null,
+      0,
+      data.mozInputSource
+    );
+    popup.openPopupAtScreen(newEvent.screenX, newEvent.screenY, true, newEvent);
+  },
+
+  hideToggle() {
+    Services.prefs.setBoolPref(TOGGLE_ENABLED_PREF, false);
   },
 };

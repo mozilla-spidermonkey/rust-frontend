@@ -43,6 +43,18 @@ using namespace mozilla;
 static const char kPrefDefaultEnabledState[] = "plugin.default.state";
 static const char kPrefDefaultEnabledStateXpi[] = "plugin.defaultXpi.state";
 
+// The defaults here will be read from prefs and overwritten
+#if defined(MOZ_SANDBOX)
+#  if defined(XP_WIN) || defined(XP_MACOSX)
+static int32_t sFlashSandboxLevel = 3;
+static int32_t sDefaultSandboxLevel = 0;
+#  endif
+#  if defined(XP_MACOSX)
+static bool sEnableSandboxLogging = false;
+#  endif
+#endif /* MOZ_SANDBOX */
+static bool sInitializedSandboxingInfo = false;
+
 // check comma delimited extensions
 static bool ExtensionInList(const nsCString& aExtensionList,
                             const nsACString& aExtension) {
@@ -184,7 +196,7 @@ bool nsIInternalPluginTag::HasMimeType(const nsACString& aMimeType) const {
 /* nsPluginTag */
 
 nsPluginTag::nsPluginTag(nsPluginInfo* aPluginInfo, int64_t aLastModifiedTime,
-                         bool fromExtension, uint32_t aBlocklistState)
+                         uint32_t aBlocklistState)
     : nsIInternalPluginTag(aPluginInfo->fName, aPluginInfo->fDescription,
                            aPluginInfo->fFileName, aPluginInfo->fVersion),
       mId(sNextId++),
@@ -197,7 +209,6 @@ nsPluginTag::nsPluginTag(nsPluginInfo* aPluginInfo, int64_t aLastModifiedTime,
       mLastModifiedTime(aLastModifiedTime),
       mSandboxLevel(0),
       mIsSandboxLoggingEnabled(false),
-      mIsFromExtension(fromExtension),
       mBlocklistState(aBlocklistState) {
   InitMime(aPluginInfo->fMimeTypeArray, aPluginInfo->fMimeDescriptionArray,
            aPluginInfo->fExtensionArray, aPluginInfo->fVariantCount);
@@ -211,8 +222,8 @@ nsPluginTag::nsPluginTag(const char* aName, const char* aDescription,
                          const char* aVersion, const char* const* aMimeTypes,
                          const char* const* aMimeDescriptions,
                          const char* const* aExtensions, int32_t aVariants,
-                         int64_t aLastModifiedTime, bool fromExtension,
-                         uint32_t aBlocklistState, bool aArgsAreUTF8)
+                         int64_t aLastModifiedTime, uint32_t aBlocklistState,
+                         bool aArgsAreUTF8)
     : nsIInternalPluginTag(aName, aDescription, aFileName, aVersion),
       mId(sNextId++),
       mContentProcessRunningCount(0),
@@ -224,7 +235,6 @@ nsPluginTag::nsPluginTag(const char* aName, const char* aDescription,
       mLastModifiedTime(aLastModifiedTime),
       mSandboxLevel(0),
       mIsSandboxLoggingEnabled(false),
-      mIsFromExtension(fromExtension),
       mBlocklistState(aBlocklistState) {
   InitMime(aMimeTypes, aMimeDescriptions, aExtensions,
            static_cast<uint32_t>(aVariants));
@@ -240,8 +250,7 @@ nsPluginTag::nsPluginTag(uint32_t aId, const char* aName,
                          nsTArray<nsCString> aMimeDescriptions,
                          nsTArray<nsCString> aExtensions, bool aIsFlashPlugin,
                          bool aSupportsAsyncRender, int64_t aLastModifiedTime,
-                         bool aFromExtension, int32_t aSandboxLevel,
-                         uint32_t aBlocklistState)
+                         int32_t aSandboxLevel, uint32_t aBlocklistState)
     : nsIInternalPluginTag(aName, aDescription, aFileName, aVersion, aMimeTypes,
                            aMimeDescriptions, aExtensions),
       mId(aId),
@@ -254,7 +263,6 @@ nsPluginTag::nsPluginTag(uint32_t aId, const char* aName,
       mSandboxLevel(aSandboxLevel),
       mIsSandboxLoggingEnabled(false),
       mNiceFileName(),
-      mIsFromExtension(aFromExtension),
       mBlocklistState(aBlocklistState) {}
 
 nsPluginTag::~nsPluginTag() {
@@ -281,10 +289,6 @@ void nsPluginTag::InitMime(const char* const* aMimeTypes,
     // Convert the MIME type, which is case insensitive, to lowercase in order
     // to properly handle a mixed-case type.
     ToLowerCase(mimeType);
-
-    if (!nsPluginHost::IsTypeWhitelisted(mimeType.get())) {
-      continue;
-    }
 
     // Look for certain special plugins.
     switch (nsPluginHost::GetSpecialType(mimeType)) {
@@ -344,68 +348,16 @@ void nsPluginTag::InitMime(const char* const* aMimeTypes,
 }
 
 void nsPluginTag::InitSandboxLevel() {
-#if defined(XP_WIN) && defined(MOZ_SANDBOX)
-  nsAutoCString sandboxPref("dom.ipc.plugins.sandbox-level.");
-  sandboxPref.Append(GetNiceFileName());
-  if (NS_FAILED(Preferences::GetInt(sandboxPref.get(), &mSandboxLevel))) {
-    mSandboxLevel =
-        Preferences::GetInt("dom.ipc.plugins.sandbox-level.default");
-  }
-
-#  if defined(_AMD64_)
-  // Level 3 is now the default NPAPI sandbox level for 64-bit flash.
-  // We permit the user to drop the sandbox level by at most 1.  This should
-  // be kept up to date with the default value in the firefox.js pref file.
-  if (mIsFlashPlugin && mSandboxLevel < 2) {
-    mSandboxLevel = 2;
-  }
-#  endif /* defined(_AMD64_) */
-
-#elif defined(XP_MACOSX) && defined(MOZ_SANDBOX)
-  if (mIsFlashPlugin) {
-    // For older OS versions, use a different Flash sandbox level.
-    // The following pref indicates which OS versions this applies to.
-    int legacyOSMinorMax = Preferences::GetInt(
-        "dom.ipc.plugins.sandbox-level.flash.max-legacy-os-minor", 10);
-
-    const char* levelPref = "dom.ipc.plugins.sandbox-level.flash";
-
-    if (PR_GetEnv("MOZ_DISABLE_NPAPI_SANDBOX")) {
-      // Flash sandbox disabled
-      mSandboxLevel = 0;
-    } else if (nsCocoaFeatures::OSXVersionMajor() == 10 &&
-               nsCocoaFeatures::OSXVersionMinor() <= legacyOSMinorMax) {
-      // We're on an older OS version. Use the minimum of both
-      // prefs so that setting the standard level pref to 0 is sufficient
-      // to disable the sandbox regardless of OS version.
-      const char* legacyLevelPref =
-          "dom.ipc.plugins.sandbox-level.flash.legacy";
-      int32_t compatLevel = Preferences::GetInt(legacyLevelPref, 0);
-      int32_t level = Preferences::GetInt(levelPref, 0);
-      mSandboxLevel = std::min(compatLevel, level);
-    } else {
-      // Use standard level
-      mSandboxLevel = Preferences::GetInt(levelPref, 0);
-    }
-
-    mSandboxLevel = ClampFlashSandboxLevel(mSandboxLevel);
-    if (mSandboxLevel > 0) {
-      // Enable sandbox logging in the plugin process if it has
-      // been turned on via prefs or environment variables.
-      if (Preferences::GetBool("security.sandbox.logging.enabled") ||
-          PR_GetEnv("MOZ_SANDBOX_LOGGING") ||
-          PR_GetEnv("MOZ_SANDBOX_MAC_FLASH_LOGGING")) {
-        mIsSandboxLoggingEnabled = true;
-      }
-    }
-  } else {
-    // This isn't the flash plugin. At present, Flash is the only
-    // supported plugin on macOS. Other test plugins are used during
-    // testing and they will use the default plugin sandbox level.
-    mSandboxLevel =
-        Preferences::GetInt("dom.ipc.plugins.sandbox-level.default");
-  }
-#endif /* defined(XP_MACOSX) && defined(MOZ_SANDBOX) */
+  MOZ_ASSERT(sInitializedSandboxingInfo,
+             "Should have initialized global sandboxing info");
+#if defined(MOZ_SANDBOX)
+#  if defined(XP_MACOSX)
+  mSandboxLevel = mIsFlashPlugin ? sFlashSandboxLevel : sDefaultSandboxLevel;
+  mIsSandboxLoggingEnabled = mIsFlashPlugin && sEnableSandboxLogging;
+#  elif defined(XP_WIN)
+  mSandboxLevel = mIsFlashPlugin ? sFlashSandboxLevel : sDefaultSandboxLevel;
+#  endif /* defined(XP_MACOSX) / defined(XP_WIN) */
+#endif   /* defined(MOZ_SANDBOX) */
 }
 
 #if !defined(XP_WIN) && !defined(XP_MACOSX)
@@ -532,10 +484,8 @@ nsPluginTag::GetEnabledState(uint32_t* aEnabledState) {
     return rv;
   }
 
-  const char* const pref =
-      mIsFromExtension ? kPrefDefaultEnabledStateXpi : kPrefDefaultEnabledState;
-
-  enabledState = Preferences::GetInt(pref, nsIPluginTag::STATE_ENABLED);
+  enabledState = Preferences::GetInt(kPrefDefaultEnabledState,
+                                     nsIPluginTag::STATE_ENABLED);
   if (enabledState == nsIPluginTag::STATE_ENABLED && mIsFlashPlugin) {
     enabledState = nsIPluginTag::STATE_CLICKTOPLAY;
   }
@@ -640,6 +590,58 @@ void nsPluginTag::TryUnloadPlugin(bool inShutdown) {
   }
 }
 
+/* static */ void nsPluginTag::EnsureSandboxInformation() {
+  if (sInitializedSandboxingInfo) {
+    return;
+  }
+  MOZ_ASSERT(NS_IsMainThread(), "Should be on the main thread.");
+#if defined(XP_WIN) && defined(MOZ_SANDBOX)
+  Preferences::GetInt("dom.ipc.plugins.sandbox-level.default",
+                      &sDefaultSandboxLevel);
+  Preferences::GetInt("dom.ipc.plugins.sandbox-level.flash",
+                      &sFlashSandboxLevel);
+#  if defined(_AMD64_)
+  // Level 3 is now the default NPAPI sandbox level for 64-bit flash.
+  // We permit the user to drop the sandbox level by at most 1.  This should
+  // be kept up to date with the default value in the firefox.js pref file.
+  sFlashSandboxLevel = std::max(sFlashSandboxLevel, 2);
+#  endif
+#elif defined(XP_MACOSX) && defined(MOZ_SANDBOX)
+  int legacyOSMinorMax = Preferences::GetInt(
+      "dom.ipc.plugins.sandbox-level.flash.max-legacy-os-minor", 10);
+  const char* levelPref = "dom.ipc.plugins.sandbox-level.flash";
+
+  if (PR_GetEnv("MOZ_DISABLE_NPAPI_SANDBOX")) {
+    // Flash sandbox disabled
+    sFlashSandboxLevel = 0;
+  } else if (nsCocoaFeatures::OSXVersionMajor() == 10 &&
+             nsCocoaFeatures::OSXVersionMinor() <= legacyOSMinorMax) {
+    const char* legacyLevelPref = "dom.ipc.plugins.sandbox-level.flash.legacy";
+    int32_t compatLevel = Preferences::GetInt(legacyLevelPref, 0);
+    int32_t level = Preferences::GetInt(levelPref, 0);
+    sFlashSandboxLevel = std::min(compatLevel, level);
+  } else {
+    sFlashSandboxLevel = Preferences::GetInt(levelPref, 0);
+  }
+  sFlashSandboxLevel = ClampFlashSandboxLevel(sFlashSandboxLevel);
+
+  // At present, Flash is the only supported plugin on macOS.
+  // Other test plugins are used during testing and they will use
+  // the default plugin sandbox level.
+  Preferences::GetInt("dom.ipc.plugins.sandbox-level.default",
+                      &sDefaultSandboxLevel);
+
+  // Enable sandbox logging in the plugin process if it has
+  // been turned on via prefs or environment variables.
+  sEnableSandboxLogging =
+      sFlashSandboxLevel > 0 &&
+      (Preferences::GetBool("security.sandbox.logging.enabled") ||
+       PR_GetEnv("MOZ_SANDBOX_LOGGING") ||
+       PR_GetEnv("MOZ_SANDBOX_MAC_FLASH_LOGGING"));
+#endif
+  sInitializedSandboxingInfo = true;
+}
+
 const nsCString& nsPluginTag::GetNiceFileName() {
   if (!mNiceFileName.IsEmpty()) {
     return mNiceFileName;
@@ -684,8 +686,6 @@ nsPluginTag::GetId(uint32_t* aId) {
   *aId = mId;
   return NS_OK;
 }
-
-bool nsPluginTag::IsFromExtension() const { return mIsFromExtension; }
 
 /* nsFakePluginTag */
 

@@ -5,6 +5,7 @@
  * Must be included from a file that has a uri of the image to test defined in
  * var uri.
  */
+/* import-globals-from image_load_helpers.js */
 
 const { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
 const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
@@ -22,6 +23,7 @@ server.start(-1);
 load("image_load_helpers.js");
 
 var requests = [];
+/* global uri */
 
 // Return a closure that holds on to the listener from the original
 // imgIRequest, and compares its results to the cloned one.
@@ -100,7 +102,7 @@ function checkSecondLoad() {
     .getService(Ci.imgITools)
     .createScriptedObserver(listener);
   var referrerInfo = new ReferrerInfo(
-    Ci.nsIHttpChannel.REFERRER_POLICY_NO_REFERRER_WHEN_DOWNGRADE,
+    Ci.nsIReferrerInfo.NO_REFERRER_WHEN_DOWNGRADE,
     true,
     null
   );
@@ -217,7 +219,7 @@ function startImageCallback(otherCb) {
       .getService(Ci.imgITools)
       .createScriptedObserver(listener2);
     var referrerInfo = new ReferrerInfo(
-      Ci.nsIHttpChannel.REFERRER_POLICY_NO_REFERRER_WHEN_DOWNGRADE,
+      Ci.nsIReferrerInfo.NO_REFERRER_WHEN_DOWNGRADE,
       true,
       null
     );
@@ -271,7 +273,7 @@ function run_test() {
     .getService(Ci.imgITools)
     .createScriptedObserver(listener);
   var referrerInfo = new ReferrerInfo(
-    Ci.nsIHttpChannel.REFERRER_POLICY_NO_REFERRER_WHEN_DOWNGRADE,
+    Ci.nsIReferrerInfo.NO_REFERRER_WHEN_DOWNGRADE,
     true,
     null
   );

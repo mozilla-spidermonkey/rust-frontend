@@ -4,12 +4,15 @@ import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSession.NavigationDelegate.LoadRequest
+import org.mozilla.geckoview.GeckoSession.PromptDelegate
+import org.mozilla.geckoview.test.rule.GeckoSessionTestRule
 import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.AssertCalled
 import org.mozilla.geckoview.test.util.Callbacks
 
 import android.support.test.filters.MediumTest
 import android.support.test.runner.AndroidJUnit4
 import org.hamcrest.Matchers.*
+import org.junit.Assert
 import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,11 +28,11 @@ class PromptDelegateTest : BaseSessionTest() {
 
         sessionRule.waitUntilCalled(object : Callbacks.PromptDelegate {
             @AssertCalled(count = 1)
-            override fun onPopupRequest(session: GeckoSession, targetUri: String?)
-                    : GeckoResult<AllowOrDeny>? {
+            override fun onPopupPrompt(session: GeckoSession, prompt: PromptDelegate.PopupPrompt)
+                    : GeckoResult<PromptDelegate.PromptResponse>? {
                 assertThat("Session should not be null", session, notNullValue())
-                assertThat("URL should not be null", targetUri, notNullValue())
-                assertThat("URL should match", targetUri, endsWith(HELLO_HTML_PATH))
+                assertThat("URL should not be null", prompt.targetUri, notNullValue())
+                assertThat("URL should match", prompt.targetUri, endsWith(HELLO_HTML_PATH))
                 return null
             }
         })
@@ -41,12 +44,12 @@ class PromptDelegateTest : BaseSessionTest() {
 
         sessionRule.delegateDuringNextWait(object : Callbacks.PromptDelegate, Callbacks.NavigationDelegate {
             @AssertCalled(count = 1)
-            override fun onPopupRequest(session: GeckoSession, targetUri: String?)
-                    : GeckoResult<AllowOrDeny>? {
+            override fun onPopupPrompt(session: GeckoSession, prompt: PromptDelegate.PopupPrompt)
+                    : GeckoResult<PromptDelegate.PromptResponse>? {
                 assertThat("Session should not be null", session, notNullValue())
-                assertThat("URL should not be null", targetUri, notNullValue())
-                assertThat("URL should match", targetUri, endsWith(HELLO_HTML_PATH))
-                return GeckoResult.fromValue(AllowOrDeny.ALLOW)
+                assertThat("URL should not be null", prompt.targetUri, notNullValue())
+                assertThat("URL should match", prompt.targetUri, endsWith(HELLO_HTML_PATH))
+                return GeckoResult.fromValue(prompt.confirm(AllowOrDeny.ALLOW))
             }
 
             @AssertCalled(count = 2)
@@ -69,12 +72,12 @@ class PromptDelegateTest : BaseSessionTest() {
 
         sessionRule.delegateDuringNextWait(object : Callbacks.PromptDelegate, Callbacks.NavigationDelegate {
             @AssertCalled(count = 1)
-            override fun onPopupRequest(session: GeckoSession, targetUri: String?)
-                    : GeckoResult<AllowOrDeny>? {
+            override fun onPopupPrompt(session: GeckoSession, prompt: PromptDelegate.PopupPrompt)
+                    : GeckoResult<PromptDelegate.PromptResponse>? {
                 assertThat("Session should not be null", session, notNullValue())
-                assertThat("URL should not be null", targetUri, notNullValue())
-                assertThat("URL should match", targetUri, endsWith(HELLO_HTML_PATH))
-                return GeckoResult.fromValue(AllowOrDeny.DENY)
+                assertThat("URL should not be null", prompt.targetUri, notNullValue())
+                assertThat("URL should match", prompt.targetUri, endsWith(HELLO_HTML_PATH))
+                return GeckoResult.fromValue(prompt.confirm(AllowOrDeny.DENY))
             }
 
             @AssertCalled(count = 1)
@@ -102,8 +105,9 @@ class PromptDelegateTest : BaseSessionTest() {
 
         sessionRule.waitUntilCalled(object : Callbacks.PromptDelegate {
             @AssertCalled(count = 1)
-            override fun onAlert(session: GeckoSession, title: String?, msg: String?, callback: GeckoSession.PromptDelegate.AlertCallback) {
-                assertThat("Message should match", "Alert!", equalTo(msg))
+            override fun onAlertPrompt(session: GeckoSession, prompt: PromptDelegate.AlertPrompt): GeckoResult<PromptDelegate.PromptResponse> {
+                assertThat("Message should match", "Alert!", equalTo(prompt.message))
+                return GeckoResult.fromValue(prompt.dismiss())
             }
         })
     }
@@ -113,8 +117,9 @@ class PromptDelegateTest : BaseSessionTest() {
 
         sessionRule.waitUntilCalled(object : Callbacks.PromptDelegate {
             @AssertCalled(count = 1)
-            override fun onAuthPrompt(session: GeckoSession, title: String?, msg: String?, options: GeckoSession.PromptDelegate.AuthOptions, callback: GeckoSession.PromptDelegate.AuthCallback) {
+            override fun onAuthPrompt(session: GeckoSession, prompt: PromptDelegate.AuthPrompt): GeckoResult<PromptDelegate.PromptResponse>? {
                 //TODO: Figure out some better testing here.
+                return null
             }
         })
     }
@@ -123,9 +128,9 @@ class PromptDelegateTest : BaseSessionTest() {
     @Test fun buttonTest() {
         sessionRule.delegateDuringNextWait(object : Callbacks.PromptDelegate {
             @AssertCalled(count = 1)
-            override fun onButtonPrompt(session: GeckoSession, title: String?, msg: String?, btnMsg: Array<out String>?, callback: GeckoSession.PromptDelegate.ButtonCallback) {
-                assertThat("Message should match", "Confirm?", equalTo(msg))
-                callback.confirm(GeckoSession.PromptDelegate.BUTTON_TYPE_POSITIVE)
+            override fun onButtonPrompt(session: GeckoSession, prompt: PromptDelegate.ButtonPrompt): GeckoResult<PromptDelegate.PromptResponse> {
+                assertThat("Message should match", "Confirm?", equalTo(prompt.message))
+                return GeckoResult.fromValue(prompt.confirm(PromptDelegate.ButtonPrompt.Type.POSITIVE))
             }
         })
 
@@ -135,9 +140,9 @@ class PromptDelegateTest : BaseSessionTest() {
 
         sessionRule.delegateDuringNextWait(object : Callbacks.PromptDelegate {
             @AssertCalled(count = 1)
-            override fun onButtonPrompt(session: GeckoSession, title: String?, msg: String?, btnMsg: Array<out String>?, callback: GeckoSession.PromptDelegate.ButtonCallback) {
-                assertThat("Message should match", "Confirm?", equalTo(msg))
-                callback.confirm(GeckoSession.PromptDelegate.BUTTON_TYPE_NEGATIVE)
+            override fun onButtonPrompt(session: GeckoSession, prompt: PromptDelegate.ButtonPrompt): GeckoResult<PromptDelegate.PromptResponse> {
+                assertThat("Message should match", "Confirm?", equalTo(prompt.message))
+                return GeckoResult.fromValue(prompt.confirm(PromptDelegate.ButtonPrompt.Type.NEGATIVE))
             }
         })
 
@@ -152,10 +157,10 @@ class PromptDelegateTest : BaseSessionTest() {
 
         sessionRule.delegateUntilTestEnd(object : Callbacks.PromptDelegate {
             @AssertCalled(count = 1)
-            override fun onTextPrompt(session: GeckoSession, title: String?, msg: String?, value: String?, callback: GeckoSession.PromptDelegate.TextCallback) {
-                assertThat("Message should match", "Prompt:", equalTo(msg))
-                assertThat("Default should match", "default", equalTo(value))
-                callback.confirm("foo")
+            override fun onTextPrompt(session: GeckoSession, prompt: PromptDelegate.TextPrompt): GeckoResult<PromptDelegate.PromptResponse> {
+                assertThat("Message should match", "Prompt:", equalTo(prompt.message))
+                assertThat("Default should match", "default", equalTo(prompt.defaultValue))
+                return GeckoResult.fromValue(prompt.confirm("foo"))
             }
         })
 
@@ -175,7 +180,8 @@ class PromptDelegateTest : BaseSessionTest() {
 
         sessionRule.waitUntilCalled(object : Callbacks.PromptDelegate {
             @AssertCalled(count = 1)
-            override fun onChoicePrompt(session: GeckoSession, title: String?, msg: String?, type: Int, choices: Array<out GeckoSession.PromptDelegate.Choice>, callback: GeckoSession.PromptDelegate.ChoiceCallback) {
+            override fun onChoicePrompt(session: GeckoSession, prompt: PromptDelegate.ChoicePrompt): GeckoResult<PromptDelegate.PromptResponse> {
+                return GeckoResult.fromValue(prompt.dismiss())
             }
         })
     }
@@ -188,9 +194,9 @@ class PromptDelegateTest : BaseSessionTest() {
 
         sessionRule.delegateDuringNextWait(object : Callbacks.PromptDelegate {
             @AssertCalled(count = 1)
-            override fun onColorPrompt(session: GeckoSession, title: String?, value: String?, callback: GeckoSession.PromptDelegate.TextCallback) {
-                assertThat("Value should match", "#ffffff", equalTo(value))
-                callback.confirm("#123456")
+            override fun onColorPrompt(session: GeckoSession, prompt: PromptDelegate.ColorPrompt): GeckoResult<PromptDelegate.PromptResponse> {
+                assertThat("Value should match", "#ffffff", equalTo(prompt.defaultValue))
+                return GeckoResult.fromValue(prompt.confirm("#123456"))
             }
         })
 
@@ -225,7 +231,8 @@ class PromptDelegateTest : BaseSessionTest() {
 
         sessionRule.waitUntilCalled(object : Callbacks.PromptDelegate {
             @AssertCalled(count = 1)
-            override fun onDateTimePrompt(session: GeckoSession, title: String?, type: Int, value: String?, min: String?, max: String?, callback: GeckoSession.PromptDelegate.TextCallback) {
+            override fun onDateTimePrompt(session: GeckoSession, prompt: PromptDelegate.DateTimePrompt): GeckoResult<PromptDelegate.PromptResponse> {
+                return GeckoResult.fromValue(prompt.dismiss())
             }
         })
     }
@@ -240,12 +247,225 @@ class PromptDelegateTest : BaseSessionTest() {
 
         sessionRule.waitUntilCalled(object : Callbacks.PromptDelegate {
             @AssertCalled(count = 1)
-            override fun onFilePrompt(session: GeckoSession, title: String?, type: Int, mimeTypes: Array<out String>?, capture: Int, callback: GeckoSession.PromptDelegate.FileCallback) {
-                assertThat("Length of mimeTypes should match", 2, equalTo(mimeTypes!!.size))
-                assertThat("First accept attribute should match", "image/*", equalTo(mimeTypes[0]))
-                assertThat("Second accept attribute should match", ".pdf", equalTo(mimeTypes[1]))
-                assertThat("Capture attribute should match", GeckoSession.PromptDelegate.CAPTURE_TYPE_USER, equalTo(capture))
+            override fun onFilePrompt(session: GeckoSession, prompt: PromptDelegate.FilePrompt): GeckoResult<PromptDelegate.PromptResponse> {
+                assertThat("Length of mimeTypes should match", 2, equalTo(prompt.mimeTypes!!.size))
+                assertThat("First accept attribute should match", "image/*", equalTo(prompt.mimeTypes?.get(0)))
+                assertThat("Second accept attribute should match", ".pdf", equalTo(prompt.mimeTypes?.get(1)))
+                assertThat("Capture attribute should match", PromptDelegate.FilePrompt.Capture.USER, equalTo(prompt.capture))
+                return GeckoResult.fromValue(prompt.dismiss())
             }
         })
+    }
+
+    @Test fun shareTextSucceeds() {
+        sessionRule.setPrefsUntilTestEnd(mapOf("dom.webshare.requireinteraction" to false))
+        mainSession.loadTestPath(HELLO_HTML_PATH)
+        mainSession.waitForPageStop()
+
+        val shareText = "Example share text"
+
+        sessionRule.delegateDuringNextWait(object : Callbacks.PromptDelegate {
+            @AssertCalled(count = 1)
+            override fun onSharePrompt(session: GeckoSession, prompt: PromptDelegate.SharePrompt): GeckoResult<PromptDelegate.PromptResponse>? {
+                assertThat("Text field is not null", prompt.text, notNullValue())
+                assertThat("Title field is null", prompt.title, nullValue())
+                assertThat("Url field is null", prompt.uri, nullValue())
+                assertThat("Text field contains correct value", prompt.text, equalTo(shareText))
+                return GeckoResult.fromValue(prompt.confirm(PromptDelegate.SharePrompt.Result.SUCCESS))
+            }
+        })
+
+        try {
+            mainSession.waitForJS("""window.navigator.share({text: "${shareText}"})""")
+        } catch (e: GeckoSessionTestRule.RejectedPromiseException) {
+            Assert.fail("Share must succeed." + e.reason as String)
+        }
+    }
+
+    @Test fun shareUrlSucceeds() {
+        sessionRule.setPrefsUntilTestEnd(mapOf("dom.webshare.requireinteraction" to false))
+        mainSession.loadTestPath(HELLO_HTML_PATH)
+        mainSession.waitForPageStop()
+
+        val shareUrl = "https://example.com/"
+
+        sessionRule.delegateDuringNextWait(object : Callbacks.PromptDelegate {
+            @AssertCalled(count = 1)
+            override fun onSharePrompt(session: GeckoSession, prompt: PromptDelegate.SharePrompt): GeckoResult<PromptDelegate.PromptResponse>? {
+                assertThat("Text field is null", prompt.text, nullValue())
+                assertThat("Title field is null", prompt.title, nullValue())
+                assertThat("Url field is not null", prompt.uri, notNullValue())
+                assertThat("Text field contains correct value", prompt.uri, equalTo(shareUrl))
+                return GeckoResult.fromValue(prompt.confirm(PromptDelegate.SharePrompt.Result.SUCCESS))
+            }
+        })
+
+        try {
+            mainSession.waitForJS("""window.navigator.share({url: "${shareUrl}"})""")
+        } catch (e: GeckoSessionTestRule.RejectedPromiseException) {
+            Assert.fail("Share must succeed." + e.reason as String)
+        }
+    }
+
+    @Test fun shareTitleSucceeds() {
+        sessionRule.setPrefsUntilTestEnd(mapOf("dom.webshare.requireinteraction" to false))
+        mainSession.loadTestPath(HELLO_HTML_PATH)
+        mainSession.waitForPageStop()
+
+        val shareTitle = "Title!"
+
+        sessionRule.delegateDuringNextWait(object : Callbacks.PromptDelegate {
+            @AssertCalled(count = 1)
+            override fun onSharePrompt(session: GeckoSession, prompt: PromptDelegate.SharePrompt): GeckoResult<PromptDelegate.PromptResponse>? {
+                assertThat("Text field is null", prompt.text, nullValue())
+                assertThat("Title field is not null", prompt.title, notNullValue())
+                assertThat("Url field is null", prompt.uri, nullValue())
+                assertThat("Text field contains correct value", prompt.title, equalTo(shareTitle))
+                return GeckoResult.fromValue(prompt.confirm(PromptDelegate.SharePrompt.Result.SUCCESS))
+            }
+        })
+
+        try {
+            mainSession.waitForJS("""window.navigator.share({title: "${shareTitle}"})""")
+        } catch (e: GeckoSessionTestRule.RejectedPromiseException) {
+            Assert.fail("Share must succeed." + e.reason as String)
+        }
+    }
+
+    @Test fun failedShareReturnsDataError() {
+        sessionRule.setPrefsUntilTestEnd(mapOf("dom.webshare.requireinteraction" to false))
+        mainSession.loadTestPath(HELLO_HTML_PATH)
+        mainSession.waitForPageStop()
+
+        val shareUrl = "https://www.example.com"
+
+        sessionRule.delegateDuringNextWait(object : Callbacks.PromptDelegate {
+            @AssertCalled(count = 1)
+            override fun onSharePrompt(session: GeckoSession, prompt: PromptDelegate.SharePrompt): GeckoResult<PromptDelegate.PromptResponse>? {
+                return GeckoResult.fromValue(prompt.confirm(PromptDelegate.SharePrompt.Result.FAILURE))
+            }
+        })
+
+        try {
+            mainSession.waitForJS("""window.navigator.share({url: "${shareUrl}"})""")
+            Assert.fail("Request should have failed")
+        } catch (e: GeckoSessionTestRule.RejectedPromiseException) {
+            assertThat("Error should be correct",
+                    e.reason as String, containsString("DataError"))
+        }
+    }
+
+    @Test fun abortedShareReturnsAbortError() {
+        sessionRule.setPrefsUntilTestEnd(mapOf("dom.webshare.requireinteraction" to false))
+        mainSession.loadTestPath(HELLO_HTML_PATH)
+        mainSession.waitForPageStop()
+
+        val shareUrl = "https://www.example.com"
+
+        sessionRule.delegateDuringNextWait(object : Callbacks.PromptDelegate {
+            @AssertCalled(count = 1)
+            override fun onSharePrompt(session: GeckoSession, prompt: PromptDelegate.SharePrompt): GeckoResult<PromptDelegate.PromptResponse>? {
+                return GeckoResult.fromValue(prompt.confirm(PromptDelegate.SharePrompt.Result.ABORT))
+            }
+        })
+
+        try {
+            mainSession.waitForJS("""window.navigator.share({url: "${shareUrl}"})""")
+            Assert.fail("Request should have failed")
+        } catch (e: GeckoSessionTestRule.RejectedPromiseException) {
+            assertThat("Error should be correct",
+                    e.reason as String, containsString("AbortError"))
+        }
+    }
+
+    @Test fun dismissedShareReturnsAbortError() {
+        sessionRule.setPrefsUntilTestEnd(mapOf("dom.webshare.requireinteraction" to false))
+        mainSession.loadTestPath(HELLO_HTML_PATH)
+        mainSession.waitForPageStop()
+
+        val shareUrl = "https://www.example.com"
+
+        sessionRule.delegateDuringNextWait(object : Callbacks.PromptDelegate {
+            @AssertCalled(count = 1)
+            override fun onSharePrompt(session: GeckoSession, prompt: PromptDelegate.SharePrompt): GeckoResult<PromptDelegate.PromptResponse>? {
+                return GeckoResult.fromValue(prompt.dismiss())
+            }
+        })
+
+        try {
+            mainSession.waitForJS("""window.navigator.share({url: "${shareUrl}"})""")
+            Assert.fail("Request should have failed")
+        } catch (e: GeckoSessionTestRule.RejectedPromiseException) {
+            assertThat("Error should be correct",
+                    e.reason as String, containsString("AbortError"))
+        }
+    }
+
+    @Test fun emptyShareReturnsTypeError() {
+        sessionRule.setPrefsUntilTestEnd(mapOf("dom.webshare.requireinteraction" to false))
+        mainSession.loadTestPath(HELLO_HTML_PATH)
+        mainSession.waitForPageStop()
+
+        sessionRule.delegateDuringNextWait(object : Callbacks.PromptDelegate {
+            @AssertCalled(count = 0)
+            override fun onSharePrompt(session: GeckoSession, prompt: PromptDelegate.SharePrompt): GeckoResult<PromptDelegate.PromptResponse>? {
+                return GeckoResult.fromValue(prompt.dismiss())
+            }
+        })
+
+        try {
+            mainSession.waitForJS("""window.navigator.share({})""")
+            Assert.fail("Request should have failed")
+        } catch (e: GeckoSessionTestRule.RejectedPromiseException) {
+            assertThat("Error should be correct",
+                    e.reason as String, containsString("TypeError"))
+        }
+    }
+
+    @Test fun invalidShareUrlReturnsTypeError() {
+        sessionRule.setPrefsUntilTestEnd(mapOf("dom.webshare.requireinteraction" to false))
+        mainSession.loadTestPath(HELLO_HTML_PATH)
+        mainSession.waitForPageStop()
+
+        // Invalid port should cause URL parser to fail.
+        val shareUrl = "http://www.example.com:123456"
+
+        sessionRule.delegateDuringNextWait(object : Callbacks.PromptDelegate {
+            @AssertCalled(count = 0)
+            override fun onSharePrompt(session: GeckoSession, prompt: PromptDelegate.SharePrompt): GeckoResult<PromptDelegate.PromptResponse>? {
+                return GeckoResult.fromValue(prompt.dismiss())
+            }
+        })
+
+        try {
+            mainSession.waitForJS("""window.navigator.share({url: "${shareUrl}"})""")
+            Assert.fail("Request should have failed")
+        } catch (e: GeckoSessionTestRule.RejectedPromiseException) {
+            assertThat("Error should be correct",
+                    e.reason as String, containsString("TypeError"))
+        }
+    }
+
+    @Test fun shareRequiresUserInteraction() {
+        sessionRule.setPrefsUntilTestEnd(mapOf("dom.webshare.requireinteraction" to true))
+        mainSession.loadTestPath(HELLO_HTML_PATH)
+        mainSession.waitForPageStop()
+
+        val shareUrl = "https://www.example.com"
+
+        sessionRule.delegateDuringNextWait(object : Callbacks.PromptDelegate {
+            @AssertCalled(count = 0)
+            override fun onSharePrompt(session: GeckoSession, prompt: PromptDelegate.SharePrompt): GeckoResult<PromptDelegate.PromptResponse>? {
+                return GeckoResult.fromValue(prompt.dismiss())
+            }
+        })
+
+        try {
+            mainSession.waitForJS("""window.navigator.share({url: "${shareUrl}"})""")
+            Assert.fail("Request should have failed")
+        } catch (e: GeckoSessionTestRule.RejectedPromiseException) {
+            assertThat("Error should be correct",
+                    e.reason as String, containsString("NotAllowedError"))
+        }
     }
 }

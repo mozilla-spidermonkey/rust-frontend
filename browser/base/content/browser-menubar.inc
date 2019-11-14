@@ -235,6 +235,7 @@
               <menupopup id="goPopup"
 #ifndef XP_MACOSX
                          placespopup="true"
+                         is="places-popup"
 #endif
                          oncommand="this.parentNode._placesView._onCommand(event);"
                          onclick="checkForMiddleClick(this, event);"
@@ -264,6 +265,7 @@
                   <menupopup id="historyUndoPopup"
 #ifndef XP_MACOSX
                              placespopup="true"
+                             is="places-popup"
 #endif
                              onpopupshowing="document.getElementById('history-menu')._placesView.populateUndoSubmenu();"/>
                 </menu>
@@ -272,6 +274,7 @@
                   <menupopup id="historyUndoWindowPopup"
 #ifndef XP_MACOSX
                              placespopup="true"
+                             is="places-popup"
 #endif
                              onpopupshowing="document.getElementById('history-menu')._placesView.populateUndoWindowSubmenu();"/>
                 </menu>
@@ -287,6 +290,7 @@
     <menupopup id="bookmarksMenuPopup"
 #ifndef XP_MACOSX
                placespopup="true"
+               is="places-popup"
 #endif
                context="placesContext"
                openInTabs="children"
@@ -315,6 +319,7 @@
         <menupopup id="bookmarksToolbarFolderPopup"
 #ifndef XP_MACOSX
                    placespopup="true"
+                   is="places-popup"
 #endif
                    context="placesContext"
                    onpopupshowing="if (!this.parentNode._placesView)
@@ -326,6 +331,7 @@
         <menupopup id="otherBookmarksFolderPopup"
 #ifndef XP_MACOSX
                    placespopup="true"
+                   is="places-popup"
 #endif
                    context="placesContext"
                    onpopupshowing="if (!this.parentNode._placesView)
@@ -338,6 +344,7 @@
         <menupopup id="mobileBookmarksFolderPopup"
 #ifndef XP_MACOSX
                    placespopup="true"
+                   is="places-popup"
 #endif
                    context="placesContext"
                    onpopupshowing="if (!this.parentNode._placesView)
@@ -357,15 +364,19 @@
                         key="key_openAddons"
                         command="Tools:Addons" data-l10n-id="menu-tools-addons"/>
 
-              <!-- only one of sync-setup, sync-unverifieditem, sync-syncnowitem or sync-reauthitem will be showing at once -->
+              <!-- only one of sync-setup, sync-enable, sync-unverifieditem, sync-syncnowitem or sync-reauthitem will be showing at once -->
               <menuitem id="sync-setup"
                         class="sync-ui-item"
                         hidden="true"
-                        oncommand="gSync.openPrefs('menubar')" data-l10n-id="menu-tools-sync-sign-in"/>
+                        oncommand="gSync.openPrefs('menubar')" data-l10n-id="menu-tools-fxa-sign-in"/>
+              <menuitem id="sync-enable"
+                        class="sync-ui-item"
+                        hidden="true"
+                        oncommand="gSync.openPrefs('menubar')" data-l10n-id="menu-tools-turn-on-sync"/>
               <menuitem id="sync-unverifieditem"
                         class="sync-ui-item"
                         hidden="true"
-                        oncommand="gSync.openPrefs('menubar')" data-l10n-id="menu-tools-sync-sign-in"/>
+                        oncommand="gSync.openPrefs('menubar')" data-l10n-id="menu-tools-fxa-sign-in"/>
               <menuitem id="sync-syncnowitem"
                         class="sync-ui-item"
                         hidden="true"
@@ -373,7 +384,7 @@
               <menuitem id="sync-reauthitem"
                         class="sync-ui-item"
                         hidden="true"
-                        oncommand="gSync.openSignInAgainPage('menubar');" data-l10n-id="menu-tools-sync-re-auth"/>
+                        oncommand="gSync.openSignInAgainPage('menubar');" data-l10n-id="menu-tools-fxa-re-auth"/>
               <menuseparator id="devToolsSeparator"/>
               <menu id="webDeveloperMenu" data-l10n-id="menu-tools-web-developer">
                 <menupopup id="menuWebDeveloperPopup">
@@ -434,8 +445,9 @@
                 <menuitem id="menu_openHelp"
                           oncommand="openHelpLink('firefox-help')"
                           onclick="checkForMiddleClick(this, event);"
+                          data-l10n-id="menu-help-product"
 #ifdef XP_MACOSX
-                          key="key_openHelpMac" data-l10n-id="menu-help-product"/>
+                          key="key_openHelpMac"/>
 #else
                           />
 #endif
@@ -461,6 +473,7 @@
                           disabled="true"
                           oncommand="ReportFalseDeceptiveSite();"
                           onclick="checkForMiddleClick(this, event);"
+                          data-l10n-id="menu-help-not-deceptive"
                           hidden="true"/>
                 <menuseparator id="helpPolicySeparator"
                           hidden="true"/>

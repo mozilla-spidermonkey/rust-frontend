@@ -13,18 +13,12 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/MediaStreamTrackBinding.h"
-#include "mozilla/dom/MediaTrackConstraintSetBinding.h"
 #include "mozilla/dom/MediaTrackSupportedConstraintsBinding.h"
 
 namespace mozilla {
 
 class MediaDevice;
 class MediaEngineSource;
-
-template <class EnumValuesStrings, class Enum>
-static const char* EnumToASCII(const EnumValuesStrings& aStrings, Enum aValue) {
-  return aStrings[uint32_t(aValue)].value;
-}
 
 template <class EnumValuesStrings, class Enum>
 static Enum StringToEnum(const EnumValuesStrings& aStrings,
@@ -340,8 +334,7 @@ class MediaConstraintsHelper {
 
   static const char* FindBadConstraint(
       const NormalizedConstraints& aConstraints,
-      const RefPtr<MediaEngineSource>& aMediaEngineSource,
-      const nsString& aDeviceId, const nsString& aGroupId);
+      const RefPtr<MediaEngineSource>& aMediaEngineSource);
 
   static void LogConstraints(const NormalizedConstraintSet& aConstraints);
 };

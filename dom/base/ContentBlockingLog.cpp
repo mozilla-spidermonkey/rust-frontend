@@ -79,7 +79,7 @@ static bool IsReportingPerUserEnabled() {
 
 static bool IsReportingPerDocumentEnabled() {
   constexpr double boundary =
-      kRatioReportDocument * std::numeric_limits<uint64_t>::max();
+      kRatioReportDocument * double(std::numeric_limits<uint64_t>::max());
   Maybe<uint64_t> randomNum = RandomUint64();
   return randomNum.isSome() && randomNum.value() <= boundary;
 }
@@ -167,8 +167,10 @@ void ContentBlockingLog::ReportOrigins() {
     }
 
     for (const auto& logEntry : Reversed(originEntry.mData->mLogs)) {
-      if (logEntry.mType !=
-              nsIWebProgressListener::STATE_COOKIES_BLOCKED_TRACKER ||
+      if ((logEntry.mType !=
+               nsIWebProgressListener::STATE_COOKIES_BLOCKED_TRACKER &&
+           logEntry.mType !=
+               nsIWebProgressListener::STATE_COOKIES_BLOCKED_SOCIALTRACKER) ||
           logEntry.mTrackingFullHashes.IsEmpty()) {
         continue;
       }

@@ -8,9 +8,7 @@
      set to true to allow debuggers to attach to application processes but
      this prohibits notarization with the notary service. Aside from allowing
      debugging, these entitlements enable hardened runtime protections to the
-     extent possible for Firefox. Supporting binaries within the bundle could
-     use more restrictive entitlements, but they are launched by the main
-     Firefox process and therefore inherit the parent process entitlements.
+     extent possible for Firefox.
 -->
 <plist version="1.0">
   <dict>
@@ -27,8 +25,7 @@
     <key>com.apple.security.cs.disable-library-validation</key><true/>
 
     <!-- Allow dyld environment variables. Needed because Firefox uses
-         dyld variables (such as @executable_path) to load libaries from
-         within the .app bundle. -->
+         dyld variables to load libaries from within the .app bundle. -->
     <key>com.apple.security.cs.allow-dyld-environment-variables</key><true/>
 
     <!-- Allow debuggers to attach to running executables -->
@@ -42,5 +39,8 @@
 
     <!-- Firefox needs to access the location on sites the user allows -->
     <key>com.apple.security.personal-information.location</key><true/>
+    
+    <!-- For SmartCardServices(7) -->
+    <key>com.apple.security.smartcard</key><true/>
   </dict>
 </plist>

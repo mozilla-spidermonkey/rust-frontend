@@ -31,7 +31,6 @@
 
 #include <gdk/gdkprivate.h>
 #include <gtk/gtk.h>
-#include <gtk/gtkx.h>
 
 #include "gfxContext.h"
 #include "gfxPlatformGtk.h"
@@ -43,6 +42,7 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/layers/StackingContextHelper.h"
 #include "mozilla/StaticPrefs_layout.h"
+#include "mozilla/StaticPrefs_widget.h"
 #include "nsWindow.h"
 
 #ifdef MOZ_X11
@@ -67,15 +67,12 @@ NS_IMPL_ISUPPORTS_INHERITED(nsNativeThemeGTK, nsNativeTheme, nsITheme,
 
 static int gLastGdkError;
 
-// from nsWindow.cpp
-extern bool gDisableNativeTheme;
-
 // Return scale factor of the monitor where the window is located
 // by the most part or layout.css.devPixelsPerPx pref if set to > 0.
 static inline gint GetMonitorScaleFactor(nsIFrame* aFrame) {
   // When the layout.css.devPixelsPerPx is set the scale can be < 1,
   // the real monitor scale cannot go under 1.
-  double scale = nsIWidget::DefaultScaleOverride();
+  double scale = StaticPrefs::layout_css_devPixelsPerPx();
   if (scale <= 0) {
     nsIWidget* rootWidget = aFrame->PresContext()->GetRootWidget();
     if (rootWidget) {
@@ -866,7 +863,7 @@ static void DrawThemeWithCairo(gfxContext* aContext, DrawTarget* aDrawTarget,
                                const nsIntSize& aDrawSize,
                                GdkRectangle& aGDKRect,
                                nsITheme::Transparency aTransparency) {
-  bool isX11Display = GDK_IS_X11_DISPLAY(gdk_display_get_default());
+  bool isX11Display = gfxPlatformGtk::GetPlatform()->IsX11Display();
   static auto sCairoSurfaceSetDeviceScalePtr =
       (void (*)(cairo_surface_t*, double, double))dlsym(
           RTLD_DEFAULT, "cairo_surface_set_device_scale");
@@ -1204,7 +1201,7 @@ nsNativeThemeGTK::DrawWidgetBackground(gfxContext* aContext, nsIFrame* aFrame,
   if (!safeState) {
     // gdk_flush() call from expose event crashes Gtk+ on Wayland
     // (Gnome BZ #773307)
-    if (GDK_IS_X11_DISPLAY(gdk_display_get_default())) {
+    if (gfxPlatformGtk::GetPlatform()->IsX11Display()) {
       gdk_flush();
     }
     gLastGdkError = gdk_error_trap_pop();
@@ -1245,9 +1242,8 @@ bool nsNativeThemeGTK::CreateWebRenderCommandsForWidget(
     mozilla::layers::RenderRootStateManager* aManager, nsIFrame* aFrame,
     StyleAppearance aAppearance, const nsRect& aRect) {
   nsPresContext* presContext = aFrame->PresContext();
-  wr::LayoutRect bounds =
-      wr::ToRoundedLayoutRect(LayoutDeviceRect::FromAppUnits(
-          aRect, presContext->AppUnitsPerDevPixel()));
+  wr::LayoutRect bounds = wr::ToLayoutRect(LayoutDeviceRect::FromAppUnits(
+      aRect, presContext->AppUnitsPerDevPixel()));
 
   switch (aAppearance) {
     case StyleAppearance::Window:
@@ -2044,7 +2040,7 @@ bool nsNativeThemeGTK::WidgetAppearanceDependsOnWindowFocus(
 }
 
 already_AddRefed<nsITheme> do_GetNativeTheme() {
-  if (gDisableNativeTheme) {
+  if (StaticPrefs::widget_disable_native_theme()) {
     return nullptr;
   }
 

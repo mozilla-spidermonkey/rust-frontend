@@ -12,6 +12,7 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/Maybe.h"
+#include "mozilla/StaticPrefs_nglayout.h"
 #include "mozilla/TypedEnumBits.h"
 #include "nsBoundingMetrics.h"
 #include "nsChangeHint.h"
@@ -114,13 +115,6 @@ struct DisplayPortMarginsPropertyData {
       : mMargins(aMargins), mPriority(aPriority) {}
   ScreenMargin mMargins;
   uint32_t mPriority;
-};
-
-struct MotionPathData {
-  gfx::Point mTranslate;
-  float mRotate;
-  // The delta value between transform-origin and offset-anchor.
-  gfx::Point mShift;
 };
 
 }  // namespace mozilla
@@ -2331,6 +2325,17 @@ class nsLayoutUtils {
                                         mozilla::EffectSet* aEffectSet);
 
   /**
+   * A variant of the above HasAnimationOfPropertySet. This is especially for
+   * tranform-like properties with motion-path.
+   * For transform-like properties with motion-path, we need to check if
+   * offset-path has effect. If we don't have any animation on offset-path and
+   * offset-path is none, there is no effective motion-path, and so we don't
+   * care other offset-* properties. In this case, this function only checks the
+   * rest of transform-like properties (i.e. transform/translate/rotate/scale).
+   */
+  static bool HasAnimationOfTransformAndMotionPath(const nsIFrame* aFrame);
+
+  /**
    * Returns true if |aFrame| has an animation of |aProperty| which is
    * not overridden by !important rules.
    */
@@ -2371,11 +2376,6 @@ class nsLayoutUtils {
   static bool AreAsyncAnimationsEnabled();
 
   /**
-   * Checks if we should warn about animations that can't be async
-   */
-  static bool IsAnimationLoggingEnabled();
-
-  /**
    * Checks if retained display lists are enabled.
    */
   static bool AreRetainedDisplayListsEnabled();
@@ -2401,20 +2401,6 @@ class nsLayoutUtils {
    * possible.
    */
   static bool GPUImageScalingEnabled();
-
-  /**
-   * Checks whether we want to layerize animated images whenever possible.
-   */
-  static bool AnimatedImageLayersEnabled();
-
-  /**
-   * Checks whether support for inter-character ruby is enabled.
-   */
-  static bool IsInterCharacterRubyEnabled();
-
-  static bool InterruptibleReflowEnabled() {
-    return sInterruptibleReflowEnabled;
-  }
 
   /**
    * Unions the overflow areas of the children of aFrame with aOverflowAreas.
@@ -2461,78 +2447,10 @@ class nsLayoutUtils {
   static bool FontSizeInflationEnabled(nsPresContext* aPresContext);
 
   /**
-   * See comment above "font.size.inflation.maxRatio" in
-   * modules/libpref/src/init/all.js .
-   */
-  static uint32_t FontSizeInflationMaxRatio() {
-    return sFontSizeInflationMaxRatio;
-  }
-
-  /**
-   * See comment above "font.size.inflation.emPerLine" in
-   * modules/libpref/src/init/all.js .
-   */
-  static uint32_t FontSizeInflationEmPerLine() {
-    return sFontSizeInflationEmPerLine;
-  }
-
-  /**
-   * See comment above "font.size.inflation.minTwips" in
-   * modules/libpref/src/init/all.js .
-   */
-  static uint32_t FontSizeInflationMinTwips() {
-    return sFontSizeInflationMinTwips;
-  }
-
-  /**
-   * See comment above "font.size.inflation.lineThreshold" in
-   * modules/libpref/src/init/all.js .
-   */
-  static uint32_t FontSizeInflationLineThreshold() {
-    return sFontSizeInflationLineThreshold;
-  }
-
-  static bool FontSizeInflationForceEnabled() {
-    return sFontSizeInflationForceEnabled;
-  }
-
-  static bool FontSizeInflationDisabledInMasterProcess() {
-    return sFontSizeInflationDisabledInMasterProcess;
-  }
-
-  /**
-   * See comment above "font.size.systemFontScale" in
-   * modules/libpref/init/all.js.
-   */
-  static float SystemFontScale() { return sSystemFontScale / 100.0f; }
-
-  static float MaxZoom() { return sZoomMaxPercent / 100.0f; }
-
-  static float MinZoom() { return sZoomMinPercent / 100.0f; }
-
-  static bool SVGTransformBoxEnabled() { return sSVGTransformBoxEnabled; }
-
-  static uint32_t IdlePeriodDeadlineLimit() { return sIdlePeriodDeadlineLimit; }
-
-  static uint32_t QuiescentFramesBeforeIdlePeriod() {
-    return sQuiescentFramesBeforeIdlePeriod;
-  }
-
-  /**
-   * See comment above "font.size.inflation.mappingIntercept" in
-   * modules/libpref/src/init/all.js .
-   */
-  static int32_t FontSizeInflationMappingIntercept() {
-    return sFontSizeInflationMappingIntercept;
-  }
-
-  /**
    * Returns true if the nglayout.debug.invalidation pref is set to true.
-   * Note that sInvalidationDebuggingIsEnabled is declared outside this function
-   * to allow it to be accessed an manipulated from breakpoint conditions.
    */
   static bool InvalidationDebuggingIsEnabled() {
-    return sInvalidationDebuggingIsEnabled ||
+    return mozilla::StaticPrefs::nglayout_debug_invalidation() ||
            getenv("MOZ_DUMP_INVALIDATION") != 0;
   }
 
@@ -2844,8 +2762,6 @@ class nsLayoutUtils {
    */
   static void ExpireDisplayPortOnAsyncScrollableAncestor(nsIFrame* aFrame);
 
-  static bool IsOutlineStyleAutoEnabled();
-
   static void SetBSizeFromFontMetrics(
       const nsIFrame* aFrame, mozilla::ReflowOutput& aMetrics,
       const mozilla::LogicalMargin& aFramePadding, mozilla::WritingMode aLineWM,
@@ -3066,28 +2982,21 @@ class nsLayoutUtils {
   static ComputedStyle* StyleForScrollbar(nsIFrame* aScrollbarPart);
 
   /**
-   * Generate the motion path transform result.
+   * Returns true if |aFrame| is scrolled out of view by a scrollable element in
+   * a cross-process ancestor document.
+   * Note this function only works for frames in out-of-process iframes.
    **/
-  static mozilla::Maybe<mozilla::MotionPathData> ResolveMotionPath(
-      const nsIFrame* aFrame);
+  static bool FrameIsScrolledOutOfViewInCrossProcess(const nsIFrame* aFrame);
+
+  /**
+   * Similar to above FrameIsScrolledOutViewInCrossProcess but returns true even
+   * if |aFrame| is not fully scrolled out of view and its visible area width or
+   * height is smaller than |aMargin|.
+   **/
+  static bool FrameIsMostlyScrolledOutOfViewInCrossProcess(
+      const nsIFrame* aFrame, nscoord aMargin);
 
  private:
-  static uint32_t sFontSizeInflationEmPerLine;
-  static uint32_t sFontSizeInflationMinTwips;
-  static uint32_t sFontSizeInflationLineThreshold;
-  static int32_t sFontSizeInflationMappingIntercept;
-  static uint32_t sFontSizeInflationMaxRatio;
-  static bool sFontSizeInflationForceEnabled;
-  static bool sFontSizeInflationDisabledInMasterProcess;
-  static uint32_t sSystemFontScale;
-  static uint32_t sZoomMaxPercent;
-  static uint32_t sZoomMinPercent;
-  static bool sInvalidationDebuggingIsEnabled;
-  static bool sInterruptibleReflowEnabled;
-  static bool sSVGTransformBoxEnabled;
-  static uint32_t sIdlePeriodDeadlineLimit;
-  static uint32_t sQuiescentFramesBeforeIdlePeriod;
-
   /**
    * Helper function for LogTestDataForPaint().
    */

@@ -123,13 +123,17 @@ var gIdentityHandler = {
     return this._state & Ci.nsIWebProgressListener.STATE_CERT_DISTRUST_IMMINENT;
   },
 
-  get _hasInsecureLoginForms() {
-    // checks if the page has been flagged for an insecure login. Also checks
-    // if the pref to degrade the UI is set to true
+  get _isAboutCertErrorPage() {
     return (
-      LoginManagerParent.hasInsecureLoginForms(gBrowser.selectedBrowser) &&
-      Services.prefs.getBoolPref("security.insecure_password.ui.enabled")
+      gBrowser.selectedBrowser.documentURI &&
+      gBrowser.selectedBrowser.documentURI.scheme == "about" &&
+      gBrowser.selectedBrowser.documentURI.pathQueryRef.startsWith("certerror")
     );
+  },
+
+  get _hasInsecureLoginForms() {
+    // This function will be deleted in bug 1567827.
+    return false;
   },
 
   // smart getters
@@ -159,10 +163,16 @@ var gIdentityHandler = {
       "identity-popup-mainView-panel-header-span"
     ));
   },
-  get _identityPopupContentHost() {
-    delete this._identityPopupContentHost;
-    return (this._identityPopupContentHost = document.getElementById(
-      "identity-popup-host"
+  get _identityPopupSecurityView() {
+    delete this._identityPopupSecurityView;
+    return (this._identityPopupSecurityView = document.getElementById(
+      "identity-popup-securityView"
+    ));
+  },
+  get _identityPopupSecurityEVContentOwner() {
+    delete this._identityPopupSecurityEVContentOwner;
+    return (this._identityPopupSecurityEVContentOwner = document.getElementById(
+      "identity-popup-security-ev-content-owner"
     ));
   },
   get _identityPopupContentOwner() {
@@ -334,6 +344,28 @@ var gIdentityHandler = {
     return this._protectionsPanelEnabled;
   },
 
+  get _useGrayLockIcon() {
+    delete this._useGrayLockIcon;
+    XPCOMUtils.defineLazyPreferenceGetter(
+      this,
+      "_useGrayLockIcon",
+      "security.secure_connection_icon_color_gray",
+      false
+    );
+    return this._useGrayLockIcon;
+  },
+
+  get _showExtendedValidation() {
+    delete this._showExtendedValidation;
+    XPCOMUtils.defineLazyPreferenceGetter(
+      this,
+      "_showExtendedValidation",
+      "security.identityblock.show_extended_validation",
+      false
+    );
+    return this._showExtendedValidation;
+  },
+
   /**
    * Handles clicks on the "Clear Cookies and Site Data" button.
    */
@@ -369,14 +401,6 @@ var gIdentityHandler = {
 
   openPermissionPreferences() {
     openPreferences("privacy-permissions");
-  },
-
-  recordClick(object) {
-    Services.telemetry.recordEvent(
-      "security.ui.identitypopup",
-      "click",
-      object
-    );
   },
 
   /**
@@ -604,6 +628,14 @@ var gIdentityHandler = {
       // Some URIs might have no hosts.
     }
 
+    if (this._uri.schemeIs("about")) {
+      // For example in about:certificate the original URL is
+      // about:certificate?cert=<large base64 encoded data>&cert=<large base64 encoded data>&cert=...
+      // So, instead of showing that large string in the identity panel header, we are just showing
+      // about:certificate now. For the other about pages we are just showing about:<page>
+      host = "about:" + this._uri.filePath;
+    }
+
     let readerStrippedURI = ReaderMode.getOriginalUrlObjectForDisplay(
       this._uri.displaySpec
     );
@@ -630,7 +662,7 @@ var gIdentityHandler = {
    */
   get pointerlockFsWarningClassName() {
     // Note that the fullscreen warning does not handle _isSecureInternalUI.
-    if (this._uriHasHost && this._isEV) {
+    if (this._uriHasHost && this._isEV && this._showExtendedValidation) {
       return "verifiedIdentity";
     }
     if (this._uriHasHost && this._isSecureConnection) {
@@ -645,22 +677,31 @@ var gIdentityHandler = {
    */
   _hasCustomRoot() {
     let issuerCert = null;
-    // Walk the whole chain to get the last cert.
-    // eslint-disable-next-line no-empty
-    for (issuerCert of this._secInfo.succeededCertChain.getEnumerator()) {
-    }
+    issuerCert = this._secInfo.succeededCertChain[
+      this._secInfo.succeededCertChain.length - 1
+    ];
 
     return !issuerCert.isBuiltInRoot;
   },
 
   /**
-   * Updates the identity block user interface with the data from this object.
+   * Returns whether the current URI results in an "invalid"
+   * URL bar state, which effectively means hidden security
+   * indicators.
    */
-  refreshIdentityBlock() {
-    if (!this._identityBox) {
-      return;
-    }
+  _hasInvalidPageProxyState() {
+    return (
+      !this._uriHasHost &&
+      this._uri &&
+      isBlankPageURL(this._uri.spec) &&
+      !this._uri.schemeIs("moz-extension")
+    );
+  },
 
+  /**
+   * Updates the security identity in the identity block.
+   */
+  _refreshIdentityIcons() {
     let icon_label = "";
     let tooltip = "";
     let icon_country_label = "";
@@ -671,7 +712,7 @@ var gIdentityHandler = {
       this._identityBox.className = "chromeUI";
       let brandBundle = document.getElementById("bundle_brand");
       icon_label = brandBundle.getString("brandShorterName");
-    } else if (this._uriHasHost && this._isEV) {
+    } else if (this._uriHasHost && this._isEV && this._showExtendedValidation) {
       // This is a secure connection with EV.
       this._identityBox.className = "verifiedIdentity";
       if (this._isMixedActiveContentBlocked) {
@@ -710,6 +751,7 @@ var gIdentityHandler = {
         "identity.extension.label",
         [extensionName]
       );
+      icon_labels_dir = "";
     } else if (this._uriHasHost && this._isSecureConnection) {
       // This is a secure connection.
       this._identityBox.className = "verifiedDomain";
@@ -738,6 +780,9 @@ var gIdentityHandler = {
       } else {
         this._identityBox.classList.add("weakCipher");
       }
+    } else if (this._isAboutCertErrorPage) {
+      // We show a warning lock icon for 'about:certerror' page.
+      this._identityBox.className = "certErrorPage";
     } else if (
       this._isSecureContext ||
       (gBrowser.selectedBrowser.documentURI &&
@@ -754,6 +799,9 @@ var gIdentityHandler = {
           PrivateBrowsingUtils.isWindowPrivate(window));
       let className = warnOnInsecure ? "notSecure" : "unknownIdentity";
       this._identityBox.className = className;
+      tooltip = warnOnInsecure
+        ? gNavigatorBundle.getString("identity.notSecure.tooltip")
+        : "";
 
       let warnTextOnInsecure =
         this._insecureConnectionTextEnabled ||
@@ -770,12 +818,6 @@ var gIdentityHandler = {
       }
     }
 
-    // Hide the shield icon if it is a chrome page.
-    this._trackingProtectionIconContainer.classList.toggle(
-      "chromeUI",
-      this._isSecureInternalUI
-    );
-
     if (this._isCertUserOverridden) {
       this._identityBox.classList.add("certUserOverridden");
       // Cert is trusted because of a security exception, verifier is a special string.
@@ -784,6 +826,43 @@ var gIdentityHandler = {
       );
     }
 
+    // Gray lock icon for secure connections if pref set
+    this._updateAttribute(
+      this._identityIcon,
+      "lock-icon-gray",
+      this._useGrayLockIcon
+    );
+
+    // Push the appropriate strings out to the UI
+    this._identityIcon.setAttribute("tooltiptext", tooltip);
+
+    if (this._pageExtensionPolicy) {
+      let extensionName = this._pageExtensionPolicy.name;
+      this._identityIcon.setAttribute(
+        "tooltiptext",
+        gNavigatorBundle.getFormattedString("identity.extension.tooltip", [
+          extensionName,
+        ])
+      );
+    }
+
+    this._identityIconLabels.setAttribute("tooltiptext", tooltip);
+    this._identityIconLabel.setAttribute("value", icon_label);
+    this._identityIconCountryLabel.setAttribute("value", icon_country_label);
+    // Set cropping and direction
+    this._identityIconLabel.setAttribute(
+      "crop",
+      icon_country_label ? "end" : "center"
+    );
+    this._identityIconLabel.parentNode.style.direction = icon_labels_dir;
+    // Hide completely if the organization label is empty
+    this._identityIconLabel.parentNode.collapsed = !icon_label;
+  },
+
+  /**
+   * Updates the permissions block in the identity block.
+   */
+  _refreshPermissionIcons() {
     let permissionAnchors = this._permissionAnchors;
 
     // hide all permission icons
@@ -825,31 +904,35 @@ var gIdentityHandler = {
       let icon = permissionAnchors.popup;
       icon.setAttribute("showing", "true");
     }
+  },
 
-    // Push the appropriate strings out to the UI
-    this._identityIcon.setAttribute("tooltiptext", tooltip);
-
-    if (this._pageExtensionPolicy) {
-      let extensionName = this._pageExtensionPolicy.name;
-      this._identityIcon.setAttribute(
-        "tooltiptext",
-        gNavigatorBundle.getFormattedString("identity.extension.tooltip", [
-          extensionName,
-        ])
-      );
+  /**
+   * Updates the identity block user interface with the data from this object.
+   */
+  refreshIdentityBlock() {
+    if (!this._identityBox) {
+      return;
     }
 
-    this._identityIconLabels.setAttribute("tooltiptext", tooltip);
-    this._identityIconLabel.setAttribute("value", icon_label);
-    this._identityIconCountryLabel.setAttribute("value", icon_country_label);
-    // Set cropping and direction
-    this._identityIconLabel.setAttribute(
-      "crop",
-      icon_country_label ? "end" : "center"
+    // If this condition is true, the URL bar will have an "invalid"
+    // pageproxystate, which will hide the security indicators. Thus, we can
+    // safely avoid updating the security UI.
+    //
+    // This will also filter out intermediate about:blank loads to avoid
+    // flickering the identity block and doing unnecessary work.
+    if (this._hasInvalidPageProxyState()) {
+      return;
+    }
+
+    this._refreshIdentityIcons();
+
+    this._refreshPermissionIcons();
+
+    // Hide the shield icon if it is a chrome page.
+    this._trackingProtectionIconContainer.classList.toggle(
+      "chromeUI",
+      this._isSecureInternalUI
     );
-    this._identityIconLabel.parentNode.style.direction = icon_labels_dir;
-    // Hide completely if the organization label is empty
-    this._identityIconLabel.parentNode.collapsed = !icon_label;
   },
 
   /**
@@ -862,14 +945,8 @@ var gIdentityHandler = {
     // "Clear Site Data" button if the site is storing local data.
     this._clearSiteDataFooter.hidden = true;
     if (this._uriHasHost) {
-      let host = this._uri.host;
-      SiteDataManager.updateSites().then(async () => {
-        let baseDomain = SiteDataManager.getBaseDomainFromHost(host);
-        let siteData = await SiteDataManager.getSites(baseDomain);
-
-        if (siteData && siteData.length) {
-          this._clearSiteDataFooter.hidden = false;
-        }
+      SiteDataManager.hasSiteData(this._uri.asciiHost).then(hasData => {
+        this._clearSiteDataFooter.hidden = !hasData;
       });
     }
 
@@ -909,6 +986,8 @@ var gIdentityHandler = {
     } else if (this._isSecureConnection) {
       connection = "secure";
       customRoot = this._hasCustomRoot();
+    } else if (this._isAboutCertErrorPage) {
+      connection = "cert-error-page";
     }
 
     // Determine if there are insecure login forms.
@@ -941,25 +1020,24 @@ var gIdentityHandler = {
       ciphers = "weak";
     }
 
+    // Gray lock icon for secure connections if pref set
+    this._updateAttribute(
+      this._identityPopup,
+      "lock-icon-gray",
+      this._useGrayLockIcon
+    );
+
     // Update all elements.
     let elementIDs = ["identity-popup", "identity-popup-securityView-body"];
 
-    function updateAttribute(elem, attr, value) {
-      if (value) {
-        elem.setAttribute(attr, value);
-      } else {
-        elem.removeAttribute(attr);
-      }
-    }
-
     for (let id of elementIDs) {
       let element = document.getElementById(id);
-      updateAttribute(element, "connection", connection);
-      updateAttribute(element, "loginforms", loginforms);
-      updateAttribute(element, "ciphers", ciphers);
-      updateAttribute(element, "mixedcontent", mixedcontent);
-      updateAttribute(element, "isbroken", this._isBrokenConnection);
-      updateAttribute(element, "customroot", customRoot);
+      this._updateAttribute(element, "connection", connection);
+      this._updateAttribute(element, "loginforms", loginforms);
+      this._updateAttribute(element, "ciphers", ciphers);
+      this._updateAttribute(element, "mixedcontent", mixedcontent);
+      this._updateAttribute(element, "isbroken", this._isBrokenConnection);
+      this._updateAttribute(element, "customroot", customRoot);
     }
 
     // Initialize the optional strings to empty values
@@ -999,10 +1077,22 @@ var gIdentityHandler = {
 
     // Push the appropriate strings out to the UI.
     this._identityPopupMainViewHeaderLabel.textContent = gNavigatorBundle.getFormattedString(
-      "identity.headerWithHost",
+      "identity.headerMainWithHost",
       [host]
     );
-    this._identityPopupContentHost.textContent = host;
+
+    this._identityPopupSecurityView.setAttribute(
+      "title",
+      gNavigatorBundle.getFormattedString("identity.headerSecurityWithHost", [
+        host,
+      ])
+    );
+
+    this._identityPopupSecurityEVContentOwner.textContent = gNavigatorBundle.getFormattedString(
+      "identity.ev.contentOwner2",
+      [owner]
+    );
+
     this._identityPopupContentOwner.textContent = owner;
     this._identityPopupContentSupp.textContent = supplemental;
     this._identityPopupContentVerif.textContent = verifier;
@@ -1075,29 +1165,19 @@ var gIdentityHandler = {
     }
 
     // If we are in DOM full-screen, exit it before showing the identity popup
+    // (see bug 1557041)
     if (document.fullscreen) {
       // Open the identity popup after DOM full-screen exit
       // We need to wait for the exit event and after that wait for the fullscreen exit transition to complete
       // If we call _openPopup before the full-screen transition ends it can get cancelled
       // Only waiting for painted is not sufficient because we could still be in the full-screen enter transition.
-      let exitedEventReceived = false;
-      window.messageManager.addMessageListener(
-        "DOMFullscreen:Painted",
-        function listener() {
-          if (!exitedEventReceived) {
-            return;
-          }
-          window.messageManager.removeMessageListener(
-            "DOMFullscreen:Painted",
-            listener
-          );
-          gIdentityHandler._openPopup(event);
-        }
-      );
+      this._exitedEventReceived = false;
+      this._event = event;
+      Services.obs.addObserver(this, "fullscreen-painted");
       window.addEventListener(
         "MozDOMFullscreen:Exited",
         () => {
-          exitedEventReceived = true;
+          this._exitedEventReceived = true;
         },
         { once: true }
       );
@@ -1137,12 +1217,6 @@ var gIdentityHandler = {
     if (event.target == this._identityPopup) {
       window.addEventListener("focus", this, true);
     }
-
-    Services.telemetry.recordEvent(
-      "security.ui.identitypopup",
-      "open",
-      "identity_popup"
-    );
   },
 
   onPopupHidden(event) {
@@ -1171,16 +1245,29 @@ var gIdentityHandler = {
   },
 
   observe(subject, topic, data) {
-    // Exclude permissions which do not appear in the UI in order to avoid
-    // doing extra work here.
-    if (
-      topic == "perm-changed" &&
-      subject &&
-      SitePermissions.listPermissions().includes(
-        subject.QueryInterface(Ci.nsIPermission).type
-      )
-    ) {
-      this.refreshIdentityBlock();
+    switch (topic) {
+      case "perm-changed": {
+        // Exclude permissions which do not appear in the UI in order to avoid
+        // doing extra work here.
+        if (
+          subject &&
+          SitePermissions.listPermissions().includes(
+            subject.QueryInterface(Ci.nsIPermission).type
+          )
+        ) {
+          this.refreshIdentityBlock();
+        }
+        break;
+      }
+      case "fullscreen-painted": {
+        if (subject != window || !this._exitedEventReceived) {
+          return;
+        }
+        Services.obs.removeObserver(this, "fullscreen-painted");
+        this._openPopup(this._event);
+        delete this._event;
+        break;
+      }
     }
   },
 
@@ -1214,6 +1301,9 @@ var gIdentityHandler = {
     dt.setData("text/plain", value);
     dt.setData("text/html", htmlString);
     dt.setDragImage(canvas, 16, 16);
+
+    // Don't cover potential drop targets on the toolbars or in content.
+    gURLBar.view.close();
   },
 
   onLocationChange() {
@@ -1221,6 +1311,14 @@ var gIdentityHandler = {
 
     if (!this._permissionList.hasChildNodes()) {
       this._permissionEmptyHint.removeAttribute("hidden");
+    }
+  },
+
+  _updateAttribute(elem, attr, value) {
+    if (value) {
+      elem.setAttribute(attr, value);
+    } else {
+      elem.removeAttribute(attr);
     }
   },
 
@@ -1342,7 +1440,10 @@ var gIdentityHandler = {
       "identity-popup-permission-icon",
       aPermission.id + "-icon"
     );
-    if (aPermission.state == SitePermissions.BLOCK) {
+    if (
+      aPermission.state == SitePermissions.BLOCK ||
+      aPermission.state == SitePermissions.AUTOPLAY_BLOCKED_ALL
+    ) {
       img.classList.add("blocked-permission-icon");
     }
 
@@ -1488,6 +1589,16 @@ var gIdentityHandler = {
     return container;
   },
 
+  _removePermPersistentAllow(principal, id) {
+    let perm = SitePermissions.getForPrincipal(principal, id);
+    if (
+      perm.state == SitePermissions.ALLOW &&
+      perm.scope == SitePermissions.SCOPE_PERSISTENT
+    ) {
+      SitePermissions.removeFromPrincipal(principal, id);
+    }
+  },
+
   _createPermissionClearButton(aPermission, container) {
     let button = document.createXULElement("button");
     button.setAttribute("class", "identity-popup-permission-remove-button");
@@ -1496,36 +1607,49 @@ var gIdentityHandler = {
     button.addEventListener("command", () => {
       let browser = gBrowser.selectedBrowser;
       this._permissionList.removeChild(container);
-      if (
-        aPermission.sharingState &&
-        ["camera", "microphone", "screen"].includes(aPermission.id)
-      ) {
-        let windowId = this._sharingState.webRTC.windowId;
-        if (aPermission.id == "screen") {
-          windowId = "screen:" + windowId;
-        } else {
-          // If we set persistent permissions or the sharing has
-          // started due to existing persistent permissions, we need
-          // to handle removing these even for frames with different hostnames.
-          let principals = browser._devicePermissionPrincipals || [];
-          for (let principal of principals) {
-            // It's not possible to stop sharing one of camera/microphone
-            // without the other.
-            for (let id of ["camera", "microphone"]) {
-              if (this._sharingState.webRTC[id]) {
-                let perm = SitePermissions.getForPrincipal(principal, id);
-                if (
-                  perm.state == SitePermissions.ALLOW &&
-                  perm.scope == SitePermissions.SCOPE_PERSISTENT
-                ) {
-                  SitePermissions.removeFromPrincipal(principal, id);
+      if (aPermission.sharingState) {
+        if (aPermission.id === "geo") {
+          let origins = browser.getDevicePermissionOrigins("geo");
+          for (let origin of origins) {
+            let principal = Services.scriptSecurityManager.createContentPrincipalFromOrigin(
+              origin
+            );
+            this._removePermPersistentAllow(principal, aPermission.id);
+          }
+          origins.clear();
+        } else if (
+          ["camera", "microphone", "screen"].includes(aPermission.id)
+        ) {
+          let windowId = this._sharingState.webRTC.windowId;
+          if (aPermission.id == "screen") {
+            windowId = "screen:" + windowId;
+          } else {
+            // If we set persistent permissions or the sharing has
+            // started due to existing persistent permissions, we need
+            // to handle removing these even for frames with different hostnames.
+            let origins = browser.getDevicePermissionOrigins("webrtc");
+            for (let origin of origins) {
+              // It's not possible to stop sharing one of camera/microphone
+              // without the other.
+              let principal;
+              for (let id of ["camera", "microphone"]) {
+                if (this._sharingState.webRTC[id]) {
+                  if (!principal) {
+                    principal = Services.scriptSecurityManager.createContentPrincipalFromOrigin(
+                      origin
+                    );
+                  }
+                  this._removePermPersistentAllow(principal, id);
                 }
               }
             }
           }
+          browser.messageManager.sendAsyncMessage(
+            "webrtc:StopSharing",
+            windowId
+          );
+          webrtcUI.forgetActivePermissionsFromBrowser(gBrowser.selectedBrowser);
         }
-        browser.messageManager.sendAsyncMessage("webrtc:StopSharing", windowId);
-        webrtcUI.forgetActivePermissionsFromBrowser(gBrowser.selectedBrowser);
       }
       SitePermissions.removeFromPrincipal(
         gBrowser.contentPrincipal,

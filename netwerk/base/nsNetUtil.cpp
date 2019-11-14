@@ -25,11 +25,13 @@
 #include "nsFileStreams.h"
 #include "nsHashKeys.h"
 #include "nsHttp.h"
+#include "nsMimeTypes.h"
 #include "nsIAsyncStreamCopier.h"
 #include "nsIAuthPrompt.h"
 #include "nsIAuthPrompt2.h"
 #include "nsIAuthPromptAdapterFactory.h"
 #include "nsIBufferedStreams.h"
+#include "nsBufferedStreams.h"
 #include "nsIChannelEventSink.h"
 #include "nsIContentSniffer.h"
 #include "mozilla/dom/Document.h"
@@ -1125,11 +1127,9 @@ void NS_GetReferrerFromChannel(nsIChannel* channel, nsIURI** referrer) {
     nsresult rv = props->GetPropertyAsInterface(
         NS_LITERAL_STRING("docshell.internalReferrer"), NS_GET_IID(nsIURI),
         reinterpret_cast<void**>(referrer));
-    if (NS_FAILED(rv)) *referrer = nullptr;
-  }
-
-  if (*referrer) {
-    return;
+    if (NS_SUCCEEDED(rv)) {
+      return;
+    }
   }
 
   // if that didn't work, we can still try to get the referrer from the
@@ -1269,7 +1269,9 @@ MOZ_MUST_USE nsresult NS_NewBufferedInputStream(
   if (NS_SUCCEEDED(rv)) {
     rv = in->Init(inputStream, aBufferSize);
     if (NS_SUCCEEDED(rv)) {
-      in.forget(aResult);
+      *aResult = static_cast<nsBufferedInputStream*>(in.get())
+                     ->GetInputStream()
+                     .take();
     }
   }
   return rv;
@@ -2122,7 +2124,7 @@ bool NS_ShouldCheckAppCache(nsIPrincipal* aPrincipal) {
   }
 
   bool allowed;
-  rv = offlineService->OfflineAppAllowed(aPrincipal, nullptr, &allowed);
+  rv = offlineService->OfflineAppAllowed(aPrincipal, &allowed);
   return NS_SUCCEEDED(rv) && allowed;
 }
 
@@ -2545,8 +2547,7 @@ bool NS_IsHSTSUpgradeRedirect(nsIChannel* aOldChannel, nsIChannel* aNewChannel,
     return false;
   }
 
-  bool isHttp;
-  if (NS_FAILED(oldURI->SchemeIs("http", &isHttp)) || !isHttp) {
+  if (!oldURI->SchemeIs("http")) {
     return false;
   }
 
@@ -2662,8 +2663,7 @@ void net_EnsurePSMInit() {
 
 bool NS_IsAboutBlank(nsIURI* uri) {
   // GetSpec can be expensive for some URIs, so check the scheme first.
-  bool isAbout = false;
-  if (NS_FAILED(uri->SchemeIs("about", &isAbout)) || !isAbout) {
+  if (!uri->SchemeIs("about")) {
     return false;
   }
 
@@ -2696,15 +2696,6 @@ nsresult NS_GenerateHostPort(const nsCString& host, int32_t port,
 void NS_SniffContent(const char* aSnifferType, nsIRequest* aRequest,
                      const uint8_t* aData, uint32_t aLength,
                      nsACString& aSniffedType) {
-  // In case XCTO nosniff was present, we could just skip sniffing here
-  nsCOMPtr<nsIChannel> channel = do_QueryInterface(aRequest);
-  if (channel) {
-    nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
-    if (loadInfo->GetSkipContentSniffing()) {
-      aSniffedType.Truncate();
-      return;
-    }
-  }
   typedef nsCategoryCache<nsIContentSniffer> ContentSnifferCache;
   extern ContentSnifferCache* gNetSniffers;
   extern ContentSnifferCache* gDataSniffers;
@@ -2725,6 +2716,30 @@ void NS_SniffContent(const char* aSnifferType, nsIRequest* aRequest,
     return;
   }
 
+  // In case XCTO nosniff was present, we could just skip sniffing here
+  nsCOMPtr<nsIChannel> channel = do_QueryInterface(aRequest);
+  if (channel) {
+    nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
+    if (loadInfo->GetSkipContentSniffing()) {
+      /* Bug 1571742
+       * We cannot skip snffing if the current MIME-Type might be a JSON.
+       * The JSON-Viewer relies on its own sniffer to determine, if it can
+       * render the page, so we need to make an exception if the Server provides
+       * a application/ mime, as it might be json.
+
+       * Bug 1594766
+       * We also dont't skip sniffing if the currentContentType is empty
+       * because of legacy page compatibility issues.
+       */
+      nsAutoCString currentContentType;
+      channel->GetContentType(currentContentType);
+      if (!currentContentType.IsEmpty() &&
+          !StringBeginsWith(currentContentType,
+                            NS_LITERAL_CSTRING("application/"))) {
+        return;
+      }
+    }
+  }
   nsCOMArray<nsIContentSniffer> sniffers;
   cache->GetEntries(sniffers);
   for (int32_t i = 0; i < sniffers.Count(); ++i) {
@@ -2767,9 +2782,7 @@ nsresult NS_ShouldSecureUpgrade(
   // data (it is read-only).
   // if the connection is not using SSL and either the exact host matches or
   // a superdomain wants to force HTTPS, do it.
-  bool isHttps = false;
-  nsresult rv = aURI->SchemeIs("https", &isHttps);
-  NS_ENSURE_SUCCESS(rv, rv);
+  bool isHttps = aURI->SchemeIs("https");
 
   if (!isHttps &&
       !nsMixedContentBlocker::IsPotentiallyTrustworthyLoopbackURL(aURI)) {
@@ -2876,7 +2889,7 @@ nsresult NS_ShouldSecureUpgrade(
     if (!storageReady && gSocketTransportService && aResultCallback) {
       nsCOMPtr<nsIURI> uri = aURI;
       nsCOMPtr<nsISiteSecurityService> service = sss;
-      rv = gSocketTransportService->Dispatch(
+      nsresult rv = gSocketTransportService->Dispatch(
           NS_NewRunnableFunction(
               "net::NS_ShouldSecureUpgrade",
               [service{std::move(service)}, uri{std::move(uri)}, flags(flags),
@@ -2906,8 +2919,9 @@ nsresult NS_ShouldSecureUpgrade(
       return rv;
     }
 
-    rv = sss->IsSecureURI(nsISiteSecurityService::HEADER_HSTS, aURI, flags,
-                          aOriginAttributes, nullptr, &hstsSource, &isStsHost);
+    nsresult rv =
+        sss->IsSecureURI(nsISiteSecurityService::HEADER_HSTS, aURI, flags,
+                         aOriginAttributes, nullptr, &hstsSource, &isStsHost);
 
     // if the SSS check fails, it's likely because this load is on a
     // malformed URI or something else in the setup is wrong, so any error
@@ -2974,8 +2988,7 @@ nsresult NS_CompareLoadInfoAndLoadContext(nsIChannel* aChannel) {
   nsINode* node = loadInfo->LoadingNode();
   if (node) {
     nsIURI* uri = node->OwnerDoc()->GetDocumentURI();
-    nsresult rv = uri->SchemeIs("about", &isAboutPage);
-    NS_ENSURE_SUCCESS(rv, rv);
+    isAboutPage = uri->SchemeIs("about");
   }
 
   if (isAboutPage) {
@@ -3106,15 +3119,12 @@ bool NS_ShouldClassifyChannel(nsIChannel* aChannel) {
   }
 
   nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
-  if (loadInfo) {
-    nsContentPolicyType type = loadInfo->GetExternalContentPolicyType();
-
-    // Skip classifying channel triggered by system unless it is a top-level
-    // load.
-    if (nsContentUtils::IsSystemPrincipal(loadInfo->TriggeringPrincipal()) &&
-        nsIContentPolicy::TYPE_DOCUMENT != type) {
-      return false;
-    }
+  nsContentPolicyType type = loadInfo->GetExternalContentPolicyType();
+  // Skip classifying channel triggered by system unless it is a top-level
+  // load.
+  if (nsContentUtils::IsSystemPrincipal(loadInfo->TriggeringPrincipal()) &&
+      nsIContentPolicy::TYPE_DOCUMENT != type) {
+    return false;
   }
 
   return true;

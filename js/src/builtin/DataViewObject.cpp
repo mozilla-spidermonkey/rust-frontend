@@ -11,6 +11,7 @@
 #include "mozilla/EndianUtils.h"
 #include "mozilla/WrappingOperations.h"
 
+#include <algorithm>
 #include <string.h>
 #include <type_traits>
 
@@ -352,10 +353,12 @@ template <typename DataType, typename BufferPtrType>
 struct DataViewIO {
   typedef typename DataToRepType<DataType>::result ReadWriteType;
 
+  static constexpr auto alignMask =
+      std::min<size_t>(MOZ_ALIGNOF(void*), sizeof(DataType)) - 1;
+
   static void fromBuffer(DataType* dest, BufferPtrType unalignedBuffer,
                          bool wantSwap) {
-    MOZ_ASSERT((reinterpret_cast<uintptr_t>(dest) &
-                (Min<size_t>(MOZ_ALIGNOF(void*), sizeof(DataType)) - 1)) == 0);
+    MOZ_ASSERT((reinterpret_cast<uintptr_t>(dest) & alignMask) == 0);
     Memcpy((uint8_t*)dest, unalignedBuffer, sizeof(ReadWriteType));
     if (wantSwap) {
       ReadWriteType* rwDest = reinterpret_cast<ReadWriteType*>(dest);
@@ -365,8 +368,7 @@ struct DataViewIO {
 
   static void toBuffer(BufferPtrType unalignedBuffer, const DataType* src,
                        bool wantSwap) {
-    MOZ_ASSERT((reinterpret_cast<uintptr_t>(src) &
-                (Min<size_t>(MOZ_ALIGNOF(void*), sizeof(DataType)) - 1)) == 0);
+    MOZ_ASSERT((reinterpret_cast<uintptr_t>(src) & alignMask) == 0);
     ReadWriteType temp = *reinterpret_cast<const ReadWriteType*>(src);
     if (wantSwap) {
       temp = swapBytes(temp);
@@ -981,17 +983,17 @@ JSObject* DataViewObject::CreatePrototype(JSContext* cx, JSProtoKey key) {
                                             &DataViewObject::protoClass_);
 }
 
-static const ClassOps DataViewObjectClassOps = {nullptr, /* addProperty */
-                                                nullptr, /* delProperty */
-                                                nullptr, /* enumerate */
-                                                nullptr, /* newEnumerate */
-                                                nullptr, /* resolve */
-                                                nullptr, /* mayResolve */
-                                                nullptr, /* finalize */
-                                                nullptr, /* call */
-                                                nullptr, /* hasInstance */
-                                                nullptr, /* construct */
-                                                ArrayBufferViewObject::trace};
+static const JSClassOps DataViewObjectClassOps = {nullptr, /* addProperty */
+                                                  nullptr, /* delProperty */
+                                                  nullptr, /* enumerate */
+                                                  nullptr, /* newEnumerate */
+                                                  nullptr, /* resolve */
+                                                  nullptr, /* mayResolve */
+                                                  nullptr, /* finalize */
+                                                  nullptr, /* call */
+                                                  nullptr, /* hasInstance */
+                                                  nullptr, /* construct */
+                                                  ArrayBufferViewObject::trace};
 
 const ClassSpec DataViewObject::classSpec_ = {
     GenericCreateConstructor<DataViewObject::construct, 1,
@@ -1002,14 +1004,14 @@ const ClassSpec DataViewObject::classSpec_ = {
     DataViewObject::methods,
     DataViewObject::properties};
 
-const Class DataViewObject::class_ = {
+const JSClass DataViewObject::class_ = {
     "DataView",
     JSCLASS_HAS_PRIVATE |
         JSCLASS_HAS_RESERVED_SLOTS(DataViewObject::RESERVED_SLOTS) |
         JSCLASS_HAS_CACHED_PROTO(JSProto_DataView),
     &DataViewObjectClassOps, &DataViewObject::classSpec_};
 
-const Class DataViewObject::protoClass_ = {
+const JSClass DataViewObject::protoClass_ = {
     js_Object_str, JSCLASS_HAS_CACHED_PROTO(JSProto_DataView),
     JS_NULL_CLASS_OPS, &DataViewObject::classSpec_};
 

@@ -10,7 +10,7 @@
 /*
  * Frame script that listens for requests to start a `DebuggerServer` for a frame in a
  * content process.  Loaded into content process frames by the main process during
- * `DebuggerServer.connectToFrame`.
+ * frame-connector.js' connectToFrame.
  */
 
 try {
@@ -41,7 +41,7 @@ try {
 
     const DevToolsUtils = require("devtools/shared/DevToolsUtils");
     const { dumpn } = DevToolsUtils;
-    const { DebuggerServer } = require("devtools/server/main");
+    const { DebuggerServer } = require("devtools/server/debugger-server");
     const { ActorPool } = require("devtools/server/actors/common");
 
     DebuggerServer.init();

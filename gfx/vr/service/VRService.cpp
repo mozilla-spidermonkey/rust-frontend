@@ -28,7 +28,6 @@
 
 using namespace mozilla;
 using namespace mozilla::gfx;
-using namespace std;
 
 namespace {
 
@@ -70,13 +69,13 @@ VRService::VRService(volatile VRExternalShmem* aShmem)
   // of mAPIShmem from GPU process and pass it to the CTOR.
   // If we don't have the VR process, we will instantiate
   // mAPIShmem in VRService.
-  mShmem = new VRShMem(aShmem, aShmem == nullptr, XRE_IsParentProcess());
+  mShmem = new VRShMem(aShmem, aShmem == nullptr /*aRequiresMutex*/);
 }
 
 VRService::~VRService() {
   // PSA: We must store the value of any staticPrefs preferences as this
   // destructor will be called after staticPrefs has been shut down.
-  Stop();
+  StopInternal(true /*aFromDtor*/);
 }
 
 void VRService::Refresh() {
@@ -121,7 +120,9 @@ void VRService::Start() {
   }
 }
 
-void VRService::Stop() {
+void VRService::Stop() { StopInternal(false /*aFromDtor*/); }
+
+void VRService::StopInternal(bool aFromDtor) {
   if (mServiceThread) {
     mShutdownRequested = true;
     mServiceThread->Stop();
@@ -129,7 +130,10 @@ void VRService::Stop() {
     mServiceThread = nullptr;
   }
 
-  if (mShmem != nullptr) {
+  if (mShmem != nullptr && (aFromDtor || !mShmem->IsSharedExternalShmem())) {
+    // Only leave the VRShMem and clean up the pointer when the struct
+    // was not passed in. Otherwise, VRService will no longer have a
+    // way to access that struct if VRService starts again.
     mShmem->LeaveShMem();
     delete mShmem;
     mShmem = nullptr;

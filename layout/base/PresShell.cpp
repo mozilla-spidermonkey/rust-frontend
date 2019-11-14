@@ -29,6 +29,7 @@
 #include "mozilla/Sprintf.h"
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/StaticPrefs_font.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TimeStamp.h"
@@ -53,6 +54,7 @@
 #include "mozilla/dom/PopupBlocker.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentInlines.h"
+#include "mozilla/dom/UserActivation.h"
 #include "nsAnimationManager.h"
 #include "nsNameSpaceManager.h"  // for Pref-related rule management (bugs 22963,20760,31816)
 #include "nsFrame.h"
@@ -192,7 +194,6 @@
 #include "mozilla/StyleSheetInlines.h"
 #include "mozilla/dom/ImageTracker.h"
 #include "nsIDocShellTreeOwner.h"
-#include "nsBindingManager.h"
 #include "nsClassHashtable.h"
 #include "nsHashKeys.h"
 #include "VisualViewport.h"
@@ -999,6 +1000,7 @@ void PresShell::Init(Document* aDocument, nsPresContext* aPresContext,
         os->AddObserver(this, "sessionstore-one-or-no-tab-restored", false);
       }
       os->AddObserver(this, "font-info-updated", false);
+      os->AddObserver(this, "look-and-feel-pref-changed", false);
     }
   }
 
@@ -1032,14 +1034,14 @@ void PresShell::Init(Document* aDocument, nsPresContext* aPresContext,
   QueryIsActive();
 
   // Setup our font inflation preferences.
-  mFontSizeInflationEmPerLine = nsLayoutUtils::FontSizeInflationEmPerLine();
-  mFontSizeInflationMinTwips = nsLayoutUtils::FontSizeInflationMinTwips();
+  mFontSizeInflationEmPerLine = StaticPrefs::font_size_inflation_emPerLine();
+  mFontSizeInflationMinTwips = StaticPrefs::font_size_inflation_minTwips();
   mFontSizeInflationLineThreshold =
-      nsLayoutUtils::FontSizeInflationLineThreshold();
+      StaticPrefs::font_size_inflation_lineThreshold();
   mFontSizeInflationForceEnabled =
-      nsLayoutUtils::FontSizeInflationForceEnabled();
+      StaticPrefs::font_size_inflation_forceEnabled();
   mFontSizeInflationDisabledInMasterProcess =
-      nsLayoutUtils::FontSizeInflationDisabledInMasterProcess();
+      StaticPrefs::font_size_inflation_disabledInMasterProcess();
   // We'll compute the font size inflation state in Initialize(), when we know
   // the document type.
 
@@ -1054,7 +1056,7 @@ void PresShell::Init(Document* aDocument, nsPresContext* aPresContext,
   }
 
   if (nsCOMPtr<nsIDocShell> docShell = mPresContext->GetDocShell()) {
-    BrowsingContext* bc = nsDocShell::Cast(docShell)->GetBrowsingContext();
+    BrowsingContext* bc = docShell->GetBrowsingContext();
     bool embedderFrameIsHidden = true;
     if (Element* embedderElement = bc->GetEmbedderElement()) {
       if (auto embedderFrame = embedderElement->GetPrimaryFrame()) {
@@ -1243,6 +1245,7 @@ void PresShell::Destroy() {
         os->RemoveObserver(this, "sessionstore-one-or-no-tab-restored");
       }
       os->RemoveObserver(this, "font-info-updated");
+      os->RemoveObserver(this, "look-and-feel-pref-changed");
     }
   }
 
@@ -1664,20 +1667,6 @@ void PresShell::EndObservingDocument() {
 char* nsPresShell_ReflowStackPointerTop;
 #endif
 
-class XBLConstructorRunner : public Runnable {
- public:
-  explicit XBLConstructorRunner(Document* aDocument)
-      : Runnable("XBLConstructorRunner"), mDocument(aDocument) {}
-
-  NS_IMETHOD Run() override {
-    mDocument->BindingManager()->ProcessAttachedQueue();
-    return NS_OK;
-  }
-
- private:
-  RefPtr<Document> mDocument;
-};
-
 nsresult PresShell::Initialize() {
   if (mIsDestroying) {
     return NS_OK;
@@ -1755,11 +1744,6 @@ nsresult PresShell::Initialize() {
     // scope may have killed us too
     NS_ENSURE_STATE(!mHaveShutDown);
 
-    // Run the XBL binding constructors for any new frames we've constructed.
-    // (Do this in a script runner, since our caller might have a script
-    // blocker on the stack.)
-    nsContentUtils::AddScriptRunner(new XBLConstructorRunner(mDocument));
-
     // XBLConstructorRunner might destroy us.
     NS_ENSURE_STATE(!mHaveShutDown);
   }
@@ -1832,7 +1816,6 @@ void PresShell::sPaintSuppressionCallback(nsITimer* aTimer, void* aPresShell) {
 }
 
 nsresult PresShell::ResizeReflow(nscoord aWidth, nscoord aHeight,
-                                 nscoord aOldWidth, nscoord aOldHeight,
                                  ResizeReflowOptions aOptions) {
   if (mZoomConstraintsClient) {
     // If we have a ZoomConstraintsClient and the available screen area
@@ -1850,18 +1833,79 @@ nsresult PresShell::ResizeReflow(nscoord aWidth, nscoord aHeight,
     return NS_OK;
   }
 
-  return ResizeReflowIgnoreOverride(aWidth, aHeight, aOldWidth, aOldHeight,
-                                    aOptions);
+  return ResizeReflowIgnoreOverride(aWidth, aHeight, aOptions);
+}
+
+void PresShell::SimpleResizeReflow(nscoord aWidth, nscoord aHeight,
+                                   ResizeReflowOptions aOptions) {
+  MOZ_ASSERT(aWidth != NS_UNCONSTRAINEDSIZE);
+  MOZ_ASSERT(aHeight != NS_UNCONSTRAINEDSIZE);
+  nsSize oldSize = mPresContext->GetVisibleArea().Size();
+  mPresContext->SetVisibleArea(nsRect(0, 0, aWidth, aHeight));
+  nsIFrame* rootFrame = GetRootFrame();
+  if (!rootFrame) {
+    return;
+  }
+  WritingMode wm = rootFrame->GetWritingMode();
+  bool isBSizeChanging =
+      wm.IsVertical() ? oldSize.width != aWidth : oldSize.height != aHeight;
+  if (isBSizeChanging) {
+    nsLayoutUtils::MarkIntrinsicISizesDirtyIfDependentOnBSize(rootFrame);
+  }
+  FrameNeedsReflow(rootFrame, IntrinsicDirty::Resize,
+                   NS_FRAME_HAS_DIRTY_CHILDREN);
+
+  // For compat with the old code path which always reflowed as long as there
+  // was a root frame.
+  bool suppressReflow = (aOptions & ResizeReflowOptions::SuppressReflow) ||
+                        mPresContext->SuppressingResizeReflow();
+  if (!suppressReflow) {
+    mDocument->FlushPendingNotifications(FlushType::InterruptibleLayout);
+  }
 }
 
 nsresult PresShell::ResizeReflowIgnoreOverride(nscoord aWidth, nscoord aHeight,
-                                               nscoord aOldWidth,
-                                               nscoord aOldHeight,
                                                ResizeReflowOptions aOptions) {
   MOZ_ASSERT(!mIsReflowing, "Shouldn't be in reflow here!");
+  nsSize oldSize = mPresContext->GetVisibleArea().Size();
+  if (oldSize == nsSize(aWidth, aHeight)) {
+    return NS_OK;
+  }
 
-  nsIFrame* rootFrame = mFrameConstructor->GetRootFrame();
-  if (!rootFrame) {
+  // Historically we never fired resize events if there was no root frame by the
+  // time this function got called.
+  const bool initialized = mDidInitialize;
+  RefPtr<PresShell> kungFuDeathGrip(this);
+
+  auto postResizeEventIfNeeded = [this, initialized]() {
+    if (initialized && !mIsDestroying && !mResizeEventPending) {
+      mResizeEventPending = true;
+      if (MOZ_LIKELY(!mDocument->GetBFCacheEntry())) {
+        mPresContext->RefreshDriver()->AddResizeEventFlushObserver(this);
+      }
+    }
+  };
+
+  if (!(aOptions & ResizeReflowOptions::BSizeLimit)) {
+    SimpleResizeReflow(aWidth, aHeight, aOptions);
+    postResizeEventIfNeeded();
+    return NS_OK;
+  }
+
+  MOZ_ASSERT(!mPresContext->SuppressingResizeReflow() &&
+                 !(aOptions & ResizeReflowOptions::SuppressReflow),
+             "Can't suppress resize reflow and shrink-wrap at the same time");
+
+  // Make sure that style is flushed before setting the pres context
+  // VisibleArea.
+  //
+  // Otherwise we may end up with bogus viewport units resolved against the
+  // unconstrained bsize, or restyling the whole document resolving viewport
+  // units against targetWidth, which may end up doing wasteful work.
+  mDocument->FlushPendingNotifications(FlushType::Frames);
+
+  nsIFrame* rootFrame = GetRootFrame();
+  if (mIsDestroying || !rootFrame) {
     // If we don't have a root frame yet, that means we haven't had our initial
     // reflow... If that's the case, and aWidth or aHeight is unconstrained,
     // ignore them altogether.
@@ -1878,134 +1922,59 @@ nsresult PresShell::ResizeReflowIgnoreOverride(nscoord aWidth, nscoord aHeight,
   }
 
   WritingMode wm = rootFrame->GetWritingMode();
-  const bool shrinkToFit = !!(aOptions & ResizeReflowOptions::BSizeLimit);
-  MOZ_ASSERT(shrinkToFit ||
-                 (wm.IsVertical() ? aWidth : aHeight) != NS_UNCONSTRAINEDSIZE,
-             "unconstrained bsize only usable with eBSizeLimit");
   MOZ_ASSERT((wm.IsVertical() ? aHeight : aWidth) != NS_UNCONSTRAINEDSIZE,
              "unconstrained isize not allowed");
-  bool isBSizeChanging =
-      wm.IsVertical() ? aOldWidth != aWidth : aOldHeight != aHeight;
+
   nscoord targetWidth = aWidth;
   nscoord targetHeight = aHeight;
-
-  if (shrinkToFit) {
-    if (wm.IsVertical()) {
-      targetWidth = NS_UNCONSTRAINEDSIZE;
-    } else {
-      targetHeight = NS_UNCONSTRAINEDSIZE;
-    }
-    isBSizeChanging = true;
+  if (wm.IsVertical()) {
+    targetWidth = NS_UNCONSTRAINEDSIZE;
+  } else {
+    targetHeight = NS_UNCONSTRAINEDSIZE;
   }
 
-  const bool suppressingResizeReflow =
-      GetPresContext()->SuppressingResizeReflow();
+  mPresContext->SetVisibleArea(nsRect(0, 0, targetWidth, targetHeight));
+  // XXX Do a full invalidate at the beginning so that invalidates along
+  // the way don't have region accumulation issues?
 
-  RefPtr<nsViewManager> viewManager = mViewManager;
-  RefPtr<PresShell> kungFuDeathGrip(this);
+  // For height:auto BSizes (i.e. layout-controlled), descendant
+  // intrinsic sizes can't depend on them. So the only other case is
+  // viewport-controlled BSizes which we handle here.
+  nsLayoutUtils::MarkIntrinsicISizesDirtyIfDependentOnBSize(rootFrame);
 
-  if (!suppressingResizeReflow && shrinkToFit) {
-    // Make sure that style is flushed before setting the pres context
-    // VisibleArea if we're shrinking to fit.
-    //
-    // Otherwise we may end up with bogus viewport units resolved against the
-    // unconstrained bsize, or restyling the whole document resolving viewport
-    // units against targetWidth, which may end up doing wasteful work.
-    mDocument->FlushPendingNotifications(FlushType::Frames);
-  }
+  {
+    nsAutoCauseReflowNotifier crNotifier(this);
+    WillDoReflow();
 
-  if (!mIsDestroying) {
-    mPresContext->SetVisibleArea(nsRect(0, 0, targetWidth, targetHeight));
-  }
+    // Kick off a top-down reflow
+    AUTO_LAYOUT_PHASE_ENTRY_POINT(GetPresContext(), Reflow);
+    nsViewManager::AutoDisableRefresh refreshBlocker(mViewManager);
 
-  if (!mIsDestroying && !suppressingResizeReflow) {
-    if (!shrinkToFit) {
-      // Flush styles _now_ (with the correct visible area) if not computing the
-      // shrink-to-fit size.
-      //
-      // We've asserted above that sizes are not unconstrained, so this is going
-      // to be the final size, which means that we'll get the (correct) final
-      // styles now, and avoid a further potentially-wasteful full recascade on
-      // the next flush.
-      mDocument->FlushPendingNotifications(FlushType::Frames);
-    }
+    mDirtyRoots.Remove(rootFrame);
+    DoReflow(rootFrame, true, nullptr);
 
-    rootFrame = mFrameConstructor->GetRootFrame();
-    if (!mIsDestroying && rootFrame) {
-      // XXX Do a full invalidate at the beginning so that invalidates along
-      // the way don't have region accumulation issues?
+    const bool reflowAgain =
+        wm.IsVertical() ? mPresContext->GetVisibleArea().width > aWidth
+                        : mPresContext->GetVisibleArea().height > aHeight;
 
-      if (isBSizeChanging) {
-        // For BSize changes driven by style, RestyleManager handles this.
-        // For height:auto BSizes (i.e. layout-controlled), descendant
-        // intrinsic sizes can't depend on them. So the only other case is
-        // viewport-controlled BSizes which we handle here.
-        nsLayoutUtils::MarkIntrinsicISizesDirtyIfDependentOnBSize(rootFrame);
-      }
-
-      {
-        nsAutoCauseReflowNotifier crNotifier(this);
-        WillDoReflow();
-
-        // Kick off a top-down reflow
-        AUTO_LAYOUT_PHASE_ENTRY_POINT(GetPresContext(), Reflow);
-        nsViewManager::AutoDisableRefresh refreshBlocker(viewManager);
-
-        mDirtyRoots.Remove(rootFrame);
-        DoReflow(rootFrame, true, nullptr);
-
-        if (shrinkToFit) {
-          const bool reflowAgain =
-              wm.IsVertical() ? mPresContext->GetVisibleArea().width > aWidth
-                              : mPresContext->GetVisibleArea().height > aHeight;
-
-          if (reflowAgain) {
-            mPresContext->SetVisibleArea(nsRect(0, 0, aWidth, aHeight));
-            DoReflow(rootFrame, true, nullptr);
-          }
-        }
-      }
-
-      // the first DoReflow above should've set our bsize if it was
-      // NS_UNCONSTRAINEDSIZE, and the isize shouldn't be NS_UNCONSTRAINEDSIZE
-      // anyway
-      NS_ASSERTION(mPresContext->GetVisibleArea().width != NS_UNCONSTRAINEDSIZE,
-                   "width should not be NS_UNCONSTRAINEDSIZE after reflow");
-      NS_ASSERTION(
-          mPresContext->GetVisibleArea().height != NS_UNCONSTRAINEDSIZE,
-          "height should not be NS_UNCONSTRAINEDSIZE after reflow");
-
-      DidDoReflow(true);
+    if (reflowAgain) {
+      mPresContext->SetVisibleArea(nsRect(0, 0, aWidth, aHeight));
+      DoReflow(rootFrame, true, nullptr);
     }
   }
 
-  rootFrame = mFrameConstructor->GetRootFrame();
-  if (rootFrame) {
-    wm = rootFrame->GetWritingMode();
-    // reflow did not happen; if the reflow happened, our bsize should not be
-    // NS_UNCONSTRAINEDSIZE because DoReflow will fix it up to the same values
-    // as below
-    if (wm.IsVertical()) {
-      if (mPresContext->GetVisibleArea().width == NS_UNCONSTRAINEDSIZE) {
-        mPresContext->SetVisibleArea(
-            nsRect(0, 0, rootFrame->GetRect().width, aHeight));
-      }
-    } else {
-      if (mPresContext->GetVisibleArea().height == NS_UNCONSTRAINEDSIZE) {
-        mPresContext->SetVisibleArea(
-            nsRect(0, 0, aWidth, rootFrame->GetRect().height));
-      }
-    }
-  }
+  DidDoReflow(true);
 
-  if (!mIsDestroying && !mResizeEventPending &&
-      !(aOptions & ResizeReflowOptions::SuppressResizeEvent)) {
-    mResizeEventPending = true;
-    if (MOZ_LIKELY(!mDocument->GetBFCacheEntry())) {
-      mPresContext->RefreshDriver()->AddResizeEventFlushObserver(this);
-    }
-  }
+  // the reflow above should've set our bsize if it was NS_UNCONSTRAINEDSIZE,
+  // and the isize shouldn't be NS_UNCONSTRAINEDSIZE anyway.
+  MOZ_DIAGNOSTIC_ASSERT(
+      mPresContext->GetVisibleArea().width != NS_UNCONSTRAINEDSIZE,
+      "width should not be NS_UNCONSTRAINEDSIZE after reflow");
+  MOZ_DIAGNOSTIC_ASSERT(
+      mPresContext->GetVisibleArea().height != NS_UNCONSTRAINEDSIZE,
+      "height should not be NS_UNCONSTRAINEDSIZE after reflow");
 
+  postResizeEventIfNeeded();
   return NS_OK;  // XXX this needs to be real. MMP
 }
 
@@ -2267,15 +2236,12 @@ PresShell::PageMove(bool aForward, bool aExtend) {
       return NS_OK;
     }
   }
+  // We may scroll parent scrollable element of current selection limiter.
+  // In such case, we don't want to scroll selection into view unless
+  // selection is changed.
   RefPtr<nsFrameSelection> frameSelection = mSelection;
-  frameSelection->CommonPageMove(aForward, aExtend, frame);
-  // After ScrollSelectionIntoView(), the pending notifications might be
-  // flushed and PresShell/PresContext/Frames may be dead. See bug 418470.
-  return ScrollSelectionIntoView(
-      nsISelectionController::SELECTION_NORMAL,
-      nsISelectionController::SELECTION_FOCUS_REGION,
-      nsISelectionController::SCROLL_SYNCHRONOUS |
-          nsISelectionController::SCROLL_FOR_CARET_MOVE);
+  return frameSelection->PageMove(
+      aForward, aExtend, frame, nsFrameSelection::SelectionIntoView::IfChanged);
 }
 
 NS_IMETHODIMP
@@ -2854,9 +2820,10 @@ void PresShell::SlotAssignmentWillChange(Element& aElement,
     return;
   }
 
-  // If the old slot is about to become empty, let layout know that it needs to
-  // do work.
-  if (aOldSlot && aOldSlot->AssignedNodes().Length() == 1) {
+  // If the old slot is about to become empty and show fallback, let layout know
+  // that it needs to do work.
+  if (aOldSlot && aOldSlot->AssignedNodes().Length() == 1 &&
+      aOldSlot->HasChildren()) {
     DestroyFramesForAndRestyle(aOldSlot);
   }
 
@@ -2867,7 +2834,7 @@ void PresShell::SlotAssignmentWillChange(Element& aElement,
   if (aNewSlot) {
     // If the new slot will stop showing fallback content, we need to reframe it
     // altogether.
-    if (aNewSlot->AssignedNodes().IsEmpty()) {
+    if (aNewSlot->AssignedNodes().IsEmpty() && aNewSlot->HasChildren()) {
       DestroyFramesForAndRestyle(aNewSlot);
       // Otherwise we just care about the element, but we need to ensure that
       // something takes care of traversing to the relevant slot, if needed.
@@ -2889,21 +2856,6 @@ static void AssertNoFramesInSubtree(nsIContent* aContent) {
   for (nsINode* node : ShadowIncludingTreeIterator(*aContent)) {
     nsIContent* c = nsIContent::FromNode(node);
     MOZ_ASSERT(!c->GetPrimaryFrame());
-    if (auto* binding = c->GetXBLBinding()) {
-      if (auto* bindingWithContent = binding->GetBindingWithContent()) {
-        nsIContent* anonContent = bindingWithContent->GetAnonymousContent();
-        MOZ_ASSERT(!anonContent->GetPrimaryFrame());
-
-        // Need to do this instead of just AssertNoFramesInSubtree(anonContent),
-        // because the parent of the children of the <content> element isn't the
-        // <content> element, but the bound element, and that confuses
-        // GetNextNode a lot.
-        for (nsIContent* child = anonContent->GetFirstChild(); child;
-             child = child->GetNextSibling()) {
-          AssertNoFramesInSubtree(child);
-        }
-      }
-    }
   }
 }
 #endif
@@ -3628,71 +3580,6 @@ bool PresShell::ScrollFrameRectIntoView(nsIFrame* aFrame, const nsRect& aRect,
   return didScroll;
 }
 
-RectVisibility PresShell::GetRectVisibility(nsIFrame* aFrame,
-                                            const nsRect& aRect,
-                                            nscoord aMinTwips) const {
-  NS_ASSERTION(aFrame->PresContext() == GetPresContext(),
-               "prescontext mismatch?");
-  nsIFrame* rootFrame = mFrameConstructor->GetRootFrame();
-  NS_ASSERTION(
-      rootFrame,
-      "How can someone have a frame for this presshell when there's no root?");
-  nsIScrollableFrame* sf = GetRootScrollFrameAsScrollable();
-  nsRect scrollPortRect;
-  if (sf) {
-    scrollPortRect = sf->GetScrollPortRect();
-    nsIFrame* f = do_QueryFrame(sf);
-    scrollPortRect += f->GetOffsetTo(rootFrame);
-  } else {
-    scrollPortRect = nsRect(nsPoint(0, 0), rootFrame->GetSize());
-  }
-
-  // scrollPortRect has the viewport visible area relative to rootFrame.
-  nsRect visibleAreaRect(scrollPortRect);
-  // Find the intersection of this and the frame's ancestor scrollable
-  // frames. We walk the whole ancestor chain to find all the scrollable
-  // frames.
-  nsIScrollableFrame* scrollAncestorFrame =
-      nsLayoutUtils::GetNearestScrollableFrame(
-          aFrame, nsLayoutUtils::SCROLLABLE_INCLUDE_HIDDEN);
-  while (scrollAncestorFrame) {
-    nsRect scrollAncestorRect = scrollAncestorFrame->GetScrollPortRect();
-    nsIFrame* f = do_QueryFrame(scrollAncestorFrame);
-    scrollAncestorRect += f->GetOffsetTo(rootFrame);
-
-    visibleAreaRect = visibleAreaRect.Intersect(scrollAncestorRect);
-
-    // Continue up the chain.
-    scrollAncestorFrame = nsLayoutUtils::GetNearestScrollableFrame(
-        f->GetParent(), nsLayoutUtils::SCROLLABLE_INCLUDE_HIDDEN);
-  }
-
-  // aRect is in the aFrame coordinate space, so bring it into rootFrame
-  // coordinate space.
-  nsRect r = aRect + aFrame->GetOffsetTo(rootFrame);
-  // If aRect is entirely visible then we don't need to ensure that
-  // at least aMinTwips of it is visible
-  if (visibleAreaRect.Contains(r)) {
-    return RectVisibility::Visible;
-  }
-
-  nsRect insetRect = visibleAreaRect;
-  insetRect.Deflate(aMinTwips, aMinTwips);
-  if (r.YMost() <= insetRect.y) {
-    return RectVisibility::AboveViewport;
-  }
-  if (r.y >= insetRect.YMost()) {
-    return RectVisibility::BelowViewport;
-  }
-  if (r.XMost() <= insetRect.x) {
-    return RectVisibility::LeftOfViewport;
-  }
-  if (r.x >= insetRect.XMost()) {
-    return RectVisibility::RightOfViewport;
-  }
-  return RectVisibility::Visible;
-}
-
 void PresShell::ScheduleViewManagerFlush(PaintType aType) {
   if (MOZ_UNLIKELY(mIsDestroying)) {
     return;
@@ -4058,6 +3945,7 @@ void PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush) {
     "Event",
     "Content",
     "ContentAndNotify",
+    "Style",
     // As far as the profiler is concerned, EnsurePresShellInitAndFrames and
     // Frames are the same
     "Style",
@@ -4080,7 +3968,7 @@ void PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush) {
 #  endif
 #endif
 
-  NS_ASSERTION(flushType >= FlushType::Frames, "Why did we get called?");
+  NS_ASSERTION(flushType >= FlushType::Style, "Why did we get called?");
 
   mNeedStyleFlush = false;
   mNeedThrottledAnimationFlush =
@@ -4173,21 +4061,17 @@ void PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush) {
     if (MOZ_LIKELY(!mIsDestroying)) {
       nsAutoScriptBlocker scriptBlocker;
 #ifdef MOZ_GECKO_PROFILER
-      nsCOMPtr<nsIDocShell> docShell = mPresContext->GetDocShell();
-      DECLARE_DOCSHELL_AND_HISTORY_ID(docShell);
+      Maybe<uint64_t> innerWindowID;
+      if (auto* window = mDocument->GetInnerWindow()) {
+        innerWindowID = Some(window->WindowID());
+      }
       AutoProfilerStyleMarker tracingStyleFlush(std::move(mStyleCause),
-                                                docShellId, docShellHistoryId);
+                                                innerWindowID);
 #endif
       PerfStats::AutoMetricRecording<PerfStats::Metric::Styling> autoRecording;
+      LAYOUT_TELEMETRY_RECORD_BASE(Restyle);
 
       mPresContext->RestyleManager()->ProcessPendingRestyles();
-    }
-
-    // Process whatever XBL constructors those restyles queued up.  This
-    // ensures that onload doesn't fire too early and that we won't do extra
-    // reflows after those constructors run.
-    if (MOZ_LIKELY(!mIsDestroying)) {
-      mDocument->BindingManager()->ProcessAttachedQueue();
     }
 
     // Now those constructors or events might have posted restyle
@@ -4200,12 +4084,15 @@ void PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush) {
     if (MOZ_LIKELY(!mIsDestroying)) {
       nsAutoScriptBlocker scriptBlocker;
 #ifdef MOZ_GECKO_PROFILER
-      nsCOMPtr<nsIDocShell> docShell = mPresContext->GetDocShell();
-      DECLARE_DOCSHELL_AND_HISTORY_ID(docShell);
+      Maybe<uint64_t> innerWindowID;
+      if (auto* window = mDocument->GetInnerWindow()) {
+        innerWindowID = Some(window->WindowID());
+      }
       AutoProfilerStyleMarker tracingStyleFlush(std::move(mStyleCause),
-                                                docShellId, docShellHistoryId);
+                                                innerWindowID);
 #endif
       PerfStats::AutoMetricRecording<PerfStats::Metric::Styling> autoRecording;
+      LAYOUT_TELEMETRY_RECORD_BASE(Restyle);
 
       mPresContext->RestyleManager()->ProcessPendingRestyles();
       // Clear mNeedStyleFlush here agagin to make this flag work properly for
@@ -4227,12 +4114,7 @@ void PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush) {
         !mIsDestroying) {
       didLayoutFlush = true;
       mFrameConstructor->RecalcQuotesAndCounters();
-      viewManager->FlushDelayedResize(true);
       if (ProcessReflowCommands(flushType < FlushType::Layout)) {
-        // We didn't get interrupted. Go ahead and perform scroll anchor
-        // adjustments and scroll content into view
-        FlushPendingScrollAnchorAdjustments();
-
         if (mContentToScrollTo) {
           DoScrollContentIntoView();
           if (mContentToScrollTo) {
@@ -4263,6 +4145,30 @@ void PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush) {
     // or due to SuppressInterruptibleReflows().  Either way, the
     // mNeedLayoutFlush flag needs to be re-set.
     SetNeedLayoutFlush();
+  }
+
+  // Update flush counters
+  if (didStyleFlush) {
+    mLayoutTelemetry.IncReqsPerFlush(FlushType::Style);
+  }
+
+  if (didLayoutFlush) {
+    mLayoutTelemetry.IncReqsPerFlush(FlushType::Layout);
+  }
+
+  // Record telemetry for the number of requests per each flush type.
+  //
+  // Flushes happen as style or style+layout. This depends upon the `flushType`
+  // where flushType >= InterruptibleLayout means flush layout and flushType >=
+  // Style means flush style. We only report if didLayoutFlush or didStyleFlush
+  // is true because we care if a flush really did take place. (Flush is guarded
+  // by `isSafeToFlush == true`.)
+  if (flushType >= FlushType::InterruptibleLayout && didLayoutFlush) {
+    MOZ_ASSERT(didLayoutFlush == didStyleFlush);
+    mLayoutTelemetry.PingReqsPerFlushTelemetry(FlushType::Layout);
+  } else if (flushType >= FlushType::Style && didStyleFlush) {
+    MOZ_ASSERT(!didLayoutFlush);
+    mLayoutTelemetry.PingReqsPerFlushTelemetry(FlushType::Style);
   }
 }
 
@@ -5103,13 +5009,6 @@ void PresShell::AddCanvasBackgroundColorItem(
   // We can only do that if the color is opaque.
   bool forceUnscrolledItem =
       nsLayoutUtils::UsesAsyncScrolling(aFrame) && NS_GET_A(bgcolor) == 255;
-  if ((aFlags & AddCanvasBackgroundColorFlags::AddForSubDocument) &&
-      StaticPrefs::layout_scroll_root_frame_containers()) {
-    // If we're using ContainerLayers for a subdoc, then any items we add here
-    // will still be scrolled (since we're inside the container at this point),
-    // so don't bother and we will do it manually later.
-    forceUnscrolledItem = false;
-  }
 
   if (!addedScrollingBackgroundColor || forceUnscrolledItem) {
     aList->AppendNewToBottom<nsDisplaySolidColor>(aBuilder, aFrame, aBounds,
@@ -5160,11 +5059,16 @@ void PresShell::UpdateCanvasBackground() {
     // style frame but we don't have access to the canvasframe here. It isn't
     // a problem because only a few frames can return something other than true
     // and none of them would be a canvas frame or root element style frame.
-    bool drawBackgroundImage;
-    bool drawBackgroundColor;
-    mCanvasBackgroundColor = nsCSSRendering::DetermineBackgroundColor(
-        mPresContext, bgStyle, rootStyleFrame, drawBackgroundImage,
-        drawBackgroundColor);
+    bool drawBackgroundImage = false;
+    bool drawBackgroundColor = false;
+    if (rootStyleFrame->IsThemed()) {
+      // Ignore the CSS background-color if -moz-appearance is used.
+      mCanvasBackgroundColor = NS_RGBA(0, 0, 0, 0);
+    } else {
+      mCanvasBackgroundColor = nsCSSRendering::DetermineBackgroundColor(
+          mPresContext, bgStyle, rootStyleFrame, drawBackgroundImage,
+          drawBackgroundColor);
+    }
     mHasCSSBackgroundColor = drawBackgroundColor;
     if (mPresContext->IsRootContentDocumentCrossProcess() &&
         !IsTransparentContainerElement(mPresContext)) {
@@ -5222,21 +5126,6 @@ bool PresShell::AsyncPanZoomEnabled() {
   return gfxPlatform::AsyncPanZoomEnabled();
 }
 
-void PresShell::SetIgnoreViewportScrolling(bool aIgnore) {
-  if (IgnoringViewportScrolling() == aIgnore) {
-    return;
-  }
-  RenderingState state(this);
-  if (aIgnore) {
-    state.mRenderingStateFlags |=
-        RenderingStateFlags::IgnoringViewportScrolling;
-  } else {
-    state.mRenderingStateFlags &=
-        ~RenderingStateFlags::IgnoringViewportScrolling;
-  }
-  SetRenderingState(state);
-}
-
 nsresult PresShell::SetResolutionAndScaleTo(float aResolution,
                                             ResolutionChangeOrigin aOrigin) {
   if (!(aResolution > 0.0)) {
@@ -5250,7 +5139,7 @@ nsresult PresShell::SetResolutionAndScaleTo(float aResolution,
   state.mResolution = Some(aResolution);
   SetRenderingState(state);
   if (mMobileViewportManager) {
-    mMobileViewportManager->ResolutionUpdated();
+    mMobileViewportManager->ResolutionUpdated(aOrigin);
   }
   if (aOrigin == ResolutionChangeOrigin::Apz) {
     mResolutionUpdatedByApz = true;
@@ -5990,6 +5879,10 @@ void PresShell::Paint(nsView* aViewToPaint, const nsRegion& aDirtyRegion,
   AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING("PresShell::Paint", GRAPHICS, url);
 #endif
 
+  // When recording/replaying, create a checkpoint after every paint. This can
+  // cause content JS to run, so must live outside |nojs|.
+  auto createCheckpoint = MakeScopeExit(recordreplay::child::CreateCheckpoint);
+
   Maybe<js::AutoAssertNoContentJS> nojs;
 
   // On Android, Flash can call into content JS during painting, so we can't
@@ -6147,14 +6040,6 @@ void PresShell::Paint(nsView* aViewToPaint, const nsRegion& aDirtyRegion,
     // We can paint directly into the widget using its layer manager.
     nsLayoutUtils::PaintFrame(nullptr, frame, aDirtyRegion, bgcolor,
                               nsDisplayListBuilderMode::Painting, flags);
-
-    // When recording/replaying, create a checkpoint after every paint. This
-    // can cause content JS to run, so reset |nojs|.
-    if (recordreplay::IsRecordingOrReplaying()) {
-      nojs.reset();
-      recordreplay::child::CreateCheckpoint();
-    }
-
     return;
   }
 
@@ -7828,7 +7713,7 @@ nsresult PresShell::EventHandler::HandleEventWithCurrentEventInfo(
   RecordEventPreparationPerformance(aEvent);
 
   AutoHandlingUserInputStatePusher userInpStatePusher(
-      EventStateManager::IsUserInteractionEvent(aEvent), aEvent);
+      UserActivation::IsUserInteractionEvent(aEvent), aEvent);
   AutoEventHandler eventHandler(aEvent, GetDocument());
   AutoPopupStatePusher popupStatePusher(
       PopupBlocker::GetEventPopupControlState(aEvent));
@@ -9104,8 +8989,8 @@ void PresShell::WillDoReflow() {
 void PresShell::DidDoReflow(bool aInterruptible) {
   HandlePostedReflowCallbacks(aInterruptible);
 
-  nsCOMPtr<nsIDocShell> docShell = mPresContext->GetDocShell();
-  if (docShell) {
+  AutoAssertNoFlush noReentrantFlush(*this);
+  if (nsCOMPtr<nsIDocShell> docShell = mPresContext->GetDocShell()) {
     DOMHighResTimeStamp now = GetPerformanceNowUnclamped();
     docShell->NotifyReflowObservers(aInterruptible, mLastReflowStart, now);
   }
@@ -9165,6 +9050,9 @@ bool PresShell::DoReflow(nsIFrame* target, bool aInterruptible,
       "Reflow", LAYOUT_Reflow,
       uri ? uri->GetSpecOrDefault() : NS_LITERAL_CSTRING("N/A"));
 #endif
+
+  LAYOUT_TELEMETRY_RECORD_BASE(Reflow);
+
   PerfStats::AutoMetricRecording<PerfStats::Metric::Reflowing> autoRecording;
 
   gfxTextPerfMetrics* tp = mPresContext->GetTextPerfMetrics();
@@ -9192,10 +9080,13 @@ bool PresShell::DoReflow(nsIFrame* target, bool aInterruptible,
   }
 
 #ifdef MOZ_GECKO_PROFILER
-  DECLARE_DOCSHELL_AND_HISTORY_ID(docShell);
+  Maybe<uint64_t> innerWindowID;
+  if (auto* window = mDocument->GetInnerWindow()) {
+    innerWindowID = Some(window->WindowID());
+  }
   AutoProfilerTracing tracingLayoutFlush(
       "Paint", "Reflow", JS::ProfilingCategoryPair::LAYOUT,
-      std::move(mReflowCause), docShellId, docShellHistoryId);
+      std::move(mReflowCause), innerWindowID);
   mReflowCause = nullptr;
 #endif
 
@@ -9471,6 +9362,12 @@ bool PresShell::ProcessReflowCommands(bool aInterruptible) {
       interrupted = !mDirtyRoots.IsEmpty();
 
       overflowTracker.Flush();
+
+      if (!interrupted) {
+        // We didn't get interrupted. Go ahead and perform scroll anchor
+        // adjustments.
+        FlushPendingScrollAnchorAdjustments();
+      }
     }
 
     // Exiting the scriptblocker might have killed us
@@ -9565,6 +9462,11 @@ PresShell::Observe(nsISupports* aSubject, const char* aTopic,
 
   if (!nsCRT::strcmp(aTopic, "font-info-updated")) {
     mPresContext->ForceReflowForFontInfoUpdate();
+    return NS_OK;
+  }
+
+  if (!nsCRT::strcmp(aTopic, "look-and-feel-pref-changed")) {
+    ThemeChanged();
     return NS_OK;
   }
 
@@ -9944,7 +9846,6 @@ bool PresShell::VerifyIncrementalReflow() {
     nsAutoCauseReflowNotifier crNotifier(this);
     presShell->Initialize();
   }
-  mDocument->BindingManager()->ProcessAttachedQueue();
   presShell->FlushPendingNotifications(FlushType::Layout);
   presShell->SetVerifyReflowEnable(
       true);  // turn on verify reflow again now that
@@ -10548,12 +10449,25 @@ RefPtr<MobileViewportManager> PresShell::GetMobileViewportManager() const {
   return mMobileViewportManager;
 }
 
+bool UseMobileViewportManager(PresShell* aPresShell, Document* aDocument) {
+  // If we're not using APZ, we won't be able to zoom, so there is no
+  // point in having an MVM.
+  if (nsPresContext* presContext = aPresShell->GetPresContext()) {
+    if (nsIWidget* widget = presContext->GetNearestWidget()) {
+      if (!widget->AsyncPanZoomEnabled()) {
+        return false;
+      }
+    }
+  }
+  return nsLayoutUtils::ShouldHandleMetaViewport(aDocument) ||
+         nsLayoutUtils::AllowZoomingForDocument(aDocument);
+}
+
 void PresShell::UpdateViewportOverridden(bool aAfterInitialization) {
   // Determine if we require a MobileViewportManager. We need one any
   // time we allow resolution zooming for a document, and any time we
   // want to obey <meta name="viewport"> tags for it.
-  bool needMVM = nsLayoutUtils::ShouldHandleMetaViewport(mDocument) ||
-                 nsLayoutUtils::AllowZoomingForDocument(mDocument);
+  bool needMVM = UseMobileViewportManager(this, mDocument);
 
   if (needMVM == !!mMobileViewportManager) {
     // Either we've need one and we've already got it, or we don't need one
@@ -10815,7 +10729,8 @@ nsSize PresShell::GetLayoutViewportSize() const {
 void PresShell::RecomputeFontSizeInflationEnabled() {
   mFontSizeInflationEnabled = DetermineFontSizeInflationState();
 
-  float fontScale = nsLayoutUtils::SystemFontScale();
+  // Divide by 100 to convert the pref from a percentage to a fraction.
+  float fontScale = StaticPrefs::font_size_systemFontScale() / 100.0f;
   if (fontScale == 0.0f) {
     return;
   }
@@ -10975,7 +10890,7 @@ void PresShell::SetIsUnderHiddenEmbedderElement(
   mUnderHiddenEmbedderElement = aUnderHiddenEmbedderElement;
 
   if (nsCOMPtr<nsIDocShell> docShell = mPresContext->GetDocShell()) {
-    BrowsingContext* bc = nsDocShell::Cast(docShell)->GetBrowsingContext();
+    BrowsingContext* bc = docShell->GetBrowsingContext();
 
     // Propagate to children.
     for (BrowsingContext* child : bc->GetChildren()) {
@@ -11254,4 +11169,8 @@ void PresShell::EndPaint() {
   if (mDocument) {
     mDocument->EnumerateSubDocuments(EndPaintHelper, nullptr);
   }
+}
+
+void PresShell::PingPerTickTelemetry(FlushType aFlushType) {
+  mLayoutTelemetry.PingPerTickTelemetry(aFlushType);
 }

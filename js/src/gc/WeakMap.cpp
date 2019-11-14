@@ -71,9 +71,9 @@ bool WeakMapBase::markZoneIteratively(JS::Zone* zone, GCMarker* marker) {
   return markedAny;
 }
 
-bool WeakMapBase::findSweepGroupEdges(JS::Zone* zone) {
+bool WeakMapBase::findSweepGroupEdgesForZone(JS::Zone* zone) {
   for (WeakMapBase* m : zone->gcWeakMapList()) {
-    if (!m->findZoneEdges()) {
+    if (!m->findSweepGroupEdges()) {
       return false;
     }
   }
@@ -129,11 +129,12 @@ void WeakMapBase::restoreMarkedWeakMaps(WeakMapSet& markedWeakMaps) {
   }
 }
 
-size_t ObjectValueMap::sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) {
+size_t ObjectValueWeakMap::sizeOfIncludingThis(
+    mozilla::MallocSizeOf mallocSizeOf) {
   return mallocSizeOf(this) + shallowSizeOfExcludingThis(mallocSizeOf);
 }
 
-bool ObjectValueMap::findZoneEdges() {
+bool ObjectValueWeakMap::findSweepGroupEdges() {
   /*
    * For unmarked weakmap keys with delegates in a different zone, add a zone
    * edge to ensure that the delegate zone finishes marking before the key
@@ -163,7 +164,7 @@ bool ObjectValueMap::findZoneEdges() {
 ObjectWeakMap::ObjectWeakMap(JSContext* cx) : map(cx, nullptr) {}
 
 JSObject* ObjectWeakMap::lookup(const JSObject* obj) {
-  if (ObjectValueMap::Ptr p = map.lookup(const_cast<JSObject*>(obj))) {
+  if (ObjectValueWeakMap::Ptr p = map.lookup(const_cast<JSObject*>(obj))) {
     return &p->value().toObject();
   }
   return nullptr;
@@ -181,6 +182,11 @@ bool ObjectWeakMap::add(JSContext* cx, JSObject* obj, JSObject* target) {
   return true;
 }
 
+void ObjectWeakMap::remove(JSObject* key) {
+  MOZ_ASSERT(key);
+  map.remove(key);
+}
+
 void ObjectWeakMap::clear() { map.clear(); }
 
 void ObjectWeakMap::trace(JSTracer* trc) { map.trace(trc); }
@@ -191,7 +197,7 @@ size_t ObjectWeakMap::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) {
 
 #ifdef JSGC_HASH_TABLE_CHECKS
 void ObjectWeakMap::checkAfterMovingGC() {
-  for (ObjectValueMap::Range r = map.all(); !r.empty(); r.popFront()) {
+  for (ObjectValueWeakMap::Range r = map.all(); !r.empty(); r.popFront()) {
     CheckGCThingAfterMovingGC(r.front().key().get());
     CheckGCThingAfterMovingGC(&r.front().value().toObject());
   }

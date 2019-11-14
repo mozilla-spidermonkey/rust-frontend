@@ -14,7 +14,6 @@
 
 const { Cc, Ci } = require("chrome");
 const Services = require("Services");
-const defer = require("devtools/shared/defer");
 const { gDevTools } = require("./devtools");
 
 // Load target and toolbox lazily as they need gDevTools to be fully initialized
@@ -30,7 +29,12 @@ loader.lazyRequireGetter(
   "devtools/client/framework/toolbox",
   true
 );
-loader.lazyRequireGetter(this, "DebuggerServer", "devtools/server/main", true);
+loader.lazyRequireGetter(
+  this,
+  "DebuggerServer",
+  "devtools/server/debugger-server",
+  true
+);
 loader.lazyRequireGetter(
   this,
   "DebuggerClient",
@@ -51,8 +55,7 @@ loader.lazyRequireGetter(
 loader.lazyRequireGetter(
   this,
   "ResponsiveUIManager",
-  "devtools/client/responsive.html/manager",
-  true
+  "devtools/client/responsive/manager"
 );
 loader.lazyRequireGetter(
   this,
@@ -64,11 +67,6 @@ loader.lazyImporter(
   this,
   "BrowserToolboxProcess",
   "resource://devtools/client/framework/ToolboxProcess.jsm"
-);
-loader.lazyImporter(
-  this,
-  "ScratchpadManager",
-  "resource://devtools/client/scratchpad/scratchpad-manager.jsm"
 );
 
 const { LocalizationHelper } = require("devtools/shared/l10n");
@@ -135,10 +133,6 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
       }
     }
 
-    // Enable WebIDE?
-    const webIDEEnabled = Services.prefs.getBoolPref("devtools.webide.enabled");
-    toggleMenuItem("menu_webide", webIDEEnabled);
-
     // Enable Browser Toolbox?
     const chromeEnabled = Services.prefs.getBoolPref("devtools.chrome.enabled");
     const devtoolsRemoteEnabled = Services.prefs.getBoolPref(
@@ -151,22 +145,11 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
       remoteEnabled && win.gMultiProcessBrowser
     );
 
-    // Enable DevTools connection screen, if the preference allows this.
-    const connectPageEnabled = Services.prefs.getBoolPref(
-      "devtools.connectpage.enabled"
-    );
-    const connectEnabled = devtoolsRemoteEnabled && connectPageEnabled;
-    toggleMenuItem("menu_devtools_connect", connectEnabled);
-
     // Enable record/replay menu items?
-    try {
-      const recordReplayEnabled = Services.prefs.getBoolPref(
-        "devtools.recordreplay.enabled"
-      );
-      toggleMenuItem("menu_webreplay", recordReplayEnabled);
-    } catch (e) {
-      // devtools.recordreplay.enabled only exists on certain platforms.
-    }
+    const recordReplayEnabled = Services.prefs.getBoolPref(
+      "devtools.recordreplay.enabled"
+    );
+    toggleMenuItem("menu_webreplay", recordReplayEnabled);
 
     // The profiler's popup is experimental. The plan is to eventually turn it on
     // everywhere, but while it's under active development we don't want everyone
@@ -293,14 +276,24 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
         toolDefinition.preventClosingOnKey ||
         toolbox.hostType == Toolbox.HostType.WINDOW
       ) {
-        toolbox.raise();
+        if (!toolDefinition.preventRaisingOnKey) {
+          toolbox.raise();
+        }
       } else {
         toolbox.destroy();
       }
       gDevTools.emit("select-tool-command", toolId);
     } else {
       gDevTools
-        .showToolbox(target, toolId, null, null, startTime)
+        .showToolbox(
+          target,
+          toolId,
+          null,
+          null,
+          startTime,
+          undefined,
+          !toolDefinition.preventRaisingOnKey
+        )
         .then(newToolbox => {
           newToolbox.fireCustomKey(toolId);
           gDevTools.emit("select-tool-command", toolId);
@@ -318,8 +311,7 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
    *         from devtools-startup.js's KeyShortcuts array. The useful fields here
    *         are:
    *         - `toolId` used to identify a toolbox's panel like inspector or webconsole,
-   *         - `id` used to identify any other key shortcuts like scratchpad or
-   *         about:debugging
+   *         - `id` used to identify any other key shortcuts like about:debugging
    * @param {Number} startTime
    *        Optional, indicates the time at which the key event fired. This is a
    *        `Cu.now()` timing.
@@ -345,9 +337,6 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
       case "toggleToolboxF12":
         await gDevToolsBrowser.toggleToolboxCommand(window.gBrowser, startTime);
         break;
-      case "webide":
-        gDevToolsBrowser.openWebIDE();
-        break;
       case "browserToolbox":
         BrowserToolboxProcess.init();
         break;
@@ -362,16 +351,6 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
           trigger: "shortcut",
         });
         break;
-      case "scratchpad":
-        ScratchpadManager.openScratchpad();
-        break;
-      case "inspectorMac":
-        await gDevToolsBrowser.selectToolCommand(
-          window,
-          "inspector",
-          startTime
-        );
-        break;
     }
   },
 
@@ -382,36 +361,6 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
   openAboutDebugging(gBrowser, hash) {
     const url = "about:debugging" + (hash ? "#" + hash : "");
     gBrowser.selectedTab = gBrowser.addTrustedTab(url);
-  },
-
-  /**
-   * Open a tab to allow connects to a remote browser
-   */
-  // Used by browser-sets.inc, command
-  openConnectScreen(gBrowser) {
-    gBrowser.selectedTab = gBrowser.addTrustedTab(
-      "chrome://devtools/content/framework/connect/connect.xhtml"
-    );
-  },
-
-  /**
-   * Open WebIDE
-   */
-  // Used by browser-sets.inc, command
-  //         itself, webide widget
-  openWebIDE() {
-    const win = Services.wm.getMostRecentWindow("devtools:webide");
-    if (win) {
-      win.focus();
-    } else {
-      Services.ww.openWindow(
-        null,
-        "chrome://webide/content/",
-        "webide",
-        "chrome,centerscreen,resizable",
-        null
-      );
-    }
   },
 
   async _getContentProcessTarget(processId) {
@@ -449,7 +398,7 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
     for (let i = 1; i < childCount; i++) {
       const child = Services.ppmm.getChildAt(i);
       if (child == mm) {
-        processId = i;
+        processId = mm.osPid;
         break;
       }
     }
@@ -508,14 +457,9 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
   },
 
   /**
-   * The deferred promise will be resolved by WebIDE's UI.init()
-   */
-  isWebIDEInitialized: defer(),
-
-  /**
    * Add this DevTools's presence to a browser window's document
    *
-   * @param {XULDocument} doc
+   * @param {HTMLDocument} doc
    *        The document to which devtools should be hooked to.
    */
   _registerBrowserWindow(win) {

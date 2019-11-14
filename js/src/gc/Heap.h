@@ -10,18 +10,16 @@
 #include "mozilla/Atomics.h"
 #include "mozilla/DebugOnly.h"
 
-#include "jsutil.h"
-
 #include "ds/BitArray.h"
 #include "gc/AllocKind.h"
 #include "gc/GCEnum.h"
 #include "js/TypeDecls.h"
+#include "util/Poison.h"
 
 namespace js {
 
 class AutoLockGC;
 class AutoLockGCBgAlloc;
-class FreeOp;
 class NurseryDecommitTask;
 
 namespace gc {
@@ -29,6 +27,7 @@ namespace gc {
 class Arena;
 class ArenaCellSet;
 class ArenaList;
+class GCRuntime;
 class SortedArenaList;
 class StoreBuffer;
 class TenuredCell;
@@ -279,7 +278,7 @@ class Arena {
 
     // Poison zone pointer to highlight UAF on released arenas in crash data.
     AlwaysPoison(&zone, JS_FREED_ARENA_PATTERN, sizeof(zone),
-                 MemCheckKind::MakeUndefined);
+                 MemCheckKind::MakeNoAccess);
 
     allocKind = size_t(AllocKind::LIMIT);
     onDelayedMarkingList_ = 0;
@@ -441,7 +440,7 @@ class Arena {
   inline size_t& atomBitmapStart();
 
   template <typename T>
-  size_t finalize(FreeOp* fop, AllocKind thingKind, size_t thingSize);
+  size_t finalize(JSFreeOp* fop, AllocKind thingKind, size_t thingSize);
 
   static void staticAsserts();
 
@@ -782,36 +781,36 @@ struct Chunk {
 
   bool isNurseryChunk() const { return trailer.storeBuffer; }
 
-  Arena* allocateArena(JSRuntime* rt, JS::Zone* zone, AllocKind kind,
+  Arena* allocateArena(GCRuntime* gc, JS::Zone* zone, AllocKind kind,
                        const AutoLockGC& lock);
 
-  void releaseArena(JSRuntime* rt, Arena* arena, const AutoLockGC& lock);
+  void releaseArena(GCRuntime* gc, Arena* arena, const AutoLockGC& lock);
   void recycleArena(Arena* arena, SortedArenaList& dest, size_t thingsPerArena);
 
-  MOZ_MUST_USE bool decommitOneFreeArena(JSRuntime* rt, AutoLockGC& lock);
+  MOZ_MUST_USE bool decommitOneFreeArena(GCRuntime* gc, AutoLockGC& lock);
   void decommitAllArenas();
 
   // This will decommit each unused not-already decommitted arena. It performs a
   // system call for each arena but is only used during OOM.
   void decommitFreeArenasWithoutUnlocking(const AutoLockGC& lock);
 
-  static Chunk* allocate(JSRuntime* rt);
-  void init(JSRuntime* rt);
+  static Chunk* allocate(GCRuntime* gc);
+  void init(GCRuntime* gc);
 
  private:
   /* Search for a decommitted arena to allocate. */
   unsigned findDecommittedArenaOffset();
   Arena* fetchNextDecommittedArena();
 
-  void addArenaToFreeList(JSRuntime* rt, Arena* arena);
+  void addArenaToFreeList(GCRuntime* gc, Arena* arena);
   void addArenaToDecommittedList(const Arena* arena);
 
-  void updateChunkListAfterAlloc(JSRuntime* rt, const AutoLockGC& lock);
-  void updateChunkListAfterFree(JSRuntime* rt, const AutoLockGC& lock);
+  void updateChunkListAfterAlloc(GCRuntime* gc, const AutoLockGC& lock);
+  void updateChunkListAfterFree(GCRuntime* gc, const AutoLockGC& lock);
 
  public:
   /* Unlink and return the freeArenasHead. */
-  Arena* fetchNextFreeArena(JSRuntime* rt);
+  Arena* fetchNextFreeArena(GCRuntime* gc);
 };
 
 static_assert(

@@ -124,10 +124,25 @@ bool GeckoMVMContext::AllowZoomingForDocument() const {
   return nsLayoutUtils::AllowZoomingForDocument(mDocument);
 }
 
-void GeckoMVMContext::SetResolutionAndScaleTo(float aResolution) {
+bool GeckoMVMContext::IsInReaderMode() const {
+  MOZ_ASSERT(mDocument);
+  nsString uri;
+  if (NS_FAILED(mDocument->GetDocumentURI(uri))) {
+    return false;
+  }
+  static auto readerModeUriPrefix = NS_LITERAL_STRING("about:reader");
+  return StringBeginsWith(uri, readerModeUriPrefix);
+}
+
+bool GeckoMVMContext::IsDocumentLoading() const {
+  MOZ_ASSERT(mDocument);
+  return mDocument->GetReadyStateEnum() == dom::Document::READYSTATE_LOADING;
+}
+
+void GeckoMVMContext::SetResolutionAndScaleTo(float aResolution,
+                                              ResolutionChangeOrigin aOrigin) {
   MOZ_ASSERT(mPresShell);
-  mPresShell->SetResolutionAndScaleTo(aResolution,
-                                      ResolutionChangeOrigin::MainThread);
+  mPresShell->SetResolutionAndScaleTo(aResolution, aOrigin);
 }
 
 void GeckoMVMContext::SetVisualViewportSize(const CSSSize& aSize) {
@@ -161,21 +176,13 @@ void GeckoMVMContext::UpdateDisplayPortMargins() {
   }
 }
 
-void GeckoMVMContext::Reflow(const CSSSize& aNewSize, const CSSSize& aOldSize,
-                             ResizeEventFlag aResizeEventFlag) {
+void GeckoMVMContext::Reflow(const CSSSize& aNewSize) {
   MOZ_ASSERT(mPresShell);
 
-  ResizeReflowOptions reflowOptions = ResizeReflowOptions::NoOption;
-  if (aResizeEventFlag == ResizeEventFlag::Suppress) {
-    reflowOptions |= ResizeReflowOptions::SuppressResizeEvent;
-  }
-
   RefPtr<PresShell> presShell = mPresShell;
-  presShell->ResizeReflowIgnoreOverride(
-      nsPresContext::CSSPixelsToAppUnits(aNewSize.width),
-      nsPresContext::CSSPixelsToAppUnits(aNewSize.height),
-      nsPresContext::CSSPixelsToAppUnits(aOldSize.width),
-      nsPresContext::CSSPixelsToAppUnits(aOldSize.height), reflowOptions);
+  presShell->ResizeReflowIgnoreOverride(CSSPixel::ToAppUnits(aNewSize.width),
+                                        CSSPixel::ToAppUnits(aNewSize.height),
+                                        ResizeReflowOptions::NoOption);
 }
 
 }  // namespace mozilla

@@ -23,16 +23,19 @@
 //! That is why `translate_function_body` takes an object having the `WasmRuntime` trait as
 //! argument.
 use super::{hash_map, HashMap};
-use crate::environ::{FuncEnvironment, GlobalVariable, ReturnMode, WasmError, WasmResult};
-use crate::state::{ControlStackFrame, TranslationState};
+use crate::environ::{FuncEnvironment, GlobalVariable, ReturnMode, WasmResult};
+use crate::state::{ControlStackFrame, ElseData, FuncTranslationState, ModuleTranslationState};
 use crate::translation_utils::{
-    blocktype_to_type, f32_translation, f64_translation, num_return_values,
+    blocktype_params_results, ebb_with_params, f32_translation, f64_translation,
 };
 use crate::translation_utils::{FuncIndex, MemoryIndex, SignatureIndex, TableIndex};
+use crate::wasm_unsupported;
 use core::{i32, u32};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types::*;
-use cranelift_codegen::ir::{self, InstBuilder, JumpTableData, MemFlags, ValueLabel};
+use cranelift_codegen::ir::{
+    self, ConstantData, InstBuilder, JumpTableData, MemFlags, Value, ValueLabel,
+};
 use cranelift_codegen::packed_option::ReservedValue;
 use cranelift_frontend::{FunctionBuilder, Variable};
 use wasmparser::{MemoryImmediate, Operator};
@@ -42,13 +45,14 @@ use wasmparser::{MemoryImmediate, Operator};
 /// Translates wasm operators into Cranelift IR instructions. Returns `true` if it inserted
 /// a return.
 pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
-    op: Operator,
+    module_translation_state: &ModuleTranslationState,
+    op: &Operator,
     builder: &mut FunctionBuilder,
-    state: &mut TranslationState,
+    state: &mut FuncTranslationState,
     environ: &mut FE,
 ) -> WasmResult<()> {
     if !state.reachable {
-        translate_unreachable_operator(&op, builder, state);
+        translate_unreachable_operator(module_translation_state, &op, builder, state)?;
         return Ok(());
     }
 
@@ -59,28 +63,28 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
          *  disappear in the Cranelift Code
          ***********************************************************************************/
         Operator::GetLocal { local_index } => {
-            let val = builder.use_var(Variable::with_u32(local_index));
+            let val = builder.use_var(Variable::with_u32(*local_index));
             state.push1(val);
-            let label = ValueLabel::from_u32(local_index);
+            let label = ValueLabel::from_u32(*local_index);
             builder.set_val_label(val, label);
         }
         Operator::SetLocal { local_index } => {
             let val = state.pop1();
-            builder.def_var(Variable::with_u32(local_index), val);
-            let label = ValueLabel::from_u32(local_index);
+            builder.def_var(Variable::with_u32(*local_index), val);
+            let label = ValueLabel::from_u32(*local_index);
             builder.set_val_label(val, label);
         }
         Operator::TeeLocal { local_index } => {
             let val = state.peek1();
-            builder.def_var(Variable::with_u32(local_index), val);
-            let label = ValueLabel::from_u32(local_index);
+            builder.def_var(Variable::with_u32(*local_index), val);
+            let label = ValueLabel::from_u32(*local_index);
             builder.set_val_label(val, label);
         }
         /********************************** Globals ****************************************
          *  `get_global` and `set_global` are handled by the environment.
          ***********************************************************************************/
         Operator::GetGlobal { global_index } => {
-            let val = match state.get_global(builder.func, global_index, environ)? {
+            let val = match state.get_global(builder.func, *global_index, environ)? {
                 GlobalVariable::Const(val) => val,
                 GlobalVariable::Memory { gv, offset, ty } => {
                     let addr = builder.ins().global_value(environ.pointer_type(), gv);
@@ -91,8 +95,8 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             state.push1(val);
         }
         Operator::SetGlobal { global_index } => {
-            match state.get_global(builder.func, global_index, environ)? {
-                GlobalVariable::Const(_) => panic!("global #{} is a constant", global_index),
+            match state.get_global(builder.func, *global_index, environ)? {
+                GlobalVariable::Const(_) => panic!("global #{} is a constant", *global_index),
                 GlobalVariable::Memory { gv, offset, ty } => {
                     let addr = builder.ins().global_value(environ.pointer_type(), gv);
                     let flags = ir::MemFlags::trusted();
@@ -131,76 +135,147 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
          *  possible `Ebb`'s arguments values.
          ***********************************************************************************/
         Operator::Block { ty } => {
-            let next = builder.create_ebb();
-            if let Ok(ty_cre) = blocktype_to_type(ty) {
-                builder.append_ebb_param(next, ty_cre);
-            }
-            state.push_block(next, num_return_values(ty)?);
+            let (params, results) = blocktype_params_results(module_translation_state, *ty)?;
+            let next = ebb_with_params(builder, results)?;
+            state.push_block(next, params.len(), results.len());
         }
         Operator::Loop { ty } => {
-            let loop_body = builder.create_ebb();
-            let next = builder.create_ebb();
-            if let Ok(ty_cre) = blocktype_to_type(ty) {
-                builder.append_ebb_param(next, ty_cre);
-            }
-            builder.ins().jump(loop_body, &[]);
-            state.push_loop(loop_body, next, num_return_values(ty)?);
+            let (params, results) = blocktype_params_results(module_translation_state, *ty)?;
+            let loop_body = ebb_with_params(builder, params)?;
+            let next = ebb_with_params(builder, results)?;
+            builder.ins().jump(loop_body, state.peekn(params.len()));
+            state.push_loop(loop_body, next, params.len(), results.len());
+
+            // Pop the initial `Ebb` actuals and replace them with the `Ebb`'s
+            // params since control flow joins at the top of the loop.
+            state.popn(params.len());
+            state.stack.extend_from_slice(builder.ebb_params(loop_body));
+
             builder.switch_to_block(loop_body);
             environ.translate_loop_header(builder.cursor())?;
         }
         Operator::If { ty } => {
             let val = state.pop1();
-            let if_not = builder.create_ebb();
-            let jump_inst = builder.ins().brz(val, if_not, &[]);
+
+            let (params, results) = blocktype_params_results(module_translation_state, *ty)?;
+            let (destination, else_data) = if params == results {
+                // It is possible there is no `else` block, so we will only
+                // allocate an ebb for it if/when we find the `else`. For now,
+                // we if the condition isn't true, then we jump directly to the
+                // destination ebb following the whole `if...end`. If we do end
+                // up discovering an `else`, then we will allocate an ebb for it
+                // and go back and patch the jump.
+                let destination = ebb_with_params(builder, results)?;
+                let branch_inst = builder
+                    .ins()
+                    .brz(val, destination, state.peekn(params.len()));
+                (destination, ElseData::NoElse { branch_inst })
+            } else {
+                // The `if` type signature is not valid without an `else` block,
+                // so we eagerly allocate the `else` block here.
+                let destination = ebb_with_params(builder, results)?;
+                let else_block = ebb_with_params(builder, params)?;
+                builder
+                    .ins()
+                    .brz(val, else_block, state.peekn(params.len()));
+                builder.seal_block(else_block);
+                (destination, ElseData::WithElse { else_block })
+            };
+
+            #[cfg(feature = "basic-blocks")]
+            {
+                let next_ebb = builder.create_ebb();
+                builder.ins().jump(next_ebb, &[]);
+                builder.seal_block(next_ebb); // Only predecessor is the current block.
+                builder.switch_to_block(next_ebb);
+            }
+
             // Here we append an argument to an Ebb targeted by an argumentless jump instruction
             // But in fact there are two cases:
             // - either the If does not have a Else clause, in that case ty = EmptyBlock
             //   and we add nothing;
             // - either the If have an Else clause, in that case the destination of this jump
             //   instruction will be changed later when we translate the Else operator.
-            if let Ok(ty_cre) = blocktype_to_type(ty) {
-                builder.append_ebb_param(if_not, ty_cre);
-            }
-            state.push_if(jump_inst, if_not, num_return_values(ty)?);
+            state.push_if(destination, else_data, params.len(), results.len(), *ty);
         }
         Operator::Else => {
-            // We take the control frame pushed by the if, use its ebb as the else body
-            // and push a new control frame with a new ebb for the code after the if/then/else
-            // At the end of the then clause we jump to the destination
             let i = state.control_stack.len() - 1;
-            let (destination, return_count, branch_inst, ref mut reachable_from_top) =
-                match state.control_stack[i] {
-                    ControlStackFrame::If {
-                        destination,
-                        num_return_values,
-                        branch_inst,
-                        reachable_from_top,
-                        ..
-                    } => (
-                        destination,
-                        num_return_values,
-                        branch_inst,
-                        reachable_from_top,
-                    ),
-                    _ => panic!("should not happen"),
-                };
-            // The if has an else, so there's no branch to the end from the top.
-            *reachable_from_top = false;
-            builder.ins().jump(destination, state.peekn(return_count));
-            state.popn(return_count);
-            // We change the target of the branch instruction
-            let else_ebb = builder.create_ebb();
-            builder.change_jump_destination(branch_inst, else_ebb);
-            builder.seal_block(else_ebb);
-            builder.switch_to_block(else_ebb);
+            match state.control_stack[i] {
+                ControlStackFrame::If {
+                    ref else_data,
+                    head_is_reachable,
+                    ref mut consequent_ends_reachable,
+                    num_return_values,
+                    blocktype,
+                    destination,
+                    ..
+                } => {
+                    // We finished the consequent, so record its final
+                    // reachability state.
+                    debug_assert!(consequent_ends_reachable.is_none());
+                    *consequent_ends_reachable = Some(state.reachable);
+
+                    if head_is_reachable {
+                        // We have a branch from the head of the `if` to the `else`.
+                        state.reachable = true;
+
+                        // Ensure we have an ebb for the `else` block (it may have
+                        // already been pre-allocated, see `ElseData` for details).
+                        let else_ebb = match *else_data {
+                            ElseData::NoElse { branch_inst } => {
+                                let (params, _results) =
+                                    blocktype_params_results(module_translation_state, blocktype)?;
+                                debug_assert_eq!(params.len(), num_return_values);
+                                let else_ebb = ebb_with_params(builder, params)?;
+                                builder.ins().jump(destination, state.peekn(params.len()));
+                                state.popn(params.len());
+
+                                builder.change_jump_destination(branch_inst, else_ebb);
+                                builder.seal_block(else_ebb);
+                                else_ebb
+                            }
+                            ElseData::WithElse { else_block } => {
+                                builder
+                                    .ins()
+                                    .jump(destination, state.peekn(num_return_values));
+                                state.popn(num_return_values);
+                                else_block
+                            }
+                        };
+
+                        // You might be expecting that we push the parameters for this
+                        // `else` block here, something like this:
+                        //
+                        //     state.pushn(&control_stack_frame.params);
+                        //
+                        // We don't do that because they are already on the top of the stack
+                        // for us: we pushed the parameters twice when we saw the initial
+                        // `if` so that we wouldn't have to save the parameters in the
+                        // `ControlStackFrame` as another `Vec` allocation.
+
+                        builder.switch_to_block(else_ebb);
+
+                        // We don't bother updating the control frame's `ElseData`
+                        // to `WithElse` because nothing else will read it.
+                    }
+                }
+                _ => unreachable!(),
+            }
         }
         Operator::End => {
             let frame = state.control_stack.pop().unwrap();
+
             if !builder.is_unreachable() || !builder.is_pristine() {
                 let return_count = frame.num_return_values();
                 builder
                     .ins()
                     .jump(frame.following_code(), state.peekn(return_count));
+                // You might expect that if we just finished an `if` block that
+                // didn't have a corresponding `else` block, then we would clean
+                // up our duplicate set of parameters that we pushed earlier
+                // right here. However, we don't have to explicitly do that,
+                // since we truncate the stack back to the original height
+                // below.
             }
             builder.switch_to_block(frame.following_code());
             builder.seal_block(frame.following_code());
@@ -235,7 +310,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
          * `br_table`.
          ***********************************************************************************/
         Operator::Br { relative_depth } => {
-            let i = state.control_stack.len() - 1 - (relative_depth as usize);
+            let i = state.control_stack.len() - 1 - (*relative_depth as usize);
             let (return_count, br_destination) = {
                 let frame = &mut state.control_stack[i];
                 // We signal that all the code that follows until the next End is unreachable
@@ -253,7 +328,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             state.popn(return_count);
             state.reachable = false;
         }
-        Operator::BrIf { relative_depth } => translate_br_if(relative_depth, builder, state),
+        Operator::BrIf { relative_depth } => translate_br_if(*relative_depth, builder, state),
         Operator::BrTable { table } => {
             let (depths, default) = table.read_table()?;
             let mut min_depth = default;
@@ -357,10 +432,10 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
          * argument referring to an index in the external functions table of the module.
          ************************************************************************************/
         Operator::Call { function_index } => {
-            let (fref, num_args) = state.get_direct_func(builder.func, function_index, environ)?;
+            let (fref, num_args) = state.get_direct_func(builder.func, *function_index, environ)?;
             let call = environ.translate_call(
                 builder.cursor(),
-                FuncIndex::from_u32(function_index),
+                FuncIndex::from_u32(*function_index),
                 fref,
                 state.peekn(num_args),
             )?;
@@ -378,14 +453,14 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         Operator::CallIndirect { index, table_index } => {
             // `index` is the index of the function's signature and `table_index` is the index of
             // the table to search the function in.
-            let (sigref, num_args) = state.get_indirect_sig(builder.func, index, environ)?;
-            let table = state.get_table(builder.func, table_index, environ)?;
+            let (sigref, num_args) = state.get_indirect_sig(builder.func, *index, environ)?;
+            let table = state.get_table(builder.func, *table_index, environ)?;
             let callee = state.pop1();
             let call = environ.translate_call_indirect(
                 builder.cursor(),
-                TableIndex::from_u32(table_index),
+                TableIndex::from_u32(*table_index),
                 table,
-                SignatureIndex::from_u32(index),
+                SignatureIndex::from_u32(*index),
                 sigref,
                 callee,
                 state.peekn(num_args),
@@ -406,14 +481,14 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         Operator::MemoryGrow { reserved } => {
             // The WebAssembly MVP only supports one linear memory, but we expect the reserved
             // argument to be a memory index.
-            let heap_index = MemoryIndex::from_u32(reserved);
-            let heap = state.get_heap(builder.func, reserved, environ)?;
+            let heap_index = MemoryIndex::from_u32(*reserved);
+            let heap = state.get_heap(builder.func, *reserved, environ)?;
             let val = state.pop1();
             state.push1(environ.translate_memory_grow(builder.cursor(), heap_index, heap, val)?)
         }
         Operator::MemorySize { reserved } => {
-            let heap_index = MemoryIndex::from_u32(reserved);
-            let heap = state.get_heap(builder.func, reserved, environ)?;
+            let heap_index = MemoryIndex::from_u32(*reserved);
+            let heap = state.get_heap(builder.func, *reserved, environ)?;
             state.push1(environ.translate_memory_size(builder.cursor(), heap_index, heap)?);
         }
         /******************************* Load instructions ***********************************
@@ -423,72 +498,77 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         Operator::I32Load8U {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(offset, ir::Opcode::Uload8, I32, builder, state, environ)?;
+            translate_load(*offset, ir::Opcode::Uload8, I32, builder, state, environ)?;
         }
         Operator::I32Load16U {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(offset, ir::Opcode::Uload16, I32, builder, state, environ)?;
+            translate_load(*offset, ir::Opcode::Uload16, I32, builder, state, environ)?;
         }
         Operator::I32Load8S {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(offset, ir::Opcode::Sload8, I32, builder, state, environ)?;
+            translate_load(*offset, ir::Opcode::Sload8, I32, builder, state, environ)?;
         }
         Operator::I32Load16S {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(offset, ir::Opcode::Sload16, I32, builder, state, environ)?;
+            translate_load(*offset, ir::Opcode::Sload16, I32, builder, state, environ)?;
         }
         Operator::I64Load8U {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(offset, ir::Opcode::Uload8, I64, builder, state, environ)?;
+            translate_load(*offset, ir::Opcode::Uload8, I64, builder, state, environ)?;
         }
         Operator::I64Load16U {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(offset, ir::Opcode::Uload16, I64, builder, state, environ)?;
+            translate_load(*offset, ir::Opcode::Uload16, I64, builder, state, environ)?;
         }
         Operator::I64Load8S {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(offset, ir::Opcode::Sload8, I64, builder, state, environ)?;
+            translate_load(*offset, ir::Opcode::Sload8, I64, builder, state, environ)?;
         }
         Operator::I64Load16S {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(offset, ir::Opcode::Sload16, I64, builder, state, environ)?;
+            translate_load(*offset, ir::Opcode::Sload16, I64, builder, state, environ)?;
         }
         Operator::I64Load32S {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(offset, ir::Opcode::Sload32, I64, builder, state, environ)?;
+            translate_load(*offset, ir::Opcode::Sload32, I64, builder, state, environ)?;
         }
         Operator::I64Load32U {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(offset, ir::Opcode::Uload32, I64, builder, state, environ)?;
+            translate_load(*offset, ir::Opcode::Uload32, I64, builder, state, environ)?;
         }
         Operator::I32Load {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(offset, ir::Opcode::Load, I32, builder, state, environ)?;
+            translate_load(*offset, ir::Opcode::Load, I32, builder, state, environ)?;
         }
         Operator::F32Load {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(offset, ir::Opcode::Load, F32, builder, state, environ)?;
+            translate_load(*offset, ir::Opcode::Load, F32, builder, state, environ)?;
         }
         Operator::I64Load {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(offset, ir::Opcode::Load, I64, builder, state, environ)?;
+            translate_load(*offset, ir::Opcode::Load, I64, builder, state, environ)?;
         }
         Operator::F64Load {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(offset, ir::Opcode::Load, F64, builder, state, environ)?;
+            translate_load(*offset, ir::Opcode::Load, F64, builder, state, environ)?;
+        }
+        Operator::V128Load {
+            memarg: MemoryImmediate { flags: _, offset },
+        } => {
+            translate_load(*offset, ir::Opcode::Load, I8X16, builder, state, environ)?;
         }
         /****************************** Store instructions ***********************************
          * Wasm specifies an integer alignment flag but we drop it in Cranelift.
@@ -506,7 +586,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         | Operator::F64Store {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_store(offset, ir::Opcode::Store, builder, state, environ)?;
+            translate_store(*offset, ir::Opcode::Store, builder, state, environ)?;
         }
         Operator::I32Store8 {
             memarg: MemoryImmediate { flags: _, offset },
@@ -514,7 +594,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         | Operator::I64Store8 {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_store(offset, ir::Opcode::Istore8, builder, state, environ)?;
+            translate_store(*offset, ir::Opcode::Istore8, builder, state, environ)?;
         }
         Operator::I32Store16 {
             memarg: MemoryImmediate { flags: _, offset },
@@ -522,21 +602,26 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         | Operator::I64Store16 {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_store(offset, ir::Opcode::Istore16, builder, state, environ)?;
+            translate_store(*offset, ir::Opcode::Istore16, builder, state, environ)?;
         }
         Operator::I64Store32 {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_store(offset, ir::Opcode::Istore32, builder, state, environ)?;
+            translate_store(*offset, ir::Opcode::Istore32, builder, state, environ)?;
+        }
+        Operator::V128Store {
+            memarg: MemoryImmediate { flags: _, offset },
+        } => {
+            translate_store(*offset, ir::Opcode::Store, builder, state, environ)?;
         }
         /****************************** Nullary Operators ************************************/
-        Operator::I32Const { value } => state.push1(builder.ins().iconst(I32, i64::from(value))),
-        Operator::I64Const { value } => state.push1(builder.ins().iconst(I64, value)),
+        Operator::I32Const { value } => state.push1(builder.ins().iconst(I32, i64::from(*value))),
+        Operator::I64Const { value } => state.push1(builder.ins().iconst(I64, *value)),
         Operator::F32Const { value } => {
-            state.push1(builder.ins().f32const(f32_translation(value)));
+            state.push1(builder.ins().f32const(f32_translation(*value)));
         }
         Operator::F64Const { value } => {
-            state.push1(builder.ins().f64const(f64_translation(value)));
+            state.push1(builder.ins().f64const(f64_translation(*value)));
         }
         /******************************* Unary Operators *************************************/
         Operator::I32Clz | Operator::I64Clz => {
@@ -824,6 +909,12 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         Operator::F32Le | Operator::F64Le => {
             translate_fcmp(FloatCC::LessThanOrEqual, builder, state)
         }
+        Operator::RefNull => state.push1(builder.ins().null(environ.reference_type())),
+        Operator::RefIsNull => {
+            let arg = state.pop1();
+            let val = builder.ins().is_null(arg);
+            state.push1(val);
+        }
         Operator::Wake { .. }
         | Operator::I32Wait { .. }
         | Operator::I64Wait { .. }
@@ -889,11 +980,9 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         | Operator::I32AtomicRmw16UCmpxchg { .. }
         | Operator::I64AtomicRmw8UCmpxchg { .. }
         | Operator::I64AtomicRmw16UCmpxchg { .. }
-        | Operator::I64AtomicRmw32UCmpxchg { .. } => {
-            return Err(WasmError::Unsupported("proposed thread operators"));
-        }
-        Operator::RefNull | Operator::RefIsNull { .. } => {
-            return Err(WasmError::Unsupported("proposed reference-type operators"));
+        | Operator::I64AtomicRmw32UCmpxchg { .. }
+        | Operator::Fence { .. } => {
+            return Err(wasm_unsupported!("proposed thread operator {:?}", op));
         }
         Operator::MemoryInit { .. }
         | Operator::DataDrop { .. }
@@ -906,33 +995,150 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         | Operator::TableSet { .. }
         | Operator::TableGrow { .. }
         | Operator::TableSize { .. } => {
-            return Err(WasmError::Unsupported("proposed bulk memory operators"));
+            return Err(wasm_unsupported!("proposed bulk memory operator {:?}", op));
         }
-        Operator::V128Load { .. }
-        | Operator::V128Store { .. }
-        | Operator::V128Const { .. }
-        | Operator::V8x16Shuffle { .. }
-        | Operator::I8x16Splat
-        | Operator::I8x16ExtractLaneS { .. }
-        | Operator::I8x16ExtractLaneU { .. }
-        | Operator::I8x16ReplaceLane { .. }
+        Operator::V128Const { value } => {
+            let data = value.bytes().to_vec().into();
+            let handle = builder.func.dfg.constants.insert(data);
+            let value = builder.ins().vconst(I8X16, handle);
+            // the v128.const is typed in CLIF as a I8x16 but raw_bitcast to a different type before use
+            state.push1(value)
+        }
+        Operator::I8x16Splat
         | Operator::I16x8Splat
-        | Operator::I16x8ExtractLaneS { .. }
-        | Operator::I16x8ExtractLaneU { .. }
-        | Operator::I16x8ReplaceLane { .. }
         | Operator::I32x4Splat
-        | Operator::I32x4ExtractLane { .. }
-        | Operator::I32x4ReplaceLane { .. }
         | Operator::I64x2Splat
-        | Operator::I64x2ExtractLane { .. }
-        | Operator::I64x2ReplaceLane { .. }
         | Operator::F32x4Splat
-        | Operator::F32x4ExtractLane { .. }
-        | Operator::F32x4ReplaceLane { .. }
-        | Operator::F64x2Splat
-        | Operator::F64x2ExtractLane { .. }
-        | Operator::F64x2ReplaceLane { .. }
-        | Operator::I8x16Eq
+        | Operator::F64x2Splat => {
+            let value_to_splat = state.pop1();
+            let ty = type_of(op);
+            let splatted = builder.ins().splat(ty, value_to_splat);
+            state.push1(splatted)
+        }
+        Operator::I8x16ExtractLaneS { lane } | Operator::I16x8ExtractLaneS { lane } => {
+            let vector = optionally_bitcast_vector(state.pop1(), type_of(op), builder);
+            let extracted = builder.ins().extractlane(vector, lane.clone());
+            state.push1(builder.ins().sextend(I32, extracted))
+        }
+        Operator::I8x16ExtractLaneU { lane } | Operator::I16x8ExtractLaneU { lane } => {
+            let vector = optionally_bitcast_vector(state.pop1(), type_of(op), builder);
+            state.push1(builder.ins().extractlane(vector, lane.clone()));
+            // on x86, PEXTRB zeroes the upper bits of the destination register of extractlane so uextend is elided; of course, this depends on extractlane being legalized to a PEXTRB
+        }
+        Operator::I32x4ExtractLane { lane }
+        | Operator::I64x2ExtractLane { lane }
+        | Operator::F32x4ExtractLane { lane }
+        | Operator::F64x2ExtractLane { lane } => {
+            let vector = optionally_bitcast_vector(state.pop1(), type_of(op), builder);
+            state.push1(builder.ins().extractlane(vector, lane.clone()))
+        }
+        Operator::I8x16ReplaceLane { lane }
+        | Operator::I16x8ReplaceLane { lane }
+        | Operator::I32x4ReplaceLane { lane }
+        | Operator::I64x2ReplaceLane { lane }
+        | Operator::F32x4ReplaceLane { lane }
+        | Operator::F64x2ReplaceLane { lane } => {
+            let (vector, replacement_value) = state.pop2();
+            let original_vector_type = builder.func.dfg.value_type(vector);
+            let vector = optionally_bitcast_vector(vector, type_of(op), builder);
+            let replaced_vector = builder
+                .ins()
+                .insertlane(vector, lane.clone(), replacement_value);
+            state.push1(optionally_bitcast_vector(
+                replaced_vector,
+                original_vector_type,
+                builder,
+            ))
+        }
+        Operator::V8x16Shuffle { lanes, .. } => {
+            let (vector_a, vector_b) = state.pop2();
+            let a = optionally_bitcast_vector(vector_a, I8X16, builder);
+            let b = optionally_bitcast_vector(vector_b, I8X16, builder);
+            let lanes = ConstantData::from(lanes.as_ref());
+            let mask = builder.func.dfg.immediates.push(lanes);
+            let shuffled = builder.ins().shuffle(a, b, mask);
+            state.push1(shuffled)
+            // At this point the original types of a and b are lost; users of this value (i.e. this
+            // WASM-to-CLIF translator) may need to raw_bitcast for type-correctness. This is due
+            // to WASM using the less specific v128 type for certain operations and more specific
+            // types (e.g. i8x16) for others.
+        }
+        Operator::I8x16Add | Operator::I16x8Add | Operator::I32x4Add | Operator::I64x2Add => {
+            let (a, b) = state.pop2();
+            state.push1(builder.ins().iadd(a, b))
+        }
+        Operator::I8x16AddSaturateS | Operator::I16x8AddSaturateS => {
+            let (a, b) = state.pop2();
+            state.push1(builder.ins().sadd_sat(a, b))
+        }
+        Operator::I8x16AddSaturateU | Operator::I16x8AddSaturateU => {
+            let (a, b) = state.pop2();
+            state.push1(builder.ins().uadd_sat(a, b))
+        }
+        Operator::I8x16Sub | Operator::I16x8Sub | Operator::I32x4Sub | Operator::I64x2Sub => {
+            let (a, b) = state.pop2();
+            state.push1(builder.ins().isub(a, b))
+        }
+        Operator::I8x16SubSaturateS | Operator::I16x8SubSaturateS => {
+            let (a, b) = state.pop2();
+            state.push1(builder.ins().ssub_sat(a, b))
+        }
+        Operator::I8x16SubSaturateU | Operator::I16x8SubSaturateU => {
+            let (a, b) = state.pop2();
+            state.push1(builder.ins().usub_sat(a, b))
+        }
+        Operator::I8x16Neg | Operator::I16x8Neg | Operator::I32x4Neg | Operator::I64x2Neg => {
+            let a = state.pop1();
+            state.push1(builder.ins().ineg(a))
+        }
+        Operator::I16x8Mul | Operator::I32x4Mul => {
+            let (a, b) = state.pop2();
+            state.push1(builder.ins().imul(a, b))
+        }
+        Operator::V128Not => {
+            let a = state.pop1();
+            state.push1(builder.ins().bnot(a));
+        }
+        Operator::V128And => {
+            let (a, b) = state.pop2();
+            state.push1(builder.ins().band(a, b));
+        }
+        Operator::V128Or => {
+            let (a, b) = state.pop2();
+            state.push1(builder.ins().bor(a, b));
+        }
+        Operator::V128Xor => {
+            let (a, b) = state.pop2();
+            state.push1(builder.ins().bxor(a, b));
+        }
+        Operator::I16x8Shl | Operator::I32x4Shl | Operator::I64x2Shl => {
+            let (a, b) = state.pop2();
+            let bitcast_a = optionally_bitcast_vector(a, type_of(op), builder);
+            let bitwidth = i64::from(builder.func.dfg.value_type(a).bits());
+            // The spec expects to shift with `b mod lanewidth`; so, e.g., for 16 bit lane-width
+            // we do `b AND 15`; this means fewer instructions than `iconst + urem`.
+            let b_mod_bitwidth = builder.ins().band_imm(b, bitwidth - 1);
+            state.push1(builder.ins().ishl(bitcast_a, b_mod_bitwidth))
+        }
+        Operator::I16x8ShrU | Operator::I32x4ShrU | Operator::I64x2ShrU => {
+            let (a, b) = state.pop2();
+            let bitcast_a = optionally_bitcast_vector(a, type_of(op), builder);
+            let bitwidth = i64::from(builder.func.dfg.value_type(a).bits());
+            // The spec expects to shift with `b mod lanewidth`; so, e.g., for 16 bit lane-width
+            // we do `b AND 15`; this means fewer instructions than `iconst + urem`.
+            let b_mod_bitwidth = builder.ins().band_imm(b, bitwidth - 1);
+            state.push1(builder.ins().ushr(bitcast_a, b_mod_bitwidth))
+        }
+        Operator::I16x8ShrS | Operator::I32x4ShrS => {
+            let (a, b) = state.pop2();
+            let bitcast_a = optionally_bitcast_vector(a, type_of(op), builder);
+            let bitwidth = i64::from(builder.func.dfg.value_type(a).bits());
+            // The spec expects to shift with `b mod lanewidth`; so, e.g., for 16 bit lane-width
+            // we do `b AND 15`; this means fewer instructions than `iconst + urem`.
+            let b_mod_bitwidth = builder.ins().band_imm(b, bitwidth - 1);
+            state.push1(builder.ins().sshr(bitcast_a, b_mod_bitwidth))
+        }
+        Operator::I8x16Eq
         | Operator::I8x16Ne
         | Operator::I8x16LtS
         | Operator::I8x16LtU
@@ -974,54 +1180,20 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         | Operator::F64x2Gt
         | Operator::F64x2Le
         | Operator::F64x2Ge
-        | Operator::V128Not
-        | Operator::V128And
-        | Operator::V128Or
-        | Operator::V128Xor
         | Operator::V128Bitselect
-        | Operator::I8x16Neg
         | Operator::I8x16AnyTrue
         | Operator::I8x16AllTrue
         | Operator::I8x16Shl
         | Operator::I8x16ShrS
         | Operator::I8x16ShrU
-        | Operator::I8x16Add
-        | Operator::I8x16AddSaturateS
-        | Operator::I8x16AddSaturateU
-        | Operator::I8x16Sub
-        | Operator::I8x16SubSaturateS
-        | Operator::I8x16SubSaturateU
         | Operator::I8x16Mul
-        | Operator::I16x8Neg
         | Operator::I16x8AnyTrue
         | Operator::I16x8AllTrue
-        | Operator::I16x8Shl
-        | Operator::I16x8ShrS
-        | Operator::I16x8ShrU
-        | Operator::I16x8Add
-        | Operator::I16x8AddSaturateS
-        | Operator::I16x8AddSaturateU
-        | Operator::I16x8Sub
-        | Operator::I16x8SubSaturateS
-        | Operator::I16x8SubSaturateU
-        | Operator::I16x8Mul
-        | Operator::I32x4Neg
         | Operator::I32x4AnyTrue
         | Operator::I32x4AllTrue
-        | Operator::I32x4Shl
-        | Operator::I32x4ShrS
-        | Operator::I32x4ShrU
-        | Operator::I32x4Add
-        | Operator::I32x4Sub
-        | Operator::I32x4Mul
-        | Operator::I64x2Neg
         | Operator::I64x2AnyTrue
         | Operator::I64x2AllTrue
-        | Operator::I64x2Shl
         | Operator::I64x2ShrS
-        | Operator::I64x2ShrU
-        | Operator::I64x2Add
-        | Operator::I64x2Sub
         | Operator::F32x4Abs
         | Operator::F32x4Neg
         | Operator::F32x4Sqrt
@@ -1047,10 +1219,13 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         | Operator::F32x4ConvertSI32x4
         | Operator::F32x4ConvertUI32x4
         | Operator::F64x2ConvertSI64x2
-        | Operator::F64x2ConvertUI64x2
-        | Operator::V8x16Shuffle1
-        | Operator::V8x16Shuffle2Imm { .. } => {
-            return Err(WasmError::Unsupported("proposed SIMD operators"));
+        | Operator::F64x2ConvertUI64x2 { .. }
+        | Operator::V8x16Swizzle
+        | Operator::I8x16LoadSplat { .. }
+        | Operator::I16x8LoadSplat { .. }
+        | Operator::I32x4LoadSplat { .. }
+        | Operator::I64x2LoadSplat { .. } => {
+            return Err(wasm_unsupported!("proposed SIMD operator {:?}", op));
         }
     };
     Ok(())
@@ -1062,40 +1237,69 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
 /// are dropped but special ones like `End` or `Else` signal the potential end of the unreachable
 /// portion so the translation state must be updated accordingly.
 fn translate_unreachable_operator(
+    module_translation_state: &ModuleTranslationState,
     op: &Operator,
     builder: &mut FunctionBuilder,
-    state: &mut TranslationState,
-) {
+    state: &mut FuncTranslationState,
+) -> WasmResult<()> {
+    debug_assert!(!state.reachable);
     match *op {
-        Operator::If { ty: _ } => {
+        Operator::If { ty } => {
             // Push a placeholder control stack entry. The if isn't reachable,
             // so we don't have any branches anywhere.
-            state.push_if(ir::Inst::reserved_value(), ir::Ebb::reserved_value(), 0);
+            state.push_if(
+                ir::Ebb::reserved_value(),
+                ElseData::NoElse {
+                    branch_inst: ir::Inst::reserved_value(),
+                },
+                0,
+                0,
+                ty,
+            );
         }
         Operator::Loop { ty: _ } | Operator::Block { ty: _ } => {
-            state.push_block(ir::Ebb::reserved_value(), 0);
+            state.push_block(ir::Ebb::reserved_value(), 0, 0);
         }
         Operator::Else => {
             let i = state.control_stack.len() - 1;
-            if let ControlStackFrame::If {
-                branch_inst,
-                ref mut reachable_from_top,
-                ..
-            } = state.control_stack[i]
-            {
-                if *reachable_from_top {
-                    // We have a branch from the top of the if to the else.
-                    state.reachable = true;
-                    // And because there's an else, there can no longer be a
-                    // branch from the top directly to the end.
-                    *reachable_from_top = false;
+            match state.control_stack[i] {
+                ControlStackFrame::If {
+                    ref else_data,
+                    head_is_reachable,
+                    ref mut consequent_ends_reachable,
+                    blocktype,
+                    ..
+                } => {
+                    debug_assert!(consequent_ends_reachable.is_none());
+                    *consequent_ends_reachable = Some(state.reachable);
 
-                    // We change the target of the branch instruction
-                    let else_ebb = builder.create_ebb();
-                    builder.change_jump_destination(branch_inst, else_ebb);
-                    builder.seal_block(else_ebb);
-                    builder.switch_to_block(else_ebb);
+                    if head_is_reachable {
+                        // We have a branch from the head of the `if` to the `else`.
+                        state.reachable = true;
+
+                        let else_ebb = match *else_data {
+                            ElseData::NoElse { branch_inst } => {
+                                let (params, _results) =
+                                    blocktype_params_results(module_translation_state, blocktype)?;
+                                let else_ebb = ebb_with_params(builder, params)?;
+
+                                // We change the target of the branch instruction.
+                                builder.change_jump_destination(branch_inst, else_ebb);
+                                builder.seal_block(else_ebb);
+                                else_ebb
+                            }
+                            ElseData::WithElse { else_block } => else_block,
+                        };
+
+                        builder.switch_to_block(else_ebb);
+
+                        // Again, no need to push the parameters for the `else`,
+                        // since we already did when we saw the original `if`. See
+                        // the comment for translating `Operator::Else` in
+                        // `translate_operator` for details.
+                    }
                 }
+                _ => unreachable!(),
             }
         }
         Operator::End => {
@@ -1114,13 +1318,24 @@ fn translate_unreachable_operator(
                     // And loops can't have branches to the end.
                     false
                 }
+                // If we never set `consequent_ends_reachable` then that means
+                // we are finishing the consequent now, and there was no
+                // `else`. Whether the following block is reachable depends only
+                // on if the head was reachable.
                 ControlStackFrame::If {
-                    reachable_from_top, ..
-                } => {
-                    // A reachable if without an else has a branch from the top
-                    // directly to the bottom.
-                    reachable_from_top
-                }
+                    head_is_reachable,
+                    consequent_ends_reachable: None,
+                    ..
+                } => head_is_reachable,
+                // Since we are only in this function when in unreachable code,
+                // we know that the alternative just ended unreachable. Whether
+                // the following block is reachable depends on if the consequent
+                // ended reachable or not.
+                ControlStackFrame::If {
+                    head_is_reachable,
+                    consequent_ends_reachable: Some(consequent_ends_reachable),
+                    ..
+                } => head_is_reachable && consequent_ends_reachable,
                 // All other control constructs are already handled.
                 _ => false,
             };
@@ -1139,6 +1354,8 @@ fn translate_unreachable_operator(
             // We don't translate because this is unreachable code
         }
     }
+
+    Ok(())
 }
 
 /// Get the address+offset to use for a heap access.
@@ -1184,7 +1401,7 @@ fn translate_load<FE: FuncEnvironment + ?Sized>(
     opcode: ir::Opcode,
     result_ty: Type,
     builder: &mut FunctionBuilder,
-    state: &mut TranslationState,
+    state: &mut FuncTranslationState,
     environ: &mut FE,
 ) -> WasmResult<()> {
     let addr32 = state.pop1();
@@ -1207,7 +1424,7 @@ fn translate_store<FE: FuncEnvironment + ?Sized>(
     offset: u32,
     opcode: ir::Opcode,
     builder: &mut FunctionBuilder,
-    state: &mut TranslationState,
+    state: &mut FuncTranslationState,
     environ: &mut FE,
 ) -> WasmResult<()> {
     let (addr32, val) = state.pop2();
@@ -1224,13 +1441,13 @@ fn translate_store<FE: FuncEnvironment + ?Sized>(
     Ok(())
 }
 
-fn translate_icmp(cc: IntCC, builder: &mut FunctionBuilder, state: &mut TranslationState) {
+fn translate_icmp(cc: IntCC, builder: &mut FunctionBuilder, state: &mut FuncTranslationState) {
     let (arg0, arg1) = state.pop2();
     let val = builder.ins().icmp(cc, arg0, arg1);
     state.push1(builder.ins().bint(I32, val));
 }
 
-fn translate_fcmp(cc: FloatCC, builder: &mut FunctionBuilder, state: &mut TranslationState) {
+fn translate_fcmp(cc: FloatCC, builder: &mut FunctionBuilder, state: &mut FuncTranslationState) {
     let (arg0, arg1) = state.pop2();
     let val = builder.ins().fcmp(cc, arg0, arg1);
     state.push1(builder.ins().bint(I32, val));
@@ -1239,16 +1456,24 @@ fn translate_fcmp(cc: FloatCC, builder: &mut FunctionBuilder, state: &mut Transl
 fn translate_br_if(
     relative_depth: u32,
     builder: &mut FunctionBuilder,
-    state: &mut TranslationState,
+    state: &mut FuncTranslationState,
 ) {
     let val = state.pop1();
     let (br_destination, inputs) = translate_br_if_args(relative_depth, state);
     builder.ins().brnz(val, br_destination, inputs);
+
+    #[cfg(feature = "basic-blocks")]
+    {
+        let next_ebb = builder.create_ebb();
+        builder.ins().jump(next_ebb, &[]);
+        builder.seal_block(next_ebb); // The only predecessor is the current block.
+        builder.switch_to_block(next_ebb);
+    }
 }
 
 fn translate_br_if_args(
     relative_depth: u32,
-    state: &mut TranslationState,
+    state: &mut FuncTranslationState,
 ) -> (ir::Ebb, &[ir::Value]) {
     let i = state.control_stack.len() - 1 - (relative_depth as usize);
     let (return_count, br_destination) = {
@@ -1257,7 +1482,7 @@ fn translate_br_if_args(
         // code that comes after it
         frame.set_branched_to_exit();
         let return_count = if frame.is_loop() {
-            0
+            frame.num_param_values()
         } else {
             frame.num_return_values()
         };
@@ -1265,4 +1490,175 @@ fn translate_br_if_args(
     };
     let inputs = state.peekn(return_count);
     (br_destination, inputs)
+}
+
+/// Determine the returned value type of a WebAssembly operator
+fn type_of(operator: &Operator) -> Type {
+    match operator {
+        Operator::V128Load { .. }
+        | Operator::V128Store { .. }
+        | Operator::V128Const { .. }
+        | Operator::V128Not
+        | Operator::V128And
+        | Operator::V128Or
+        | Operator::V128Xor
+        | Operator::V128Bitselect => I8X16, // default type representing V128
+
+        Operator::V8x16Shuffle { .. }
+        | Operator::I8x16Splat
+        | Operator::I8x16ExtractLaneS { .. }
+        | Operator::I8x16ExtractLaneU { .. }
+        | Operator::I8x16ReplaceLane { .. }
+        | Operator::I8x16Eq
+        | Operator::I8x16Ne
+        | Operator::I8x16LtS
+        | Operator::I8x16LtU
+        | Operator::I8x16GtS
+        | Operator::I8x16GtU
+        | Operator::I8x16LeS
+        | Operator::I8x16LeU
+        | Operator::I8x16GeS
+        | Operator::I8x16GeU
+        | Operator::I8x16Neg
+        | Operator::I8x16AnyTrue
+        | Operator::I8x16AllTrue
+        | Operator::I8x16Shl
+        | Operator::I8x16ShrS
+        | Operator::I8x16ShrU
+        | Operator::I8x16Add
+        | Operator::I8x16AddSaturateS
+        | Operator::I8x16AddSaturateU
+        | Operator::I8x16Sub
+        | Operator::I8x16SubSaturateS
+        | Operator::I8x16SubSaturateU
+        | Operator::I8x16Mul => I8X16,
+
+        Operator::I16x8Splat
+        | Operator::I16x8ExtractLaneS { .. }
+        | Operator::I16x8ExtractLaneU { .. }
+        | Operator::I16x8ReplaceLane { .. }
+        | Operator::I16x8Eq
+        | Operator::I16x8Ne
+        | Operator::I16x8LtS
+        | Operator::I16x8LtU
+        | Operator::I16x8GtS
+        | Operator::I16x8GtU
+        | Operator::I16x8LeS
+        | Operator::I16x8LeU
+        | Operator::I16x8GeS
+        | Operator::I16x8GeU
+        | Operator::I16x8Neg
+        | Operator::I16x8AnyTrue
+        | Operator::I16x8AllTrue
+        | Operator::I16x8Shl
+        | Operator::I16x8ShrS
+        | Operator::I16x8ShrU
+        | Operator::I16x8Add
+        | Operator::I16x8AddSaturateS
+        | Operator::I16x8AddSaturateU
+        | Operator::I16x8Sub
+        | Operator::I16x8SubSaturateS
+        | Operator::I16x8SubSaturateU
+        | Operator::I16x8Mul => I16X8,
+
+        Operator::I32x4Splat
+        | Operator::I32x4ExtractLane { .. }
+        | Operator::I32x4ReplaceLane { .. }
+        | Operator::I32x4Eq
+        | Operator::I32x4Ne
+        | Operator::I32x4LtS
+        | Operator::I32x4LtU
+        | Operator::I32x4GtS
+        | Operator::I32x4GtU
+        | Operator::I32x4LeS
+        | Operator::I32x4LeU
+        | Operator::I32x4GeS
+        | Operator::I32x4GeU
+        | Operator::I32x4Neg
+        | Operator::I32x4AnyTrue
+        | Operator::I32x4AllTrue
+        | Operator::I32x4Shl
+        | Operator::I32x4ShrS
+        | Operator::I32x4ShrU
+        | Operator::I32x4Add
+        | Operator::I32x4Sub
+        | Operator::I32x4Mul
+        | Operator::F32x4ConvertSI32x4
+        | Operator::F32x4ConvertUI32x4 => I32X4,
+
+        Operator::I64x2Splat
+        | Operator::I64x2ExtractLane { .. }
+        | Operator::I64x2ReplaceLane { .. }
+        | Operator::I64x2Neg
+        | Operator::I64x2AnyTrue
+        | Operator::I64x2AllTrue
+        | Operator::I64x2Shl
+        | Operator::I64x2ShrS
+        | Operator::I64x2ShrU
+        | Operator::I64x2Add
+        | Operator::I64x2Sub
+        | Operator::F64x2ConvertSI64x2
+        | Operator::F64x2ConvertUI64x2 => I64X2,
+
+        Operator::F32x4Splat
+        | Operator::F32x4ExtractLane { .. }
+        | Operator::F32x4ReplaceLane { .. }
+        | Operator::F32x4Eq
+        | Operator::F32x4Ne
+        | Operator::F32x4Lt
+        | Operator::F32x4Gt
+        | Operator::F32x4Le
+        | Operator::F32x4Ge
+        | Operator::F32x4Abs
+        | Operator::F32x4Neg
+        | Operator::F32x4Sqrt
+        | Operator::F32x4Add
+        | Operator::F32x4Sub
+        | Operator::F32x4Mul
+        | Operator::F32x4Div
+        | Operator::F32x4Min
+        | Operator::F32x4Max
+        | Operator::I32x4TruncSF32x4Sat
+        | Operator::I32x4TruncUF32x4Sat => F32X4,
+
+        Operator::F64x2Splat
+        | Operator::F64x2ExtractLane { .. }
+        | Operator::F64x2ReplaceLane { .. }
+        | Operator::F64x2Eq
+        | Operator::F64x2Ne
+        | Operator::F64x2Lt
+        | Operator::F64x2Gt
+        | Operator::F64x2Le
+        | Operator::F64x2Ge
+        | Operator::F64x2Abs
+        | Operator::F64x2Neg
+        | Operator::F64x2Sqrt
+        | Operator::F64x2Add
+        | Operator::F64x2Sub
+        | Operator::F64x2Mul
+        | Operator::F64x2Div
+        | Operator::F64x2Min
+        | Operator::F64x2Max
+        | Operator::I64x2TruncSF64x2Sat
+        | Operator::I64x2TruncUF64x2Sat => F64X2,
+
+        _ => unimplemented!(
+            "Currently only the SIMD instructions are translated to their return type: {:?}",
+            operator
+        ),
+    }
+}
+
+/// Some SIMD operations only operate on I8X16 in CLIF; this will convert them to that type by
+/// adding a raw_bitcast if necessary
+fn optionally_bitcast_vector(
+    value: Value,
+    needed_type: Type,
+    builder: &mut FunctionBuilder,
+) -> Value {
+    if builder.func.dfg.value_type(value) != needed_type {
+        builder.ins().raw_bitcast(needed_type, value)
+    } else {
+        value
+    }
 }

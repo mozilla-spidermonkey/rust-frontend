@@ -136,7 +136,7 @@ class nsFrame : public nsBox {
 
  private:
   // Left undefined; nsFrame objects are never allocated from the heap.
-  void* operator new(size_t sz) CPP_THROW_NEW;
+  void* operator new(size_t sz) noexcept(true);
 
  protected:
   // Overridden to prevent the global delete from being called, since
@@ -271,7 +271,7 @@ class nsFrame : public nsBox {
                          InlineMinISizeData* aData) override;
   void AddInlinePrefISize(gfxContext* aRenderingContext,
                           InlinePrefISizeData* aData) override;
-  IntrinsicISizeOffsetData IntrinsicISizeOffsets(
+  IntrinsicSizeOffsetData IntrinsicISizeOffsets(
       nscoord aPercentageBasis = NS_UNCONSTRAINEDSIZE) override;
   mozilla::IntrinsicSize GetIntrinsicSize() override;
   mozilla::AspectRatio GetIntrinsicRatio() override;
@@ -615,6 +615,7 @@ class nsFrame : public nsBox {
    */
   static bool ShouldApplyOverflowClipping(const nsIFrame* aFrame,
                                           const nsStyleDisplay* aDisp) {
+    MOZ_ASSERT(aDisp == aFrame->StyleDisplay(), "Wong display struct");
     // clip overflow:-moz-hidden-unscrollable, except for nsListControlFrame,
     // which is an nsHTMLScrollFrame.
     if (MOZ_UNLIKELY(aDisp->mOverflowX ==
@@ -628,7 +629,8 @@ class nsFrame : public nsBox {
     // clipping, because the scrollable frame will already clip overflowing
     // content, and because contain:paint should prevent all means of escaping
     // that clipping (e.g. because it forms a fixed-pos containing block).
-    if (aDisp->IsContainPaint() && !aFrame->IsScrollFrame()) {
+    if (aDisp->IsContainPaint() && !aFrame->IsScrollFrame() &&
+        aFrame->IsFrameOfType(eSupportsContainLayoutAndPaint)) {
       return true;
     }
 
@@ -639,7 +641,6 @@ class nsFrame : public nsBox {
       mozilla::LayoutFrameType type = aFrame->Type();
       if (type == mozilla::LayoutFrameType::Table ||
           type == mozilla::LayoutFrameType::TableCell ||
-          type == mozilla::LayoutFrameType::BCTableCell ||
           type == mozilla::LayoutFrameType::SVGOuterSVG ||
           type == mozilla::LayoutFrameType::SVGInnerSVG ||
           type == mozilla::LayoutFrameType::SVGSymbol ||

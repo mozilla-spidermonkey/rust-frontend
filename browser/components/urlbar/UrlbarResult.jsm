@@ -57,7 +57,11 @@ class UrlbarResult {
     this.source = resultSource;
 
     // UrlbarView is responsible for updating this.
-    this.uiIndex = -1;
+    this.rowIndex = -1;
+
+    // This is an optional hint to the Muxer that can be set by a provider to
+    // suggest a specific position among the results.
+    this.suggestedIndex = -1;
 
     // May be used to indicate an heuristic result. Heuristic results can bypass
     // source filters in the ProvidersManager, that otherwise may skip them.
@@ -116,10 +120,11 @@ class UrlbarResult {
           ? [this.payload.title, this.payloadHighlights.title]
           : [this.payload.url || "", this.payloadHighlights.url || []];
       case UrlbarUtils.RESULT_TYPE.SEARCH:
-        if (this.payload.isKeywordOffer) {
-          return this.heuristic
-            ? ["", []]
-            : [this.payload.keyword, this.payloadHighlights.keyword];
+        switch (this.payload.keywordOffer) {
+          case UrlbarUtils.KEYWORD_OFFER.SHOW:
+            return [this.payload.keyword, this.payloadHighlights.keyword];
+          case UrlbarUtils.KEYWORD_OFFER.HIDE:
+            return ["", []];
         }
         return this.payload.suggestion
           ? [this.payload.suggestion, this.payloadHighlights.suggestion]
@@ -195,8 +200,14 @@ class UrlbarResult {
       // For display purposes we need to unescape the url.
       payloadInfo.displayUrl = [...payloadInfo.url];
       let url = payloadInfo.displayUrl[0];
-      if (UrlbarPrefs.get("trimURLs")) {
-        url = BrowserUtils.trimURL(url || "");
+      if (url && UrlbarPrefs.get("trimURLs")) {
+        if (UrlbarPrefs.get("view.stripHttps")) {
+          if (url.startsWith("https://")) {
+            url = url.substring(8);
+          }
+        } else {
+          url = BrowserUtils.trimURL(url);
+        }
       }
       payloadInfo.displayUrl[0] = Services.textToSubURI.unEscapeURIForUI(
         "UTF-8",

@@ -35,6 +35,7 @@
 #include "mozilla/dom/IPCBlobUtils.h"
 #include "mozilla/dom/quota/PQuotaChild.h"
 #include "mozilla/dom/RemoteWorkerChild.h"
+#include "mozilla/dom/RemoteWorkerControllerChild.h"
 #include "mozilla/dom/RemoteWorkerServiceChild.h"
 #include "mozilla/dom/SharedWorkerChild.h"
 #include "mozilla/dom/StorageIPC.h"
@@ -324,7 +325,7 @@ bool BackgroundChildImpl::DeallocPPendingIPCBlobChild(
 
 dom::PRemoteWorkerChild* BackgroundChildImpl::AllocPRemoteWorkerChild(
     const RemoteWorkerData& aData) {
-  RefPtr<dom::RemoteWorkerChild> agent = new dom::RemoteWorkerChild();
+  RefPtr<dom::RemoteWorkerChild> agent = new dom::RemoteWorkerChild(aData);
   return agent.forget().take();
 }
 
@@ -339,6 +340,23 @@ bool BackgroundChildImpl::DeallocPRemoteWorkerChild(
     dom::PRemoteWorkerChild* aActor) {
   RefPtr<dom::RemoteWorkerChild> actor =
       dont_AddRef(static_cast<dom::RemoteWorkerChild*>(aActor));
+  return true;
+}
+
+dom::PRemoteWorkerControllerChild*
+BackgroundChildImpl::AllocPRemoteWorkerControllerChild(
+    const dom::RemoteWorkerData& aRemoteWorkerData) {
+  MOZ_CRASH(
+      "PRemoteWorkerControllerChild actors must be manually constructed!");
+  return nullptr;
+}
+
+bool BackgroundChildImpl::DeallocPRemoteWorkerControllerChild(
+    dom::PRemoteWorkerControllerChild* aActor) {
+  MOZ_ASSERT(aActor);
+
+  RefPtr<dom::RemoteWorkerControllerChild> actor =
+      dont_AddRef(static_cast<dom::RemoteWorkerControllerChild*>(aActor));
   return true;
 }
 
@@ -395,22 +413,12 @@ bool BackgroundChildImpl::DeallocPFileCreatorChild(PFileCreatorChild* aActor) {
   return true;
 }
 
-dom::PIPCBlobInputStreamChild*
+already_AddRefed<dom::PIPCBlobInputStreamChild>
 BackgroundChildImpl::AllocPIPCBlobInputStreamChild(const nsID& aID,
                                                    const uint64_t& aSize) {
-  // IPCBlobInputStreamChild is refcounted. Here it's created and in
-  // DeallocPIPCBlobInputStreamChild is released.
-
   RefPtr<dom::IPCBlobInputStreamChild> actor =
       new dom::IPCBlobInputStreamChild(aID, aSize);
-  return actor.forget().take();
-}
-
-bool BackgroundChildImpl::DeallocPIPCBlobInputStreamChild(
-    dom::PIPCBlobInputStreamChild* aActor) {
-  RefPtr<dom::IPCBlobInputStreamChild> actor =
-      dont_AddRef(static_cast<dom::IPCBlobInputStreamChild*>(aActor));
-  return true;
+  return actor.forget();
 }
 
 PFileDescriptorSetChild* BackgroundChildImpl::AllocPFileDescriptorSetChild(
@@ -631,21 +639,6 @@ bool BackgroundChildImpl::DeallocPMIDIManagerChild(PMIDIManagerChild* aActor) {
   return true;
 }
 
-dom::PFileSystemRequestChild* BackgroundChildImpl::AllocPFileSystemRequestChild(
-    const FileSystemParams& aParams) {
-  MOZ_CRASH("Should never get here!");
-  return nullptr;
-}
-
-bool BackgroundChildImpl::DeallocPFileSystemRequestChild(
-    PFileSystemRequestChild* aActor) {
-  // The reference is increased in FileSystemTaskBase::Start of
-  // FileSystemTaskBase.cpp. We should decrease it after IPC.
-  RefPtr<dom::FileSystemTaskChildBase> child =
-      dont_AddRef(static_cast<dom::FileSystemTaskChildBase*>(aActor));
-  return true;
-}
-
 // Gamepad API Background IPC
 dom::PGamepadEventChannelChild*
 BackgroundChildImpl::AllocPGamepadEventChannelChild() {
@@ -704,24 +697,6 @@ bool BackgroundChildImpl::DeallocPWebAuthnTransactionChild(
   MOZ_ASSERT(aActor);
   RefPtr<dom::WebAuthnTransactionChild> child =
       dont_AddRef(static_cast<dom::WebAuthnTransactionChild*>(aActor));
-  return true;
-}
-
-net::PHttpBackgroundChannelChild*
-BackgroundChildImpl::AllocPHttpBackgroundChannelChild(
-    const uint64_t& aChannelId) {
-  MOZ_CRASH(
-      "PHttpBackgroundChannelChild actor should be manually constructed!");
-  return nullptr;
-}
-
-bool BackgroundChildImpl::DeallocPHttpBackgroundChannelChild(
-    PHttpBackgroundChannelChild* aActor) {
-  // The reference is increased in BackgroundChannelCreateCallback::ActorCreated
-  // of HttpBackgroundChannelChild.cpp. We should decrease it after IPC
-  // destroyed.
-  RefPtr<net::HttpBackgroundChannelChild> child =
-      dont_AddRef(static_cast<net::HttpBackgroundChannelChild*>(aActor));
   return true;
 }
 

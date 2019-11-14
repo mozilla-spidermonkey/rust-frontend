@@ -13,19 +13,47 @@ export default class LoginIntro extends HTMLElement {
     document.l10n.connectRoot(shadowRoot);
     shadowRoot.appendChild(loginIntroTemplate.content.cloneNode(true));
 
-    shadowRoot.addEventListener("click", this);
+    this._importText = shadowRoot.querySelector(".intro-import-text");
+    this._importText.addEventListener("click", this);
+  }
+
+  focus() {
+    let helpLink = this.shadowRoot.querySelector(".intro-help-link");
+    helpLink.focus();
   }
 
   handleEvent(event) {
-    let faqLink = this.shadowRoot.querySelector(".intro-faq-link");
-
-    if (event.type == "click" && event.originalTarget == faqLink) {
+    if (
+      event.currentTarget.classList.contains("intro-import-text") &&
+      event.target.localName == "a"
+    ) {
       document.dispatchEvent(
-        new CustomEvent("AboutLoginsOpenFAQ", {
+        new CustomEvent("AboutLoginsImport", {
           bubbles: true,
         })
       );
     }
+    event.preventDefault();
+  }
+
+  set supportURL(val) {
+    this.shadowRoot.querySelector(".intro-help-link").setAttribute("href", val);
+  }
+
+  updateState(syncState) {
+    let l10nId = syncState.loggedIn
+      ? "about-logins-login-intro-heading-logged-in"
+      : "login-intro-heading";
+    document.l10n.setAttributes(
+      this.shadowRoot.querySelector(".heading"),
+      l10nId
+    );
+
+    this.shadowRoot
+      .querySelector(".illustration")
+      .classList.toggle("logged-in", syncState.loggedIn);
+
+    this._importText.hidden = !window.AboutLoginsUtils.importVisible;
   }
 }
 customElements.define("login-intro", LoginIntro);

@@ -1,15 +1,20 @@
 use crate::ir::{Function, SourceLoc, Value, ValueLabel, ValueLabelAssignments, ValueLoc};
 use crate::isa::TargetIsa;
 use crate::regalloc::{Context, RegDiversions};
-use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
-use std::iter::Iterator;
-use std::ops::Bound::*;
-use std::ops::Deref;
-use std::vec::Vec;
+use crate::HashMap;
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
+use core::cmp::Ordering;
+use core::iter::Iterator;
+use core::ops::Bound::*;
+use core::ops::Deref;
+
+#[cfg(feature = "enable-serde")]
+use serde::{Deserialize, Serialize};
 
 /// Value location range.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "enable-serde", derive(Serialize, Deserialize))]
 pub struct ValueLocRange {
     /// The ValueLoc containing a ValueLabel during this range.
     pub loc: ValueLoc,
@@ -92,7 +97,6 @@ where
     ebbs.sort_by_key(|ebb| func.offsets[*ebb]); // Ensure inst offsets always increase
     let encinfo = isa.encoding_info();
     let values_locations = &func.locations;
-    let liveness_context = regalloc.liveness().context(&func.layout);
     let liveness_ranges = regalloc.liveness().ranges();
 
     let mut ranges = HashMap::new();
@@ -114,7 +118,7 @@ where
     let mut tracked_values: Vec<(Value, ValueLabel, u32, ValueLoc)> = Vec::new();
     let mut divert = RegDiversions::new();
     for ebb in ebbs {
-        divert.clear();
+        divert.at_ebb(&func.entry_diversions, ebb);
         let mut last_srcloc: Option<T> = None;
         for (offset, inst, size) in func.inst_offsets(ebb, &encinfo) {
             divert.apply(&func.dfg[inst]);
@@ -122,7 +126,7 @@ where
             // Remove killed values.
             tracked_values.retain(|(x, label, start_offset, last_loc)| {
                 let range = liveness_ranges.get(*x);
-                if range.expect("value").killed_at(inst, ebb, liveness_context) {
+                if range.expect("value").killed_at(inst, ebb, &func.layout) {
                     add_range(*label, (*start_offset, end_offset), *last_loc);
                     return false;
                 }
@@ -169,7 +173,7 @@ where
                 // Ignore dead/inactive Values.
                 let range = liveness_ranges.get(*v);
                 match range {
-                    Some(r) => r.reaches_use(inst, ebb, liveness_context),
+                    Some(r) => r.reaches_use(inst, ebb, &func.layout),
                     None => false,
                 }
             });

@@ -102,8 +102,6 @@ class nsIOService final : public nsIIOService,
   static bool IsDataURIUniqueOpaqueOrigin();
   static bool BlockToplevelDataUriNavigations();
 
-  static bool BlockFTPSubresources();
-
   // Used to count the total number of HTTP requests made
   void IncrementRequestNumber() { mTotalRequests++; }
   uint32_t GetTotalRequestNumber() { return mTotalRequests; }
@@ -119,6 +117,7 @@ class nsIOService final : public nsIIOService,
   void OnProcessLaunchComplete(SocketProcessHost* aHost, bool aSucceeded);
   void OnProcessUnexpectedShutdown(SocketProcessHost* aHost);
   bool SocketProcessReady();
+  static void NotifySocketProcessPrefsChanged(const char* aName, void* aSelf);
   void NotifySocketProcessPrefsChanged(const char* aName);
 
   bool IsSocketProcessLaunchComplete();
@@ -153,6 +152,7 @@ class nsIOService final : public nsIIOService,
   nsresult RecheckCaptivePortalIfLocalRedirect(nsIChannel* newChan);
 
   // Prefs wrangling
+  static void PrefsChanged(const char* pref, void* self);
   void PrefsChanged(const char* pref = nullptr);
   void ParsePortList(const char* pref, bool remove);
 
@@ -218,12 +218,8 @@ class nsIOService final : public nsIIOService,
 
   nsTArray<int32_t> mRestrictedPortList;
 
-  bool mNetworkNotifyChanged;
-
   static bool sIsDataURIUniqueOpaqueOrigin;
   static bool sBlockToplevelDataUriNavigations;
-
-  static bool sBlockFTPSubresources;
 
   uint32_t mTotalRequests;
   uint32_t mCacheWon;

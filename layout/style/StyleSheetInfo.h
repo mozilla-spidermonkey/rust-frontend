@@ -25,7 +25,7 @@ struct URLExtraData;
  * Struct for data common to CSSStyleSheetInner and ServoStyleSheet.
  */
 struct StyleSheetInfo final {
-  typedef net::ReferrerPolicy ReferrerPolicy;
+  typedef dom::ReferrerPolicy ReferrerPolicy;
 
   StyleSheetInfo(CORSMode aCORSMode, const dom::SRIMetadata& aIntegrity,
                  css::SheetParsingMode aParsingMode);
@@ -76,12 +76,6 @@ struct StyleSheetInfo final {
   nsString mSourceURL;
 
   RefPtr<const RawServoStyleSheetContents> mContents;
-
-  // The shared memory buffer that stores the rules in the style sheet, if
-  // this style sheet was loaded from the style sheet cache's shared memory.
-  //
-  // We need to hold on to this so it doesn't go away before we do.
-  RefPtr<nsLayoutStylesheetCacheShm> mSharedMemory;
 
   // XXX We already have mSheetURI, mBaseURI, and mPrincipal.
   //

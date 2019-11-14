@@ -23,8 +23,6 @@ from distutils.dir_util import copy_tree
 
 from shutil import which
 
-URL_REPO = "https://github.com/llvm/llvm-project"
-
 
 def symlink(source, link_name):
     os_symlink = getattr(os, "symlink", None)
@@ -37,7 +35,7 @@ def symlink(source, link_name):
 
 
 def check_run(args):
-    print(' '.join(args), file=sys.stderr)
+    print(' '.join(args), file=sys.stderr, flush=True)
     if args[0] == 'cmake':
         # CMake `message(STATUS)` messages, as appearing in failed source code
         # compiles, appear on stdout, so we only capture that.
@@ -49,8 +47,8 @@ def check_run(args):
             sys.stdout.flush()
         r = p.wait()
         if r != 0:
-            cmake_output_re = re.compile("See also \"(.*/CMakeOutput.log)\"")
-            cmake_error_re = re.compile("See also \"(.*/CMakeError.log)\"")
+            cmake_output_re = re.compile(b"See also \"(.*/CMakeOutput.log)\"")
+            cmake_error_re = re.compile(b"See also \"(.*/CMakeError.log)\"")
 
             def find_first_match(re):
                 for l in lines:
@@ -182,16 +180,16 @@ def install_libgcc(gcc_dir, clang_dir, is_final_stage):
                                  "x86_64-unknown-linux-gnu",
                                  os.path.basename(libgcc_dir))
     mkdir_p(clang_lib_dir)
-    copy_tree(libgcc_dir, clang_lib_dir)
+    copy_tree(libgcc_dir, clang_lib_dir, preserve_symlinks=True)
     libgcc_dir = os.path.join(gcc_dir, "lib64")
     clang_lib_dir = os.path.join(clang_dir, "lib")
-    copy_tree(libgcc_dir, clang_lib_dir)
+    copy_tree(libgcc_dir, clang_lib_dir, preserve_symlinks=True)
     libgcc_dir = os.path.join(gcc_dir, "lib32")
     clang_lib_dir = os.path.join(clang_dir, "lib32")
-    copy_tree(libgcc_dir, clang_lib_dir)
+    copy_tree(libgcc_dir, clang_lib_dir, preserve_symlinks=True)
     include_dir = os.path.join(gcc_dir, "include")
     clang_include_dir = os.path.join(clang_dir, "include")
-    copy_tree(include_dir, clang_include_dir)
+    copy_tree(include_dir, clang_include_dir, preserve_symlinks=True)
 
 
 def install_import_library(build_dir, clang_dir):
@@ -214,16 +212,6 @@ def install_asan_symbols(build_dir, clang_dir):
     shutil.copy2(src_path[0], dst_path[0])
 
 
-def git_clone(base_dir, url, directory, revision):
-    run_in(base_dir, ["git", "clone", "-n", url, directory])
-    run_in(os.path.join(base_dir, directory), ["git", "checkout", revision])
-
-
-def git_update(directory, revision):
-    run_in(directory, ["git", "remote", "update"])
-    run_in(directory, ["git", "reset", "--hard", revision])
-
-
 def is_darwin():
     return platform.system() == "Darwin"
 
@@ -239,7 +227,7 @@ def is_windows():
 def build_one_stage(cc, cxx, asm, ld, ar, ranlib, libtool,
                     src_dir, stage_dir, package_name, build_libcxx,
                     osx_cross_compile, build_type, assertions,
-                    python_path, gcc_dir, libcxx_include_dir,
+                    python_path, gcc_dir, libcxx_include_dir, build_wasm,
                     compiler_rt_source_dir=None, runtimes_source_link=None,
                     compiler_rt_source_link=None,
                     is_final_stage=False, android_targets=None,
@@ -282,9 +270,10 @@ def build_one_stage(cc, cxx, asm, ld, ar, ranlib, libtool,
             "-DLLVM_ENABLE_ASSERTIONS=%s" % ("ON" if assertions else "OFF"),
             "-DPYTHON_EXECUTABLE=%s" % slashify_path(python_path),
             "-DLLVM_TOOL_LIBCXX_BUILD=%s" % ("ON" if build_libcxx else "OFF"),
-            "-DLIBCXX_LIBCPPABI_VERSION=\"\"",
             "-DLLVM_ENABLE_BINDINGS=OFF",
         ]
+        if build_wasm:
+            cmake_args += ["-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=WebAssembly"]
         if is_linux():
             cmake_args += ["-DLLVM_BINUTILS_INCDIR=%s/include" % gcc_dir]
         if is_windows():
@@ -356,12 +345,13 @@ def build_one_stage(cc, cxx, asm, ld, ar, ranlib, libtool,
         android_link_flags = "-fuse-ld=lld"
 
         for target, cfg in android_targets.items():
-            sysroot_dir = cfg["ndk_sysroot"]
-            android_gcc_dir = cfg["ndk_toolchain"]
+            sysroot_dir = cfg["ndk_sysroot"].format(**os.environ)
+            android_gcc_dir = cfg["ndk_toolchain"].format(**os.environ)
             android_include_dirs = cfg["ndk_includes"]
             api_level = cfg["api_level"]
 
-            android_flags = ["-isystem %s" % d for d in android_include_dirs]
+            android_flags = ["-isystem %s" % d.format(**os.environ)
+                             for d in android_include_dirs]
             android_flags += ["--gcc-toolchain=%s" % android_gcc_dir]
             android_flags += ["-D__ANDROID_API__=%s" % api_level]
 
@@ -449,7 +439,7 @@ def build_one_stage(cc, cxx, asm, ld, ar, ranlib, libtool,
 def get_tool(config, key):
     f = None
     if key in config:
-        f = config[key]
+        f = config[key].format(**os.environ)
         if os.path.isabs(f):
             if not os.path.exists(f):
                 raise ValueError("%s must point to an existing path" % key)
@@ -517,9 +507,10 @@ def prune_final_dir_for_clang_tidy(final_dir, osx_cross_compile):
         name = os.path.basename(f)
         if name == "clang":
             continue
-        if osx_cross_compile and name == 'libLLVM.dylib':
+        if osx_cross_compile and name in ['libLLVM.dylib', 'libclang-cpp.dylib']:
             continue
-        if is_linux() and fnmatch.fnmatch(name, 'libLLVM*.so'):
+        if is_linux() and (fnmatch.fnmatch(name, 'libLLVM*.so') or
+                           fnmatch.fnmatch(name, 'libclang-cpp.so*')):
             continue
         delete(f)
     for f in glob.glob("%s/lib/clang/*" % final_dir):
@@ -551,8 +542,6 @@ if __name__ == "__main__":
     parser.add_argument('-c', '--config', required=True,
                         type=argparse.FileType('r'),
                         help="Clang configuration file")
-    parser.add_argument('-b', '--base-dir', required=False,
-                        help="Base directory for code and build artifacts")
     parser.add_argument('--clean', required=False,
                         action='store_true',
                         help="Clean the build directory")
@@ -565,35 +554,11 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # The directories end up in the debug info, so the easy way of getting
-    # a reproducible build is to run it in a know absolute directory.
-    # We use a directory that is registered as a volume in the Docker image.
-
-    if args.base_dir:
-        base_dir = args.base_dir
-    elif os.environ.get('MOZ_AUTOMATION') and not is_windows():
-        base_dir = "/builds/worker/workspace/moz-toolchain"
-    else:
-        # Handles both the Windows automation case and the local build case
-        # TODO: Because Windows taskcluster builds are run with distinct
-        # user IDs for each job, we can't store things in some globally
-        # accessible directory: one job will run, checkout LLVM to that
-        # directory, and then if another job runs, the new user won't be
-        # able to access the previously-checked out code--or be able to
-        # delete it.  So on Windows, we build in the task-specific home
-        # directory; we will eventually add -fdebug-prefix-map options
-        # to the LLVM build to bring back reproducibility.
-        base_dir = os.path.join(os.getcwd(), 'build-clang')
-
-    source_dir = base_dir + "/src"
-    build_dir = base_dir + "/build"
-
-    if not os.path.exists(base_dir):
-        os.makedirs(base_dir)
-    elif os.listdir(base_dir) and not os.path.exists(os.path.join(base_dir, '.build-clang')):
-        raise ValueError("Base directory %s exists and is not a build-clang directory. "
-                         "Supply a non-existent or empty directory with --base-dir" % base_dir)
-    open(os.path.join(base_dir, '.build-clang'), 'a').close()
+    if not os.path.exists('llvm/LLVMBuild.txt'):
+        raise Exception('The script must be run from the root directory of the '
+                        'llvm-project tree')
+    source_dir = os.getcwd()
+    build_dir = source_dir + "/build"
 
     if args.clean:
         shutil.rmtree(build_dir)
@@ -623,9 +588,6 @@ if __name__ == "__main__":
     config_dir = os.path.dirname(args.config.name)
     config = json.load(args.config)
 
-    llvm_revision = config["llvm_revision"]
-    if not re.match(r'^[0-9a-fA-F]{40}$', llvm_revision):
-        raise ValueError("Incorrect format of the git revision")
     stages = 3
     if "stages" in config:
         stages = int(config["stages"])
@@ -642,6 +604,11 @@ if __name__ == "__main__":
         build_libcxx = config["build_libcxx"]
         if build_libcxx not in (True, False):
             raise ValueError("Only boolean values are accepted for build_libcxx.")
+    build_wasm = False
+    if "build_wasm" in config:
+        build_wasm = config["build_wasm"]
+        if build_wasm not in (True, False):
+            raise ValueError("Only boolean values are accepted for build_wasm.")
     build_clang_tidy = False
     if "build_clang_tidy" in config:
         build_clang_tidy = config["build_clang_tidy"]
@@ -665,7 +632,7 @@ if __name__ == "__main__":
     python_path = config["python_path"]
     gcc_dir = None
     if "gcc_dir" in config:
-        gcc_dir = config["gcc_dir"]
+        gcc_dir = config["gcc_dir"].format(**os.environ)
         if not os.path.exists(gcc_dir):
             raise ValueError("gcc_dir must point to an existing path")
     ndk_dir = None
@@ -698,13 +665,6 @@ if __name__ == "__main__":
 
     if not os.path.exists(source_dir):
         os.makedirs(source_dir)
-
-    if not args.skip_checkout:
-        if os.path.exists(os.path.join(source_dir, '.git')):
-            git_update(source_dir, llvm_revision)
-        else:
-            delete(source_dir)
-            git_clone(base_dir, URL_REPO, source_dir, llvm_revision)
 
     for p in config.get("patches", []):
         patch(os.path.join(config_dir, p), source_dir)
@@ -812,7 +772,7 @@ if __name__ == "__main__":
         [ld] + extra_ldflags,
         ar, ranlib, libtool,
         llvm_source_dir, stage1_dir, package_name, build_libcxx, osx_cross_compile,
-        build_type, assertions, python_path, gcc_dir, libcxx_include_dir)
+        build_type, assertions, python_path, gcc_dir, libcxx_include_dir, build_wasm)
 
     runtimes_source_link = llvm_source_dir + "/runtimes/compiler-rt"
 
@@ -830,7 +790,7 @@ if __name__ == "__main__":
             [ld] + extra_ldflags,
             ar, ranlib, libtool,
             llvm_source_dir, stage2_dir, package_name, build_libcxx, osx_cross_compile,
-            build_type, assertions, python_path, gcc_dir, libcxx_include_dir,
+            build_type, assertions, python_path, gcc_dir, libcxx_include_dir, build_wasm,
             compiler_rt_source_dir, runtimes_source_link, compiler_rt_source_link,
             is_final_stage=(stages == 2), android_targets=android_targets,
             extra_targets=extra_targets)
@@ -848,7 +808,7 @@ if __name__ == "__main__":
             [ld] + extra_ldflags,
             ar, ranlib, libtool,
             llvm_source_dir, stage3_dir, package_name, build_libcxx, osx_cross_compile,
-            build_type, assertions, python_path, gcc_dir, libcxx_include_dir,
+            build_type, assertions, python_path, gcc_dir, libcxx_include_dir, build_wasm,
             compiler_rt_source_dir, runtimes_source_link, compiler_rt_source_link,
             (stages == 3), extra_targets=extra_targets)
 

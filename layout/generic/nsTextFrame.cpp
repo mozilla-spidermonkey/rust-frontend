@@ -832,6 +832,10 @@ static uint32_t GetTrimmableWhitespaceCount(const nsTextFragment* aFrag,
                                             int32_t aStartOffset,
                                             int32_t aLength,
                                             int32_t aDirection) {
+  if (!aLength) {
+    return 0;
+  }
+
   int32_t count = 0;
   if (aFrag->Is2b()) {
     const char16_t* str = aFrag->Get2b() + aStartOffset;
@@ -2161,7 +2165,7 @@ already_AddRefed<gfxTextRun> BuildTextRunsScanner::BuildTextRunForFrames(
         lastComputedStyle->IsTextCombined()) {
       anyTextTransformStyle = true;
     }
-    if (textStyle->HasTextEmphasis()) {
+    if (textStyle->HasEffectiveTextEmphasis()) {
       anyTextEmphasis = true;
     }
     flags |= GetSpacingFlags(f);
@@ -2772,8 +2776,7 @@ void BuildTextRunsScanner::SetupTextEmphasisForTextRun(gfxTextRun* aTextRun,
     auto text = reinterpret_cast<const char16_t*>(aTextPtr);
     auto length = aTextRun->GetLength();
     for (size_t i = 0; i < length; ++i) {
-      if (NS_IS_HIGH_SURROGATE(text[i]) && i + 1 < length &&
-          NS_IS_LOW_SURROGATE(text[i + 1])) {
+      if (i + 1 < length && NS_IS_SURROGATE_PAIR(text[i], text[i + 1])) {
         uint32_t ch = SURROGATE_TO_UCS4(text[i], text[i + 1]);
         if (!MayCharacterHaveEmphasisMark(ch)) {
           aTextRun->SetNoEmphasisMark(i);
@@ -3100,16 +3103,15 @@ static bool IsJustifiableCharacter(const nsStyleText* aTextStyle,
         (0xff5eu <= ch && ch <= 0xff9fu)) {
       return true;
     }
-    char16_t ch2;
-    if (NS_IS_HIGH_SURROGATE(ch) && aFrag->GetLength() > uint32_t(aPos) + 1 &&
-        NS_IS_LOW_SURROGATE(ch2 = aFrag->CharAt(aPos + 1))) {
-      uint32_t u = SURROGATE_TO_UCS4(ch, ch2);
-      // CJK Unified Ideographs Extension B,
-      // CJK Unified Ideographs Extension C,
-      // CJK Unified Ideographs Extension D,
-      // CJK Compatibility Ideographs Supplement
-      if (0x20000u <= u && u <= 0x2ffffu) {
-        return true;
+    if (NS_IS_HIGH_SURROGATE(ch)) {
+      if (char32_t u = aFrag->ScalarValueAt(aPos)) {
+        // CJK Unified Ideographs Extension B,
+        // CJK Unified Ideographs Extension C,
+        // CJK Unified Ideographs Extension D,
+        // CJK Compatibility Ideographs Supplement
+        if (0x20000u <= u && u <= 0x2ffffu) {
+          return true;
+        }
       }
     }
   }
@@ -4074,9 +4076,9 @@ void nsTextPaintStyle::InitCommonColors() {
   mFrameBackgroundColor = NS_ComposeColors(defaultBgColor, bgColor);
 
   mSystemFieldForegroundColor =
-      LookAndFeel::GetColor(LookAndFeel::ColorID::MozFieldtext);
+      LookAndFeel::GetColor(LookAndFeel::ColorID::Fieldtext);
   mSystemFieldBackgroundColor =
-      LookAndFeel::GetColor(LookAndFeel::ColorID::MozField);
+      LookAndFeel::GetColor(LookAndFeel::ColorID::Field);
 
   if (bgFrame->IsThemed()) {
     // Assume a native widget has sufficient contrast always
@@ -4479,14 +4481,16 @@ void nsContinuingTextFrame::Init(nsIContent* aContent,
                                  nsContainerFrame* aParent,
                                  nsIFrame* aPrevInFlow) {
   NS_ASSERTION(aPrevInFlow, "Must be a continuation!");
+
+  // Hook the frame into the flow
+  nsTextFrame* prev = static_cast<nsTextFrame*>(aPrevInFlow);
+  nsTextFrame* nextContinuation = prev->GetNextContinuation();
+  SetPrevInFlow(aPrevInFlow);
+  aPrevInFlow->SetNextInFlow(this);
+
   // NOTE: bypassing nsTextFrame::Init!!!
   nsFrame::Init(aContent, aParent, aPrevInFlow);
 
-  nsTextFrame* prev = static_cast<nsTextFrame*>(aPrevInFlow);
-  nsTextFrame* nextContinuation = prev->GetNextContinuation();
-  // Hook the frame into the flow
-  SetPrevInFlow(aPrevInFlow);
-  aPrevInFlow->SetNextInFlow(this);
   mContentOffset = prev->GetContentOffset() + prev->GetContentLengthHint();
   NS_ASSERTION(mContentOffset < int32_t(aContent->GetText()->GetLength()),
                "Creating ContinuingTextFrame, but there is no more content");
@@ -5178,12 +5182,12 @@ void nsTextFrame::GetTextDecorations(
       }
     }
 
-    // In all modes, if we're on an inline-block or inline-table (or
-    // inline-stack, inline-box, inline-grid), we're done.
+    // In all modes, if we're on an inline-block/table/grid/flex (or
+    // -moz-inline-box), we're done.
     // If we're on a ruby frame other than ruby text container, we
     // should continue.
     mozilla::StyleDisplay display = f->GetDisplay();
-    if (display != mozilla::StyleDisplay::Inline &&
+    if (nsStyleDisplay::DisplayInside(display) != StyleDisplayInside::Inline &&
         (!nsStyleDisplay::IsRubyDisplayType(display) ||
          display == mozilla::StyleDisplay::RubyTextContainer) &&
         nsStyleDisplay::IsDisplayTypeInlineOutside(display)) {
@@ -5232,10 +5236,38 @@ struct EmphasisMarkInfo {
 
 NS_DECLARE_FRAME_PROPERTY_DELETABLE(EmphasisMarkProperty, EmphasisMarkInfo)
 
+static void ComputeTextEmphasisStyleString(const StyleTextEmphasisStyle& aStyle,
+                                           nsAString& aOut) {
+  MOZ_ASSERT(!aStyle.IsNone());
+  if (aStyle.IsString()) {
+    nsDependentCSubstring string = aStyle.AsString().AsString();
+    AppendUTF8toUTF16(string, aOut);
+    return;
+  }
+  const auto& keyword = aStyle.AsKeyword();
+  const bool fill = keyword.fill == StyleTextEmphasisFillMode::Filled;
+  switch (keyword.shape) {
+    case StyleTextEmphasisShapeKeyword::Dot:
+      return aOut.AppendLiteral(fill ? u"\u2022" : u"\u25e6");
+    case StyleTextEmphasisShapeKeyword::Circle:
+      return aOut.AppendLiteral(fill ? u"\u25cf" : u"\u25cb");
+    case StyleTextEmphasisShapeKeyword::DoubleCircle:
+      return aOut.AppendLiteral(fill ? u"\u25c9" : u"\u25ce");
+    case StyleTextEmphasisShapeKeyword::Triangle:
+      return aOut.AppendLiteral(fill ? u"\u25b2" : u"\u25b3");
+    case StyleTextEmphasisShapeKeyword::Sesame:
+      return aOut.AppendLiteral(fill ? u"\ufe45" : u"\ufe46");
+    default:
+      MOZ_ASSERT_UNREACHABLE("Unknown emphasis style shape");
+  }
+}
+
 static already_AddRefed<gfxTextRun> GenerateTextRunForEmphasisMarks(
     nsTextFrame* aFrame, gfxFontGroup* aFontGroup,
     ComputedStyle* aComputedStyle, const nsStyleText* aStyleText) {
-  const nsString& emphasisString = aStyleText->mTextEmphasisStyleString;
+  nsAutoString string;
+  ComputeTextEmphasisStyleString(aStyleText->mTextEmphasisStyle, string);
+
   RefPtr<DrawTarget> dt = CreateReferenceDrawTarget(aFrame);
   auto appUnitsPerDevUnit = aFrame->PresContext()->AppUnitsPerDevPixel();
   gfx::ShapedTextFlags flags =
@@ -5244,9 +5276,9 @@ static already_AddRefed<gfxTextRun> GenerateTextRunForEmphasisMarks(
     // The emphasis marks should always be rendered upright per spec.
     flags = gfx::ShapedTextFlags::TEXT_ORIENT_VERTICAL_UPRIGHT;
   }
-  return aFontGroup->MakeTextRun<char16_t>(
-      emphasisString.get(), emphasisString.Length(), dt, appUnitsPerDevUnit,
-      flags, nsTextFrameUtils::Flags(), nullptr);
+  return aFontGroup->MakeTextRun<char16_t>(string.get(), string.Length(), dt,
+                                           appUnitsPerDevUnit, flags,
+                                           nsTextFrameUtils::Flags(), nullptr);
 }
 
 static nsRubyFrame* FindFurthestInlineRubyAncestor(nsTextFrame* aFrame) {
@@ -5264,7 +5296,7 @@ static nsRubyFrame* FindFurthestInlineRubyAncestor(nsTextFrame* aFrame) {
 nsRect nsTextFrame::UpdateTextEmphasis(WritingMode aWM,
                                        PropertyProvider& aProvider) {
   const nsStyleText* styleText = StyleText();
-  if (!styleText->HasTextEmphasis()) {
+  if (!styleText->HasEffectiveTextEmphasis()) {
     DeleteProperty(EmphasisMarkProperty());
     return nsRect();
   }
@@ -5324,9 +5356,11 @@ nsRect nsTextFrame::UpdateTextEmphasis(WritingMode aWM,
 
 // helper function for implementing text-decoration-thickness
 // https://drafts.csswg.org/css-text-decor-4/#text-decoration-width-property
-static void SetWidthIfLength(const LengthOrAuto& aDecorationThickness,
-                             Float* aLineThickness,
-                             const gfxFloat aAppUnitsPerDevPixel) {
+static void SetWidthIfLength(
+    const StyleTextDecorationLength& aDecorationThickness,
+    Float* aLineThickness, const gfxFloat aAppUnitsPerDevPixel) {
+  // auto is from-font (the automatic thickness is derived from font metrics) so
+  // we only change the value if it is a length
   if (aDecorationThickness.IsLength()) {
     *aLineThickness =
         aDecorationThickness.AsLength().ToAppUnits() / aAppUnitsPerDevPixel;
@@ -5337,13 +5371,31 @@ static void SetWidthIfLength(const LengthOrAuto& aDecorationThickness,
 // https://drafts.csswg.org/css-text-decor-4/#underline-offset
 // params.defaultLineThickness should be set before calling
 // this function
-static void SetOffsetIfLength(const LengthOrAuto& aOffset,
+// On entry, aParams.offset is already initialized with the underlineOffset
+// from the font; this function may adjust it as appropriate.
+static void SetOffsetIfLength(const StyleTextDecorationLength& aOffset,
                               nsCSSRendering::DecorationRectParams& aParams,
+                              const gfxFont::Metrics& aFontMetrics,
                               const gfxFloat aAppUnitsPerDevPixel,
                               bool aIsSideways, bool aRightUnderline) {
-  if (!aOffset.IsLength()) {
+  // `auto` is treated like `from-font`, except that (for horizontal/sideways
+  // text) we clamp the offset to a minimum of 1/16 em (equivalent to 1px at
+  // font-size 16px) to mitigate skip-ink issues with fonts that leave the
+  // underlineOffset field as zero.
+  if (aOffset.IsAuto()) {
+    if (!aParams.vertical || aIsSideways) {
+      aParams.offset =
+          std::min(aParams.offset, gfx::Float(-aFontMetrics.emHeight / 16.0));
+    }
     return;
   }
+
+  // If the value is `from-font`, just leave the font's value untouched.
+  if (aOffset.IsFromFont()) {
+    return;
+  }
+
+  MOZ_ASSERT(aOffset.IsLength(), "unexpected value type!");
 
   if (aParams.vertical && !aIsSideways &&
       aParams.decoration == StyleTextDecorationLine_UNDERLINE) {
@@ -5391,10 +5443,10 @@ void nsTextFrame::UnionAdditionalOverflow(nsPresContext* aPresContext,
     nscoord underlineOffset, underlineSize;
     fontMetrics->GetUnderline(underlineOffset, underlineSize);
 
-    const LengthOrAuto& textUnderlineOffset =
+    const StyleTextDecorationLength& textUnderlineOffset =
         aBlock->Style()->StyleText()->mTextUnderlineOffset;
 
-    const LengthOrAuto& textDecorationThickness =
+    const StyleTextDecorationLength& textDecorationThickness =
         aBlock->Style()->StyleTextReset()->mTextDecorationThickness;
 
     if (textUnderlineOffset.IsLength()) {
@@ -5502,7 +5554,7 @@ void nsTextFrame::UnionAdditionalOverflow(nsPresContext* aPresContext,
             bool swapUnderline = verticalDec && IsUnderlineRight(this);
             if (swapUnderline ? lineType == StyleTextDecorationLine_OVERLINE
                               : lineType == StyleTextDecorationLine_UNDERLINE) {
-              SetOffsetIfLength(dec.mTextUnderlineOffset, params,
+              SetOffsetIfLength(dec.mTextUnderlineOffset, params, metrics,
                                 appUnitsPerDevUnit, parentWM.IsSideways(),
                                 swapUnderline);
             }
@@ -5644,6 +5696,7 @@ struct nsTextFrame::PaintDecorationLineParams
   const nscolor* overrideColor = nullptr;
   nscolor color = NS_RGBA(0, 0, 0, 0);
   gfxFloat icoordInFrame = 0.0f;
+  gfxFloat baselineOffset = 0.0f;
   DecorationType decorationType = DecorationType::Normal;
   DrawPathCallbacks* callbacks = nullptr;
 };
@@ -5656,6 +5709,7 @@ void nsTextFrame::PaintDecorationLine(
   params.pt = aParams.pt;
   params.color = aParams.overrideColor ? *aParams.overrideColor : aParams.color;
   params.icoordInFrame = Float(aParams.icoordInFrame);
+  params.baselineOffset = Float(aParams.baselineOffset);
   if (aParams.callbacks) {
     Rect path = nsCSSRendering::DecorationLineToPath(params);
     if (aParams.decorationType == DecorationType::Normal) {
@@ -5695,7 +5749,7 @@ void nsTextFrame::DrawSelectionDecorations(
       aTextPaintStyle.PresContext(), aFontMetrics);
 
   float relativeSize;
-  const LengthOrAuto& decThickness = StyleTextReset()->mTextDecorationThickness;
+  const auto& decThickness = StyleTextReset()->mTextDecorationThickness;
   const gfxFloat appUnitsPerDevPixel =
       aTextPaintStyle.PresContext()->AppUnitsPerDevPixel();
 
@@ -5719,7 +5773,8 @@ void nsTextFrame::DrawSelectionDecorations(
         WritingMode wm = GetWritingMode();
         params.offset = aFontMetrics.underlineOffset;
         SetOffsetIfLength(StyleText()->mTextUnderlineOffset, params,
-                          appUnitsPerDevPixel, wm.IsSideways(), swapUnderline);
+                          aFontMetrics, appUnitsPerDevPixel, wm.IsSideways(),
+                          swapUnderline);
       } else {
         params.offset = aFontMetrics.maxAscent;
       }
@@ -6226,6 +6281,7 @@ bool nsTextFrame::PaintTextWithSelectionColors(
   params.clipEdges = &aClipEdges;
   params.advanceWidth = &advance;
   params.callbacks = aParams.callbacks;
+  params.glyphRange = aParams.glyphRange;
 
   PaintShadowParams shadowParams(aParams);
   shadowParams.provider = aParams.provider;
@@ -6746,6 +6802,7 @@ void nsTextFrame::PaintText(const PaintTextParams& aParams,
     params.provider = &provider;
     params.contentRange = contentRange;
     params.textPaintStyle = &textPaintStyle;
+    params.glyphRange = range;
     if (PaintTextWithSelection(params, clipEdges)) {
       return;
     }
@@ -6796,6 +6853,7 @@ void nsTextFrame::PaintText(const PaintTextParams& aParams,
   params.drawSoftHyphen = (GetStateBits() & TEXT_HYPHEN_BREAK) != 0;
   params.contextPaint = aParams.contextPaint;
   params.callbacks = aParams.callbacks;
+  params.glyphRange = range;
   DrawText(range, textBaselinePt, params);
 }
 
@@ -6834,22 +6892,24 @@ static void DrawTextRun(const gfxTextRun* aTextRun,
       // Check the paint-order property; if we find stroke before fill,
       // then change mode to GLYPH_STROKE_UNDERNEATH.
       uint32_t paintOrder = aFrame->StyleSVG()->mPaintOrder;
-      if (paintOrder != NS_STYLE_PAINT_ORDER_NORMAL) {
-        while (paintOrder) {
-          uint32_t component =
-              paintOrder & ((1 << NS_STYLE_PAINT_ORDER_BITWIDTH) - 1);
-          switch (component) {
-            case NS_STYLE_PAINT_ORDER_FILL:
-              // Just break the loop, no need to check further
-              paintOrder = 0;
-              break;
-            case NS_STYLE_PAINT_ORDER_STROKE:
-              params.drawMode |= DrawMode::GLYPH_STROKE_UNDERNEATH;
-              paintOrder = 0;
-              break;
-          }
-          paintOrder >>= NS_STYLE_PAINT_ORDER_BITWIDTH;
+      while (paintOrder) {
+        auto component = StylePaintOrder(paintOrder & kPaintOrderMask);
+        switch (component) {
+          case StylePaintOrder::Fill:
+            // Just break the loop, no need to check further
+            paintOrder = 0;
+            break;
+          case StylePaintOrder::Stroke:
+            params.drawMode |= DrawMode::GLYPH_STROKE_UNDERNEATH;
+            paintOrder = 0;
+            break;
+          default:
+            MOZ_FALLTHROUGH_ASSERT("Unknown paint-order variant, how?");
+          case StylePaintOrder::Markers:
+          case StylePaintOrder::Normal:
+            break;
         }
+        paintOrder >>= kPaintOrderShift;
       }
 
       // Use ROUND joins as they are less likely to produce ugly artifacts
@@ -6945,6 +7005,8 @@ void nsTextFrame::DrawTextRunAndDecorations(
   params.dirtyRect = aParams.dirtyRect;
   params.overrideColor = aParams.decorationOverrideColor;
   params.callbacks = aParams.callbacks;
+  params.glyphRange = aParams.glyphRange;
+  params.provider = aParams.provider;
   // pt is the physical point where the decoration is to be drawn,
   // relative to the frame; one of its coordinates will be updated below.
   params.pt = Point(x / app, y / app);
@@ -6991,11 +7053,12 @@ void nsTextFrame::DrawTextRunAndDecorations(
     params.color = dec.mColor;
     params.defaultLineThickness = params.lineSize.height;
     params.offset = metrics.*lineOffset;
+    params.baselineOffset = dec.mBaselineOffset / app;
 
     bool swapUnderline = verticalDec && IsUnderlineRight(this);
     if (swapUnderline ? lineType == StyleTextDecorationLine_OVERLINE
                       : lineType == StyleTextDecorationLine_UNDERLINE) {
-      SetOffsetIfLength(dec.mTextUnderlineOffset, params,
+      SetOffsetIfLength(dec.mTextUnderlineOffset, params, metrics,
                         PresContext()->AppUnitsPerDevPixel(), wm.IsSideways(),
                         swapUnderline);
     }
@@ -7106,7 +7169,8 @@ void nsTextFrame::DrawText(Range aRange, const gfx::Point& aTextBaselinePt,
   // Hide text decorations if we're currently hiding @font-face fallback text
   const bool drawDecorations =
       !aParams.provider->GetFontGroup()->ShouldSkipDrawing() &&
-      (decorations.HasDecorationLines() || StyleText()->HasTextEmphasis());
+      (decorations.HasDecorationLines() ||
+       StyleText()->HasEffectiveTextEmphasis());
   if (drawDecorations) {
     DrawTextRunAndDecorations(aRange, aTextBaselinePt, aParams, decorations);
   } else {
@@ -7218,11 +7282,8 @@ nsIFrame::ContentOffsets nsTextFrame::GetCharacterOffsetAtFramePointInternal(
     // chars that are ligated in the textrun to form a single flag symbol.
     uint32_t offs = extraCluster.GetOriginalOffset();
     const nsTextFragment* frag = TextFragment();
-    if (offs + 1 < frag->GetLength() &&
-        NS_IS_HIGH_SURROGATE(frag->CharAt(offs)) &&
-        NS_IS_LOW_SURROGATE(frag->CharAt(offs + 1)) &&
-        gfxFontUtils::IsRegionalIndicator(
-            SURROGATE_TO_UCS4(frag->CharAt(offs), frag->CharAt(offs + 1)))) {
+    if (frag->IsHighSurrogateFollowedByLowSurrogateAt(offs) &&
+        gfxFontUtils::IsRegionalIndicator(frag->ScalarValueAt(offs))) {
       allowSplitLigature = false;
       if (extraCluster.GetSkippedOffset() > 1 &&
           !mTextRun->IsLigatureGroupStart(extraCluster.GetSkippedOffset())) {
@@ -7340,8 +7401,7 @@ bool nsTextFrame::CombineSelectionUnderlineRect(nsPresContext* aPresContext,
     }
     nsRect decorationArea;
 
-    const LengthOrAuto& decThickness =
-        StyleTextReset()->mTextDecorationThickness;
+    const auto& decThickness = StyleTextReset()->mTextDecorationThickness;
     params.lineSize.width = aPresContext->AppUnitsToGfxUnits(aRect.width);
     params.defaultLineThickness = ComputeSelectionUnderlineHeight(
         aPresContext, metrics, sd->mSelectionType);
@@ -7351,7 +7411,7 @@ bool nsTextFrame::CombineSelectionUnderlineRect(nsPresContext* aPresContext,
 
     bool swapUnderline = verticalRun && IsUnderlineRight(this);
     if (swapUnderline ? textDecs.HasOverline() : textDecs.HasUnderline()) {
-      SetOffsetIfLength(StyleText()->mTextUnderlineOffset, params,
+      SetOffsetIfLength(StyleText()->mTextUnderlineOffset, params, metrics,
                         aPresContext->AppUnitsPerDevPixel(), wm.IsSideways(),
                         swapUnderline);
     }
@@ -7536,7 +7596,8 @@ nsresult nsTextFrame::GetCharacterRectsInRange(int32_t aInOffset,
       gfxSkipCharsIterator nextIter(iter);
       nextIter.AdvanceOriginal(1);
       if (!nextIter.IsOriginalCharSkipped() &&
-          !mTextRun->IsClusterStart(nextIter.GetSkippedOffset())) {
+          !mTextRun->IsClusterStart(nextIter.GetSkippedOffset()) &&
+          nextIter.GetOriginalOffset() < kContentEnd) {
         FindClusterEnd(mTextRun, kContentEnd, &nextIter);
       }
 
@@ -7732,8 +7793,7 @@ static bool IsAcceptableCaretPosition(const gfxSkipCharsIterator& aIter,
     uint32_t ch = frag->CharAt(offs);
 
     if (gfxFontUtils::IsVarSelector(ch) ||
-        (NS_IS_LOW_SURROGATE(ch) && offs > 0 &&
-         NS_IS_HIGH_SURROGATE(frag->CharAt(offs - 1))) ||
+        frag->IsLowSurrogateFollowingHighSurrogateAt(offs) ||
         (!aTextRun->IsLigatureGroupStart(index) &&
          (unicode::GetEmojiPresentation(ch) == unicode::EmojiDefault ||
           (unicode::GetEmojiPresentation(ch) == unicode::TextDefault &&
@@ -7744,17 +7804,15 @@ static bool IsAcceptableCaretPosition(const gfxSkipCharsIterator& aIter,
 
     // If the proposed position is before a high surrogate, we need to decode
     // the surrogate pair (if valid) and check the resulting character.
-    if (NS_IS_HIGH_SURROGATE(ch) && offs + 1 < frag->GetLength()) {
-      uint32_t ch2 = frag->CharAt(offs + 1);
-      if (NS_IS_LOW_SURROGATE(ch2)) {
-        ch = SURROGATE_TO_UCS4(ch, ch2);
+    if (NS_IS_HIGH_SURROGATE(ch)) {
+      if (char32_t ucs4 = frag->ScalarValueAt(offs)) {
         // If the character is a (Plane-14) variation selector,
         // or an emoji character that is ligated with the previous
         // character (i.e. part of a Regional-Indicator flag pair,
         // or an emoji-ZWJ sequence), this is not a valid boundary.
-        if (gfxFontUtils::IsVarSelector(ch) ||
+        if (gfxFontUtils::IsVarSelector(ucs4) ||
             (!aTextRun->IsLigatureGroupStart(index) &&
-             unicode::GetEmojiPresentation(ch) == unicode::EmojiDefault)) {
+             unicode::GetEmojiPresentation(ucs4) == unicode::EmojiDefault)) {
           return false;
         }
       }
@@ -7861,9 +7919,7 @@ bool ClusterIterator::IsPunctuation() {
 }
 
 int32_t ClusterIterator::GetAfterInternal() {
-  if (mFrag->Is2b() && NS_IS_HIGH_SURROGATE(mFrag->Get2b()[mCharIndex]) &&
-      uint32_t(mCharIndex) + 1 < mFrag->GetLength() &&
-      NS_IS_LOW_SURROGATE(mFrag->Get2b()[mCharIndex + 1])) {
+  if (mFrag->IsHighSurrogateFollowedByLowSurrogateAt(mCharIndex)) {
     return mCharIndex + 2;
   }
   return mCharIndex + 1;
@@ -7928,16 +7984,14 @@ ClusterIterator::ClusterIterator(nsTextFrame* aTextFrame, int32_t aPosition,
     nsString maskedText;
     maskedText.SetCapacity(mFrag->GetLength());
     for (uint32_t i = 0; i < mFrag->GetLength(); ++i) {
-      uint32_t ch = mFrag->CharAt(i);
       mIterator.SetOriginalOffset(i);
       uint32_t skippedOffset = mIterator.GetSkippedOffset();
-      if (NS_IS_HIGH_SURROGATE(ch) && i < mFrag->GetLength() - 1 &&
-          NS_IS_LOW_SURROGATE(mFrag->CharAt(i + 1))) {
+      if (mFrag->IsHighSurrogateFollowedByLowSurrogateAt(i)) {
         if (transformedTextRun->mStyles[skippedOffset]->mMaskPassword) {
           maskedText.Append(kPasswordMask);
           maskedText.Append(kPasswordMask);
         } else {
-          maskedText.Append(ch);
+          maskedText.Append(mFrag->CharAt(i));
           maskedText.Append(mFrag->CharAt(i + 1));
         }
         ++i;
@@ -7945,7 +7999,7 @@ ClusterIterator::ClusterIterator(nsTextFrame* aTextFrame, int32_t aPosition,
         maskedText.Append(
             transformedTextRun->mStyles[skippedOffset]->mMaskPassword
                 ? kPasswordMask
-                : ch);
+                : mFrag->CharAt(i));
       }
     }
     mMaskedFrag.SetTo(maskedText, mFrag->IsBidi(), true);
@@ -8085,7 +8139,8 @@ static int32_t FindEndOfPunctuationRun(const nsTextFragment* aFrag,
   int32_t i;
 
   for (i = aStart; i < aEnd - aOffset; ++i) {
-    if (nsContentUtils::IsFirstLetterPunctuationAt(aFrag, aOffset + i)) {
+    if (nsContentUtils::IsFirstLetterPunctuation(
+            aFrag->ScalarValueAt(aOffset + i))) {
       aIter->SetOriginalOffset(aOffset + i);
       FindClusterEnd(aTextRun, aEnd, aIter);
       i = aIter->GetOriginalOffset() - aOffset;
@@ -9706,15 +9761,25 @@ static void TransformChars(nsTextFrame* aFrame, const nsStyleText* aStyle,
   }
 }
 
-static bool LineEndsInHardLineBreak(nsTextFrame* aFrame,
-                                    nsBlockFrame* aLineContainer) {
+static void LineStartsOrEndsAtHardLineBreak(nsTextFrame* aFrame,
+                                            nsBlockFrame* aLineContainer,
+                                            bool* aStartsAtHardBreak,
+                                            bool* aEndsAtHardBreak) {
   bool foundValidLine;
   nsBlockInFlowLineIterator iter(aLineContainer, aFrame, &foundValidLine);
   if (!foundValidLine) {
     NS_ERROR("Invalid line!");
-    return true;
+    *aStartsAtHardBreak = *aEndsAtHardBreak = true;
+    return;
   }
-  return !iter.GetLine()->IsLineWrapped();
+
+  *aEndsAtHardBreak = !iter.GetLine()->IsLineWrapped();
+  if (iter.Prev()) {
+    *aStartsAtHardBreak = !iter.GetLine()->IsLineWrapped();
+  } else {
+    // Hit block boundary
+    *aStartsAtHardBreak = true;
+  }
 }
 
 nsIFrame::RenderedText nsTextFrame::GetRenderedText(
@@ -9752,11 +9817,11 @@ nsIFrame::RenderedText nsTextFrame::GetRenderedText(
     }
     gfxSkipCharsIterator tmpIter = iter;
 
-    // Whether we need to trim whitespaces after the text frame.
-    bool trimAfter;
-    if (!textFrame->IsAtEndOfLine() ||
-        aTrimTrailingWhitespace != TrailingWhitespace::Trim) {
-      trimAfter = false;
+    // Check if the frame starts/ends at a hard line break, to determine
+    // whether whitespace should be trimmed.
+    bool startsAtHardBreak, endsAtHardBreak;
+    if (!(GetStateBits() & (TEXT_START_OF_LINE | TEXT_END_OF_LINE))) {
+      startsAtHardBreak = endsAtHardBreak = false;
     } else if (nsBlockFrame* thisLc =
                    do_QueryFrame(FindLineContainer(textFrame))) {
       if (thisLc != lineContainer) {
@@ -9765,17 +9830,31 @@ nsIFrame::RenderedText nsTextFrame::GetRenderedText(
         autoLineCursor.reset();
         autoLineCursor.emplace(lineContainer);
       }
-      trimAfter = LineEndsInHardLineBreak(textFrame, lineContainer);
+      LineStartsOrEndsAtHardLineBreak(textFrame, lineContainer,
+                                      &startsAtHardBreak, &endsAtHardBreak);
     } else {
       // Weird situation where we have a line layout without a block.
       // No soft breaks occur in this situation.
-      trimAfter = true;
+      startsAtHardBreak = endsAtHardBreak = true;
     }
 
-    // Skip to the start of the text run, past ignored chars at start of line
-    TrimmedOffsets trimmedOffsets = textFrame->GetTrimmedOffsets(
-        textFrag, (trimAfter ? TrimmedOffsetFlags::Default
-                             : TrimmedOffsetFlags::NoTrimAfter));
+    // Whether we need to trim whitespaces after the text frame.
+    // TrimmedOffsetFlags::Default will allow trimming; we set NoTrim* flags
+    // in the cases where this should not occur.
+    TrimmedOffsetFlags trimFlags = TrimmedOffsetFlags::Default;
+    if (!textFrame->IsAtEndOfLine() ||
+        aTrimTrailingWhitespace != TrailingWhitespace::Trim ||
+        !endsAtHardBreak) {
+      trimFlags |= TrimmedOffsetFlags::NoTrimAfter;
+    }
+
+    // Whether to trim whitespaces before the text frame.
+    if (!startsAtHardBreak) {
+      trimFlags |= TrimmedOffsetFlags::NoTrimBefore;
+    }
+
+    TrimmedOffsets trimmedOffsets =
+        textFrame->GetTrimmedOffsets(textFrag, trimFlags);
     bool trimmedSignificantNewline =
         trimmedOffsets.GetEnd() < GetContentEnd() &&
         HasSignificantTerminalNewline();

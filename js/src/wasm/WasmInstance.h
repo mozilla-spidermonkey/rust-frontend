@@ -50,14 +50,12 @@ class Instance {
   void* preBarrierCode_;
   const SharedCode code_;
   const UniqueTlsData tlsData_;
-  GCPtrWasmMemoryObject memory_;
+  const GCPtrWasmMemoryObject memory_;
   const SharedTableVector tables_;
   DataSegmentVector passiveDataSegments_;
   ElemSegmentVector passiveElemSegments_;
   const UniqueDebugState maybeDebug_;
   StructTypeDescrVector structTypeDescrs_;
-
-  friend void Zone::sweepBreakpoints(js::FreeOp*);
 
   // Internal helpers:
   const void** addressOfFuncTypeId(const FuncTypeIdDesc& funcTypeId) const;
@@ -156,27 +154,32 @@ class Instance {
 
   // Called by Wasm(Memory|Table)Object when a moving resize occurs:
 
-  void onMovingGrowMemory(uint8_t* prevMemoryBase);
+  void onMovingGrowMemory();
   void onMovingGrowTable(const Table* theTable);
 
   // Called to apply a single ElemSegment at a given offset, assuming
   // that all bounds validation has already been performed.
 
-  void initElems(uint32_t tableIndex, const ElemSegment& seg,
-                 uint32_t dstOffset, uint32_t srcOffset, uint32_t len);
+  MOZ_MUST_USE bool initElems(uint32_t tableIndex, const ElemSegment& seg,
+                              uint32_t dstOffset, uint32_t srcOffset,
+                              uint32_t len);
 
   // Debugger support:
 
   JSString* createDisplayURL(JSContext* cx);
   WasmBreakpointSite* getOrCreateBreakpointSite(JSContext* cx, uint32_t offset);
-  void destroyBreakpointSite(FreeOp* fop, uint32_t offset);
+  void destroyBreakpointSite(JSFreeOp* fop, uint32_t offset);
 
   // about:memory reporting:
 
   void addSizeOfMisc(MallocSizeOf mallocSizeOf, Metadata::SeenSet* seenMetadata,
-                     ShareableBytes::SeenSet* seenBytes,
                      Code::SeenSet* seenCode, Table::SeenSet* seenTables,
                      size_t* code, size_t* data) const;
+
+  // Wasm disassembly support
+
+  void disassembleExport(JSContext* cx, uint32_t funcIndex, Tier tier,
+                         PrintCallback callback) const;
 
  public:
   // Functions to be called directly from wasm code.
@@ -194,10 +197,16 @@ class Instance {
                           int64_t value, int64_t timeout);
   static int32_t wake(Instance* instance, uint32_t byteOffset, int32_t count);
   static int32_t memCopy(Instance* instance, uint32_t destByteOffset,
-                         uint32_t srcByteOffset, uint32_t len);
+                         uint32_t srcByteOffset, uint32_t len,
+                         uint8_t* memBase);
+  static int32_t memCopyShared(Instance* instance, uint32_t destByteOffset,
+                               uint32_t srcByteOffset, uint32_t len,
+                               uint8_t* memBase);
   static int32_t dataDrop(Instance* instance, uint32_t segIndex);
   static int32_t memFill(Instance* instance, uint32_t byteOffset,
-                         uint32_t value, uint32_t len);
+                         uint32_t value, uint32_t len, uint8_t* memBase);
+  static int32_t memFillShared(Instance* instance, uint32_t byteOffset,
+                               uint32_t value, uint32_t len, uint8_t* memBase);
   static int32_t memInit(Instance* instance, uint32_t dstOffset,
                          uint32_t srcOffset, uint32_t len, uint32_t segIndex);
   static int32_t tableCopy(Instance* instance, uint32_t dstOffset,
@@ -216,6 +225,7 @@ class Instance {
   static int32_t tableInit(Instance* instance, uint32_t dstOffset,
                            uint32_t srcOffset, uint32_t len, uint32_t segIndex,
                            uint32_t tableIndex);
+  static void* funcRef(Instance* instance, uint32_t funcIndex);
   static void postBarrier(Instance* instance, gc::Cell** location);
   static void postBarrierFiltering(Instance* instance, gc::Cell** location);
   static void* structNew(Instance* instance, uint32_t typeIndex);

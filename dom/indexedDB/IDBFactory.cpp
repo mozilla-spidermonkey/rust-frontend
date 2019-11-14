@@ -54,7 +54,50 @@ using namespace mozilla::ipc;
 
 namespace {
 
-const char kPrefIndexedDBEnabled[] = "dom.indexedDB.enabled";
+Telemetry::LABELS_IDB_CUSTOM_OPEN_WITH_OPTIONS_COUNT IdentifyPrincipalType(
+    const mozilla::ipc::PrincipalInfo& aPrincipalInfo) {
+  switch (aPrincipalInfo.type()) {
+    case PrincipalInfo::TSystemPrincipalInfo:
+      return Telemetry::LABELS_IDB_CUSTOM_OPEN_WITH_OPTIONS_COUNT::system;
+    case PrincipalInfo::TContentPrincipalInfo: {
+      const ContentPrincipalInfo& info =
+          aPrincipalInfo.get_ContentPrincipalInfo();
+
+      nsCOMPtr<nsIURI> uri;
+
+      if (NS_WARN_IF(NS_FAILED(NS_NewURI(getter_AddRefs(uri), info.spec())))) {
+        // This could be discriminated as an extra error value, but this is
+        // extremely unlikely to fail, so we just misuse ContentOther
+        return Telemetry::LABELS_IDB_CUSTOM_OPEN_WITH_OPTIONS_COUNT::
+            content_other;
+      }
+
+      // TODO Are there constants defined for the schemes somewhere?
+      if (uri->SchemeIs("file")) {
+        return Telemetry::LABELS_IDB_CUSTOM_OPEN_WITH_OPTIONS_COUNT::
+            content_file;
+      }
+      if (uri->SchemeIs("http") || uri->SchemeIs("https")) {
+        return Telemetry::LABELS_IDB_CUSTOM_OPEN_WITH_OPTIONS_COUNT::
+            content_http_https;
+      }
+      if (uri->SchemeIs("moz-extension")) {
+        return Telemetry::LABELS_IDB_CUSTOM_OPEN_WITH_OPTIONS_COUNT::
+            content_moz_ext;
+      }
+      if (uri->SchemeIs("about")) {
+        return Telemetry::LABELS_IDB_CUSTOM_OPEN_WITH_OPTIONS_COUNT::
+            content_about;
+      }
+      return Telemetry::LABELS_IDB_CUSTOM_OPEN_WITH_OPTIONS_COUNT::
+          content_other;
+    }
+    case PrincipalInfo::TExpandedPrincipalInfo:
+      return Telemetry::LABELS_IDB_CUSTOM_OPEN_WITH_OPTIONS_COUNT::expanded;
+    default:
+      return Telemetry::LABELS_IDB_CUSTOM_OPEN_WITH_OPTIONS_COUNT::other;
+  }
+}
 
 }  // namespace
 
@@ -98,12 +141,6 @@ nsresult IDBFactory::CreateForWindow(nsPIDOMWindowInner* aWindow,
 
   nsCOMPtr<nsIPrincipal> principal;
   nsresult rv = AllowedForWindowInternal(aWindow, getter_AddRefs(principal));
-
-  if (!(NS_SUCCEEDED(rv) && nsContentUtils::IsSystemPrincipal(principal)) &&
-      NS_WARN_IF(!Preferences::GetBool(kPrefIndexedDBEnabled, false))) {
-    *aFactory = nullptr;
-    return NS_ERROR_DOM_INDEXEDDB_NOT_ALLOWED_ERR;
-  }
 
   if (rv == NS_ERROR_DOM_NOT_SUPPORTED_ERR) {
     NS_WARNING("IndexedDB is not permitted in a third-party window.");
@@ -223,12 +260,6 @@ nsresult IDBFactory::CreateForMainThreadJSInternal(
   MOZ_ASSERT(aGlobal);
   MOZ_ASSERT(aPrincipalInfo);
 
-  if (aPrincipalInfo->type() != PrincipalInfo::TSystemPrincipalInfo &&
-      NS_WARN_IF(!Preferences::GetBool(kPrefIndexedDBEnabled, false))) {
-    *aFactory = nullptr;
-    return NS_ERROR_DOM_INDEXEDDB_NOT_ALLOWED_ERR;
-  }
-
   IndexedDatabaseManager* mgr = IndexedDatabaseManager::GetOrCreate();
   if (NS_WARN_IF(!mgr)) {
     IDB_REPORT_INTERNAL_ERR();
@@ -277,13 +308,7 @@ bool IDBFactory::AllowedForWindow(nsPIDOMWindowInner* aWindow) {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(aWindow);
 
-  nsCOMPtr<nsIPrincipal> principal;
-  nsresult rv = AllowedForWindowInternal(aWindow, getter_AddRefs(principal));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return false;
-  }
-
-  return true;
+  return !NS_WARN_IF(NS_FAILED(AllowedForWindowInternal(aWindow, nullptr)));
 }
 
 // static
@@ -326,19 +351,11 @@ nsresult IDBFactory::AllowedForWindowInternal(nsPIDOMWindowInner* aWindow,
 
   // About URIs shouldn't be able to access IndexedDB unless they have the
   // nsIAboutModule::ENABLE_INDEXED_DB flag set on them.
-  nsCOMPtr<nsIURI> uri;
-  MOZ_ALWAYS_SUCCEEDS(principal->GetURI(getter_AddRefs(uri)));
-  MOZ_ASSERT(uri);
 
-  if (uri->SchemeIs("about")) {
-    nsCOMPtr<nsIAboutModule> module;
-    if (NS_SUCCEEDED(NS_GetAboutModule(uri, getter_AddRefs(module)))) {
-      uint32_t flags;
-      if (NS_SUCCEEDED(module->GetURIFlags(uri, &flags))) {
-        if (!(flags & nsIAboutModule::ENABLE_INDEXED_DB)) {
-          return NS_ERROR_DOM_NOT_SUPPORTED_ERR;
-        }
-      } else {
+  if (principal->SchemeIs("about")) {
+    uint32_t flags;
+    if (NS_SUCCEEDED(principal->GetAboutModuleFlags(&flags))) {
+      if (!(flags & nsIAboutModule::ENABLE_INDEXED_DB)) {
         return NS_ERROR_DOM_NOT_SUPPORTED_ERR;
       }
     } else {
@@ -346,7 +363,9 @@ nsresult IDBFactory::AllowedForWindowInternal(nsPIDOMWindowInner* aWindow,
     }
   }
 
-  principal.forget(aPrincipal);
+  if (aPrincipal) {
+    principal.forget(aPrincipal);
+  }
   return NS_OK;
 }
 
@@ -365,15 +384,13 @@ bool IDBFactory::AllowedForPrincipal(nsIPrincipal* aPrincipal,
       *aIsSystemPrincipal = true;
     }
     return true;
-  } else if (aIsSystemPrincipal) {
+  }
+
+  if (aIsSystemPrincipal) {
     *aIsSystemPrincipal = false;
   }
 
-  if (aPrincipal->GetIsNullPrincipal()) {
-    return false;
-  }
-
-  return true;
+  return !aPrincipal->GetIsNullPrincipal();
 }
 
 void IDBFactory::UpdateActiveTransactionCount(int32_t aDelta) {
@@ -438,47 +455,16 @@ already_AddRefed<IDBOpenDBRequest> IDBFactory::Open(
       // so this will be reported every time.
       WorkerPrivate::ReportErrorToConsole("IDBOpenDBOptions_StorageType");
     }
+  }
 
-    bool ignore = false;
-    // Ignore internal usage on about: pages.
-    if (NS_IsMainThread()) {
-      nsCOMPtr<nsIPrincipal> principal =
-          PrincipalInfoToPrincipal(*mPrincipalInfo);
-      if (principal) {
-        nsCOMPtr<nsIURI> uri;
-        nsresult rv = principal->GetURI(getter_AddRefs(uri));
-        if (NS_SUCCEEDED(rv) && uri) {
-          bool isAbout;
-          rv = uri->SchemeIs("about", &isAbout);
-          if (NS_SUCCEEDED(rv) && isAbout) {
-            ignore = true;
-          }
-        }
-      }
-    }
-
-    if (!ignore) {
-      switch (aOptions.mStorage.Value()) {
-        case StorageType::Persistent: {
-          Telemetry::ScalarAdd(Telemetry::ScalarID::IDB_TYPE_PERSISTENT_COUNT,
-                               1);
-          break;
-        }
-
-        case StorageType::Temporary: {
-          Telemetry::ScalarAdd(Telemetry::ScalarID::IDB_TYPE_TEMPORARY_COUNT,
-                               1);
-          break;
-        }
-
-        case StorageType::Default:
-        case StorageType::EndGuard_:
-          break;
-
-        default:
-          MOZ_CRASH("Invalid storage type!");
-      }
-    }
+  // Ignore calls with empty options for telemetry of usage count.
+  // Unfortunately, we cannot distinguish between the use of the method with
+  // only a single argument (which actually is a standard overload we don't want
+  // to count) an empty dictionary passed explicitly (which is the custom
+  // overload we would like to count). However, we assume that the latter is so
+  // rare that it can be neglected.
+  if (aOptions.IsAnyMemberPresent()) {
+    Telemetry::AccumulateCategorical(IdentifyPrincipalType(*mPrincipalInfo));
   }
 
   return OpenInternal(aCx,
@@ -617,7 +603,7 @@ already_AddRefed<IDBOpenDBRequest> IDBFactory::OpenInternal(
   uint64_t version = 0;
   if (!aDeleting && aVersion.WasPassed()) {
     if (aVersion.Value() < 1) {
-      aRv.ThrowTypeError<MSG_INVALID_VERSION>();
+      aRv.ThrowTypeError(u"0 (Zero) is not a valid database version.");
       return nullptr;
     }
     version = aVersion.Value();
@@ -746,17 +732,12 @@ already_AddRefed<IDBOpenDBRequest> IDBFactory::OpenInternal(
   MOZ_ASSERT(request);
 
   if (aDeleting) {
-    IDB_LOG_MARK(
-        "IndexedDB %s: Child  Request[%llu]: "
-        "indexedDB.deleteDatabase(\"%s\")",
-        "IndexedDB %s: C R[%llu]: IDBFactory.deleteDatabase()",
-        IDB_LOG_ID_STRING(), request->LoggingSerialNumber(),
-        NS_ConvertUTF16toUTF8(aName).get());
+    IDB_LOG_MARK_CHILD_REQUEST(
+        "indexedDB.deleteDatabase(\"%s\")", "IDBFactory.deleteDatabase()",
+        request->LoggingSerialNumber(), NS_ConvertUTF16toUTF8(aName).get());
   } else {
-    IDB_LOG_MARK(
-        "IndexedDB %s: Child  Request[%llu]: "
-        "indexedDB.open(\"%s\", %s)",
-        "IndexedDB %s: C R[%llu]: IDBFactory.open()", IDB_LOG_ID_STRING(),
+    IDB_LOG_MARK_CHILD_REQUEST(
+        "indexedDB.open(\"%s\", %s)", "IDBFactory.open()",
         request->LoggingSerialNumber(), NS_ConvertUTF16toUTF8(aName).get(),
         IDB_LOG_STRINGIFY(aVersion));
   }

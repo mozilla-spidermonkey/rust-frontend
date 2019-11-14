@@ -15,22 +15,10 @@
 
 #include "jstypes.h"  // JS_PUBLIC_API
 
-struct JSContext;
-class JSObject;
-struct JSRuntime;
-
-struct JSFreeOp {
- protected:
-  JSRuntime* runtime_;
-
-  explicit JSFreeOp(JSRuntime* rt) : runtime_(rt) {}
-
- public:
-  JSRuntime* runtime() const {
-    MOZ_ASSERT(runtime_);
-    return runtime_;
-  }
-};
+struct JS_PUBLIC_API JSContext;
+class JS_PUBLIC_API JSFreeOp;
+class JS_PUBLIC_API JSObject;
+struct JS_PUBLIC_API JSRuntime;
 
 extern JS_PUBLIC_API void* JS_malloc(JSContext* cx, size_t nbytes);
 
@@ -77,7 +65,12 @@ namespace JS {
   _(CDataBuffer)                         \
   _(CClosureInfo)                        \
   _(CTypesInt64)                         \
-  _(PerfMeasurement)
+  _(PerfMeasurement)                     \
+  _(Embedding1)                          \
+  _(Embedding2)                          \
+  _(Embedding3)                          \
+  _(Embedding4)                          \
+  _(Embedding5)
 
 enum class MemoryUse : uint8_t {
 #define DEFINE_MEMORY_USE(Name) Name,

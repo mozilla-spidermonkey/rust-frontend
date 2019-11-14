@@ -11,6 +11,7 @@
 #include "mozilla/gfx/2D.h"
 #include "mozilla/layers/CompositorOptions.h"
 #include "mozilla/layers/LayersTypes.h"
+#include "mozilla/layers/NativeLayer.h"
 
 class nsIWidget;
 class nsBaseWidget;
@@ -117,12 +118,14 @@ class CompositorWidget {
   virtual void PostRender(WidgetRenderingContext* aContext) {}
 
   /**
-   * Called before the LayerManager draws the layer tree.
-   *
-   * Always called from the compositing thread.
+   * Called before the first composite. If the result is non-null, one or more
+   * native layers will be placed on the window and used for compositing.
+   * When native layers are used, StartRemoteDrawing(InRegion) and
+   * EndRemoteDrawing(InRegion) will not be called.
    */
-  virtual void DrawWindowUnderlay(WidgetRenderingContext* aContext,
-                                  LayoutDeviceIntRect aRect) {}
+  virtual RefPtr<layers::NativeLayerRoot> GetNativeLayerRoot() {
+    return nullptr;
+  }
 
   /**
    * Called after the LayerManager draws the layer tree
@@ -135,8 +138,9 @@ class CompositorWidget {
   /**
    * Return a DrawTarget for the window which can be composited into.
    *
+   * Only called if GetNativeLayerRoot() returns nullptr.
    * Called by BasicCompositor on the compositor thread for OMTC drawing
-   * before each composition.
+   * before each composition (unless there's a native layer root).
    *
    * The window may specify its buffer mode. If unspecified, it is assumed
    * to require double-buffering.
@@ -152,11 +156,12 @@ class CompositorWidget {
    * StartRemoteDrawing reaches the screen.
    *
    * Called by BasicCompositor on the compositor thread for OMTC drawing
-   * after each composition.
+   * after each composition for which StartRemoteDrawing(InRegion) was called.
    */
   virtual void EndRemoteDrawing() {}
-  virtual void EndRemoteDrawingInRegion(gfx::DrawTarget* aDrawTarget,
-                                        LayoutDeviceIntRegion& aInvalidRegion) {
+  virtual void EndRemoteDrawingInRegion(
+      gfx::DrawTarget* aDrawTarget,
+      const LayoutDeviceIntRegion& aInvalidRegion) {
     EndRemoteDrawing();
   }
 
@@ -228,8 +233,8 @@ class CompositorWidget {
    * Create a backbuffer for the software compositor.
    */
   virtual already_AddRefed<gfx::DrawTarget> GetBackBufferDrawTarget(
-      gfx::DrawTarget* aScreenTarget, const LayoutDeviceIntRect& aRect,
-      const LayoutDeviceIntRect& aClearRect);
+      gfx::DrawTarget* aScreenTarget, const gfx::IntRect& aRect,
+      bool* aOutIsCleared);
 
   /**
    * Ensure end of composition to back buffer.

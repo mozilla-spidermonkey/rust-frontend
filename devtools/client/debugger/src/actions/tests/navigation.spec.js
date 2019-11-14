@@ -27,16 +27,16 @@ const threadFront = {
     source: "function foo1() {\n  const foo = 5; return foo;\n}",
     contentType: "text/javascript",
   }),
-  getBreakpointPositions: async () => ({}),
-  getBreakableLines: async () => [],
-  detachWorkers: () => {},
+  getSourceActorBreakpointPositions: async () => ({}),
+  getSourceActorBreakableLines: async () => [],
 };
 
 describe("navigation", () => {
   it("connect sets the debuggeeUrl", async () => {
     const { dispatch, getState } = createStore({
-      fetchWorkers: () => Promise.resolve([]),
+      fetchThreads: async () => [],
       getMainThread: () => "FakeThread",
+      evaluateExpressions: () => {},
     });
     await dispatch(
       actions.connect("http://test.com/foo", "actor", false, false)

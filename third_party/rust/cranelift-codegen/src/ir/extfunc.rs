@@ -7,9 +7,9 @@
 
 use crate::ir::{ArgumentLoc, ExternalName, SigRef, Type};
 use crate::isa::{CallConv, RegInfo, RegUnit};
+use alloc::vec::Vec;
 use core::fmt;
 use core::str::FromStr;
-use std::vec::Vec;
 
 /// Function signature.
 ///
@@ -335,7 +335,7 @@ impl fmt::Display for ExtFuncData {
 mod tests {
     use super::*;
     use crate::ir::types::{B8, F32, I32};
-    use std::string::ToString;
+    use alloc::string::ToString;
 
     #[test]
     fn argument_type() {
@@ -373,7 +373,8 @@ mod tests {
             CallConv::Cold,
             CallConv::SystemV,
             CallConv::WindowsFastcall,
-            CallConv::Baldrdash,
+            CallConv::BaldrdashSystemV,
+            CallConv::BaldrdashWindows,
         ] {
             assert_eq!(Ok(cc), cc.to_string().parse())
         }
@@ -381,16 +382,19 @@ mod tests {
 
     #[test]
     fn signatures() {
-        let mut sig = Signature::new(CallConv::Baldrdash);
-        assert_eq!(sig.to_string(), "() baldrdash");
+        let mut sig = Signature::new(CallConv::BaldrdashSystemV);
+        assert_eq!(sig.to_string(), "() baldrdash_system_v");
         sig.params.push(AbiParam::new(I32));
-        assert_eq!(sig.to_string(), "(i32) baldrdash");
+        assert_eq!(sig.to_string(), "(i32) baldrdash_system_v");
         sig.returns.push(AbiParam::new(F32));
-        assert_eq!(sig.to_string(), "(i32) -> f32 baldrdash");
+        assert_eq!(sig.to_string(), "(i32) -> f32 baldrdash_system_v");
         sig.params.push(AbiParam::new(I32.by(4).unwrap()));
-        assert_eq!(sig.to_string(), "(i32, i32x4) -> f32 baldrdash");
+        assert_eq!(sig.to_string(), "(i32, i32x4) -> f32 baldrdash_system_v");
         sig.returns.push(AbiParam::new(B8));
-        assert_eq!(sig.to_string(), "(i32, i32x4) -> f32, b8 baldrdash");
+        assert_eq!(
+            sig.to_string(),
+            "(i32, i32x4) -> f32, b8 baldrdash_system_v"
+        );
 
         // Order does not matter.
         sig.params[0].location = ArgumentLoc::Stack(24);
@@ -399,7 +403,7 @@ mod tests {
         // Writing ABI-annotated signatures.
         assert_eq!(
             sig.to_string(),
-            "(i32 [24], i32x4 [8]) -> f32, b8 baldrdash"
+            "(i32 [24], i32x4 [8]) -> f32, b8 baldrdash_system_v"
         );
     }
 }

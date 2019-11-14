@@ -45,6 +45,7 @@ class nsFrameLoader;
 namespace mozilla {
 class RemoteSpellcheckEngineChild;
 class ChildProfilerController;
+class BenchmarkStorageChild;
 
 using mozilla::loader::PScriptCacheChild;
 
@@ -73,6 +74,7 @@ class ClonedMessageData;
 class BrowserChild;
 class GetFilesHelperChild;
 class TabContext;
+enum class MediaControlActions : uint32_t;
 
 class ContentChild final : public PContentChild,
                            public nsIWindowProvider,
@@ -196,12 +198,8 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvSetProcessSandbox(
       const Maybe<FileDescriptor>& aBroker);
 
-  bool DeallocPBrowserChild(PBrowserChild*);
-
-  PIPCBlobInputStreamChild* AllocPIPCBlobInputStreamChild(
+  already_AddRefed<PIPCBlobInputStreamChild> AllocPIPCBlobInputStreamChild(
       const nsID& aID, const uint64_t& aSize);
-
-  bool DeallocPIPCBlobInputStreamChild(PIPCBlobInputStreamChild* aActor);
 
   PHalChild* AllocPHalChild();
   bool DeallocPHalChild(PHalChild*);
@@ -272,24 +270,13 @@ class ContentChild final : public PContentChild,
   bool DeallocPPSMContentDownloaderChild(
       PPSMContentDownloaderChild* aDownloader);
 
-  PExternalHelperAppChild* AllocPExternalHelperAppChild(
-      const Maybe<URIParams>& uri,
-      const Maybe<mozilla::net::LoadInfoArgs>& aLoadInfoArgs,
-      const nsCString& aMimeContentType, const nsCString& aContentDisposition,
-      const uint32_t& aContentDispositionHint,
-      const nsString& aContentDispositionFilename, const bool& aForceSave,
-      const int64_t& aContentLength, const bool& aWasFileChannel,
-      const Maybe<URIParams>& aReferrer, PBrowserChild* aBrowser);
-
-  bool DeallocPExternalHelperAppChild(PExternalHelperAppChild* aService);
-
-  PHandlerServiceChild* AllocPHandlerServiceChild();
-
-  bool DeallocPHandlerServiceChild(PHandlerServiceChild*);
-
   PMediaChild* AllocPMediaChild();
 
   bool DeallocPMediaChild(PMediaChild* aActor);
+
+  PBenchmarkStorageChild* AllocPBenchmarkStorageChild();
+
+  bool DeallocPBenchmarkStorageChild(PBenchmarkStorageChild* aActor);
 
   PPresentationChild* AllocPPresentationChild();
 
@@ -334,7 +321,7 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvBidiKeyboardNotify(const bool& isLangRTL,
                                                  const bool& haveBidiKeyboards);
 
-  mozilla::ipc::IPCResult RecvNotifyVisited(nsTArray<URIParams>&& aURIs);
+  mozilla::ipc::IPCResult RecvNotifyVisited(nsTArray<VisitedQueryResult>&&);
 
   // auto remove when alertfinished is received.
   nsresult AddRemoteAlertObserver(const nsString& aData,
@@ -522,9 +509,10 @@ class ContentChild final : public PContentChild,
   bool DeallocPFileDescriptorSetChild(PFileDescriptorSetChild*);
 
   mozilla::ipc::IPCResult RecvConstructBrowser(
-      ManagedEndpoint<PBrowserChild>&& aBrowserEp, const TabId& aTabId,
+      ManagedEndpoint<PBrowserChild>&& aBrowserEp,
+      ManagedEndpoint<PWindowGlobalChild>&& aWindowEp, const TabId& aTabId,
       const TabId& aSameTabGroupAs, const IPCTabContext& aContext,
-      BrowsingContext* aBrowsingContext, const uint32_t& aChromeFlags,
+      const WindowGlobalInit& aWindowInit, const uint32_t& aChromeFlags,
       const ContentParentId& aCpID, const bool& aIsForBrowser,
       const bool& aIsTopLevel);
 
@@ -533,13 +521,6 @@ class ContentChild final : public PContentChild,
   void GetAvailableDictionaries(nsTArray<nsString>& aDictionaries);
 
   PBrowserOrId GetBrowserOrId(BrowserChild* aBrowserChild);
-
-  POfflineCacheUpdateChild* AllocPOfflineCacheUpdateChild(
-      const URIParams& manifestURI, const URIParams& documentURI,
-      const PrincipalInfo& aLoadingPrincipalInfo, const bool& stickDocument);
-
-  bool DeallocPOfflineCacheUpdateChild(
-      POfflineCacheUpdateChild* offlineCacheUpdate);
 
   PWebrtcGlobalChild* AllocPWebrtcGlobalChild();
 
@@ -643,6 +624,14 @@ class ContentChild final : public PContentChild,
   bool DeallocPSessionStorageObserverChild(
       PSessionStorageObserverChild* aActor);
 
+  PSHEntryChild* AllocPSHEntryChild(PSHistoryChild* aSHistory,
+                                    const PSHEntryOrSharedID& aEntryOrSharedID);
+  void DeallocPSHEntryChild(PSHEntryChild*);
+
+  PSHistoryChild* AllocPSHistoryChild(BrowsingContext* aContext);
+
+  void DeallocPSHistoryChild(PSHistoryChild* aActor);
+
   nsTArray<LookAndFeelInt>& LookAndFeelCache() { return mLookAndFeelCache; }
 
   /**
@@ -677,19 +666,34 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvSaveRecording(const FileDescriptor& aFile);
 
   mozilla::ipc::IPCResult RecvCrossProcessRedirect(
-      const uint32_t& aRegistrarId, nsIURI* aURI, const uint32_t& aNewLoadFlags,
+      const uint32_t& aRegistrarId, nsIURI* aURI,
+      const Maybe<ReplacementChannelConfigInit>& aConfig,
       const Maybe<LoadInfoArgs>& aLoadInfoForwarder, const uint64_t& aChannelId,
       nsIURI* aOriginalURI, const uint64_t& aIdentifier,
-      const uint32_t& aRedirectMode);
+      const uint32_t& aRedirectMode, CrossProcessRedirectResolver&& aResolve);
 
   mozilla::ipc::IPCResult RecvStartDelayedAutoplayMediaComponents(
       BrowsingContext* aContext);
 
-  mozilla::ipc::IPCResult RecvSetMediaMuted(BrowsingContext* aContext,
-                                            bool aMuted);
+  mozilla::ipc::IPCResult RecvUpdateMediaAction(BrowsingContext* aContext,
+                                                MediaControlActions aAction);
 
   void HoldBrowsingContextGroup(BrowsingContextGroup* aBCG);
   void ReleaseBrowsingContextGroup(BrowsingContextGroup* aBCG);
+
+  // See `BrowsingContext::mEpochs` for an explanation of this field.
+  uint64_t GetBrowsingContextFieldEpoch() const {
+    return mBrowsingContextFieldEpoch;
+  }
+  uint64_t NextBrowsingContextFieldEpoch() {
+    mBrowsingContextFieldEpoch++;
+    return mBrowsingContextFieldEpoch;
+  }
+
+  mozilla::ipc::IPCResult RecvDestroySHEntrySharedState(const uint64_t& aID);
+
+  mozilla::ipc::IPCResult RecvEvictContentViewers(
+      nsTArray<uint64_t>&& aToEvictSharedStateIDs);
 
 #ifdef NIGHTLY_BUILD
   // Fetch the current number of pending input events.
@@ -697,6 +701,11 @@ class ContentChild final : public PContentChild,
   // NOTE: This method performs an atomic read, and is safe to call from all
   // threads.
   uint32_t GetPendingInputEvents() { return mPendingInputEvents; }
+#endif
+
+#if defined(MOZ_SANDBOX) && defined(MOZ_DEBUG) && defined(ENABLE_TESTS)
+  mozilla::ipc::IPCResult RecvInitSandboxTesting(
+      Endpoint<PSandboxTestingChild>&& aEndpoint);
 #endif
 
  private:
@@ -742,7 +751,14 @@ class ContentChild final : public PContentChild,
 
   mozilla::ipc::IPCResult RecvCommitBrowsingContextTransaction(
       BrowsingContext* aContext, BrowsingContext::Transaction&& aTransaction,
-      BrowsingContext::FieldEpochs&& aEpochs);
+      uint64_t aEpoch);
+
+  mozilla::ipc::IPCResult RecvScriptError(
+      const nsString& aMessage, const nsString& aSourceName,
+      const nsString& aSourceLine, const uint32_t& aLineNumber,
+      const uint32_t& aColNumber, const uint32_t& aFlags,
+      const nsCString& aCategory, const bool& aFromPrivateWindow,
+      const uint64_t& aInnerWindowId, const bool& aFromChromeContext);
 
 #ifdef NIGHTLY_BUILD
   virtual PContentChild::Result OnMessageReceived(const Message& aMsg) override;
@@ -834,10 +850,11 @@ class ContentChild final : public PContentChild,
 
   nsTArray<RefPtr<BrowsingContextGroup>> mBrowsingContextGroupHolder;
 
+  // See `BrowsingContext::mEpochs` for an explanation of this field.
+  uint64_t mBrowsingContextFieldEpoch = 0;
+
   DISALLOW_EVIL_CONSTRUCTORS(ContentChild);
 };
-
-uint64_t NextWindowID();
 
 }  // namespace dom
 }  // namespace mozilla

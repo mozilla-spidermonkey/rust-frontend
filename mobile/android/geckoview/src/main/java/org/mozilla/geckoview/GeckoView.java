@@ -20,7 +20,9 @@ import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.Region;
 import android.os.Build;
 import android.os.Handler;
@@ -42,6 +44,7 @@ import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewStructure;
+import android.view.autofill.AutofillManager;
 import android.view.autofill.AutofillValue;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
@@ -61,7 +64,10 @@ public class GeckoView extends FrameLayout {
 
     private boolean mIsResettingFocus;
 
+    private boolean mAutofillEnabled = true;
+
     private GeckoSession.SelectionActionDelegate mSelectionActionDelegate;
+    private Autofill.Delegate mAutofillDelegate;
 
     private static class SavedState extends BaseSavedState {
         public final GeckoSession session;
@@ -235,6 +241,8 @@ public class GeckoView extends FrameLayout {
         if (activity != null) {
             mSelectionActionDelegate = new BasicSelectionActionDelegate(activity);
         }
+
+        mAutofillDelegate = new AndroidAutofillDelegate();
     }
 
     /**
@@ -326,6 +334,10 @@ public class GeckoView extends FrameLayout {
             mSession.setSelectionActionDelegate(null);
         }
 
+        if (mSession.getAutofillDelegate() == mAutofillDelegate) {
+            mSession.setAutofillDelegate(null);
+        }
+
         if (isFocused()) {
             mSession.setFocused(false);
         }
@@ -396,6 +408,10 @@ public class GeckoView extends FrameLayout {
 
         if (session.getSelectionActionDelegate() == null && mSelectionActionDelegate != null) {
             session.setSelectionActionDelegate(mSelectionActionDelegate);
+        }
+
+        if (mAutofillEnabled) {
+            session.setAutofillDelegate(mAutofillDelegate);
         }
 
         if (isFocused()) {
@@ -654,28 +670,58 @@ public class GeckoView extends FrameLayout {
     @SuppressLint("ClickableViewAccessibility")
     @Override
     public boolean onTouchEvent(final MotionEvent event) {
+        return onTouchEventForResult(event) != PanZoomController.INPUT_RESULT_UNHANDLED;
+    }
+
+    /**
+     * Dispatches a {@link MotionEvent} to the {@link PanZoomController}. This is the same as
+     * {@link #onTouchEvent(MotionEvent)}, but instead returns a {@link PanZoomController.InputResult}
+     * indicating how the event was handled.
+     *
+     * @param event A {@link MotionEvent}
+     * @return One of the {@link PanZoomController#INPUT_RESULT_UNHANDLED INPUT_RESULT_*}) indicating how the event was handled.
+     */
+    public @PanZoomController.InputResult int onTouchEventForResult(final @NonNull MotionEvent event) {
         if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
             requestFocus();
         }
 
+        if (mSession == null) {
+            return PanZoomController.INPUT_RESULT_UNHANDLED;
+        }
+
         // NOTE: Treat mouse events as "touch" rather than as "mouse", so mouse can be
         // used to pan/zoom. Call onMouseEvent() instead for behavior similar to desktop.
-        return mSession != null &&
-               mSession.getPanZoomController().onTouchEvent(event);
+        return mSession.getPanZoomController().onTouchEvent(event);
     }
 
     @Override
     public boolean onGenericMotionEvent(final MotionEvent event) {
+        return onGenericMotionEventForResult(event) != PanZoomController.INPUT_RESULT_HANDLED;
+    }
+
+    /**
+     * Dispatches a {@link MotionEvent} to the {@link PanZoomController}. This is the same as
+     * {@link #onGenericMotionEvent(MotionEvent)} (MotionEvent)}, but instead returns
+     * a {@link PanZoomController.InputResult} indicating how the event was handled.
+     *
+     * @param event A {@link MotionEvent}
+     * @return One of the {@link PanZoomController#INPUT_RESULT_UNHANDLED INPUT_RESULT_*}) indicating how the event was handled.
+     */
+    public @PanZoomController.InputResult int onGenericMotionEventForResult(final @NonNull MotionEvent event) {
         if (AndroidGamepadManager.handleMotionEvent(event)) {
-            return true;
+            return PanZoomController.INPUT_RESULT_HANDLED;
         }
 
         if (mSession == null) {
-            return false;
+            return PanZoomController.INPUT_RESULT_UNHANDLED;
         }
 
-        return mSession.getAccessibility().onMotionEvent(event) ||
-               mSession.getPanZoomController().onMotionEvent(event);
+        if (mSession.getAccessibility().onMotionEvent(event)) {
+            return PanZoomController.INPUT_RESULT_HANDLED;
+        }
+
+        return mSession.getPanZoomController().onMotionEvent(event);
     }
 
     @Override
@@ -683,9 +729,12 @@ public class GeckoView extends FrameLayout {
                                                   final int flags) {
         super.onProvideAutofillVirtualStructure(structure, flags);
 
-        if (mSession != null) {
-            mSession.getTextInput().onProvideAutofillVirtualStructure(structure, flags);
+        if (mSession == null) {
+            return;
         }
+
+        final Autofill.Session autofillSession = mSession.getAutofillSession();
+        autofillSession.fillViewStructure(this, structure, flags);
     }
 
     @Override
@@ -704,7 +753,7 @@ public class GeckoView extends FrameLayout {
                 strValues.put(values.keyAt(i), value.getTextValue());
             }
         }
-        mSession.getTextInput().autofill(strValues);
+        mSession.autofill(strValues);
     }
 
     /**
@@ -719,5 +768,88 @@ public class GeckoView extends FrameLayout {
     @UiThread
     public @NonNull GeckoResult<Bitmap> capturePixels() {
         return mDisplay.capturePixels();
+    }
+
+    /**
+     * Sets whether or not this View participates in Android autofill.
+     *
+     * When enabled, this will set an {@link Autofill.Delegate} on the
+     * {@link GeckoSession} for this instance.
+     *
+     * @param enabled Whether or not Android autofill is enabled for this view.
+     */
+    @TargetApi(26)
+    public void setAutofillEnabled(final boolean enabled) {
+        mAutofillEnabled = enabled;
+
+        if (mSession != null) {
+            if (!enabled && mSession.getAutofillDelegate() == mAutofillDelegate) {
+                mSession.setAutofillDelegate(null);
+            } else if (enabled) {
+                mSession.setAutofillDelegate(mAutofillDelegate);
+            }
+        }
+    }
+
+    /**
+     * @return Whether or not Android autofill is enabled for this view.
+     */
+    @TargetApi(26)
+    public boolean getAutofillEnabled() {
+        return mAutofillEnabled;
+    }
+
+    private class AndroidAutofillDelegate implements Autofill.Delegate {
+
+        private Rect displayRectForId(@NonNull final GeckoSession session,
+                                      @NonNull final Autofill.Node node) {
+            if (node == null) {
+                return new Rect(0, 0, 0, 0);
+            }
+
+            final Matrix matrix = new Matrix();
+            final RectF rectF = new RectF(node.getDimensions());
+            session.getPageToScreenMatrix(matrix);
+            matrix.mapRect(rectF);
+
+            final Rect screenRect = new Rect();
+            rectF.roundOut(screenRect);
+            return screenRect;
+        }
+
+        @Override
+        public void onAutofill(@NonNull final GeckoSession session,
+                               final int notification,
+                               final Autofill.Node node) {
+            ThreadUtils.assertOnUiThread();
+            if (Build.VERSION.SDK_INT < 26) {
+                return;
+            }
+
+            final AutofillManager manager =
+                    GeckoView.this.getContext().getSystemService(AutofillManager.class);
+            if (manager == null) {
+                return;
+            }
+
+            switch (notification) {
+                case Autofill.Notify.SESSION_STARTED:
+                    // This line seems necessary for auto-fill to work on the initial page.
+                case Autofill.Notify.SESSION_CANCELED:
+                    manager.cancel();
+                    break;
+                case Autofill.Notify.SESSION_COMMITTED:
+                    manager.commit();
+                    break;
+                case Autofill.Notify.NODE_FOCUSED:
+                    manager.notifyViewEntered(
+                        GeckoView.this, node.getId(),
+                        displayRectForId(session, node));
+                    break;
+                case Autofill.Notify.NODE_BLURRED:
+                    manager.notifyViewExited(GeckoView.this, node.getId());
+                    break;
+            }
+        }
     }
 }

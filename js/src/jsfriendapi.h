@@ -11,6 +11,7 @@
 #include "mozilla/Casting.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtr.h"
 
 #include "jspubtd.h"
@@ -172,9 +173,9 @@ enum {
   JS_TELEMETRY_GC_TIME_BETWEEN_S,
   JS_TELEMETRY_GC_TIME_BETWEEN_SLICES_MS,
   JS_TELEMETRY_GC_SLICE_COUNT,
+  JS_TELEMETRY_GC_EFFECTIVENESS,
   JS_TELEMETRY_PRIVILEGED_PARSER_COMPILE_LAZY_AFTER_MS,
   JS_TELEMETRY_WEB_PARSER_COMPILE_LAZY_AFTER_MS,
-  JS_TELEMETRY_DEPRECATED_ARRAY_GENERICS,
   JS_TELEMETRY_END
 };
 
@@ -197,6 +198,10 @@ typedef void (*JSSetUseCounterCallback)(JSObject* obj, JSUseCounter counter);
 
 extern JS_FRIEND_API void JS_SetSetUseCounterCallback(
     JSContext* cx, JSSetUseCounterCallback callback);
+
+extern JS_FRIEND_API void JS_ReportFirstCompileTime(
+    JS::HandleScript script, mozilla::TimeDuration& parse,
+    mozilla::TimeDuration& emit);
 
 extern JS_FRIEND_API JSPrincipals* JS_GetScriptPrincipals(JSScript* script);
 
@@ -438,13 +443,6 @@ extern JS_FRIEND_API void DumpHeap(
     JSContext* cx, FILE* fp, DumpHeapNurseryBehaviour nurseryBehaviour,
     mozilla::MallocSizeOf mallocSizeOf = nullptr);
 
-#ifdef JS_OLD_GETTER_SETTER_METHODS
-JS_FRIEND_API bool obj_defineGetter(JSContext* cx, unsigned argc,
-                                    JS::Value* vp);
-JS_FRIEND_API bool obj_defineSetter(JSContext* cx, unsigned argc,
-                                    JS::Value* vp);
-#endif
-
 extern JS_FRIEND_API bool IsSystemRealm(JS::Realm* realm);
 
 extern JS_FRIEND_API bool IsSystemCompartment(JS::Compartment* comp);
@@ -537,13 +535,13 @@ extern JS_FRIEND_API bool IsSharableCompartment(JS::Compartment* comp);
 namespace shadow {
 
 struct ObjectGroup {
-  const Class* clasp;
+  const JSClass* clasp;
   JSObject* proto;
   JS::Realm* realm;
 };
 
 struct BaseShape {
-  const js::Class* clasp_;
+  const JSClass* clasp_;
   JSObject* parent;
 };
 
@@ -602,17 +600,13 @@ struct Function {
 
 // This is equal to |&JSObject::class_|.  Use it in places where you don't want
 // to #include vm/JSObject.h.
-extern JS_FRIEND_DATA const js::Class* const ObjectClassPtr;
+extern JS_FRIEND_DATA const JSClass* const ObjectClassPtr;
 
-inline const js::Class* GetObjectClass(const JSObject* obj) {
+inline const JSClass* GetObjectClass(const JSObject* obj) {
   return reinterpret_cast<const shadow::Object*>(obj)->group->clasp;
 }
 
-inline const JSClass* GetObjectJSClass(JSObject* obj) {
-  return js::Jsvalify(GetObjectClass(obj));
-}
-
-JS_FRIEND_API const Class* ProtoKeyToClass(JSProtoKey key);
+JS_FRIEND_API const JSClass* ProtoKeyToClass(JSProtoKey key);
 
 // Returns the key for the class inherited by a given standard class (that
 // is to say, the prototype of this standard class's prototype).
@@ -755,10 +749,6 @@ static_assert((uint64_t(MaxStringLength) + 1) * sizeof(char16_t) <= INT32_MAX,
               "size of null-terminated JSString char buffer must fit in "
               "INT32_MAX");
 
-MOZ_ALWAYS_INLINE size_t GetFlatStringLength(JSFlatString* s) {
-  return reinterpret_cast<JS::shadow::String*>(s)->length();
-}
-
 MOZ_ALWAYS_INLINE size_t GetLinearStringLength(JSLinearString* s) {
   return reinterpret_cast<JS::shadow::String*>(s)->length();
 }
@@ -802,16 +792,17 @@ MOZ_ALWAYS_INLINE const char16_t* GetTwoByteLinearStringChars(
   return s->nonInlineCharsTwoByte;
 }
 
+MOZ_ALWAYS_INLINE char16_t GetLinearStringCharAt(JSLinearString* linear,
+                                                 size_t index) {
+  MOZ_ASSERT(index < GetLinearStringLength(linear));
+  JS::AutoCheckCannotGC nogc;
+  return LinearStringHasLatin1Chars(linear)
+             ? GetLatin1LinearStringChars(nogc, linear)[index]
+             : GetTwoByteLinearStringChars(nogc, linear)[index];
+}
+
 MOZ_ALWAYS_INLINE JSLinearString* AtomToLinearString(JSAtom* atom) {
   return reinterpret_cast<JSLinearString*>(atom);
-}
-
-MOZ_ALWAYS_INLINE JSFlatString* AtomToFlatString(JSAtom* atom) {
-  return reinterpret_cast<JSFlatString*>(atom);
-}
-
-MOZ_ALWAYS_INLINE JSLinearString* FlatStringToLinearString(JSFlatString* s) {
-  return reinterpret_cast<JSLinearString*>(s);
 }
 
 MOZ_ALWAYS_INLINE const JS::Latin1Char* GetLatin1AtomChars(
@@ -824,9 +815,9 @@ MOZ_ALWAYS_INLINE const char16_t* GetTwoByteAtomChars(
   return GetTwoByteLinearStringChars(nogc, AtomToLinearString(atom));
 }
 
-MOZ_ALWAYS_INLINE bool IsExternalString(JSString* str,
-                                        const JSStringFinalizer** fin,
-                                        const char16_t** chars) {
+MOZ_ALWAYS_INLINE bool IsExternalString(
+    JSString* str, const JSExternalStringCallbacks** callbacks,
+    const char16_t** chars) {
   using JS::shadow::String;
   String* s = reinterpret_cast<String*>(str);
 
@@ -835,7 +826,7 @@ MOZ_ALWAYS_INLINE bool IsExternalString(JSString* str,
   }
 
   MOZ_ASSERT(JS_IsExternalString(str));
-  *fin = s->externalFinalizer;
+  *callbacks = s->externalCallbacks;
   *chars = s->nonInlineCharsTwoByte;
   return true;
 }
@@ -899,10 +890,6 @@ inline bool CopyStringChars(JSContext* cx, CharType* dest, JSString* s,
 
   CopyLinearStringChars(dest, linear, len, start);
   return true;
-}
-
-inline void CopyFlatStringChars(char16_t* dest, JSFlatString* s, size_t len) {
-  CopyLinearStringChars(dest, FlatStringToLinearString(s), len);
 }
 
 /**
@@ -1101,16 +1088,20 @@ JS_FRIEND_API JSString* GetPCCountScriptSummary(JSContext* cx, size_t script);
 JS_FRIEND_API JSString* GetPCCountScriptContents(JSContext* cx, size_t script);
 
 /**
- * Generate lcov trace file content for the current compartment, and allocate a
- * new buffer and return the content in it, the size of the newly allocated
- * content within the buffer would be set to the length out-param.
+ * Generate lcov trace file content for the current realm, and allocate a new
+ * buffer and return the content in it, the size of the newly allocated content
+ * within the buffer would be set to the length out-param. The 'All' variant
+ * will collect data for all realms in the runtime.
  *
- * In case of out-of-memory, this function returns nullptr and does not set any
- * value to the length out-param.
+ * In case of out-of-memory, this function returns nullptr. The length
+ * out-param is undefined on failure.
  */
-JS_FRIEND_API char* GetCodeCoverageSummary(JSContext* cx, size_t* length);
+JS_FRIEND_API JS::UniqueChars GetCodeCoverageSummary(JSContext* cx,
+                                                     size_t* length);
+JS_FRIEND_API JS::UniqueChars GetCodeCoverageSummaryAll(JSContext* cx,
+                                                        size_t* length);
 
-typedef bool (*DOMInstanceClassHasProtoAtDepth)(const Class* instanceClass,
+typedef bool (*DOMInstanceClassHasProtoAtDepth)(const JSClass* instanceClass,
                                                 uint32_t protoID,
                                                 uint32_t depth);
 struct JSDOMCallbacks {
@@ -1125,23 +1116,14 @@ extern JS_FRIEND_API const DOMCallbacks* GetDOMCallbacks(JSContext* cx);
 
 extern JS_FRIEND_API JSObject* GetTestingFunctions(JSContext* cx);
 
-/**
- * Helper to convert FreeOp to JSFreeOp when the definition of FreeOp is not
- * available and the compiler does not know that FreeOp inherits from
- * JSFreeOp.
- */
-inline JSFreeOp* CastToJSFreeOp(FreeOp* fop) {
-  return reinterpret_cast<JSFreeOp*>(fop);
-}
-
 /* Implemented in jsexn.cpp. */
 
 /**
  * Get an error type name from a JSExnType constant.
  * Returns nullptr for invalid arguments and JSEXN_INTERNALERR
  */
-extern JS_FRIEND_API JSFlatString* GetErrorTypeName(JSContext* cx,
-                                                    int16_t exnType);
+extern JS_FRIEND_API JSLinearString* GetErrorTypeName(JSContext* cx,
+                                                      int16_t exnType);
 
 extern JS_FRIEND_API RegExpShared* RegExpToSharedNonInline(
     JSContext* cx, JS::HandleObject regexp);
@@ -1264,6 +1246,8 @@ inline bool DOMProxyIsShadowing(DOMProxyShadowsResult result) {
 
 const void* GetDOMRemoteProxyHandlerFamily();
 
+extern JS_FRIEND_API bool IsDOMRemoteProxyObject(JSObject* object);
+
 // Callbacks and other information for use by the JITs when optimizing accesses
 // on xray wrappers.
 struct XrayJitInfo {
@@ -1376,14 +1360,7 @@ struct MOZ_STACK_CLASS JS_FRIEND_API ErrorReport {
   // Or we may need to synthesize a JSErrorReport one of our own.
   JSErrorReport ownedReport;
 
-  // And we have a string to maybe keep alive that has pointers into
-  // it from ownedReport.
-  JS::RootedString str;
-
-  // And keep its chars alive too.
-  JS::AutoStableStringChars strChars;
-
-  // And we need to root our exception value.
+  // Root our exception value to keep a possibly borrowed |reportp| alive.
   JS::RootedObject exnObject;
 
   // And for our filename.
@@ -1668,17 +1645,17 @@ extern JS_FRIEND_API JSObject* UnwrapReadableStream(JSObject* obj);
 
 namespace detail {
 
-extern JS_FRIEND_DATA const Class* const Int8ArrayClassPtr;
-extern JS_FRIEND_DATA const Class* const Uint8ArrayClassPtr;
-extern JS_FRIEND_DATA const Class* const Uint8ClampedArrayClassPtr;
-extern JS_FRIEND_DATA const Class* const Int16ArrayClassPtr;
-extern JS_FRIEND_DATA const Class* const Uint16ArrayClassPtr;
-extern JS_FRIEND_DATA const Class* const Int32ArrayClassPtr;
-extern JS_FRIEND_DATA const Class* const Uint32ArrayClassPtr;
-extern JS_FRIEND_DATA const Class* const BigInt64ArrayClassPtr;
-extern JS_FRIEND_DATA const Class* const BigUint64ArrayClassPtr;
-extern JS_FRIEND_DATA const Class* const Float32ArrayClassPtr;
-extern JS_FRIEND_DATA const Class* const Float64ArrayClassPtr;
+extern JS_FRIEND_DATA const JSClass* const Int8ArrayClassPtr;
+extern JS_FRIEND_DATA const JSClass* const Uint8ArrayClassPtr;
+extern JS_FRIEND_DATA const JSClass* const Uint8ClampedArrayClassPtr;
+extern JS_FRIEND_DATA const JSClass* const Int16ArrayClassPtr;
+extern JS_FRIEND_DATA const JSClass* const Uint16ArrayClassPtr;
+extern JS_FRIEND_DATA const JSClass* const Int32ArrayClassPtr;
+extern JS_FRIEND_DATA const JSClass* const Uint32ArrayClassPtr;
+extern JS_FRIEND_DATA const JSClass* const BigInt64ArrayClassPtr;
+extern JS_FRIEND_DATA const JSClass* const BigUint64ArrayClassPtr;
+extern JS_FRIEND_DATA const JSClass* const Float32ArrayClassPtr;
+extern JS_FRIEND_DATA const JSClass* const Float64ArrayClassPtr;
 
 const size_t TypedArrayLengthSlot = 1;
 
@@ -2563,7 +2540,7 @@ extern JS_FRIEND_API JSObject* ConvertArgsToArray(JSContext* cx,
  * functions below.
  */
 extern JS_FRIEND_API void SetWindowProxyClass(JSContext* cx,
-                                              const Class* clasp);
+                                              const JSClass* clasp);
 
 /**
  * Associates a WindowProxy with a Window (global object). `windowProxy` must
@@ -2615,6 +2592,7 @@ MOZ_ALWAYS_INLINE JSObject* ToWindowProxyIfWindow(JSObject* obj) {
  */
 extern JS_FRIEND_API JSObject* ToWindowIfWindowProxy(JSObject* obj);
 
+#if ENABLE_INTL_API
 // Create and add the Intl.MozDateTimeFormat constructor function to the
 // provided object.
 //
@@ -2631,8 +2609,12 @@ extern bool AddMozDateTimeFormatConstructor(JSContext* cx,
                                             JS::Handle<JSObject*> intl);
 
 // Create and add the Intl.Locale constructor function to the provided object.
-// This function throws if called more than once per realm/global object.
 extern bool AddLocaleConstructor(JSContext* cx, JS::Handle<JSObject*> intl);
+
+// Create and add the Intl.ListFormat constructor function to the provided
+// object.
+extern bool AddListFormatConstructor(JSContext* cx, JS::Handle<JSObject*> intl);
+#endif  // ENABLE_INTL_API
 
 class MOZ_STACK_CLASS JS_FRIEND_API AutoAssertNoContentJS {
  public:
@@ -2690,6 +2672,22 @@ extern JS_FRIEND_API uint64_t GetGCHeapUsageForObjectZone(JSObject* obj);
  * Debugger.
  */
 extern JS_FRIEND_API bool GlobalHasInstrumentation(JSObject* global);
+
+class JS_FRIEND_API CompartmentTransplantCallback {
+ public:
+  virtual JSObject* getObjectToTransplant(JS::Compartment* compartment) = 0;
+};
+
+// Gather a set of remote window proxies by calling the callback on every
+// compartment, then transform them into cross-compartment wrappers to newTarget
+// via brain transplants. If there's a proxy in newTarget's compartment, it will
+// get swapped with newTarget, and the value of newTarget will be updated. If
+// the callback returns null for a compartment, no cross-compartment wrapper
+// will be created for that compartment. Any non-null values it returns must be
+// DOM remote proxies from the compartment that was passed in.
+extern JS_FRIEND_API void RemapRemoteWindowProxies(
+    JSContext* cx, CompartmentTransplantCallback* callback,
+    JS::MutableHandleObject newTarget);
 
 } /* namespace js */
 

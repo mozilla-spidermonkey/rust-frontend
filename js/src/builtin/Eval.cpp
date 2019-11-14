@@ -9,7 +9,9 @@
 #include "mozilla/HashFunctions.h"
 #include "mozilla/Range.h"
 
+#include "ds/LifoAlloc.h"
 #include "frontend/BytecodeCompilation.h"
+#include "frontend/ParseInfo.h"
 #include "gc/HashUtil.h"
 #include "js/SourceText.h"
 #include "js/StableStringChars.h"
@@ -60,10 +62,7 @@ static bool IsEvalCacheCandidate(JSScript* script) {
 
 /* static */
 HashNumber EvalCacheHashPolicy::hash(const EvalCacheLookup& l) {
-  AutoCheckCannotGC nogc;
-  uint32_t hash = l.str->hasLatin1Chars()
-                      ? HashString(l.str->latin1Chars(nogc), l.str->length())
-                      : HashString(l.str->twoByteChars(nogc), l.str->length());
+  HashNumber hash = HashStringChars(l.str);
   return AddToHash(hash, l.callerScript.get(), l.pc);
 }
 
@@ -175,7 +174,8 @@ static EvalJSONResult ParseEvalStringAsJSON(
                                            chars.begin().get() + 1U, len - 2);
 
   Rooted<JSONParser<CharT>> parser(
-      cx, JSONParser<CharT>(cx, jsonChars, JSONParserBase::NoError));
+      cx, JSONParser<CharT>(cx, jsonChars,
+                            JSONParserBase::ParseType::AttemptForEval));
   if (!parser.parse(rval)) {
     return EvalJSON_Failure;
   }
@@ -294,8 +294,11 @@ static bool EvalKernel(JSContext* cx, HandleValue v, EvalType evalType,
     options.setIsRunOnce(true)
         .setNoScriptRval(false)
         .setMutedErrors(mutedErrors)
-        .maybeMakeStrictMode(evalType == DIRECT_EVAL && IsStrictEvalPC(pc))
         .setScriptOrModule(maybeScript);
+
+    if (evalType == DIRECT_EVAL && IsStrictEvalPC(pc)) {
+      options.setForceStrictMode();
+    }
 
     if (introducerFilename) {
       options.setFileAndLine(filename, 1);
@@ -321,7 +324,10 @@ static bool EvalKernel(JSContext* cx, HandleValue v, EvalType evalType,
       return false;
     }
 
-    frontend::EvalScriptInfo info(cx, options, env, enclosing);
+    LifoAllocScope allocScope(&cx->tempLifoAlloc());
+    frontend::ParseInfo parseInfo(cx, allocScope);
+
+    frontend::EvalScriptInfo info(cx, parseInfo, options, env, enclosing);
     RootedScript compiled(cx, frontend::CompileEvalScript(info, srcBuf));
     if (!compiled) {
       return false;
@@ -381,10 +387,13 @@ bool js::DirectEvalStringFromIon(JSContext* cx, HandleObject env,
     RootedScope enclosing(cx, callerScript->innermostScope(pc));
 
     CompileOptions options(cx);
-    options.setIsRunOnce(true)
-        .setNoScriptRval(false)
-        .setMutedErrors(mutedErrors)
-        .maybeMakeStrictMode(IsStrictEvalPC(pc));
+    options.setIsRunOnce(true);
+    options.setNoScriptRval(false);
+    options.setMutedErrors(mutedErrors);
+
+    if (IsStrictEvalPC(pc)) {
+      options.setForceStrictMode();
+    }
 
     if (introducerFilename) {
       options.setFileAndLine(filename, 1);
@@ -410,7 +419,10 @@ bool js::DirectEvalStringFromIon(JSContext* cx, HandleObject env,
       return false;
     }
 
-    frontend::EvalScriptInfo info(cx, options, env, enclosing);
+    LifoAllocScope allocScope(&cx->tempLifoAlloc());
+    frontend::ParseInfo parseInfo(cx, allocScope);
+
+    frontend::EvalScriptInfo info(cx, parseInfo, options, env, enclosing);
     JSScript* compiled = frontend::CompileEvalScript(info, srcBuf);
     if (!compiled) {
       return false;

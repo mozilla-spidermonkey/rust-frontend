@@ -5,13 +5,13 @@
 // @flow
 // This module converts Firefox specific types to the generic types
 
-import type { Frame, ThreadId, GeneratedSourceData } from "../../types";
+import type { Frame, ThreadId, GeneratedSourceData, Thread } from "../../types";
 import type {
   PausedPacket,
-  FramesResponse,
-  FramePacket,
+  FrameFront,
   SourcePayload,
   ThreadFront,
+  Target,
 } from "./types";
 
 import { clientCommands } from "./commands";
@@ -29,7 +29,11 @@ export function prepareSourcePayload(
   return { thread: client.actor, source };
 }
 
-export function createFrame(thread: ThreadId, frame: FramePacket): ?Frame {
+export function createFrame(
+  thread: ThreadId,
+  frame: FrameFront,
+  index: number = 0
+): ?Frame {
   if (!frame) {
     return null;
   }
@@ -41,7 +45,7 @@ export function createFrame(thread: ThreadId, frame: FramePacket): ?Frame {
   };
 
   return {
-    id: frame.actor,
+    id: frame.actorID,
     thread,
     displayName: frame.displayName,
     location,
@@ -49,6 +53,7 @@ export function createFrame(thread: ThreadId, frame: FramePacket): ?Frame {
     this: frame.this,
     source: null,
     scope: frame.environment,
+    index,
   };
 }
 
@@ -59,25 +64,38 @@ export function makeSourceId(source: SourcePayload) {
 export function createPause(
   thread: string,
   packet: PausedPacket,
-  response: FramesResponse
+  frames: FrameFront[]
 ): any {
   // NOTE: useful when the debugger is already paused
-  const frame = packet.frame || response.frames[0];
+  const frame = packet.frame || frames[0];
 
   return {
     ...packet,
     thread,
     frame: createFrame(thread, frame),
-    frames: response.frames.map(createFrame.bind(null, thread)),
+    frames: frames.map((currentFrame, i) =>
+      createFrame(thread, currentFrame, i)
+    ),
   };
 }
 
-export function createWorker(actor: string, url: string) {
+function getTargetType(target: Target) {
+  if (target.isWorkerTarget) {
+    return "worker";
+  }
+
+  if (target.isContentProcess) {
+    return "contentProcess";
+  }
+
+  return "mainThread";
+}
+
+export function createThread(actor: string, target: Target): Thread {
   return {
     actor,
-    url,
-    // Ci.nsIWorkerDebugger.TYPE_DEDICATED
-    type: 0,
-    name: "",
+    url: target.url,
+    type: getTargetType(target),
+    name: target.name,
   };
 }

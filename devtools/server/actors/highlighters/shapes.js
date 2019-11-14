@@ -497,7 +497,10 @@ class ShapesHighlighter extends AutoRefreshHighlighter {
       const nodeWin = this.currentNode.ownerGlobal;
       // Get bounding box of iframe document relative to global document.
       const bounds = nodeWin.document
-        .getBoxQuads({ relativeTo: win.document })[0]
+        .getBoxQuads({
+          relativeTo: win.document,
+          createFramesForSuppressedWhitespace: false,
+        })[0]
         .getBounds();
       xOffset = bounds.left - nodeWin.scrollX + win.scrollX;
       yOffset = bounds.top - nodeWin.scrollY + win.scrollY;
@@ -512,7 +515,7 @@ class ShapesHighlighter extends AutoRefreshHighlighter {
     this.viewport = { left, right, top, bottom, padding };
   }
 
-  /* eslint-disable complexity */
+  // eslint-disable-next-line complexity
   handleEvent(event, id) {
     // No event handling if the highlighter is hidden
     if (this.areShapesHidden()) {
@@ -618,7 +621,6 @@ class ShapesHighlighter extends AutoRefreshHighlighter {
         break;
     }
   }
-  /* eslint-enable complexity */
 
   /**
    * Handle a mouse click in transform mode.
@@ -1978,7 +1980,7 @@ class ShapesHighlighter extends AutoRefreshHighlighter {
    * @returns {String} "top", "left", "right", or "bottom" if any of those edges were
    *          clicked. "" if none were clicked.
    */
-  /* eslint-disable complexity */
+  // eslint-disable-next-line complexity
   getInsetPointAt(pageX, pageY) {
     const { top, left, right, bottom } = this.coordinates;
     const zoom = getCurrentZoom(this.win);
@@ -2046,7 +2048,6 @@ class ShapesHighlighter extends AutoRefreshHighlighter {
 
     return "";
   }
-  /* eslint-enable complexity */
 
   /**
    * Parses the CSS definition given and returns the shape type associated
@@ -2197,9 +2198,9 @@ class ShapesHighlighter extends AutoRefreshHighlighter {
     if (!this.origCoordUnits) {
       this.origCoordUnits = this.coordUnits;
     }
-    // The computed value of circle() always has the keyword "at".
-    const values = definition.split(" at ");
-    let radius = values[0];
+
+    const values = definition.split("at");
+    let radius = values[0] ? values[0].trim() : "closest-side";
     const { width, height } = this.currentDimensions;
     const center = splitCoords(values[1]).map(
       this.convertCoordsToPercent.bind(this)
@@ -2286,19 +2287,14 @@ class ShapesHighlighter extends AutoRefreshHighlighter {
     if (!this.origCoordUnits) {
       this.origCoordUnits = this.coordUnits;
     }
-    let values = definition.split(" at ");
 
-    // Until Bug 1521508 is fixed, we need to shim the computed style value of empty
-    // ellipse() declarations because they're missing the "closest-side" default radii.
-    if (values[0] === definition) {
-      values = `closest-side closest-side ${definition}`.split(" at ");
-    }
-
+    const values = definition.split("at");
     const center = splitCoords(values[1]).map(
       this.convertCoordsToPercent.bind(this)
     );
 
-    const radii = splitCoords(values[0]).map((radius, i) => {
+    let radii = values[0] ? values[0].trim() : "closest-side closest-side";
+    radii = splitCoords(values[0]).map((radius, i) => {
       if (radius === "closest-side") {
         // radius is the distance from center to closest x/y side of reference box
         return i % 2 === 0

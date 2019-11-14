@@ -9,8 +9,8 @@ var { AppConstants } = ChromeUtils.import(
 
 const permissionExceptionsL10n = {
   trackingprotection: {
-    window: "permissions-exceptions-content-blocking-window",
-    description: "permissions-exceptions-content-blocking-desc",
+    window: "permissions-exceptions-etp-window",
+    description: "permissions-exceptions-etp-desc",
   },
   cookie: {
     window: "permissions-exceptions-cookie-window",
@@ -299,7 +299,7 @@ var gPermissionManager = {
 
   _loadPermissions() {
     // load permissions into a table.
-    for (let nextPermission of Services.perms.enumerator) {
+    for (let nextPermission of Services.perms.all) {
       this._addPermissionToList(nextPermission);
     }
   },

@@ -22,8 +22,6 @@ module.exports = {
     }
   }, {
     "files": [
-      "client/scratchpad/scratchpad-manager.jsm",
-      "client/scratchpad/scratchpad.js",
       "client/shared/*.jsm",
     ],
     "rules": {
@@ -32,10 +30,8 @@ module.exports = {
   }, {
     "files": [
       "client/framework/**",
-      "client/scratchpad/**",
       "client/shared/*.jsm",
       "client/shared/widgets/*.jsm",
-      "client/webide/**",
     ],
     "rules": {
       "consistent-return": "off",
@@ -43,27 +39,15 @@ module.exports = {
   }, {
     "files": [
       "client/framework/**",
-      "client/scratchpad/**",
-      "client/webide/**",
     ],
     "rules": {
       "max-nested-callbacks": "off",
     }
   }, {
     "files": [
-      "client/scratchpad/test/browser_scratchpad_inspect.js",
-      "client/scratchpad/test/browser_scratchpad_inspect_primitives.js",
-    ],
-    "rules": {
-      "no-labels": "off",
-    }
-  }, {
-    "files": [
       "client/framework/**",
-      "client/scratchpad/**",
       "client/shared/*.jsm",
       "client/shared/widgets/*.jsm",
-      "client/webide/**",
     ],
     "rules": {
       "mozilla/no-aArgs": "off",
@@ -71,7 +55,6 @@ module.exports = {
   }, {
     "files": [
       "client/framework/test/**",
-      "client/scratchpad/**",
     ],
     "rules": {
       "mozilla/var-only-at-top-level": "off",
@@ -79,9 +62,7 @@ module.exports = {
   }, {
     "files": [
       "client/framework/**",
-      "client/scratchpad/**",
       "client/shared/widgets/*.jsm",
-      "client/webide/**",
     ],
     "rules": {
       "no-shadow": "off",
@@ -89,8 +70,6 @@ module.exports = {
   }, {
     "files": [
       "client/framework/**",
-      "client/scratchpad/**",
-      "client/webide/**",
     ],
     "rules": {
       "strict": "off",
@@ -102,6 +81,14 @@ module.exports = {
     ],
     "rules": {
       "no-unused-vars": ["error", {"args": "none", "vars": "local"}],
+    }
+  }, {
+    // For all server files, prevent requiring devtools/client modules.
+    "files": [
+      "server/**",
+    ],
+    "rules": {
+      "mozilla/reject-some-requires": ["error", "^(resource\://)?devtools/client"],
     }
   }, {
     // Cu, Cc etc... are not available in most devtools modules loaded by require.
@@ -354,8 +341,6 @@ module.exports = {
     "no-invalid-regexp": "off",
     // disallow irregular whitespace outside of strings and comments
     "no-irregular-whitespace": "off",
-    // disallow usage of __iterator__ property
-    "no-iterator": "off",
     // disallow labels that share a name with a variable
     "no-label-var": "off",
     // disallow unnecessary nested blocks

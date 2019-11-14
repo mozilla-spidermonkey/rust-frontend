@@ -12,6 +12,7 @@
 // For UnrestrictedDoubleOrKeyframeAnimationOptions;
 #include "mozilla/dom/CSSPseudoElement.h"
 #include "mozilla/dom/KeyframeEffectBinding.h"
+#include "mozilla/dom/MutationObservers.h"
 #include "mozilla/AnimationUtils.h"
 #include "mozilla/AutoRestore.h"
 #include "mozilla/ComputedStyleInlines.h"
@@ -25,6 +26,7 @@
 #include "mozilla/ServoBindings.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_gfx.h"
+#include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/TypeTraits.h"
 #include "Layers.h"              // For Layer
 #include "nsComputedDOMStyle.h"  // nsComputedDOMStyle::GetComputedStyle
@@ -49,7 +51,7 @@ void AnimationProperty::SetPerformanceWarning(
   mPerformanceWarning = Some(aWarning);
 
   nsAutoString localizedString;
-  if (nsLayoutUtils::IsAnimationLoggingEnabled() &&
+  if (StaticPrefs::layers_offmainthreadcomposition_log_animations() &&
       mPerformanceWarning->ToLocalizedString(localizedString)) {
     nsAutoCString logMessage = NS_ConvertUTF16toUTF8(localizedString);
     AnimationUtils::LogAsyncAnimationFailure(logMessage, aElement);
@@ -108,7 +110,7 @@ void KeyframeEffect::SetIterationComposite(
   }
 
   if (mAnimation && mAnimation->IsRelevant()) {
-    nsNodeUtils::AnimationChanged(mAnimation);
+    MutationObservers::NotifyAnimationChanged(mAnimation);
   }
 
   mEffectOptions.mIterationComposite = aIterationComposite;
@@ -127,7 +129,7 @@ void KeyframeEffect::SetComposite(const CompositeOperation& aComposite) {
   mEffectOptions.mComposite = aComposite;
 
   if (mAnimation && mAnimation->IsRelevant()) {
-    nsNodeUtils::AnimationChanged(mAnimation);
+    MutationObservers::NotifyAnimationChanged(mAnimation);
   }
 
   if (mTarget) {
@@ -148,7 +150,7 @@ void KeyframeEffect::NotifySpecifiedTimingUpdated() {
     mAnimation->NotifyEffectTimingUpdated();
 
     if (mAnimation->IsRelevant()) {
-      nsNodeUtils::AnimationChanged(mAnimation);
+      MutationObservers::NotifyAnimationChanged(mAnimation);
     }
 
     RequestRestyle(EffectCompositor::RestyleType::Layer);
@@ -241,7 +243,7 @@ void KeyframeEffect::SetKeyframes(nsTArray<Keyframe>&& aKeyframes,
   KeyframeUtils::DistributeKeyframes(mKeyframes);
 
   if (mAnimation && mAnimation->IsRelevant()) {
-    nsNodeUtils::AnimationChanged(mAnimation);
+    MutationObservers::NotifyAnimationChanged(mAnimation);
   }
 
   // We need to call UpdateProperties() unless the target element doesn't have
@@ -937,6 +939,9 @@ already_AddRefed<KeyframeEffect> KeyframeEffect::Constructor(
   //       computed offsets and rebuild the animation properties.
   effect->mKeyframes = aSource.mKeyframes;
   effect->mProperties = aSource.mProperties;
+  for (auto iter = aSource.mBaseValues.ConstIter(); !iter.Done(); iter.Next()) {
+    effect->mBaseValues.Put(iter.Key(), iter.Data());
+  }
   return effect.forget();
 }
 
@@ -982,7 +987,7 @@ void KeyframeEffect::SetTarget(
 
     nsAutoAnimationMutationBatch mb(mTarget->mElement->OwnerDoc());
     if (mAnimation) {
-      nsNodeUtils::AnimationRemoved(mAnimation);
+      MutationObservers::NotifyAnimationRemoved(mAnimation);
     }
   }
 
@@ -999,7 +1004,7 @@ void KeyframeEffect::SetTarget(
 
     nsAutoAnimationMutationBatch mb(mTarget->mElement->OwnerDoc());
     if (mAnimation) {
-      nsNodeUtils::AnimationAdded(mAnimation);
+      MutationObservers::NotifyAnimationAdded(mAnimation);
       mAnimation->ReschedulePendingTasks();
     }
   }
@@ -1186,7 +1191,25 @@ void KeyframeEffect::GetKeyframes(JSContext*& aCx, nsTArray<JSObject*>& aResult,
         }
       }
 
-      const char* name = nsCSSProps::PropertyIDLName(propertyValue.mProperty);
+      // Basically, we need to do the mapping:
+      // * eCSSProperty_offset => "cssOffset"
+      // * eCSSProperty_float => "cssFloat"
+      // This means if property refers to the CSS "offset"/"float" property,
+      // return the string "cssOffset"/"cssFloat". (So avoid overlapping
+      // "offset" property in BaseKeyframe.)
+      // https://drafts.csswg.org/web-animations/#property-name-conversion
+      const char* name = nullptr;
+      switch (propertyValue.mProperty) {
+        case nsCSSPropertyID::eCSSProperty_offset:
+          name = "cssOffset";
+          break;
+        case nsCSSPropertyID::eCSSProperty_float:
+          // FIXME: Bug 1582314: Should handle cssFloat manually if we remove it
+          // from nsCSSProps::PropertyIDLName().
+        default:
+          name = nsCSSProps::PropertyIDLName(propertyValue.mProperty);
+      }
+
       JS::Rooted<JS::Value> value(aCx);
       if (!ToJSValue(aCx, stringValue, &value) ||
           !JS_DefineProperty(aCx, keyframeObject, name, value,
@@ -1605,7 +1628,8 @@ void KeyframeEffect::CalculateCumulativeChangeHint(
   mNeedsStyleData = false;
 
   nsPresContext* presContext =
-      nsContentUtils::GetContextForContent(mTarget->mElement);
+      mTarget ? nsContentUtils::GetContextForContent(mTarget->mElement)
+              : nullptr;
   if (!presContext) {
     // Change hints make no sense if we're not rendered.
     //
@@ -1879,13 +1903,6 @@ KeyframeEffect::MatchForCompositor KeyframeEffect::IsMatchForCompositor(
         return KeyframeEffect::MatchForCompositor::No;
       }
     }
-  }
-
-  // Bug 1429305: Drop this after supporting compositor animations for motion
-  // path.
-  if (aPropertySet.Intersects(nsCSSPropertyIDSet::TransformLikeProperties()) &&
-      !aFrame->StyleDisplay()->mOffsetPath.IsNone()) {
-    return KeyframeEffect::MatchForCompositor::No;
   }
 
   return mAnimation->IsPlaying() ? KeyframeEffect::MatchForCompositor::Yes

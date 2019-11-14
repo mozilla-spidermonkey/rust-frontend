@@ -8,10 +8,13 @@
 #define frontend_ParseNode_h
 
 #include "mozilla/Attributes.h"
+#include "mozilla/Variant.h"
 
 #include "frontend/Token.h"
+#include "util/Text.h"
 #include "vm/BigIntType.h"
 #include "vm/BytecodeUtil.h"
+#include "vm/JSContext.h"
 #include "vm/Printer.h"
 #include "vm/Scope.h"
 
@@ -43,162 +46,168 @@ namespace js {
 namespace frontend {
 
 class ParseContext;
+class ParserSharedBase;
 class FullParseHandler;
 class FunctionBox;
 class ObjectBox;
 class BigIntBox;
 
-#define FOR_EACH_PARSE_NODE_KIND(F)                                          \
-  F(EmptyStmt, NullaryNode)                                                  \
-  F(ExpressionStmt, UnaryNode)                                               \
-  F(CommaExpr, ListNode)                                                     \
-  F(ConditionalExpr, ConditionalExpression)                                  \
-  F(PropertyDefinition, PropertyDefinition)                                  \
-  F(Shorthand, BinaryNode)                                                   \
-  F(PosExpr, UnaryNode)                                                      \
-  F(NegExpr, UnaryNode)                                                      \
-  F(PreIncrementExpr, UnaryNode)                                             \
-  F(PostIncrementExpr, UnaryNode)                                            \
-  F(PreDecrementExpr, UnaryNode)                                             \
-  F(PostDecrementExpr, UnaryNode)                                            \
-  F(PropertyNameExpr, NameNode)                                              \
-  F(DotExpr, PropertyAccess)                                                 \
-  F(ElemExpr, PropertyByValue)                                               \
-  F(ArrayExpr, ListNode)                                                     \
-  F(Elision, NullaryNode)                                                    \
-  F(StatementList, ListNode)                                                 \
-  F(LabelStmt, LabeledStatement)                                             \
-  F(ObjectExpr, ListNode)                                                    \
-  F(CallExpr, BinaryNode)                                                    \
-  F(Arguments, ListNode)                                                     \
-  F(Name, NameNode)                                                          \
-  F(ObjectPropertyName, NameNode)                                            \
-  F(PrivateName, NameNode)                                                   \
-  F(ComputedName, UnaryNode)                                                 \
-  F(NumberExpr, NumericLiteral)                                              \
-  F(BigIntExpr, BigIntLiteral)                                               \
-  F(StringExpr, NameNode)                                                    \
-  F(TemplateStringListExpr, ListNode)                                        \
-  F(TemplateStringExpr, NameNode)                                            \
-  F(TaggedTemplateExpr, BinaryNode)                                          \
-  F(CallSiteObj, CallSiteNode)                                               \
-  F(RegExpExpr, RegExpLiteral)                                               \
-  F(TrueExpr, BooleanLiteral)                                                \
-  F(FalseExpr, BooleanLiteral)                                               \
-  F(NullExpr, NullLiteral)                                                   \
-  F(RawUndefinedExpr, RawUndefinedLiteral)                                   \
-  F(ThisExpr, UnaryNode)                                                     \
-  F(Function, FunctionNode)                                                  \
-  F(Module, ModuleNode)                                                      \
-  F(IfStmt, TernaryNode)                                                     \
-  F(SwitchStmt, SwitchStatement)                                             \
-  F(Case, CaseClause)                                                        \
-  F(WhileStmt, BinaryNode)                                                   \
-  F(DoWhileStmt, BinaryNode)                                                 \
-  F(ForStmt, ForNode)                                                        \
-  F(BreakStmt, BreakStatement)                                               \
-  F(ContinueStmt, ContinueStatement)                                         \
-  F(VarStmt, ListNode)                                                       \
-  F(ConstDecl, ListNode)                                                     \
-  F(WithStmt, BinaryNode)                                                    \
-  F(ReturnStmt, UnaryNode)                                                   \
-  F(NewExpr, BinaryNode)                                                     \
-  /* Delete operations.  These must be sequential. */                        \
-  F(DeleteNameExpr, UnaryNode)                                               \
-  F(DeletePropExpr, UnaryNode)                                               \
-  F(DeleteElemExpr, UnaryNode)                                               \
-  F(DeleteExpr, UnaryNode)                                                   \
-  F(TryStmt, TernaryNode)                                                    \
-  F(Catch, BinaryNode)                                                       \
-  F(ThrowStmt, UnaryNode)                                                    \
-  F(DebuggerStmt, DebuggerStatement)                                         \
-  F(Generator, NullaryNode)                                                  \
-  F(InitialYield, UnaryNode)                                                 \
-  F(YieldExpr, UnaryNode)                                                    \
-  F(YieldStarExpr, UnaryNode)                                                \
-  F(LexicalScope, LexicalScopeNode)                                          \
-  F(LetDecl, ListNode)                                                       \
-  F(ImportDecl, BinaryNode)                                                  \
-  F(ImportSpecList, ListNode)                                                \
-  F(ImportSpec, BinaryNode)                                                  \
-  F(ExportStmt, UnaryNode)                                                   \
-  F(ExportFromStmt, BinaryNode)                                              \
-  F(ExportDefaultStmt, BinaryNode)                                           \
-  F(ExportSpecList, ListNode)                                                \
-  F(ExportSpec, BinaryNode)                                                  \
-  F(ExportBatchSpecStmt, NullaryNode)                                        \
-  F(ForIn, TernaryNode)                                                      \
-  F(ForOf, TernaryNode)                                                      \
-  F(ForHead, TernaryNode)                                                    \
-  F(ParamsBody, ListNode)                                                    \
-  F(Spread, UnaryNode)                                                       \
-  F(MutateProto, UnaryNode)                                                  \
-  F(ClassDecl, ClassNode)                                                    \
-  F(ClassMethod, ClassMethod)                                                \
-  F(ClassField, ClassField)                                                  \
-  F(ClassMemberList, ListNode)                                               \
-  F(ClassNames, ClassNames)                                                  \
-  F(NewTargetExpr, BinaryNode)                                               \
-  F(PosHolder, NullaryNode)                                                  \
-  F(SuperBase, UnaryNode)                                                    \
-  F(SuperCallExpr, BinaryNode)                                               \
-  F(SetThis, BinaryNode)                                                     \
-  F(ImportMetaExpr, BinaryNode)                                              \
-  F(CallImportExpr, BinaryNode)                                              \
-  F(InitExpr, BinaryNode)                                                    \
-                                                                             \
-  /* Unary operators. */                                                     \
-  F(TypeOfNameExpr, UnaryNode)                                               \
-  F(TypeOfExpr, UnaryNode)                                                   \
-  F(VoidExpr, UnaryNode)                                                     \
-  F(NotExpr, UnaryNode)                                                      \
-  F(BitNotExpr, UnaryNode)                                                   \
-  F(AwaitExpr, UnaryNode)                                                    \
-                                                                             \
-  /*                                                                         \
-   * Binary operators.                                                       \
-   * These must be in the same order as TOK_OR and friends in TokenStream.h. \
-   */                                                                        \
-  F(PipelineExpr, ListNode)                                                  \
-  F(OrExpr, ListNode)                                                        \
-  F(AndExpr, ListNode)                                                       \
-  F(BitOrExpr, ListNode)                                                     \
-  F(BitXorExpr, ListNode)                                                    \
-  F(BitAndExpr, ListNode)                                                    \
-  F(StrictEqExpr, ListNode)                                                  \
-  F(EqExpr, ListNode)                                                        \
-  F(StrictNeExpr, ListNode)                                                  \
-  F(NeExpr, ListNode)                                                        \
-  F(LtExpr, ListNode)                                                        \
-  F(LeExpr, ListNode)                                                        \
-  F(GtExpr, ListNode)                                                        \
-  F(GeExpr, ListNode)                                                        \
-  F(InstanceOfExpr, ListNode)                                                \
-  F(InExpr, ListNode)                                                        \
-  F(LshExpr, ListNode)                                                       \
-  F(RshExpr, ListNode)                                                       \
-  F(UrshExpr, ListNode)                                                      \
-  F(AddExpr, ListNode)                                                       \
-  F(SubExpr, ListNode)                                                       \
-  F(MulExpr, ListNode)                                                       \
-  F(DivExpr, ListNode)                                                       \
-  F(ModExpr, ListNode)                                                       \
-  F(PowExpr, ListNode)                                                       \
-                                                                             \
-  /* Assignment operators (= += -= etc.). */                                 \
-  /* AssignmentNode::test assumes all these are consecutive. */              \
-  F(AssignExpr, AssignmentNode)                                              \
-  F(AddAssignExpr, AssignmentNode)                                           \
-  F(SubAssignExpr, AssignmentNode)                                           \
-  F(BitOrAssignExpr, AssignmentNode)                                         \
-  F(BitXorAssignExpr, AssignmentNode)                                        \
-  F(BitAndAssignExpr, AssignmentNode)                                        \
-  F(LshAssignExpr, AssignmentNode)                                           \
-  F(RshAssignExpr, AssignmentNode)                                           \
-  F(UrshAssignExpr, AssignmentNode)                                          \
-  F(MulAssignExpr, AssignmentNode)                                           \
-  F(DivAssignExpr, AssignmentNode)                                           \
-  F(ModAssignExpr, AssignmentNode)                                           \
+#define FOR_EACH_PARSE_NODE_KIND(F)                              \
+  F(EmptyStmt, NullaryNode)                                      \
+  F(ExpressionStmt, UnaryNode)                                   \
+  F(CommaExpr, ListNode)                                         \
+  F(ConditionalExpr, ConditionalExpression)                      \
+  F(PropertyDefinition, PropertyDefinition)                      \
+  F(Shorthand, BinaryNode)                                       \
+  F(PosExpr, UnaryNode)                                          \
+  F(NegExpr, UnaryNode)                                          \
+  F(PreIncrementExpr, UnaryNode)                                 \
+  F(PostIncrementExpr, UnaryNode)                                \
+  F(PreDecrementExpr, UnaryNode)                                 \
+  F(PostDecrementExpr, UnaryNode)                                \
+  F(PropertyNameExpr, NameNode)                                  \
+  F(DotExpr, PropertyAccess)                                     \
+  F(ElemExpr, PropertyByValue)                                   \
+  F(ArrayExpr, ListNode)                                         \
+  F(Elision, NullaryNode)                                        \
+  F(StatementList, ListNode)                                     \
+  F(LabelStmt, LabeledStatement)                                 \
+  F(ObjectExpr, ListNode)                                        \
+  F(CallExpr, BinaryNode)                                        \
+  F(Arguments, ListNode)                                         \
+  F(Name, NameNode)                                              \
+  F(ObjectPropertyName, NameNode)                                \
+  F(PrivateName, NameNode)                                       \
+  F(ComputedName, UnaryNode)                                     \
+  F(NumberExpr, NumericLiteral)                                  \
+  F(BigIntExpr, BigIntLiteral)                                   \
+  F(StringExpr, NameNode)                                        \
+  F(TemplateStringListExpr, ListNode)                            \
+  F(TemplateStringExpr, NameNode)                                \
+  F(TaggedTemplateExpr, BinaryNode)                              \
+  F(CallSiteObj, CallSiteNode)                                   \
+  F(RegExpExpr, RegExpLiteral)                                   \
+  F(TrueExpr, BooleanLiteral)                                    \
+  F(FalseExpr, BooleanLiteral)                                   \
+  F(NullExpr, NullLiteral)                                       \
+  F(RawUndefinedExpr, RawUndefinedLiteral)                       \
+  F(ThisExpr, UnaryNode)                                         \
+  F(Function, FunctionNode)                                      \
+  F(Module, ModuleNode)                                          \
+  F(IfStmt, TernaryNode)                                         \
+  F(SwitchStmt, SwitchStatement)                                 \
+  F(Case, CaseClause)                                            \
+  F(WhileStmt, BinaryNode)                                       \
+  F(DoWhileStmt, BinaryNode)                                     \
+  F(ForStmt, ForNode)                                            \
+  F(BreakStmt, BreakStatement)                                   \
+  F(ContinueStmt, ContinueStatement)                             \
+  F(VarStmt, ListNode)                                           \
+  F(ConstDecl, ListNode)                                         \
+  F(WithStmt, BinaryNode)                                        \
+  F(ReturnStmt, UnaryNode)                                       \
+  F(NewExpr, BinaryNode)                                         \
+  /* Delete operations.  These must be sequential. */            \
+  F(DeleteNameExpr, UnaryNode)                                   \
+  F(DeletePropExpr, UnaryNode)                                   \
+  F(DeleteElemExpr, UnaryNode)                                   \
+  F(DeleteExpr, UnaryNode)                                       \
+  F(TryStmt, TernaryNode)                                        \
+  F(Catch, BinaryNode)                                           \
+  F(ThrowStmt, UnaryNode)                                        \
+  F(DebuggerStmt, DebuggerStatement)                             \
+  F(Generator, NullaryNode)                                      \
+  F(InitialYield, UnaryNode)                                     \
+  F(YieldExpr, UnaryNode)                                        \
+  F(YieldStarExpr, UnaryNode)                                    \
+  F(LexicalScope, LexicalScopeNode)                              \
+  F(LetDecl, ListNode)                                           \
+  F(ImportDecl, BinaryNode)                                      \
+  F(ImportSpecList, ListNode)                                    \
+  F(ImportSpec, BinaryNode)                                      \
+  F(ExportStmt, UnaryNode)                                       \
+  F(ExportFromStmt, BinaryNode)                                  \
+  F(ExportDefaultStmt, BinaryNode)                               \
+  F(ExportSpecList, ListNode)                                    \
+  F(ExportSpec, BinaryNode)                                      \
+  F(ExportBatchSpecStmt, NullaryNode)                            \
+  F(ForIn, TernaryNode)                                          \
+  F(ForOf, TernaryNode)                                          \
+  F(ForHead, TernaryNode)                                        \
+  F(ParamsBody, ListNode)                                        \
+  F(Spread, UnaryNode)                                           \
+  F(MutateProto, UnaryNode)                                      \
+  F(ClassDecl, ClassNode)                                        \
+  F(ClassMethod, ClassMethod)                                    \
+  F(ClassField, ClassField)                                      \
+  F(ClassMemberList, ListNode)                                   \
+  F(ClassNames, ClassNames)                                      \
+  F(NewTargetExpr, BinaryNode)                                   \
+  F(PosHolder, NullaryNode)                                      \
+  F(SuperBase, UnaryNode)                                        \
+  F(SuperCallExpr, BinaryNode)                                   \
+  F(SetThis, BinaryNode)                                         \
+  F(ImportMetaExpr, BinaryNode)                                  \
+  F(CallImportExpr, BinaryNode)                                  \
+  F(InitExpr, BinaryNode)                                        \
+                                                                 \
+  /* Unary operators. */                                         \
+  F(TypeOfNameExpr, UnaryNode)                                   \
+  F(TypeOfExpr, UnaryNode)                                       \
+  F(VoidExpr, UnaryNode)                                         \
+  F(NotExpr, UnaryNode)                                          \
+  F(BitNotExpr, UnaryNode)                                       \
+  F(AwaitExpr, UnaryNode)                                        \
+                                                                 \
+  /*                                                             \
+   * Binary operators.                                           \
+   * This list must be kept in the same order in several places: \
+   *   - The binary operators in ParseNode.h                     \
+   *   - the binary operators in TokenKind.h                     \
+   *   - the precedence list in Parser.cpp                       \
+   *   - the JSOp code list in BytecodeEmitter.cpp               \
+   */                                                            \
+  F(PipelineExpr, ListNode)                                      \
+  F(CoalesceExpr, ListNode)                                      \
+  F(OrExpr, ListNode)                                            \
+  F(AndExpr, ListNode)                                           \
+  F(BitOrExpr, ListNode)                                         \
+  F(BitXorExpr, ListNode)                                        \
+  F(BitAndExpr, ListNode)                                        \
+  F(StrictEqExpr, ListNode)                                      \
+  F(EqExpr, ListNode)                                            \
+  F(StrictNeExpr, ListNode)                                      \
+  F(NeExpr, ListNode)                                            \
+  F(LtExpr, ListNode)                                            \
+  F(LeExpr, ListNode)                                            \
+  F(GtExpr, ListNode)                                            \
+  F(GeExpr, ListNode)                                            \
+  F(InstanceOfExpr, ListNode)                                    \
+  F(InExpr, ListNode)                                            \
+  F(LshExpr, ListNode)                                           \
+  F(RshExpr, ListNode)                                           \
+  F(UrshExpr, ListNode)                                          \
+  F(AddExpr, ListNode)                                           \
+  F(SubExpr, ListNode)                                           \
+  F(MulExpr, ListNode)                                           \
+  F(DivExpr, ListNode)                                           \
+  F(ModExpr, ListNode)                                           \
+  F(PowExpr, ListNode)                                           \
+                                                                 \
+  /* Assignment operators (= += -= etc.). */                     \
+  /* AssignmentNode::test assumes all these are consecutive. */  \
+  F(AssignExpr, AssignmentNode)                                  \
+  F(AddAssignExpr, AssignmentNode)                               \
+  F(SubAssignExpr, AssignmentNode)                               \
+  F(BitOrAssignExpr, AssignmentNode)                             \
+  F(BitXorAssignExpr, AssignmentNode)                            \
+  F(BitAndAssignExpr, AssignmentNode)                            \
+  F(LshAssignExpr, AssignmentNode)                               \
+  F(RshAssignExpr, AssignmentNode)                               \
+  F(UrshAssignExpr, AssignmentNode)                              \
+  F(MulAssignExpr, AssignmentNode)                               \
+  F(DivAssignExpr, AssignmentNode)                               \
+  F(ModAssignExpr, AssignmentNode)                               \
   F(PowAssignExpr, AssignmentNode)
 
 /*
@@ -408,10 +417,10 @@ inline bool IsTypeofKind(ParseNodeKind kind) {
  *   kid1: cond
  *   kid2: thenExpr
  *   kid3: elseExpr
- * PipelineExpr, OrExpr, AndExpr, BitOrExpr, BitXorExpr, BitAndExpr,
- * StrictEqExpr, EqExpr, StrictNeExpr, NeExpr, LtExpr, LeExpr, GtExpr, GeExpr,
- * InstanceOfExpr, InExpr, LshExpr, RshExpr, UrshExpr, AddExpr, SubExpr,
- * MulExpr, DivExpr, ModExpr, PowExpr (ListNode)
+ * PipelineExpr, CoalesceExpr, OrExpr, AndExpr, BitOrExpr, BitXorExpr,
+ * BitAndExpr, StrictEqExpr, EqExpr, StrictNeExpr, NeExpr, LtExpr, LeExpr,
+ * GtExpr, GeExpr, InstanceOfExpr, InExpr, LshExpr, RshExpr, UrshExpr, AddExpr,
+ * SubExpr, MulExpr, DivExpr, ModExpr, PowExpr (ListNode)
  *   head: list of N subexpressions
  *         All of these operators are left-associative except Pow which is
  *         right-associative, but still forms a list (see comments in
@@ -1516,12 +1525,65 @@ class NumericLiteral : public ParseNode {
   void setDecimalPoint(DecimalPoint d) { decimalPoint_ = d; }
 };
 
+// This owns a set of characters guaranteed to parse into a BigInt via
+// ParseBigIntLiteral. Used to avoid allocating the BigInt on the
+// GC heap during parsing.
+class BigIntCreationData {
+  UniqueTwoByteChars buf_;
+  size_t length_ = 0;
+
+ public:
+  BigIntCreationData() = default;
+
+  MOZ_MUST_USE bool init(JSContext* cx, const Vector<char16_t, 32>& buf) {
+#ifdef DEBUG
+    // Assert we have no separators; if we have a separator then the algorithm
+    // used in BigInt::literalIsZero will be incorrect.
+    for (char16_t c : buf) {
+      MOZ_ASSERT(c != '_');
+    }
+#endif
+    length_ = buf.length();
+    buf_ = js::DuplicateString(cx, buf.begin(), buf.length());
+    return buf_ != nullptr;
+  }
+
+  BigInt* createBigInt(JSContext* cx) {
+    mozilla::Range<const char16_t> source(buf_.get(), length_);
+
+    return js::ParseBigIntLiteral(cx, source);
+  }
+
+  bool isZero() {
+    mozilla::Range<const char16_t> source(buf_.get(), length_);
+    return js::BigIntLiteralIsZero(source);
+  }
+};
+
 class BigIntLiteral : public ParseNode {
-  BigIntBox* box_;
+  mozilla::Variant<mozilla::Nothing, BigIntCreationData, BigIntBox*> data_;
+
+  BigIntBox* box() const { return data_.as<BigIntBox*>(); }
 
  public:
   BigIntLiteral(BigIntBox* bibox, const TokenPos& pos)
-      : ParseNode(ParseNodeKind::BigIntExpr, pos), box_(bibox) {}
+      : ParseNode(ParseNodeKind::BigIntExpr, pos),
+        data_(mozilla::AsVariant(bibox)) {}
+
+  // Used to allocate a BigIntCreationData in two phase initialization to enusre
+  // clear ownership of data in an allocation failure.
+  explicit BigIntLiteral(const TokenPos& pos)
+      : ParseNode(ParseNodeKind::BigIntExpr, pos),
+        data_(AsVariant(mozilla::Nothing())) {}
+
+  void init(BigIntCreationData data) {
+    data_ = mozilla::AsVariant(std::move(data));
+  }
+
+  bool isDeferred() {
+    MOZ_ASSERT(!data_.is<mozilla::Nothing>());
+    return data_.is<BigIntCreationData>();
+  }
 
   static bool test(const ParseNode& node) {
     return node.isKind(ParseNodeKind::BigIntExpr);
@@ -1538,7 +1600,23 @@ class BigIntLiteral : public ParseNode {
   void dumpImpl(GenericPrinter& out, int indent);
 #endif
 
-  BigIntBox* box() const { return box_; }
+  // Get the contained BigInt value: Assumes it was created with one,
+  // and cannot be used when deferred allocation mode is enabled.
+  BigInt* value();
+
+  // Get the contained BigIntValue, or parse it from the creation data
+  // Can be used when deferred allocation mode is enabled.
+  BigInt* getOrCreateBigInt(JSContext* cx) {
+    if (data_.is<BigIntBox*>()) {
+      return value();
+    }
+    return data_.as<BigIntCreationData>().createBigInt(cx);
+  }
+
+  BigIntCreationData creationData() {
+    return std::move(data_.as<BigIntCreationData>());
+  }
+  bool isZero();
 };
 
 class LexicalScopeNode : public ParseNode {
@@ -1815,14 +1893,49 @@ class BooleanLiteral : public NullaryNode {
   }
 };
 
+// This owns a set of characters, previously syntax checked as a RegExp. Used
+// to avoid allocating the RegExp on the GC heap during parsing.
+class RegExpCreationData {
+  UniquePtr<char16_t[], JS::FreePolicy> buf_;
+  size_t length_ = 0;
+  JS::RegExpFlags flags_;
+
+ public:
+  RegExpCreationData() = default;
+
+  MOZ_MUST_USE bool init(JSContext* cx, mozilla::Range<const char16_t> range,
+                         JS::RegExpFlags flags) {
+    length_ = range.length();
+    buf_ = js::DuplicateString(cx, range.begin().get(), range.length());
+    if (!buf_) {
+      return false;
+    }
+    flags_ = flags;
+    return true;
+  }
+
+  RegExpObject* createRegExp(JSContext* cx) const;
+};
+
 class RegExpLiteral : public ParseNode {
-  ObjectBox* objbox_;
+  mozilla::Variant<mozilla::Nothing, ObjectBox*, RegExpCreationData> data_;
 
  public:
   RegExpLiteral(ObjectBox* reobj, const TokenPos& pos)
-      : ParseNode(ParseNodeKind::RegExpExpr, pos), objbox_(reobj) {}
+      : ParseNode(ParseNodeKind::RegExpExpr, pos), data_(reobj) {}
 
-  ObjectBox* objbox() const { return objbox_; }
+  explicit RegExpLiteral(const TokenPos& pos)
+      : ParseNode(ParseNodeKind::RegExpExpr, pos), data_(mozilla::Nothing()) {}
+
+  void init(RegExpCreationData data) {
+    data_ = mozilla::AsVariant(std::move(data));
+  }
+
+  bool isDeferred() const { return data_.is<RegExpCreationData>(); }
+
+  ObjectBox* objbox() const { return data_.as<ObjectBox*>(); }
+
+  RegExpObject* getOrCreate(JSContext* cx) const;
 
 #ifdef DEBUG
   void dumpImpl(GenericPrinter& out, int indent);
@@ -1838,6 +1951,8 @@ class RegExpLiteral : public ParseNode {
   bool accept(Visitor& visitor) {
     return true;
   }
+
+  RegExpCreationData& creationData() { return data_.as<RegExpCreationData>(); }
 };
 
 class PropertyAccess : public BinaryNode {
@@ -2170,14 +2285,21 @@ inline bool ParseNode::isConstant() {
 }
 
 class TraceListNode {
+  friend class ParserSharedBase;
+
  protected:
+  enum NodeType { Object, BigInt, Function, LastNodeType };
+
   js::gc::Cell* gcThing;
   TraceListNode* traceLink;
+  NodeType type_;
 
-  TraceListNode(js::gc::Cell* gcThing, TraceListNode* traceLink);
+  TraceListNode(js::gc::Cell* gcThing, TraceListNode* traceLink, NodeType type);
 
-  bool isBigIntBox() const { return gcThing->is<BigInt>(); }
-  bool isObjectBox() const { return gcThing->is<JSObject>(); }
+  bool isBigIntBox() const { return type_ == NodeType::BigInt; }
+  bool isObjectBox() const {
+    return type_ == NodeType::Object || type_ == NodeType::Function;
+  }
 
   BigIntBox* asBigIntBox();
   ObjectBox* asObjectBox();
@@ -2190,8 +2312,8 @@ class TraceListNode {
 
 class BigIntBox : public TraceListNode {
  public:
-  BigIntBox(BigInt* bi, TraceListNode* link);
-  BigInt* value() const { return gcThing->as<BigInt>(); }
+  BigIntBox(JS::BigInt* bi, TraceListNode* link);
+  JS::BigInt* value() const { return gcThing->as<JS::BigInt>(); }
 };
 
 class ObjectBox : public TraceListNode {
@@ -2199,14 +2321,17 @@ class ObjectBox : public TraceListNode {
   friend struct GCThingList;
   ObjectBox* emitLink;
 
-  ObjectBox(JSFunction* function, TraceListNode* link);
+  ObjectBox(JSObject* obj, TraceListNode* link, TraceListNode::NodeType type);
 
  public:
-  ObjectBox(JSObject* obj, TraceListNode* link);
+  ObjectBox(JSObject* obj, TraceListNode* link)
+      : ObjectBox(obj, link, TraceListNode::NodeType::Object) {}
+
+  bool hasObject() const { return gcThing != nullptr; }
 
   JSObject* object() const { return gcThing->as<JSObject>(); }
 
-  bool isFunctionBox() const { return object()->is<JSFunction>(); }
+  bool isFunctionBox() const { return type_ == NodeType::Function; }
   FunctionBox* asFunctionBox();
 };
 

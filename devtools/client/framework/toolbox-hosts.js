@@ -1,5 +1,3 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9,9 +7,7 @@
 const EventEmitter = require("devtools/shared/event-emitter");
 const promise = require("promise");
 const Services = require("Services");
-const {
-  DOMHelpers,
-} = require("resource://devtools/client/shared/DOMHelpers.jsm");
+const { DOMHelpers } = require("devtools/shared/dom-helpers");
 
 loader.lazyRequireGetter(
   this,
@@ -82,12 +78,11 @@ BottomHost.prototype = {
     this.frame.setAttribute("src", "about:blank");
 
     const frame = await new Promise(resolve => {
-      const domHelper = new DOMHelpers(this.frame.contentWindow);
       const frameLoad = () => {
         this.emit("ready", this.frame);
         resolve(this.frame);
       };
-      domHelper.onceDOMReady(frameLoad);
+      DOMHelpers.onceDOMReady(this.frame.contentWindow, frameLoad);
       focusTab(this.hostTab);
     });
 
@@ -178,12 +173,11 @@ class SidebarHost {
     this.frame.setAttribute("src", "about:blank");
 
     const frame = await new Promise(resolve => {
-      const domHelper = new DOMHelpers(this.frame.contentWindow);
       const frameLoad = () => {
         this.emit("ready", this.frame);
         resolve(this.frame);
       };
-      domHelper.onceDOMReady(frameLoad);
+      DOMHelpers.onceDOMReady(this.frame.contentWindow, frameLoad);
       focusTab(this.hostTab);
     });
 
@@ -436,7 +430,14 @@ function focusTab(tab) {
  * Create an iframe that can be used to load DevTools via about:devtools-toolbox.
  */
 function createDevToolsFrame(doc, className) {
-  const frame = doc.createXULElement("iframe");
+  let frame;
+  if (Services.prefs.getBoolPref("devtools.toolbox.content-frame", false)) {
+    frame = doc.createXULElement("browser");
+    frame.setAttribute("type", "content");
+  } else {
+    frame = doc.createXULElement("iframe");
+  }
+
   frame.flex = 1; // Required to be able to shrink when the window shrinks
   frame.className = className;
   frame.tooltip = "aHTMLTooltip";

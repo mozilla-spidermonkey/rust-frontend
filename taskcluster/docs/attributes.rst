@@ -247,7 +247,7 @@ artifact_prefix
 Most taskcluster artifacts are public, so we've hardcoded ``public/build`` in a
 lot of places. To support private artifacts, we've moved this to the
 ``artifact_prefix`` attribute. It will default to ``public/build`` but will be
-overrideable per-task.
+overridable per-task.
 
 artifact_map
 ===============
@@ -326,3 +326,8 @@ disable-build-signing
 =====================
 Some GeckoView-only tasks produce APKs, but not APKs that should be
 signed.  Set this to ``true`` to disable APK signing.
+
+run-visual-metrics
+==================
+If set to true, will run the visual metrics task on the provided
+video files.

@@ -297,12 +297,7 @@ impl<S: Side> ToComputedValue for PositionComponent<S> {
                 let p = Percentage(1. - length.percentage());
                 let l = -length.unclamped_length();
                 // We represent `<end-side> <length>` as `calc(100% - <length>)`.
-                ComputedLengthPercentage::with_clamping_mode(
-                    l,
-                    Some(p),
-                    length.clamping_mode,
-                    /* was_calc = */ true,
-                )
+                ComputedLengthPercentage::with_clamping_mode(l, Some(p), length.clamping_mode)
             },
             PositionComponent::Side(_, Some(ref length)) |
             PositionComponent::Length(ref length) => length.to_computed_value(context),
@@ -707,8 +702,6 @@ fn is_name_code_point(c: char) -> bool {
 /// The syntax of this property also provides a visualization of the structure
 /// of the grid, making the overall layout of the grid container easier to
 /// understand.
-///
-/// cbindgen:derive-tagged-enum-copy-constructor=true
 #[repr(C, u8)]
 #[derive(
     Clone,

@@ -134,10 +134,6 @@ def docker_worker_toolchain(config, job, taskdesc):
         'MOZ_SCM_LEVEL': config.params['level'],
         'GECKO_PATH': gecko_path,
     })
-    # If the task definition hasn't overridden the default value, set to
-    # the workspace.
-    if env.get('MOZ_FETCHES_DIR') == 'fetches':
-        env['MOZ_FETCHES_DIR'] = workspace
 
     attributes = taskdesc.setdefault('attributes', {})
     attributes['toolchain-artifact'] = run.pop('toolchain-artifact')

@@ -30,10 +30,6 @@ list-empty-find-updates =
 list-empty-button =
     .label = Learn more about add-ons
 
-install-addon-from-file =
-    .label = Install Add-on From File…
-    .accesskey = I
-
 help-button = Add-ons Support
 
 preferences =
@@ -50,10 +46,6 @@ show-unsigned-extensions-button =
 
 show-all-extensions-button =
     .label = Show all extensions
-
-debug-addons =
-    .label = Debug Add-ons
-    .accesskey = b
 
 cmd-show-details =
     .label = Show More Information
@@ -133,16 +125,14 @@ detail-update-manual =
 # Used as a description for the option to allow or block an add-on in private windows.
 detail-private-browsing-label = Run in Private Windows
 
-detail-private-browsing-description2 = When allowed, the extension will have access to your online activities while private browsing. <label data-l10n-name="detail-private-browsing-learn-more">Learn more</label>
-
 # Some add-ons may elect to not run in private windows by setting incognito: not_allowed in the manifest.  This
 # cannot be overridden by the user.
 detail-private-disallowed-label = Not Allowed in Private Windows
-detail-private-disallowed-description = This extension does not run while private browsing. <label data-l10n-name="detail-private-browsing-learn-more">Learn more</label>
+detail-private-disallowed-description2 = This extension does not run while private browsing. <a data-l10n-name="learn-more">Learn more</a>
 
 # Some special add-ons are privileged, run in private windows automatically, and this permission can't be revoked
 detail-private-required-label = Requires Access to Private Windows
-detail-private-required-description = This extension has access to your online activities while private browsing. <label data-l10n-name="detail-private-browsing-learn-more">Learn more</label>
+detail-private-required-description2 = This extension has access to your online activities while private browsing. <a data-l10n-name="learn-more">Learn more</a>
 
 detail-private-browsing-on =
     .label = Allow
@@ -237,44 +227,26 @@ extensions-view-available-updates =
 
 ## These are global warnings
 
-extensions-warning-safe-mode-label =
-    .value = All add-ons have been disabled by safe mode.
-extensions-warning-safe-mode-container =
-    .tooltiptext = { extensions-warning-safe-mode-label.value }
+extensions-warning-safe-mode = All add-ons have been disabled by safe mode.
+extensions-warning-check-compatibility = Add-on compatibility checking is disabled. You may have incompatible add-ons.
+extensions-warning-check-compatibility-button = Enable
+    .title = Enable add-on compatibility checking
+extensions-warning-update-security = Add-on update security checking is disabled. You may be compromised by updates.
+extensions-warning-update-security-button = Enable
+    .title = Enable add-on update security checking
 
-extensions-warning-check-compatibility-label =
-    .value = Add-on compatibility checking is disabled. You may have incompatible add-ons.
-extensions-warning-check-compatibility-container =
-    .tooltiptext = { extensions-warning-check-compatibility-label.value }
-
-extensions-warning-check-compatibility-enable =
-    .label = Enable
-    .tooltiptext = Enable add-on compatibility checking
-
-extensions-warning-update-security-label =
-    .value = Add-on update security checking is disabled. You may be compromised by updates.
-extensions-warning-update-security-container =
-    .tooltiptext = { extensions-warning-update-security-label.value }
-
-extensions-warning-update-security-enable =
-    .label = Enable
-    .tooltiptext = Enable add-on update security checking
 
 ## Strings connected to add-on updates
 
-extensions-updates-check-for-updates =
-    .label = Check for Updates
+addon-updates-check-for-updates = Check for Updates
     .accesskey = C
-
-extensions-updates-view-updates =
-    .label = View Recent Updates
+addon-updates-view-updates = View Recent Updates
     .accesskey = V
 
 # This menu item is a checkbox that toggles the default global behavior for
 # add-on update checking.
 
-extensions-updates-update-addons-automatically =
-    .label = Update Add-ons Automatically
+addon-updates-update-addons-automatically = Update Add-ons Automatically
     .accesskey = A
 
 ## Specific add-ons can have custom update checking behaviors ("Manually",
@@ -283,37 +255,33 @@ extensions-updates-update-addons-automatically =
 ## (which itself is either "Automatically" or "Manually", controlled by the
 ## extensions-updates-update-addons-automatically.label menu item).
 
-extensions-updates-reset-updates-to-automatic =
-    .label = Reset All Add-ons to Update Automatically
+addon-updates-reset-updates-to-automatic = Reset All Add-ons to Update Automatically
     .accesskey = R
-
-extensions-updates-reset-updates-to-manual =
-    .label = Reset All Add-ons to Update Manually
+addon-updates-reset-updates-to-manual = Reset All Add-ons to Update Manually
     .accesskey = R
 
 ## Status messages displayed when updating add-ons
 
-extensions-updates-updating =
-    .value = Updating add-ons
-extensions-updates-installed =
-    .value = Your add-ons have been updated.
-extensions-updates-downloaded =
-    .value = Your add-on updates have been downloaded.
-extensions-updates-restart =
-    .label = Restart now to complete installation
-extensions-updates-none-found =
-    .value = No updates found
-extensions-updates-manual-updates-found =
-    .label = View Available Updates
-extensions-updates-update-selected =
-    .label = Install Updates
-    .tooltiptext = Install available updates in this list
+addon-updates-updating = Updating add-ons
+addon-updates-installed = Your add-ons have been updated.
+addon-updates-none-found = No updates found
+addon-updates-manual-updates-found = View Available Updates
+
+## Add-on install/debug strings for page options menu
+
+addon-install-from-file = Install Add-on From File…
+    .accesskey = I
+addon-install-from-file-dialog-title = Select add-on to install
+addon-install-from-file-filter-name = Add-ons
+addon-open-about-debugging = Debug Add-ons
+    .accesskey = b
 
 ## Extension shortcut management
 
-manage-extensions-shortcuts =
-    .label = Manage Extension Shortcuts
+# This is displayed in the page options menu
+addon-manage-extensions-shortcuts = Manage Extension Shortcuts
     .accesskey = S
+
 shortcuts-no-addons = You don’t have any extensions enabled.
 shortcuts-no-commands = The following extensions do not have shortcuts:
 shortcuts-input =
@@ -328,6 +296,15 @@ shortcuts-modifier-other = Include Ctrl or Alt
 shortcuts-invalid = Invalid combination
 shortcuts-letter = Type a letter
 shortcuts-system = Can’t override a { -brand-short-name } shortcut
+
+# String displayed in warning label when there is a duplicate shortcut
+shortcuts-duplicate = Duplicate shortcut
+
+# String displayed when a keyboard shortcut is already assigned to more than one add-on
+# Variables:
+#   $shortcut (string) - Shortcut string for the add-on
+shortcuts-duplicate-warning-message = { $shortcut } is being used as a shortcut in more than one case. Duplicate shortcuts may cause unexpected behavior.
+
 # String displayed when a keyboard shortcut is already used by another add-on
 # Variables:
 #   $addon (string) - Name of the add-on
@@ -378,9 +355,16 @@ install-theme-button = Install Theme
 manage-addon-button = Manage
 find-more-addons = Find more add-ons
 
+# This is a label for the button to open the "more options" menu, it is only
+# used for screen readers.
+addon-options-button =
+    .aria-label = More Options
+
 ## Add-on actions
 report-addon-button = Report
 remove-addon-button = Remove
+# The link will always be shown after the other text.
+remove-addon-disabled-button = Can’t Be Removed <a data-l10n-name="link">Why?</a>
 disable-addon-button = Disable
 enable-addon-button = Enable
 preferences-addon-button =
@@ -453,17 +437,18 @@ install-update-button = Update
 
 # This is the tooltip text for the private browsing badge in about:addons. The
 # badge is the private browsing icon included next to the extension's name.
-addon-badge-private-browsing-allowed =
+addon-badge-private-browsing-allowed2 =
     .title = Allowed in private windows
+    .aria-label = { addon-badge-private-browsing-allowed2.title }
 addon-detail-private-browsing-help = When allowed, the extension will have access to your online activities while private browsing. <a data-l10n-name="learn-more">Learn more</a>
 addon-detail-private-browsing-allow = Allow
 addon-detail-private-browsing-disallow = Don’t Allow
 
 # This is the tooltip text for the recommended badge for an extension in about:addons. The
 # badge is a small icon displayed next to an extension when it is recommended on AMO.
-addon-badge-recommended =
-  .title = Recommended
-  .alt = Recommended
+addon-badge-recommended2 =
+  .title = { -brand-product-name } only recommends extensions that meet our standards for security and performance
+  .aria-label = { addon-badge-recommended2.title }
 
 available-updates-heading = Available Updates
 recent-updates-heading = Recent Updates
@@ -479,3 +464,19 @@ recommended-themes-heading = Recommended Themes
 # A recommendation for the Firefox Color theme shown at the bottom of the theme
 # list view. The "Firefox Color" name itself should not be translated.
 recommended-theme-1 = Feeling creative? <a data-l10n-name="link">Build your own theme with Firefox Color.</a>
+
+## Page headings
+
+extension-heading = Manage Your Extensions
+theme-heading = Manage Your Themes
+plugin-heading = Manage Your Plugins
+dictionary-heading = Manage Your Dictionaries
+locale-heading = Manage Your Languages
+updates-heading = Manage Your Updates
+discover-heading = Personalize Your { -brand-short-name }
+shortcuts-heading = Manage Extension Shortcuts
+
+theme-heading-search-label = Find more themes
+extension-heading-search-label = Find more extensions
+addons-heading-search-input =
+    .placeholder = Search addons.mozilla.org

@@ -5,12 +5,14 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "FeaturePolicyUtils.h"
-#include "mozilla/dom/FeaturePolicy.h"
+#include "nsIURIFixup.h"
+
+#include "mozilla/dom/DOMTypes.h"
+#include "mozilla/ipc/IPDLParamTraits.h"
 #include "mozilla/dom/FeaturePolicyViolationReportBody.h"
 #include "mozilla/dom/ReportingUtils.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/dom/Document.h"
-#include "nsIURIFixup.h"
 
 namespace mozilla {
 namespace dom {
@@ -33,7 +35,7 @@ static FeatureMap sSupportedFeatures[] = {
     {"camera", FeaturePolicyUtils::FeaturePolicyValue::eSelf},
     {"encrypted-media", FeaturePolicyUtils::FeaturePolicyValue::eAll},
     {"fullscreen", FeaturePolicyUtils::FeaturePolicyValue::eAll},
-    {"geolocation", FeaturePolicyUtils::FeaturePolicyValue::eAll},
+    {"geolocation", FeaturePolicyUtils::FeaturePolicyValue::eSelf},
     {"microphone", FeaturePolicyUtils::FeaturePolicyValue::eSelf},
     {"midi", FeaturePolicyUtils::FeaturePolicyValue::eSelf},
     {"payment", FeaturePolicyUtils::FeaturePolicyValue::eAll},
@@ -136,7 +138,7 @@ void FeaturePolicyUtils::ReportViolation(Document* aDocument,
     return;
   }
 
-  nsAutoCString fileName;
+  nsAutoString fileName;
   Nullable<int32_t> lineNumber;
   Nullable<int32_t> columnNumber;
   uint32_t line = 0;
@@ -152,9 +154,9 @@ void FeaturePolicyUtils::ReportViolation(Document* aDocument,
   }
 
   RefPtr<FeaturePolicyViolationReportBody> body =
-      new FeaturePolicyViolationReportBody(
-          window, aFeatureName, NS_ConvertUTF8toUTF16(fileName), lineNumber,
-          columnNumber, NS_LITERAL_STRING("enforce"));
+      new FeaturePolicyViolationReportBody(window, aFeatureName, fileName,
+                                           lineNumber, columnNumber,
+                                           NS_LITERAL_STRING("enforce"));
 
   ReportingUtils::Report(window, nsGkAtoms::featurePolicyViolation,
                          NS_LITERAL_STRING("default"),
@@ -162,4 +164,64 @@ void FeaturePolicyUtils::ReportViolation(Document* aDocument,
 }
 
 }  // namespace dom
+
+namespace ipc {
+void IPDLParamTraits<dom::FeaturePolicy*>::Write(IPC::Message* aMsg,
+                                                 IProtocol* aActor,
+                                                 dom::FeaturePolicy* aParam) {
+  if (!aParam) {
+    WriteIPDLParam(aMsg, aActor, false);
+    return;
+  }
+
+  WriteIPDLParam(aMsg, aActor, true);
+
+  dom::FeaturePolicyInfo info;
+  info.defaultOrigin() = aParam->DefaultOrigin();
+  info.selfOrigin() = aParam->GetSelfOrigin();
+  info.srcOrigin() = aParam->GetSrcOrigin();
+
+  aParam->GetDeclaredString(info.declaredString());
+  aParam->GetInheritedDeniedFeatureNames(info.inheritedDeniedFeatureNames());
+
+  WriteIPDLParam(aMsg, aActor, info);
+}
+
+bool IPDLParamTraits<dom::FeaturePolicy*>::Read(
+    const IPC::Message* aMsg, PickleIterator* aIter, IProtocol* aActor,
+    RefPtr<dom::FeaturePolicy>* aResult) {
+  *aResult = nullptr;
+  bool notnull = false;
+  if (!ReadIPDLParam(aMsg, aIter, aActor, &notnull)) {
+    return false;
+  }
+
+  if (!notnull) {
+    return true;
+  }
+
+  dom::FeaturePolicyInfo info;
+  if (!ReadIPDLParam(aMsg, aIter, aActor, &info)) {
+    return false;
+  }
+
+  // Note that we only do IPC for feature policy to inherit poicy from parent
+  // to child document. That does not need to bind feature policy with a node.
+  RefPtr<dom::FeaturePolicy> featurePolicy = new dom::FeaturePolicy(nullptr);
+  featurePolicy->SetDefaultOrigin(info.defaultOrigin());
+  featurePolicy->SetInheritedDeniedFeatureNames(
+      info.inheritedDeniedFeatureNames());
+
+  nsString declaredString = info.declaredString();
+  if (declaredString.IsEmpty() || !info.selfOrigin()) {
+    *aResult = featurePolicy.forget();
+    return true;
+  }
+  featurePolicy->SetDeclaredPolicy(nullptr, declaredString, info.selfOrigin(),
+                                   info.srcOrigin());
+  *aResult = featurePolicy.forget();
+  return true;
+}
+}  // namespace ipc
+
 }  // namespace mozilla

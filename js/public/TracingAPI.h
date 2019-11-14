@@ -24,6 +24,9 @@ class TenuredHeap;
 /** Returns a static string equivalent of |kind|. */
 JS_FRIEND_API const char* GCTraceKindToAscii(JS::TraceKind kind);
 
+/** Returns the base size in bytes of the GC thing of kind |kind|. */
+JS_FRIEND_API size_t GCTraceKindSize(JS::TraceKind kind);
+
 }  // namespace JS
 
 enum WeakMapTraceKind {
@@ -252,7 +255,8 @@ class JS_PUBLIC_API CallbackTracer : public JSTracer {
     GrayBuffering,
     VerifyTraceProtoAndIface,
     ClearEdges,
-    UnmarkGray
+    UnmarkGray,
+    Sweeping
   };
   virtual TracerKind getTracerKind() const { return TracerKind::Unspecified; }
 #endif
@@ -415,7 +419,7 @@ inline void TraceEdge(JSTracer* trc, JS::TenuredHeap<T>* thingp,
   MOZ_ASSERT(thingp);
   if (T ptr = thingp->unbarrieredGetPtr()) {
     js::gc::TraceExternalEdge(trc, &ptr, name);
-    thingp->unbarrieredSetPtr(ptr);
+    thingp->setPtr(ptr);
   }
 }
 
@@ -464,6 +468,19 @@ extern JS_PUBLIC_API void UnsafeTraceManuallyBarrieredEdge(JSTracer* trc,
                                                            T* edgep,
                                                            const char* name);
 
+// Not part of the public API, but declared here so we can use it in
+// GCPolicyAPI.h
+template <typename T>
+inline bool TraceManuallyBarrieredWeakEdge(JSTracer* trc, T* thingp,
+                                           const char* name);
+
+template <typename T>
+class BarrieredBase;
+
+template <typename T>
+inline bool TraceWeakEdge(JSTracer* trc, BarrieredBase<T>* thingp,
+                          const char* name);
+
 namespace gc {
 
 // Return true if the given edge is not live and is about to be swept.
@@ -476,6 +493,15 @@ template <typename T>
 bool IsAboutToBeFinalizedUnbarriered(T* thingp);
 
 }  // namespace gc
+
+#ifdef DEBUG
+/*
+ * Return whether the runtime is currently being destroyed, for use in
+ * assertions.
+ */
+extern JS_FRIEND_API bool RuntimeIsBeingDestroyed();
+#endif
+
 }  // namespace js
 
 #endif /* js_TracingAPI_h */

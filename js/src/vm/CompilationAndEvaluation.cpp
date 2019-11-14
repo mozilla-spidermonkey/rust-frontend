@@ -20,6 +20,7 @@
 #include "frontend/BytecodeCompilation.h"  // frontend::CompileGlobalScript
 #include "frontend/FullParseHandler.h"     // frontend::FullParseHandler
 #include "frontend/ParseContext.h"         // frontend::UsedNameTracker
+#include "frontend/ParseInfo.h"            // for frontened::ParseInfo
 #include "frontend/Parser.h"       // frontend::Parser, frontend::ParseGoal
 #include "js/CharacterEncoding.h"  // JS::UTF8Chars, JS::UTF8CharsToNewTwoByteCharsZ
 #include "js/RootingAPI.h"         // JS::Rooted
@@ -34,7 +35,7 @@
 #include "vm/JSContext.h"          // JSContext
 
 #include "debugger/DebugAPI-inl.h"  // js::DebugAPI
-#include "vm/JSContext-inl.h"  // JSContext::check
+#include "vm/JSContext-inl.h"       // JSContext::check
 
 using mozilla::Utf8Unit;
 
@@ -65,7 +66,10 @@ static JSScript* CompileSourceBuffer(JSContext* cx,
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
 
-  frontend::GlobalScriptInfo info(cx, options, scopeKind);
+  LifoAllocScope allocScope(&cx->tempLifoAlloc());
+  frontend::ParseInfo parseInfo(cx, allocScope);
+
+  frontend::GlobalScriptInfo info(cx, parseInfo, options, scopeKind);
   return frontend::CompileGlobalScript(info, srcBuf);
 }
 
@@ -216,11 +220,12 @@ JS_PUBLIC_API bool JS_Utf8BufferIsCompilableUnit(JSContext* cx,
   using frontend::CreateScriptSourceObject;
   using frontend::FullParseHandler;
   using frontend::ParseGoal;
+  using frontend::ParseInfo;
   using frontend::Parser;
-  using frontend::UsedNameTracker;
 
   CompileOptions options(cx);
-  UsedNameTracker usedNames(cx);
+  LifoAllocScope allocScope(&cx->tempLifoAlloc());
+  ParseInfo parseInfo(cx, allocScope);
 
   Rooted<ScriptSourceObject*> sourceObject(cx);
   sourceObject = CreateScriptSourceObject(cx, options, mozilla::Nothing());
@@ -229,10 +234,10 @@ JS_PUBLIC_API bool JS_Utf8BufferIsCompilableUnit(JSContext* cx,
   }
 
   JS::AutoSuppressWarningReporter suppressWarnings(cx);
-  Parser<FullParseHandler, char16_t> parser(
-      cx, cx->tempLifoAlloc(), options, chars.get(), length,
-      /* foldConstants = */ true, usedNames, nullptr, nullptr, sourceObject,
-      ParseGoal::Script);
+  Parser<FullParseHandler, char16_t> parser(cx, options, chars.get(), length,
+                                            /* foldConstants = */ true,
+                                            parseInfo, nullptr, nullptr,
+                                            sourceObject, ParseGoal::Script);
   if (!parser.checkOptions() || !parser.parse()) {
     // We ran into an error. If it was because we ran out of source, we
     // return false so our caller knows to try to collect more buffered
@@ -544,7 +549,10 @@ static bool EvaluateSourceBuffer(JSContext* cx, ScopeKind scopeKind,
 
   RootedScript script(cx);
   {
-    frontend::GlobalScriptInfo info(cx, options, scopeKind);
+    LifoAllocScope allocScope(&cx->tempLifoAlloc());
+    frontend::ParseInfo parseInfo(cx, allocScope);
+
+    frontend::GlobalScriptInfo info(cx, parseInfo, options, scopeKind);
     script = frontend::CompileGlobalScript(info, srcBuf);
     if (!script) {
       return false;

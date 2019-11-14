@@ -1,5 +1,3 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -8,7 +6,7 @@
 
 var { Ci } = require("chrome");
 var Services = require("Services");
-var { DebuggerServer } = require("devtools/server/main");
+var { DebuggerServer } = require("devtools/server/debugger-server");
 var { ActorRegistry } = require("devtools/server/actors/utils/actor-registry");
 var DevToolsUtils = require("devtools/shared/DevToolsUtils");
 
@@ -26,8 +24,8 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
-  "WebExtensionActor",
-  "devtools/server/actors/addon/webextension",
+  "WebExtensionDescriptorActor",
+  "devtools/server/actors/descriptors/webextension",
   true
 );
 loader.lazyRequireGetter(
@@ -291,12 +289,12 @@ BrowserTabList.prototype._getChildren = function(window) {
 };
 
 BrowserTabList.prototype.getList = function(browserActorOptions) {
-  const topXULWindow = Services.wm.getMostRecentWindow(
+  const topAppWindow = Services.wm.getMostRecentWindow(
     DebuggerServer.chromeWindowType
   );
   let selectedBrowser = null;
-  if (topXULWindow) {
-    selectedBrowser = this._getSelectedBrowser(topXULWindow);
+  if (topAppWindow) {
+    selectedBrowser = this._getSelectedBrowser(topAppWindow);
   }
 
   // As a sanity check, make sure all the actors presently in our map get
@@ -418,11 +416,11 @@ BrowserTabList.prototype.getTab = function(
     });
   }
 
-  const topXULWindow = Services.wm.getMostRecentWindow(
+  const topAppWindow = Services.wm.getMostRecentWindow(
     DebuggerServer.chromeWindowType
   );
-  if (topXULWindow) {
-    const selectedBrowser = this._getSelectedBrowser(topXULWindow);
+  if (topAppWindow) {
+    const selectedBrowser = this._getSelectedBrowser(topAppWindow);
     return this._getActorForBrowser(selectedBrowser, browserActorOptions);
   }
   return Promise.reject({
@@ -783,7 +781,7 @@ BrowserTabList.prototype.onOpenWindow = DevToolsUtils.makeInfallible(function(
 BrowserTabList.prototype.onCloseWindow = DevToolsUtils.makeInfallible(function(
   window
 ) {
-  if (window instanceof Ci.nsIXULWindow) {
+  if (window instanceof Ci.nsIAppWindow) {
     window = window.docShell.domWindow;
   }
 
@@ -826,7 +824,7 @@ BrowserAddonList.prototype.getList = async function() {
   for (const addon of addons) {
     let actor = this._actorByAddonId.get(addon.id);
     if (!actor) {
-      actor = new WebExtensionActor(this._connection, addon);
+      actor = new WebExtensionDescriptorActor(this._connection, addon);
       this._actorByAddonId.set(addon.id, actor);
     }
   }

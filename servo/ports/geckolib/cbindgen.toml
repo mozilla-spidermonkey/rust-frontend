@@ -48,6 +48,8 @@ bitflags = true
 derive_helper_methods = true
 derive_const_casts = true
 derive_tagged_enum_destructor = true
+derive_tagged_enum_copy_constructor = true
+private_default_tagged_enum_constructor = true
 cast_assert_name = "MOZ_ASSERT"
 
 [export]
@@ -67,7 +69,8 @@ include = [
   "ComputedFontWeightRange",
   "ComputedTimingFunction",
   "CursorKind",
-  "Display",
+  "DisplayOutside",
+  "DisplayInside",
   "DisplayMode",
   "PrefersColorScheme",
   "ExtremumLength",
@@ -103,6 +106,7 @@ include = [
   "LengthOrAuto",
   "NonNegativeLengthOrAuto",
   "TextDecorationSkipInk",
+  "TextDecorationLength",
   "Rect",
   "IntersectionObserverRootMargin",
   "Size",
@@ -161,8 +165,19 @@ include = [
   "GridLine",
   "TrackSize",
   "TrackBreadth",
+  "ImplicitGridTracks",
   "SVGPaint",
   "SVGPaintKind",
+  "GridTemplateComponent",
+  "TextEmphasisStyle",
+  "VariantAlternatesList",
+  "PaintOrder",
+  "SVGPaintOrder",
+  "ClipRectOrAuto",
+  "CounterSetOrReset",
+  "CounterIncrement",
+  "WritingMode",
+  "VecU8",
 ]
 item_types = ["enums", "structs", "typedefs", "functions", "constants"]
 renaming_overrides_prefixing = true
@@ -181,6 +196,7 @@ renaming_overrides_prefixing = true
 "nsTArray" = "nsTArray"
 "nsPresContext" = "nsPresContext"
 "ComputedTiming" = "ComputedTiming"
+"CountedUnknownProperty" = "CountedUnknownProperty"
 "RefPtr" = "RefPtr"
 "nsCSSPropertyID" = "nsCSSPropertyID"
 "nsCSSPropertyIDSet" = "nsCSSPropertyIDSet"
@@ -320,15 +336,6 @@ renaming_overrides_prefixing = true
 "TextTransform" = """
   static inline StyleTextTransform None();
   inline bool IsNone() const;
-"""
-
-"Quotes" = """
- private:
-  // Private default constructor without initialization so that the helper
-  // constructor functions still work as expected. They take care of
-  // initializing the fields properly.
-  StyleQuotes() {}
- public:
 """
 
 # TODO(emilio): Add hooks to cbindgen to be able to generate MOZ_MUST_USE_TYPE
@@ -510,45 +517,20 @@ renaming_overrides_prefixing = true
   bool HasPercent() const;
 """
 
-"GenericTransformOperation" = """
- private:
-  // Private default constructor without initialization so that the helper
-  // constructor functions still work as expected. They take care of
-  // initializing the fields properly.
-  StyleGenericTransformOperation() {}
- public:
-"""
-
-"GenericUrlOrNone" = """
- private:
-  // Private default constructor without initialization so that the helper
-  // constructor functions still work as expected. They take care of
-  // initializing the fields properly.
-  StyleGenericUrlOrNone() {}
- public:
-"""
 "Angle" = """
   inline static StyleAngle Zero();
   inline float ToDegrees() const;
   inline double ToRadians() const;
+  StyleAngle operator+(const StyleAngle& aAngle) const {
+    return StyleAngle{_0 + aAngle._0};
+  }
+  StyleAngle operator-(const StyleAngle& aAngle) const {
+    return StyleAngle{_0 - aAngle._0};
+  }
 """
 
-"OffsetPath" = """
- private:
-  // Private default constructor without initialization so that the helper
-  // constructor functions still work as expected. They take care of
-  // initializing the fields properly.
-  StyleOffsetPath() {}
- public:
-"""
-
-"TextOverflowSide" = """
- private:
-  // Private default constructor without initialization so that the helper
-  // constructor functions still work as expected. They take care of
-  // initializing the fields properly.
-  StyleTextOverflowSide() {}
- public:
+"CoordPair" = """
+  explicit StyleCoordPair(const gfx::Point& aPoint): _0(aPoint.x), _1(aPoint.y) {}
 """
 
 "TextOverflow" = """
@@ -599,7 +581,7 @@ renaming_overrides_prefixing = true
 
   inline bool IsLocalRef() const;
   inline bool HasRef() const;
-  inline CORSMode CorsMode() const;
+  inline StyleCorsMode CorsMode() const;
   already_AddRefed<nsIURI> ResolveLocalRef(nsIURI* aBase) const;
   already_AddRefed<nsIURI> ResolveLocalRef(const nsIContent* aContent) const;
   imgRequestProxy* LoadImage(mozilla::dom::Document&);
@@ -607,15 +589,6 @@ renaming_overrides_prefixing = true
 
 "GenericGradient" = """
   bool IsOpaque() const;
-"""
-
-"GridTemplateAreas" = """
- private:
-  // Private default constructor without initialization so that the helper
-  // constructor functions still work as expected. They take care of
-  // initializing the fields properly.
-  StyleGridTemplateAreas() {}
- public:
 """
 
 "GenericGridLine" = """
@@ -627,40 +600,50 @@ renaming_overrides_prefixing = true
 """
 
 "GenericTrackBreadth" = """
- private:
-  // Private default constructor without initialization so that the helper
-  // constructor functions still work as expected. They take care of
-  // initializing the fields properly.
-  StyleGenericTrackBreadth() {}
- public:
   inline bool HasPercent() const;
 """
 
 "GenericTrackSize" = """
- private:
-  // Private default constructor without initialization so that the helper
-  // constructor functions still work as expected. They take care of
-  // initializing the fields properly.
-  StyleGenericTrackSize() {}
- public:
+  // Implemented in nsGridContainerFrame.cpp
   inline const StyleGenericTrackBreadth<L>& GetMin() const;
   inline const StyleGenericTrackBreadth<L>& GetMax() const;
 """
 
-"GenericSVGPaintKind" = """
- private:
-  // Private default constructor without initialization so that the helper
-  // constructor functions still work as expected. They take care of
-  // initializing the fields properly.
-  StyleGenericSVGPaintKind() {}
- public:
+"GenericGridTemplateComponent" = """
+  inline Maybe<size_t> RepeatAutoIndex() const;
+  inline const StyleGenericTrackRepeat<L, I>* GetRepeatAutoValue() const;
+  inline bool HasRepeatAuto() const;
+  inline Span<const StyleOwnedSlice<StyleCustomIdent>> LineNameLists(bool aIsSubgrid) const;
+  inline Span<const StyleGenericTrackListValue<L, I>> TrackListValues() const;
 """
 
-"GenericSVGPaintFallback" = """
- private:
-  // Private default constructor without initialization so that the helper
-  // constructor functions still work as expected. They take care of
-  // initializing the fields properly.
-  StyleGenericSVGPaintFallback() {}
- public:
+"GenericClipRect" = """
+  // Get the layout rect, replacing auto right / bottom values for aAutoSize.
+  inline nsRect ToLayoutRect(nscoord aAutoSize = NS_MAXSIZE) const;
+"""
+
+"WritingMode" = """
+  StyleWritingMode operator^(const StyleWritingMode& other) const {
+    return {static_cast<decltype(bits)>(this->bits ^ other.bits)};
+  }
+  StyleWritingMode& operator^=(const StyleWritingMode& other) {
+    *this = (*this ^ other);
+    return *this;
+  }
+"""
+
+"VecU8" = """
+  StyleVecU8(): data(nullptr), length(0), capacity(0) {}
+  StyleVecU8(const StyleVecU8& aOther) = delete;
+  StyleVecU8(StyleVecU8&& aOther)
+    : data(aOther.data), length(aOther.length), capacity(aOther.capacity) {
+    aOther.data = nullptr;
+    aOther.length = 0;
+    aOther.capacity = 0;
+  }
+  StyleVecU8& operator=(StyleVecU8&& aOther) = delete;
+  StyleVecU8& operator=(const StyleVecU8& aOther) = delete;
+
+  // This type is not safe to return by value. Should be careful.
+  inline ~StyleVecU8();
 """

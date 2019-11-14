@@ -202,6 +202,10 @@ function OnRefTestLoad(win)
         doc.firstChild.remove();
       }
       doc.appendChild(g.browser);
+      // TODO Bug 1156817: reftests don't have most of GeckoView infra so we
+      // can't register this actor
+      ChromeUtils.unregisterWindowActor("LoadURIDelegate");
+      ChromeUtils.unregisterWindowActor("WebBrowserChrome");
     } else {
       document.getElementById("reftest-window").appendChild(g.browser);
     }
@@ -792,6 +796,9 @@ function DoneTests()
         }
 
         function onStopped() {
+            if (g.logFile) {
+                g.logFile.close()
+            }
             let appStartup = Cc["@mozilla.org/toolkit/app-startup;1"].getService(Ci.nsIAppStartup);
             appStartup.quit(Ci.nsIAppStartup.eForceQuit);
         }
@@ -1384,6 +1391,13 @@ function DoAssertionCheck(numAsserts)
         var minAsserts = g.urls[0].minAsserts;
         var maxAsserts = g.urls[0].maxAsserts;
 
+        if (numAsserts < minAsserts) {
+            ++g.testResults.AssertionUnexpectedFixed;
+        } else if (numAsserts > maxAsserts) {
+            ++g.testResults.AssertionUnexpected;
+        } else if (numAsserts != 0) {
+            ++g.testResults.AssertionKnown;
+        }
         logger.assertionCount(g.urls[0].identifier, numAsserts, minAsserts, maxAsserts);
     }
 

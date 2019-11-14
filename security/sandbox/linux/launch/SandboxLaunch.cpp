@@ -39,6 +39,8 @@
 #include "prenv.h"
 #include "sandbox/linux/system_headers/linux_syscalls.h"
 
+#include "mozilla/StaticPrefs_media.h"
+
 #ifdef MOZ_X11
 #  ifndef MOZ_WIDGET_GTK
 #    error "Unknown toolkit"
@@ -100,14 +102,28 @@ static bool IsDisplayLocal() {
     //
     // Unfortunately, the Xorg client libraries prefer the abstract
     // addresses, so this isn't directly detectable by inspecting the
-    // parent process's socket.  Instead, this checks for the
-    // directory the sockets are stored in, which typically won't
-    // exist in a container with a private /tmp that isn't running its
-    // own X server.
-    if (access("/tmp/.X11-unix", X_OK) != 0) {
-      NS_ERROR(
-          "/tmp/.X11-unix is inaccessible; can't isolate network"
-          " namespace in content processes");
+    // parent process's socket.  Instead, parse the DISPLAY env var
+    // (which was updated if necessary in nsAppRunner.cpp) to get the
+    // display number and construct the socket path, falling back to
+    // testing the directory in case that doesn't work.  (See bug
+    // 1565972 and bug 1559368 for cases where we need to test the
+    // specific socket.)
+    const char* const displayStr = PR_GetEnv("DISPLAY");
+    nsAutoCString socketPath("/tmp/.X11-unix");
+    int accessFlags = X_OK;
+    int displayNum;
+    // sscanf ignores trailing text, so display names with a screen
+    // number (e.g., ":0.2") will parse correctly.
+    if (displayStr && (sscanf(displayStr, ":%d", &displayNum) == 1 ||
+                       sscanf(displayStr, "unix:%d", &displayNum) == 1)) {
+      socketPath.AppendPrintf("/X%d", displayNum);
+      accessFlags = R_OK | W_OK;
+    }
+    if (access(socketPath.get(), accessFlags) != 0) {
+      SANDBOX_LOG_ERROR(
+          "%s is inaccessible (%s); can't isolate network namespace in"
+          " content processes",
+          socketPath.get(), strerror(errno));
       return false;
     }
   }
@@ -148,7 +164,7 @@ static bool ContentNeedsSysVIPC() {
   // The ALSA dmix plugin uses SysV semaphores and shared memory to
   // coordinate software mixing.
 #ifdef MOZ_ALSA
-  if (!Preferences::GetBool("media.cubeb.sandbox")) {
+  if (!StaticPrefs::media_cubeb_sandbox()) {
     return true;
   }
 #endif

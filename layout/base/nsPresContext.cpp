@@ -10,6 +10,9 @@
 #include "nsPresContextInlines.h"
 
 #include "mozilla/ArrayUtils.h"
+#if defined(MOZ_WIDGET_ANDROID)
+#  include "mozilla/AsyncEventDispatcher.h"
+#endif
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Encoding.h"
 #include "mozilla/EventDispatcher.h"
@@ -76,6 +79,8 @@
 #include "nsFontFaceUtils.h"
 #include "nsLayoutStylesheetCache.h"
 #include "mozilla/ServoBindings.h"
+#include "mozilla/StaticPrefs_layout.h"
+#include "mozilla/StaticPrefs_zoom.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
 #include "mozilla/Telemetry.h"
@@ -129,6 +134,16 @@ bool nsPresContext::IsDOMPaintEventPending() {
 }
 
 void nsPresContext::ForceReflowForFontInfoUpdate() {
+  // Flush the device context's font cache, so that we won't risk getting
+  // stale nsFontMetrics objects from it.
+  DeviceContext()->FlushFontCache();
+
+  // If there's a user font set, discard any src:local() faces it may have
+  // loaded because their font entries may no longer be valid.
+  if (Document()->GetFonts()) {
+    Document()->GetFonts()->GetUserFontSet()->ForgetLocalFaces();
+  }
+
   // We can trigger reflow by pretending a font.* preference has changed;
   // this is the same mechanism as gfxPlatform::ForceGlobalReflow() uses
   // if new fonts are installed during the session, for example.
@@ -255,12 +270,10 @@ void nsPresContext::Destroy() {
   }
 
   // Unregister preference callbacks
-  Preferences::UnregisterPrefixCallbacks(
-      PREF_CHANGE_METHOD(nsPresContext::PreferenceChanged),
-      gPrefixCallbackPrefs, this);
-  Preferences::UnregisterCallbacks(
-      PREF_CHANGE_METHOD(nsPresContext::PreferenceChanged), gExactCallbackPrefs,
-      this);
+  Preferences::UnregisterPrefixCallbacks(nsPresContext::PreferenceChanged,
+                                         gPrefixCallbackPrefs, this);
+  Preferences::UnregisterCallbacks(nsPresContext::PreferenceChanged,
+                                   gExactCallbackPrefs, this);
 
   mRefreshDriver = nullptr;
 }
@@ -329,15 +342,6 @@ bool nsPresContext::IsChrome() const {
   return Document()->IsInChromeDocShell();
 }
 
-bool nsPresContext::IsChromeOriginImage() const {
-  return Document()->IsBeingUsedAsImage() &&
-         Document()->IsDocumentURISchemeChrome();
-}
-
-void nsPresContext::GetDocumentColorPreferences() {
-  PreferenceSheet::EnsureInitialized();
-}
-
 void nsPresContext::GetUserPreferences() {
   if (!GetPresShell()) {
     // No presshell means nothing to do here.  We'll do this when we
@@ -348,8 +352,7 @@ void nsPresContext::GetUserPreferences() {
   mAutoQualityMinFontSizePixelsPref =
       Preferences::GetInt("browser.display.auto_quality_min_font_size");
 
-  // * document colors
-  GetDocumentColorPreferences();
+  PreferenceSheet::EnsureInitialized();
 
   mSendAfterPaintToContent = Preferences::GetBool(
       "dom.send_after_paint_to_content", mSendAfterPaintToContent);
@@ -438,6 +441,11 @@ void nsPresContext::AppUnitsPerDevPixelChanged() {
   // We would also have to look at all of our child subdocuments but the
   // InvalidatePaintedLayers call above calls InvalidateFrameSubtree which
   // would invalidate all subdocument frames already.
+}
+
+// static
+void nsPresContext::PreferenceChanged(const char* aPrefName, void* aSelf) {
+  static_cast<nsPresContext*>(aSelf)->PreferenceChanged(aPrefName);
 }
 
 void nsPresContext::PreferenceChanged(const char* aPrefName) {
@@ -644,12 +652,10 @@ nsresult nsPresContext::Init(nsDeviceContext* aDeviceContext) {
   }
 
   // Register callbacks so we're notified when the preferences change
-  Preferences::RegisterPrefixCallbacks(
-      PREF_CHANGE_METHOD(nsPresContext::PreferenceChanged),
-      gPrefixCallbackPrefs, this);
-  Preferences::RegisterCallbacks(
-      PREF_CHANGE_METHOD(nsPresContext::PreferenceChanged), gExactCallbackPrefs,
-      this);
+  Preferences::RegisterPrefixCallbacks(nsPresContext::PreferenceChanged,
+                                       gPrefixCallbackPrefs, this);
+  Preferences::RegisterCallbacks(nsPresContext::PreferenceChanged,
+                                 gExactCallbackPrefs, this);
 
   nsresult rv = mEventManager->Init();
   NS_ENSURE_SUCCESS(rv, rv);
@@ -687,12 +693,7 @@ void nsPresContext::AttachPresShell(mozilla::PresShell* aPresShell) {
   nsIURI* docURI = doc->GetDocumentURI();
 
   if (IsDynamic() && docURI) {
-    bool isChrome = false;
-    bool isRes = false;
-    docURI->SchemeIs("chrome", &isChrome);
-    docURI->SchemeIs("resource", &isRes);
-
-    if (!isChrome && !isRes)
+    if (!docURI->SchemeIs("chrome") && !docURI->SchemeIs("resource"))
       mImageAnimationMode = mImageAnimationModePref;
     else
       mImageAnimationMode = imgIContainer::kNormalAnimMode;
@@ -817,12 +818,14 @@ nsPresContext* nsPresContext::GetToplevelContentDocumentPresContext() {
 
 nsIWidget* nsPresContext::GetNearestWidget(nsPoint* aOffset) {
   NS_ENSURE_TRUE(mPresShell, nullptr);
-  nsIFrame* frame = mPresShell->GetRootFrame();
-  NS_ENSURE_TRUE(frame, nullptr);
-  return frame->GetView()->GetNearestWidget(aOffset);
+  nsViewManager* vm = mPresShell->GetViewManager();
+  NS_ENSURE_TRUE(vm, nullptr);
+  nsView* rootView = vm->GetRootView();
+  NS_ENSURE_TRUE(rootView, nullptr);
+  return rootView->GetNearestWidget(aOffset);
 }
 
-nsIWidget* nsPresContext::GetRootWidget() {
+nsIWidget* nsPresContext::GetRootWidget() const {
   NS_ENSURE_TRUE(mPresShell, nullptr);
   nsViewManager* vm = mPresShell->GetViewManager();
   if (!vm) {
@@ -924,8 +927,8 @@ void nsPresContext::SetImageAnimationMode(uint16_t aMode) {
 
 void nsPresContext::UpdateEffectiveTextZoom() {
   float newZoom = mSystemFontScale * mTextZoom;
-  float minZoom = nsLayoutUtils::MinZoom();
-  float maxZoom = nsLayoutUtils::MaxZoom();
+  float minZoom = StaticPrefs::zoom_minPercent() / 100.0f;
+  float maxZoom = StaticPrefs::zoom_maxPercent() / 100.0f;
 
   if (newZoom < minZoom) {
     newZoom = minZoom;
@@ -1022,40 +1025,52 @@ gfxSize nsPresContext::ScreenSizeInchesForFontInflation(bool* aChanged) {
   return deviceSizeInches;
 }
 
-static bool CheckOverflow(ComputedStyle* aComputedStyle,
+static bool CheckOverflow(const ComputedStyle* aComputedStyle,
                           ScrollStyles* aStyles) {
+  // If they're not styled yet, we'll get around to it when constructing frames
+  // for the element.
+  if (!aComputedStyle) {
+    return false;
+  }
   const nsStyleDisplay* display = aComputedStyle->StyleDisplay();
-  if (display->mOverflowX == StyleOverflow::Visible &&
-      display->mOverscrollBehaviorX == StyleOverscrollBehavior::Auto &&
-      display->mOverscrollBehaviorY == StyleOverscrollBehavior::Auto &&
-      display->mScrollSnapType.strictness == StyleScrollSnapStrictness::None) {
+
+  // If they will generate no box, just don't.
+  if (display->mDisplay == StyleDisplay::None ||
+      display->mDisplay == StyleDisplay::Contents) {
     return false;
   }
 
-  WritingMode writingMode = WritingMode(aComputedStyle);
+  if (display->mOverflowX == StyleOverflow::Visible) {
+    MOZ_ASSERT(display->mOverflowY == StyleOverflow::Visible);
+    return false;
+  }
+
   if (display->mOverflowX == StyleOverflow::MozHiddenUnscrollable) {
-    *aStyles = ScrollStyles(writingMode, StyleOverflow::Hidden,
-                            StyleOverflow::Hidden, display);
+    *aStyles = ScrollStyles(StyleOverflow::Hidden, StyleOverflow::Hidden);
   } else {
-    *aStyles = ScrollStyles(writingMode, display);
+    *aStyles = ScrollStyles(*display);
   }
   return true;
 }
 
 // https://drafts.csswg.org/css-overflow/#overflow-propagation
+//
+// NOTE(emilio): We may need to use out-of-date styles for this, since this is
+// called from nsCSSFrameConstructor::ContentRemoved. We could refactor this a
+// bit to avoid doing that, and also fix correctness issues (we don't invalidate
+// properly when we insert a body element and there is a previous one, for
+// example).
 static Element* GetPropagatedScrollStylesForViewport(
     nsPresContext* aPresContext, ScrollStyles* aStyles) {
   Document* document = aPresContext->Document();
   Element* docElement = document->GetRootElement();
-
   // docElement might be null if we're doing this after removing it.
   if (!docElement) {
     return nullptr;
   }
 
   // Check the style on the document root element
-  ServoStyleSet* styleSet = aPresContext->StyleSet();
-  RefPtr<ComputedStyle> rootStyle = styleSet->ResolveStyleLazily(*docElement);
+  const auto* rootStyle = Servo_Element_GetMaybeOutOfDateStyle(docElement);
   if (CheckOverflow(rootStyle, aStyles)) {
     // tell caller we stole the overflow style from the root element
     return docElement;
@@ -1072,20 +1087,13 @@ static Element* GetPropagatedScrollStylesForViewport(
 
   Element* bodyElement = document->AsHTMLDocument()->GetBodyElement();
   if (!bodyElement) {
-    // No body, nothing to do here.
     return nullptr;
   }
 
   MOZ_ASSERT(bodyElement->IsHTMLElement(nsGkAtoms::body),
              "GetBodyElement returned something bogus");
 
-  // FIXME(emilio): We could make these just a ResolveServoStyle call if we
-  // looked at `display` on the root, and updated styles properly before doing
-  // this on first construction:
-  //
-  // https://github.com/w3c/csswg-drafts/issues/3779
-  RefPtr<ComputedStyle> bodyStyle = styleSet->ResolveStyleLazily(*bodyElement);
-
+  const auto* bodyStyle = Servo_Element_GetMaybeOutOfDateStyle(bodyElement);
   if (CheckOverflow(bodyStyle, aStyles)) {
     // tell caller we stole the overflow style from the body element
     return bodyElement;
@@ -1168,10 +1176,6 @@ void nsPresContext::SetBidi(uint32_t aSource) {
 }
 
 uint32_t nsPresContext::GetBidi() const { return Document()->GetBidiOptions(); }
-
-bool nsPresContext::IsTopLevelWindowInactive() {
-  return Document()->IsTopLevelWindowInactive();
-}
 
 void nsPresContext::RecordInteractionTime(InteractionType aType,
                                           const TimeStamp& aTimeStamp) {
@@ -1334,11 +1338,9 @@ void nsPresContext::SysColorChangedInternal() {
   // Invalidate cached '-moz-windows-accent-color-applies' media query:
   RefreshSystemMetrics();
 
+  // Reset default background and foreground colors for the document since they
+  // may be using system colors
   PreferenceSheet::Refresh();
-
-  // Reset default background and foreground colors for the document since
-  // they may be using system colors
-  GetDocumentColorPreferences();
 
   // The system color values are computed to colors in the style data,
   // so normal style data comparison is sufficient here.
@@ -2236,7 +2238,7 @@ void nsPresContext::ReflowStarted(bool aInterruptible) {
   // We don't support interrupting in paginated contexts, since page
   // sequences only handle initial reflow
   mInterruptsEnabled = aInterruptible && !IsPaginated() &&
-                       nsLayoutUtils::InterruptibleReflowEnabled();
+                       StaticPrefs::layout_interruptible_reflow_enabled();
 
   // Don't set mHasPendingInterrupt based on HavePendingInputEvent() here.  If
   // we ever change that, then we need to update the code in
@@ -2367,6 +2369,12 @@ void nsPresContext::NotifyContentfulPaint() {
       if (nsRootPresContext* rootPresContext = GetRootPresContext()) {
         mFirstContentfulPaintTransactionId =
             Some(rootPresContext->mRefreshDriver->LastTransactionId().Next());
+#if defined(MOZ_WIDGET_ANDROID)
+        (new AsyncEventDispatcher(mDocument,
+                                  NS_LITERAL_STRING("MozFirstContentfulPaint"),
+                                  CanBubble::eYes, ChromeOnlyDispatch::eYes))
+            ->PostDOMEvent();
+#endif
       }
     }
   }

@@ -20,6 +20,8 @@
 #include "jit/JitFrames.h"
 #include "jit/MacroAssembler.h"
 #include "jit/MoveEmitter.h"
+#include "util/Memory.h"
+#include "vm/JitActivation.h"  // js::jit::JitActivation
 
 #include "jit/MacroAssembler-inl.h"
 
@@ -3980,15 +3982,6 @@ void MacroAssemblerARMCompat::truncf(FloatRegister input, Register output,
   bind(&fin);
 }
 
-CodeOffsetJump MacroAssemblerARMCompat::jumpWithPatch(RepatchLabel* label) {
-  ARMBuffer::PoolEntry pe;
-  BufferOffset bo = as_BranchPool(0xdeadbeef, label, LabelDoc(), &pe);
-  // Fill in a new CodeOffset with both the load and the pool entry that the
-  // instruction loads from.
-  CodeOffsetJump ret(bo.getOffset(), pe.index());
-  return ret;
-}
-
 void MacroAssemblerARMCompat::profilerEnterFrame(Register framePtr,
                                                  Register scratch) {
   asMasm().loadJSContext(scratch);
@@ -4301,13 +4294,11 @@ void MacroAssembler::patchFarJump(CodeOffset farJump, uint32_t targetOffset) {
   *u32 = (targetOffset - addOffset) - 8;
 }
 
-CodeOffset MacroAssembler::nopPatchableToCall(const wasm::CallSiteDesc& desc) {
+CodeOffset MacroAssembler::nopPatchableToCall() {
   AutoForbidPoolsAndNops afp(this,
                              /* max number of instructions in scope = */ 1);
-  CodeOffset offset(currentOffset());
   ma_nop();
-  append(desc, CodeOffset(currentOffset()));
-  return offset;
+  return CodeOffset(currentOffset());
 }
 
 void MacroAssembler::patchNopToCall(uint8_t* call, uint8_t* target) {
@@ -5745,6 +5736,15 @@ void MacroAssembler::flexibleDivMod32(Register rhs, Register lhsOutput,
   }
 }
 
+CodeOffset MacroAssembler::moveNearAddressWithPatch(Register dest) {
+  return movWithPatch(ImmPtr(nullptr), dest);
+}
+
+void MacroAssembler::patchNearAddressMove(CodeLocationLabel loc,
+                                          CodeLocationLabel target) {
+  PatchDataWithValueCheck(loc, ImmPtr(target.raw()), ImmPtr(nullptr));
+}
+
 // ========================================================================
 // Spectre Mitigations.
 
@@ -5919,7 +5919,7 @@ void MacroAssemblerARM::wasmLoadImpl(const wasm::MemoryAccessDesc& access,
   MOZ_ASSERT(ptr == ptrScratch);
 
   uint32_t offset = access.offset();
-  MOZ_ASSERT(offset < wasm::OffsetGuardLimit);
+  MOZ_ASSERT(offset < wasm::MaxOffsetGuardLimit);
 
   Scalar::Type type = access.type();
 
@@ -5990,7 +5990,7 @@ void MacroAssemblerARM::wasmStoreImpl(const wasm::MemoryAccessDesc& access,
   MOZ_ASSERT(ptr == ptrScratch);
 
   uint32_t offset = access.offset();
-  MOZ_ASSERT(offset < wasm::OffsetGuardLimit);
+  MOZ_ASSERT(offset < wasm::MaxOffsetGuardLimit);
 
   unsigned byteSize = access.byteSize();
   Scalar::Type type = access.type();
@@ -6051,7 +6051,7 @@ void MacroAssemblerARM::wasmUnalignedLoadImpl(
   MOZ_ASSERT(tmp != ptr);
 
   uint32_t offset = access.offset();
-  MOZ_ASSERT(offset < wasm::OffsetGuardLimit);
+  MOZ_ASSERT(offset < wasm::MaxOffsetGuardLimit);
 
   if (offset) {
     ScratchRegisterScope scratch(asMasm());
@@ -6143,7 +6143,7 @@ void MacroAssemblerARM::wasmUnalignedStoreImpl(
                 valOrTmp != val64.high && valOrTmp != val64.low);
 
   uint32_t offset = access.offset();
-  MOZ_ASSERT(offset < wasm::OffsetGuardLimit);
+  MOZ_ASSERT(offset < wasm::MaxOffsetGuardLimit);
 
   unsigned byteSize = access.byteSize();
   MOZ_ASSERT(byteSize == 8 || byteSize == 4 || byteSize == 2);

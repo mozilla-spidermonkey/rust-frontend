@@ -15,6 +15,8 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/TemplateLib.h"
 
+#include <algorithm>
+
 #include "jsapi.h"
 #include "jsfriendapi.h"
 #include "jstypes.h"
@@ -110,7 +112,7 @@
  * a single BaseShape.
  */
 
-MOZ_ALWAYS_INLINE size_t JSSLOT_FREE(const js::Class* clasp) {
+MOZ_ALWAYS_INLINE size_t JSSLOT_FREE(const JSClass* clasp) {
   // Proxy classes have reserved slots, but proxies manage their own slot
   // layout.
   MOZ_ASSERT(!clasp->isProxy());
@@ -207,8 +209,8 @@ typedef JSGetterOp GetterOp;
 typedef JSSetterOp SetterOp;
 
 /* Limit on the number of slotful properties in an object. */
-static const uint32_t SHAPE_INVALID_SLOT = JS_BIT(24) - 1;
-static const uint32_t SHAPE_MAXIMUM_SLOT = JS_BIT(24) - 2;
+static const uint32_t SHAPE_INVALID_SLOT = Bit(24) - 1;
+static const uint32_t SHAPE_MAXIMUM_SLOT = Bit(24) - 2;
 
 enum class MaybeAdding { Adding = true, NotAdding = false };
 
@@ -337,7 +339,7 @@ class ShapeTable {
   // This value is low because it's common for a ShapeTable to be created
   // with an entryCount of zero.
   static const uint32_t MIN_SIZE_LOG2 = 2;
-  static const uint32_t MIN_SIZE = JS_BIT(MIN_SIZE_LOG2);
+  static const uint32_t MIN_SIZE = Bit(MIN_SIZE_LOG2);
 
   uint32_t hashShift_; /* multiplicative hash shift */
 
@@ -415,7 +417,7 @@ class ShapeTable {
   }
 
   // By definition, hashShift = HASH_BITS - log2(capacity).
-  uint32_t capacity() const { return JS_BIT(HASH_BITS - hashShift_); }
+  uint32_t capacity() const { return Bit(HASH_BITS - hashShift_); }
 
   // Whether we need to grow.  We want to do this if the load factor
   // is >= 0.75
@@ -515,9 +517,9 @@ class ShapeCachePtr {
     p = icptr;
   }
 
-  void destroy(FreeOp* fop, BaseShape* base);
+  void destroy(JSFreeOp* fop, BaseShape* base);
 
-  void maybePurgeCache(FreeOp* fop, BaseShape* base);
+  void maybePurgeCache(JSFreeOp* fop, BaseShape* base);
 
   void trace(JSTracer* trc);
 
@@ -654,10 +656,10 @@ class BaseShape : public gc::TenuredCell {
   };
 
  private:
-  const Class* clasp_; /* Class of referring object. */
-  uint32_t flags;      /* Vector of above flags. */
-  uint32_t slotSpan_;  /* Object slot span for BaseShapes at
-                        * dictionary last properties. */
+  const JSClass* clasp_; /* Class of referring object. */
+  uint32_t flags;        /* Vector of above flags. */
+  uint32_t slotSpan_;    /* Object slot span for BaseShapes at
+                          * dictionary last properties. */
 
   /* For owned BaseShapes, the canonical unowned BaseShape. */
   GCPtrUnownedBaseShape unowned_;
@@ -669,14 +671,14 @@ class BaseShape : public gc::TenuredCell {
   BaseShape& operator=(const BaseShape& other) = delete;
 
  public:
-  void finalize(FreeOp* fop);
+  void finalize(JSFreeOp* fop);
 
   explicit inline BaseShape(const StackBaseShape& base);
 
   /* Not defined: BaseShapes must not be stack allocated. */
   ~BaseShape();
 
-  const Class* clasp() const { return clasp_; }
+  const JSClass* clasp() const { return clasp_; }
 
   bool isOwned() const { return !!(flags & OWNED_SHAPE); }
 
@@ -740,7 +742,7 @@ class BaseShape : public gc::TenuredCell {
     return (cache_.isIC()) ? cache_.getICPointer() : nullptr;
   }
 
-  void maybePurgeCache(FreeOp* fop) { cache_.maybePurgeCache(fop, this); }
+  void maybePurgeCache(JSFreeOp* fop) { cache_.maybePurgeCache(fop, this); }
 
   uint32_t slotSpan() const {
     MOZ_ASSERT(isOwned());
@@ -812,17 +814,17 @@ UnownedBaseShape* BaseShape::baseUnowned() {
 /* Entries for the per-zone baseShapes set of unowned base shapes. */
 struct StackBaseShape : public DefaultHasher<WeakHeapPtr<UnownedBaseShape*>> {
   uint32_t flags;
-  const Class* clasp;
+  const JSClass* clasp;
 
   explicit StackBaseShape(BaseShape* base)
       : flags(base->flags & BaseShape::OBJECT_FLAG_MASK), clasp(base->clasp_) {}
 
-  inline StackBaseShape(const Class* clasp, uint32_t objectFlags);
+  inline StackBaseShape(const JSClass* clasp, uint32_t objectFlags);
   explicit inline StackBaseShape(Shape* shape);
 
   struct Lookup {
     uint32_t flags;
-    const Class* clasp;
+    const JSClass* clasp;
 
     MOZ_IMPLICIT Lookup(const StackBaseShape& base)
         : flags(base.flags), clasp(base.clasp) {}
@@ -893,7 +895,7 @@ class Shape : public gc::TenuredCell {
 
  protected:
   GCPtrBaseShape base_;
-  GCPtrId propid_;
+  const GCPtrId propid_;
 
   // Flags that are not modified after the Shape is created. Off-thread Ion
   // compilation can access the immutableFlags word, so we don't want any
@@ -903,7 +905,7 @@ class Shape : public gc::TenuredCell {
     // For other shapes in the property tree with a parent, stores the
     // parent's slot index (which may be invalid), and invalid for all
     // other shapes.
-    SLOT_MASK = JS_BIT(24) - 1,
+    SLOT_MASK = BitMask(24),
 
     // Number of fixed slots in objects with this shape.
     // FIXED_SLOTS_MAX is the biggest count of fixed slots a Shape can store.
@@ -1110,7 +1112,7 @@ class Shape : public gc::TenuredCell {
     }
   };
 
-  const Class* getObjectClass() const { return base()->clasp_; }
+  const JSClass* getObjectClass() const { return base()->clasp_; }
 
   static Shape* setObjectFlags(JSContext* cx, BaseShape::Flag flag,
                                TaggedProto proto, Shape* last);
@@ -1232,13 +1234,13 @@ class Shape : public gc::TenuredCell {
     return JSID_IS_EMPTY(propid_);
   }
 
-  uint32_t slotSpan(const Class* clasp) const {
+  uint32_t slotSpan(const JSClass* clasp) const {
     MOZ_ASSERT(!inDictionary());
     // Proxy classes have reserved slots, but proxies manage their own slot
     // layout. This means all non-native object shapes have nfixed == 0 and
     // slotSpan == 0.
     uint32_t free = clasp->isProxy() ? 0 : JSSLOT_FREE(clasp);
-    return hasMissingSlot() ? free : Max(free, maybeSlot() + 1);
+    return hasMissingSlot() ? free : std::max(free, maybeSlot() + 1);
   }
 
   uint32_t slotSpan() const { return slotSpan(getObjectClass()); }
@@ -1273,7 +1275,7 @@ class Shape : public gc::TenuredCell {
     MOZ_ASSERT(!JSID_IS_VOID(propid_));
     return propid_;
   }
-  GCPtrId& propidRef() {
+  const GCPtrId& propidRef() {
     MOZ_ASSERT(!JSID_IS_VOID(propid_));
     return propid_;
   }
@@ -1353,9 +1355,9 @@ class Shape : public gc::TenuredCell {
   void dumpSubtree(int level, js::GenericPrinter& out) const;
 #endif
 
-  void sweep(FreeOp* fop);
-  void finalize(FreeOp* fop);
-  void removeChild(FreeOp* fop, Shape* child);
+  void sweep(JSFreeOp* fop);
+  void finalize(JSFreeOp* fop);
+  void removeChild(JSFreeOp* fop, Shape* child);
 
   static const JS::TraceKind TraceKind = JS::TraceKind::Shape;
 
@@ -1454,10 +1456,10 @@ struct EmptyShape : public js::Shape {
    * Lookup an initial shape matching the given parameters, creating an empty
    * shape if none was found.
    */
-  static Shape* getInitialShape(JSContext* cx, const Class* clasp,
+  static Shape* getInitialShape(JSContext* cx, const JSClass* clasp,
                                 TaggedProto proto, size_t nfixed,
                                 uint32_t objectFlags = 0);
-  static Shape* getInitialShape(JSContext* cx, const Class* clasp,
+  static Shape* getInitialShape(JSContext* cx, const JSClass* clasp,
                                 TaggedProto proto, gc::AllocKind kind,
                                 uint32_t objectFlags = 0);
 
@@ -1503,12 +1505,12 @@ struct InitialShapeEntry {
 
   /* State used to determine a match on an initial shape. */
   struct Lookup {
-    const Class* clasp;
+    const JSClass* clasp;
     TaggedProto proto;
     uint32_t nfixed;
     uint32_t baseFlags;
 
-    Lookup(const Class* clasp, const TaggedProto& proto, uint32_t nfixed,
+    Lookup(const JSClass* clasp, const TaggedProto& proto, uint32_t nfixed,
            uint32_t baseFlags)
         : clasp(clasp), proto(proto), nfixed(nfixed), baseFlags(baseFlags) {}
 
@@ -1629,10 +1631,7 @@ struct StackShape {
         mozilla::HashGeneric(base, attrs, maybeSlot(), rawGetter, rawSetter));
   }
 
-  // Traceable implementation.
-  static void trace(StackShape* stackShape, JSTracer* trc) {
-    stackShape->trace(trc);
-  }
+  // StructGCPolicy implementation.
   void trace(JSTracer* trc);
 };
 

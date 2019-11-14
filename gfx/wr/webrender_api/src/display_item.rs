@@ -33,6 +33,25 @@ pub const MAX_BLUR_RADIUS: f32 = 300.;
 /// events.
 pub type ItemTag = (u64, u16);
 
+bitflags! {
+    #[repr(C)]
+    #[derive(Deserialize, MallocSizeOf, Serialize, PeekPoke)]
+    pub struct PrimitiveFlags: u8 {
+        /// The CSS backface-visibility property (yes, it can be really granular)
+        const IS_BACKFACE_VISIBLE = 1 << 0;
+        /// If set, this primitive represents a scroll bar container
+        const IS_SCROLLBAR_CONTAINER = 1 << 1;
+        /// If set, this primitive represents a scroll bar thumb
+        const IS_SCROLLBAR_THUMB = 1 << 2;
+    }
+}
+
+impl Default for PrimitiveFlags {
+    fn default() -> Self {
+        PrimitiveFlags::IS_BACKFACE_VISIBLE
+    }
+}
+
 /// A grouping of fields a lot of display items need, just to avoid
 /// repeating these over and over in this file.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, PeekPoke)]
@@ -49,19 +68,22 @@ pub struct CommonItemProperties {
     /// dubious "common" field, but because it's an Option, it usually only
     /// wastes a single byte (for None).
     pub hit_info: Option<ItemTag>,
-    /// The CSS backface-visibility property (yes, it can be really granular)
-    pub is_backface_visible: bool,
+    /// Various flags describing properties of this primitive.
+    pub flags: PrimitiveFlags,
 }
 
 impl CommonItemProperties {
     /// Convenience for tests.
-    pub fn new(clip_rect: LayoutRect, space_and_clip: SpaceAndClipInfo) -> Self {
+    pub fn new(
+        clip_rect: LayoutRect,
+        space_and_clip: SpaceAndClipInfo,
+    ) -> Self {
         Self {
             clip_rect,
             spatial_id: space_and_clip.spatial_id,
             clip_id: space_and_clip.clip_id,
             hit_info: None,
-            is_backface_visible: true,
+            flags: PrimitiveFlags::default(),
         }
     }
 }
@@ -104,7 +126,9 @@ pub enum DisplayItem {
     Gradient(GradientDisplayItem),
     RadialGradient(RadialGradientDisplayItem),
     Image(ImageDisplayItem),
+    RepeatingImage(RepeatingImageDisplayItem),
     YuvImage(YuvImageDisplayItem),
+    BackdropFilter(BackdropFilterDisplayItem),
 
     // Clips
     Clip(ClipDisplayItem),
@@ -147,7 +171,9 @@ pub enum DebugDisplayItem {
     Gradient(GradientDisplayItem),
     RadialGradient(RadialGradientDisplayItem),
     Image(ImageDisplayItem),
+    RepeatingImage(RepeatingImageDisplayItem),
     YuvImage(YuvImageDisplayItem),
+    BackdropFilter(BackdropFilterDisplayItem),
 
     Clip(ClipDisplayItem, Vec<ComplexClipRegion>),
     ClipChain(ClipChainItem, Vec<ClipId>),
@@ -611,6 +637,13 @@ pub struct RadialGradientDisplayItem {
     pub tile_spacing: LayoutSize,
 }
 
+/// Renders a filtered region of its backdrop
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, PeekPoke)]
+pub struct BackdropFilterDisplayItem {
+    pub common: CommonItemProperties,
+}
+// IMPLICIT: filters: Vec<FilterOp>, filter_datas: Vec<FilterData>, filter_primitives: Vec<FilterPrimitive>
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, PeekPoke)]
 pub struct ReferenceFrameDisplayListItem {
     pub origin: LayoutPoint,
@@ -640,7 +673,7 @@ pub struct ReferenceFrame {
 pub struct PushStackingContextDisplayItem {
     pub origin: LayoutPoint,
     pub spatial_id: SpatialId,
-    pub is_backface_visible: bool,
+    pub prim_flags: PrimitiveFlags,
     pub stacking_context: StackingContext,
 }
 
@@ -652,7 +685,10 @@ pub struct StackingContext {
     pub raster_space: RasterSpace,
     /// True if picture caching should be used on this stacking context.
     pub cache_tiles: bool,
-} // IMPLICIT: filters: Vec<FilterOp>, filter_datas: Vec<FilterData>, filter_primitives: Vec<FilterPrimitive>
+    /// True if this stacking context is a backdrop root.
+    pub is_backdrop_root: bool,
+}
+// IMPLICIT: filters: Vec<FilterOp>, filter_datas: Vec<FilterData>, filter_primitives: Vec<FilterPrimitive>
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, PeekPoke)]
@@ -711,7 +747,6 @@ pub enum MixBlendMode {
     Luminosity = 15,
 }
 
-/// An input to a SVG filter primitive.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize, PeekPoke)]
 pub enum ColorSpace {
@@ -719,6 +754,35 @@ pub enum ColorSpace {
     LinearRgb,
 }
 
+/// Available composite operoations for the composite filter primitive
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Deserialize, MallocSizeOf, PartialEq, Serialize, PeekPoke)]
+pub enum CompositeOperator {
+    Over,
+    In,
+    Atop,
+    Out,
+    Xor,
+    Lighter,
+    Arithmetic([f32; 4]),
+}
+
+impl CompositeOperator {
+    // This must stay in sync with the composite operator defines in cs_svg_filter.glsl
+    pub fn as_int(&self) -> u32 {
+        match self {
+            CompositeOperator::Over => 0,
+            CompositeOperator::In => 1,
+            CompositeOperator::Out => 2,
+            CompositeOperator::Atop => 3,
+            CompositeOperator::Xor => 4,
+            CompositeOperator::Lighter => 5,
+            CompositeOperator::Arithmetic(..) => 6,
+        }
+    }
+}
+
+/// An input to a SVG filter primitive.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize, PeekPoke)]
 pub enum FilterPrimitiveInput {
@@ -825,6 +889,21 @@ pub struct IdentityPrimitive {
     pub input: FilterPrimitiveInput,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, PeekPoke)]
+pub struct OffsetPrimitive {
+    pub input: FilterPrimitiveInput,
+    pub offset: LayoutVector2D,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, PeekPoke)]
+pub struct CompositePrimitive {
+    pub input1: FilterPrimitiveInput,
+    pub input2: FilterPrimitiveInput,
+    pub operator: CompositeOperator,
+}
+
 /// See: https://github.com/eqrion/cbindgen/issues/9
 /// cbindgen:derive-eq=false
 #[repr(C)]
@@ -840,6 +919,8 @@ pub enum FilterPrimitiveKind {
     ColorMatrix(ColorMatrixPrimitive),
     DropShadow(DropShadowPrimitive),
     ComponentTransfer(ComponentTransferPrimitive),
+    Offset(OffsetPrimitive),
+    Composite(CompositePrimitive),
 }
 
 impl Default for FilterPrimitiveKind {
@@ -860,6 +941,8 @@ impl FilterPrimitiveKind {
             FilterPrimitiveKind::Identity(..) |
             FilterPrimitiveKind::Blend(..) |
             FilterPrimitiveKind::ColorMatrix(..) |
+            FilterPrimitiveKind::Offset(..) |
+            FilterPrimitiveKind::Composite(..) |
             // Component transfer's filter data is sanitized separately.
             FilterPrimitiveKind::ComponentTransfer(..) => {}
         }
@@ -1012,10 +1095,28 @@ pub struct IframeDisplayItem {
     pub ignore_missing_pipeline: bool,
 }
 
-/// This describes an image or, more generally, a background-image and its tiling.
-/// (A background-image repeats in a grid to fill the specified area).
+/// This describes an image that fills the specified area. It stretches or shrinks
+/// the image as necessary. While RepeatingImageDisplayItem could otherwise provide
+/// a superset of the functionality, it has been problematic inferring the desired
+/// repetition properties when snapping changes the size of the primitive.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, PeekPoke)]
 pub struct ImageDisplayItem {
+    pub common: CommonItemProperties,
+    /// The area to tile the image over (first tile starts at origin of this rect)
+    // FIXME: this should ideally just be `tile_origin` here, with the clip_rect
+    // defining the bounds of the item. Needs non-trivial backend changes.
+    pub bounds: LayoutRect,
+    pub image_key: ImageKey,
+    pub image_rendering: ImageRendering,
+    pub alpha_type: AlphaType,
+    /// A hack used by gecko to color a simple bitmap font used for tofu glyphs
+    pub color: ColorF,
+}
+
+/// This describes a background-image and its tiling. It repeats in a grid to fill
+/// the specified area.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, PeekPoke)]
+pub struct RepeatingImageDisplayItem {
     pub common: CommonItemProperties,
     /// The area to tile the image over (first tile starts at origin of this rect)
     // FIXME: this should ideally just be `tile_origin` here, with the clip_rect
@@ -1347,6 +1448,7 @@ impl DisplayItem {
             DisplayItem::Gradient(..) => "gradient",
             DisplayItem::Iframe(..) => "iframe",
             DisplayItem::Image(..) => "image",
+            DisplayItem::RepeatingImage(..) => "repeating_image",
             DisplayItem::Line(..) => "line",
             DisplayItem::PopAllShadows => "pop_all_shadows",
             DisplayItem::PopReferenceFrame => "pop_reference_frame",
@@ -1364,6 +1466,7 @@ impl DisplayItem {
             DisplayItem::StickyFrame(..) => "sticky_frame",
             DisplayItem::Text(..) => "text",
             DisplayItem::YuvImage(..) => "yuv_image",
+            DisplayItem::BackdropFilter(..) => "backdrop_filter",
         }
     }
 }
@@ -1407,5 +1510,6 @@ impl_default_for_enums! {
     YuvData => NV12(ImageKey::default(), ImageKey::default()),
     YuvFormat => NV12,
     FilterPrimitiveInput => Original,
-    ColorSpace => Srgb
+    ColorSpace => Srgb,
+    CompositeOperator => Over
 }

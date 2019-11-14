@@ -1051,29 +1051,26 @@ nsresult nsSiteSecurityService::ProcessPKPHeader(
   // anyway).
   CertVerifier::Flags flags = CertVerifier::FLAG_LOCAL_ONLY |
                               CertVerifier::FLAG_TLS_IGNORE_STATUS_REQUEST;
-  if (certVerifier->VerifySSLServerCert(nssCert,
-                                        nullptr,       // stapledOCSPResponse
-                                        nullptr,       // sctsFromTLSExtension
-                                        now, nullptr,  // pinarg
-                                        host,          // hostname
-                                        certList,
-                                        false,  // don't store intermediates
-                                        flags, aOriginAttributes) !=
-      mozilla::pkix::Success) {
+  if (certVerifier->VerifySSLServerCert(nssCert, now, nullptr,  // pinarg
+                                        host, certList, flags,
+                                        Nothing(),  // extraCertificates
+                                        Nothing(),  // stapledOCSPResponse
+                                        Nothing(),  // sctsFromTLSExtension
+                                        Nothing(),  // dcInfo
+                                        aOriginAttributes,
+                                        false  // don't store intermediates
+                                        ) != mozilla::pkix::Success) {
     return NS_ERROR_FAILURE;
   }
 
-  // This copy to produce an nsNSSCertList should also be removed in Bug
-  // #1406854
-  nsCOMPtr<nsIX509CertList> x509CertList =
-      new nsNSSCertList(std::move(certList));
-  if (!x509CertList) {
+  nsTArray<RefPtr<nsIX509Cert>> nssCertList;
+  rv = nsNSSCertificateDB::ConstructCertArrayFromUniqueCertList(certList,
+                                                                nssCertList);
+  if (NS_FAILED(rv)) {
     return rv;
   }
-
-  RefPtr<nsNSSCertList> nssCertList = x509CertList->GetCertList();
   nsCOMPtr<nsIX509Cert> rootCert;
-  rv = nssCertList->GetRootCertificate(rootCert);
+  rv = nsNSSCertificate::GetRootCertificate(nssCertList, rootCert);
   if (NS_FAILED(rv)) {
     return rv;
   }

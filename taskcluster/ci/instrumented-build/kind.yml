@@ -12,7 +12,6 @@ transforms:
     - taskgraph.transforms.build:transforms
     - taskgraph.transforms.build_attrs:transforms
     - taskgraph.transforms.build_lints:transforms
-    - taskgraph.transforms.use_toolchains:transforms
     - taskgraph.transforms.job:transforms
     - taskgraph.transforms.task:transforms
 
@@ -34,6 +33,9 @@ job-defaults:
 jobs:
     linux-shippable/opt:
         description: "Linux Instrumented"
+        index:
+            product: firefox
+            job-name: instrumented-linux
         shipping-product: firefox
         treeherder:
             platform: linux32-shippable/opt
@@ -47,18 +49,21 @@ jobs:
             mozconfig-variant: profile-generate
             tooltool-downloads: public
             need-xvfb: true
-        toolchains:
-            - linux64-binutils
-            - linux64-clang
-            - linux64-rust
-            - linux64-rust-size
-            - linux64-cbindgen
-            - linux64-sccache
-            - linux64-nasm
-            - linux64-node
+        fetches:
+            toolchain:
+                - linux64-binutils
+                - linux64-clang
+                - linux64-rust
+                - linux64-rust-size
+                - linux64-cbindgen
+                - linux64-nasm
+                - linux64-node
 
     linux64-shippable/opt:
         description: "Linux64 Instrumented"
+        index:
+            product: firefox
+            job-name: instrumented-linux64
         shipping-product: firefox
         treeherder:
             platform: linux64-shippable/opt
@@ -70,18 +75,21 @@ jobs:
             mozconfig-variant: profile-generate
             tooltool-downloads: public
             need-xvfb: true
-        toolchains:
-            - linux64-binutils
-            - linux64-clang
-            - linux64-rust
-            - linux64-rust-size
-            - linux64-cbindgen
-            - linux64-sccache
-            - linux64-nasm
-            - linux64-node
+        fetches:
+            toolchain:
+                - linux64-binutils
+                - linux64-clang
+                - linux64-rust
+                - linux64-rust-size
+                - linux64-cbindgen
+                - linux64-nasm
+                - linux64-node
 
     android-api-16/pgo:
         description: "Android 4.0 api-16+ PGO instrumented"
+        index:
+            product: mobile
+            job-name: instrumented-android-api-16
         shipping-product: fennec
         treeherder:
             platform: android-4-0-armv7-api16/pgo
@@ -106,20 +114,23 @@ jobs:
                 - builds/releng_base_android_64_builds.py
             custom-build-variant-cfg: api-16-profile-generate
             tooltool-downloads: internal
-        toolchains:
-            - android-gradle-dependencies
-            - android-ndk-linux
-            - android-sdk-linux
-            - linux64-clang-android-cross
-            - linux64-rust-android
-            - linux64-rust-size
-            - linux64-cbindgen
-            - linux64-sccache
-            - linux64-nasm
-            - linux64-node
+        fetches:
+            toolchain:
+                - android-gradle-dependencies
+                - android-ndk-linux
+                - android-sdk-linux
+                - linux64-clang-android-cross
+                - linux64-rust-android
+                - linux64-rust-size
+                - linux64-cbindgen
+                - linux64-nasm
+                - linux64-node
 
     win32-shippable/opt:
         description: "Win32 Shippable PGO Instrumented"
+        index:
+            product: firefox
+            job-name: instrumented-win32
         shipping-product: firefox
         treeherder:
             platform: windows2012-32-shippable/opt
@@ -135,18 +146,23 @@ jobs:
                 - builds/releng_base_firefox.py
                 - builds/taskcluster_base_windows.py
                 - builds/taskcluster_base_win32.py
+            tooltool-downloads: internal
             extra-config:
                 stage_platform: win32
-        toolchains:
-            - win64-clang-cl
-            - win64-rust
-            - win64-rust-size
-            - win64-cbindgen
-            - win64-nasm
-            - win64-node
+        fetches:
+            toolchain:
+                - win64-clang-cl
+                - win64-rust
+                - win64-rust-size
+                - win64-cbindgen
+                - win64-nasm
+                - win64-node
 
     win64-shippable/opt:
         description: "Win64 Shippable PGO Instrumented"
+        index:
+            product: firefox
+            job-name: instrumented-win64
         shipping-product: firefox
         treeherder:
             platform: windows2012-64-shippable/opt
@@ -162,12 +178,14 @@ jobs:
                 - builds/releng_base_firefox.py
                 - builds/taskcluster_base_windows.py
                 - builds/taskcluster_base_win64.py
+            tooltool-downloads: internal
             extra-config:
                 stage_platform: win64
-        toolchains:
-            - win64-clang-cl
-            - win64-rust
-            - win64-rust-size
-            - win64-cbindgen
-            - win64-nasm
-            - win64-node
+        fetches:
+            toolchain:
+                - win64-clang-cl
+                - win64-rust
+                - win64-rust-size
+                - win64-cbindgen
+                - win64-nasm
+                - win64-node

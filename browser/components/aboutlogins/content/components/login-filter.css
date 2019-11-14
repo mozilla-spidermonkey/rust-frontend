@@ -11,15 +11,22 @@
   background-position: 8px center;
   background-repeat: no-repeat;
   background-size: 16px;
+  text-align: match-parent;
   width: 100%;
   margin: 0;
-  padding-block: 6px;
-  padding-inline-start: 32px;
   box-sizing: border-box;
+  padding-block: 6px;
 }
 
-.filter:dir(rtl) {
+:host(:dir(ltr)) .filter {
+  /* We use separate RTL rules over logical properties since we want the visual direction
+     to be independent from the user input direction */
+  padding-left: 32px;
+}
+
+:host(:dir(rtl)) .filter {
   background-position-x: right 8px;
+  padding-right: 32px;
 }
 
 .filter:focus {

@@ -4,7 +4,6 @@ $col4-header-font-size: 14;
 .ds-card-grid {
   display: grid;
   grid-gap: 24px;
-  margin: 16px 0;
 
   .ds-card {
     @include dark-theme-only {
@@ -68,12 +67,12 @@ $col4-header-font-size: 14;
       }
 
       .excerpt {
-        @include limit-visibile-lines(3, 24, 15);
+        @include limit-visible-lines(3, 24, 15);
       }
     }
 
     &.ds-card-grid-divisible-by-4 .title {
-      @include limit-visibile-lines(3, 20, 15);
+      @include limit-visible-lines(3, 20, 15);
     }
   }
 

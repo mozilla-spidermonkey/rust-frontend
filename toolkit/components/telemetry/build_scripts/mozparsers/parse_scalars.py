@@ -217,6 +217,11 @@ class ScalarType:
             if not utils.is_valid_product(product):
                 ParserError(self._name + ' - unknown value in products: ' + product +
                             '.\nSee: {}'.format(BASE_DOC_URL)).handle_later()
+            if utils.is_geckoview_streaming_product(product):
+                keyed = definition.get('keyed')
+                if keyed:
+                    ParserError('%s - keyed Scalars not supported for product %s' %
+                                (self._name, product)).handle_later()
 
         # Validate the expiration version.
         # Historical versions of Scalars.json may contain expiration versions
@@ -365,9 +370,9 @@ def load_scalars(filename, strict_type_checks=True):
     try:
         with open(filename, 'r') as f:
             scalars = yaml.safe_load(f)
-    except IOError, e:
+    except IOError as e:
         ParserError('Error opening ' + filename + ': ' + e.message).handle_now()
-    except ValueError, e:
+    except ValueError as e:
         ParserError('Error parsing scalars in {}: {}'
                     '.\nSee: {}'.format(filename, e.message, BASE_DOC_URL)).handle_now()
 

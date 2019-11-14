@@ -1,5 +1,3 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -286,7 +284,7 @@ function cssTrim(str) {
  *        rewriteDeclarations, and skip the usual name-checking
  *        heuristic.
  */
-/* eslint-disable complexity */
+// eslint-disable-next-line complexity
 function parseDeclarationsInternal(
   isCssPropertyKnown,
   inputString,
@@ -507,7 +505,6 @@ function parseDeclarationsInternal(
 
   return declarations;
 }
-/* eslint-enable complexity */
 
 /**
  * Returns an array of CSS declarations given a string.
@@ -594,7 +591,7 @@ function parseNamedDeclarations(
  * @return {Array} an array of objects with the following signature:
  *         [{ "value": string, "type": integer }, ...]
  */
-/* eslint-disable complexity */
+// eslint-disable-next-line complexity
 function parsePseudoClassesAndAttributes(value) {
   if (!value) {
     throw new Error("empty input string");
@@ -680,7 +677,6 @@ function parsePseudoClassesAndAttributes(value) {
 
   return result;
 }
-/* eslint-enable complexity */
 
 /**
  * Expects a single CSS value to be passed as the input and parses the value

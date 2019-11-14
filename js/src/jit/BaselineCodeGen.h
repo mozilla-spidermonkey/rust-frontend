@@ -19,245 +19,246 @@ enum class GeneratorResumeKind;
 
 namespace jit {
 
-#define OPCODE_LIST(_)             \
-  _(JSOP_NOP)                      \
-  _(JSOP_NOP_DESTRUCTURING)        \
-  _(JSOP_LABEL)                    \
-  _(JSOP_ITERNEXT)                 \
-  _(JSOP_POP)                      \
-  _(JSOP_POPN)                     \
-  _(JSOP_DUPAT)                    \
-  _(JSOP_ENTERWITH)                \
-  _(JSOP_LEAVEWITH)                \
-  _(JSOP_DUP)                      \
-  _(JSOP_DUP2)                     \
-  _(JSOP_SWAP)                     \
-  _(JSOP_PICK)                     \
-  _(JSOP_UNPICK)                   \
-  _(JSOP_GOTO)                     \
-  _(JSOP_IFEQ)                     \
-  _(JSOP_IFNE)                     \
-  _(JSOP_AND)                      \
-  _(JSOP_OR)                       \
-  _(JSOP_NOT)                      \
-  _(JSOP_POS)                      \
-  _(JSOP_TONUMERIC)                \
-  _(JSOP_LOOPHEAD)                 \
-  _(JSOP_LOOPENTRY)                \
-  _(JSOP_VOID)                     \
-  _(JSOP_UNDEFINED)                \
-  _(JSOP_HOLE)                     \
-  _(JSOP_NULL)                     \
-  _(JSOP_TRUE)                     \
-  _(JSOP_FALSE)                    \
-  _(JSOP_ZERO)                     \
-  _(JSOP_ONE)                      \
-  _(JSOP_INT8)                     \
-  _(JSOP_INT32)                    \
-  _(JSOP_UINT16)                   \
-  _(JSOP_UINT24)                   \
-  _(JSOP_RESUMEINDEX)              \
-  _(JSOP_DOUBLE)                   \
-  _(JSOP_BIGINT)                   \
-  _(JSOP_STRING)                   \
-  _(JSOP_SYMBOL)                   \
-  _(JSOP_OBJECT)                   \
-  _(JSOP_CALLSITEOBJ)              \
-  _(JSOP_REGEXP)                   \
-  _(JSOP_LAMBDA)                   \
-  _(JSOP_LAMBDA_ARROW)             \
-  _(JSOP_SETFUNNAME)               \
-  _(JSOP_BITOR)                    \
-  _(JSOP_BITXOR)                   \
-  _(JSOP_BITAND)                   \
-  _(JSOP_LSH)                      \
-  _(JSOP_RSH)                      \
-  _(JSOP_URSH)                     \
-  _(JSOP_ADD)                      \
-  _(JSOP_SUB)                      \
-  _(JSOP_MUL)                      \
-  _(JSOP_DIV)                      \
-  _(JSOP_MOD)                      \
-  _(JSOP_POW)                      \
-  _(JSOP_LT)                       \
-  _(JSOP_LE)                       \
-  _(JSOP_GT)                       \
-  _(JSOP_GE)                       \
-  _(JSOP_EQ)                       \
-  _(JSOP_NE)                       \
-  _(JSOP_STRICTEQ)                 \
-  _(JSOP_STRICTNE)                 \
-  _(JSOP_CONDSWITCH)               \
-  _(JSOP_CASE)                     \
-  _(JSOP_DEFAULT)                  \
-  _(JSOP_LINENO)                   \
-  _(JSOP_BITNOT)                   \
-  _(JSOP_NEG)                      \
-  _(JSOP_NEWARRAY)                 \
-  _(JSOP_NEWARRAY_COPYONWRITE)     \
-  _(JSOP_INITELEM_ARRAY)           \
-  _(JSOP_NEWOBJECT)                \
-  _(JSOP_NEWINIT)                  \
-  _(JSOP_INITELEM)                 \
-  _(JSOP_INITELEM_GETTER)          \
-  _(JSOP_INITELEM_SETTER)          \
-  _(JSOP_INITELEM_INC)             \
-  _(JSOP_MUTATEPROTO)              \
-  _(JSOP_INITPROP)                 \
-  _(JSOP_INITLOCKEDPROP)           \
-  _(JSOP_INITHIDDENPROP)           \
-  _(JSOP_INITPROP_GETTER)          \
-  _(JSOP_INITPROP_SETTER)          \
-  _(JSOP_GETELEM)                  \
-  _(JSOP_SETELEM)                  \
-  _(JSOP_STRICTSETELEM)            \
-  _(JSOP_CALLELEM)                 \
-  _(JSOP_DELELEM)                  \
-  _(JSOP_STRICTDELELEM)            \
-  _(JSOP_GETELEM_SUPER)            \
-  _(JSOP_SETELEM_SUPER)            \
-  _(JSOP_STRICTSETELEM_SUPER)      \
-  _(JSOP_IN)                       \
-  _(JSOP_HASOWN)                   \
-  _(JSOP_GETGNAME)                 \
-  _(JSOP_BINDGNAME)                \
-  _(JSOP_SETGNAME)                 \
-  _(JSOP_STRICTSETGNAME)           \
-  _(JSOP_SETNAME)                  \
-  _(JSOP_STRICTSETNAME)            \
-  _(JSOP_GETPROP)                  \
-  _(JSOP_SETPROP)                  \
-  _(JSOP_STRICTSETPROP)            \
-  _(JSOP_CALLPROP)                 \
-  _(JSOP_DELPROP)                  \
-  _(JSOP_STRICTDELPROP)            \
-  _(JSOP_GETPROP_SUPER)            \
-  _(JSOP_SETPROP_SUPER)            \
-  _(JSOP_STRICTSETPROP_SUPER)      \
-  _(JSOP_LENGTH)                   \
-  _(JSOP_GETBOUNDNAME)             \
-  _(JSOP_GETALIASEDVAR)            \
-  _(JSOP_SETALIASEDVAR)            \
-  _(JSOP_GETNAME)                  \
-  _(JSOP_BINDNAME)                 \
-  _(JSOP_DELNAME)                  \
-  _(JSOP_GETIMPORT)                \
-  _(JSOP_GETINTRINSIC)             \
-  _(JSOP_SETINTRINSIC)             \
-  _(JSOP_BINDVAR)                  \
-  _(JSOP_DEFVAR)                   \
-  _(JSOP_DEFCONST)                 \
-  _(JSOP_DEFLET)                   \
-  _(JSOP_DEFFUN)                   \
-  _(JSOP_GETLOCAL)                 \
-  _(JSOP_SETLOCAL)                 \
-  _(JSOP_GETARG)                   \
-  _(JSOP_SETARG)                   \
-  _(JSOP_CHECKLEXICAL)             \
-  _(JSOP_INITLEXICAL)              \
-  _(JSOP_INITGLEXICAL)             \
-  _(JSOP_CHECKALIASEDLEXICAL)      \
-  _(JSOP_INITALIASEDLEXICAL)       \
-  _(JSOP_UNINITIALIZED)            \
-  _(JSOP_CALL)                     \
-  _(JSOP_CALL_IGNORES_RV)          \
-  _(JSOP_CALLITER)                 \
-  _(JSOP_FUNCALL)                  \
-  _(JSOP_FUNAPPLY)                 \
-  _(JSOP_NEW)                      \
-  _(JSOP_EVAL)                     \
-  _(JSOP_STRICTEVAL)               \
-  _(JSOP_SPREADCALL)               \
-  _(JSOP_SPREADNEW)                \
-  _(JSOP_SPREADEVAL)               \
-  _(JSOP_STRICTSPREADEVAL)         \
-  _(JSOP_OPTIMIZE_SPREADCALL)      \
-  _(JSOP_IMPLICITTHIS)             \
-  _(JSOP_GIMPLICITTHIS)            \
-  _(JSOP_INSTANCEOF)               \
-  _(JSOP_TYPEOF)                   \
-  _(JSOP_TYPEOFEXPR)               \
-  _(JSOP_THROWMSG)                 \
-  _(JSOP_THROW)                    \
-  _(JSOP_TRY)                      \
-  _(JSOP_FINALLY)                  \
-  _(JSOP_GOSUB)                    \
-  _(JSOP_RETSUB)                   \
-  _(JSOP_PUSHLEXICALENV)           \
-  _(JSOP_POPLEXICALENV)            \
-  _(JSOP_FRESHENLEXICALENV)        \
-  _(JSOP_RECREATELEXICALENV)       \
-  _(JSOP_DEBUGLEAVELEXICALENV)     \
-  _(JSOP_PUSHVARENV)               \
-  _(JSOP_POPVARENV)                \
-  _(JSOP_EXCEPTION)                \
-  _(JSOP_DEBUGGER)                 \
-  _(JSOP_ARGUMENTS)                \
-  _(JSOP_REST)                     \
-  _(JSOP_TOASYNCITER)              \
-  _(JSOP_TOID)                     \
-  _(JSOP_TOSTRING)                 \
-  _(JSOP_TABLESWITCH)              \
-  _(JSOP_ITER)                     \
-  _(JSOP_MOREITER)                 \
-  _(JSOP_ISNOITER)                 \
-  _(JSOP_ENDITER)                  \
-  _(JSOP_ISGENCLOSING)             \
-  _(JSOP_GENERATOR)                \
-  _(JSOP_INITIALYIELD)             \
-  _(JSOP_YIELD)                    \
-  _(JSOP_AWAIT)                    \
-  _(JSOP_TRYSKIPAWAIT)             \
-  _(JSOP_AFTERYIELD)               \
-  _(JSOP_FINALYIELDRVAL)           \
-  _(JSOP_RESUME)                   \
-  _(JSOP_ASYNCAWAIT)               \
-  _(JSOP_ASYNCRESOLVE)             \
-  _(JSOP_CALLEE)                   \
-  _(JSOP_ENVCALLEE)                \
-  _(JSOP_SUPERBASE)                \
-  _(JSOP_SUPERFUN)                 \
-  _(JSOP_GETRVAL)                  \
-  _(JSOP_SETRVAL)                  \
-  _(JSOP_RETRVAL)                  \
-  _(JSOP_RETURN)                   \
-  _(JSOP_FUNCTIONTHIS)             \
-  _(JSOP_GLOBALTHIS)               \
-  _(JSOP_CHECKISOBJ)               \
-  _(JSOP_CHECKISCALLABLE)          \
-  _(JSOP_CHECKTHIS)                \
-  _(JSOP_CHECKTHISREINIT)          \
-  _(JSOP_CHECKRETURN)              \
-  _(JSOP_NEWTARGET)                \
-  _(JSOP_SUPERCALL)                \
-  _(JSOP_SPREADSUPERCALL)          \
-  _(JSOP_THROWSETCONST)            \
-  _(JSOP_THROWSETALIASEDCONST)     \
-  _(JSOP_THROWSETCALLEE)           \
-  _(JSOP_INITHIDDENPROP_GETTER)    \
-  _(JSOP_INITHIDDENPROP_SETTER)    \
-  _(JSOP_INITHIDDENELEM)           \
-  _(JSOP_INITHIDDENELEM_GETTER)    \
-  _(JSOP_INITHIDDENELEM_SETTER)    \
-  _(JSOP_CHECKOBJCOERCIBLE)        \
-  _(JSOP_DEBUGCHECKSELFHOSTED)     \
-  _(JSOP_JUMPTARGET)               \
-  _(JSOP_IS_CONSTRUCTING)          \
-  _(JSOP_TRY_DESTRUCTURING)        \
-  _(JSOP_CHECKCLASSHERITAGE)       \
-  _(JSOP_INITHOMEOBJECT)           \
-  _(JSOP_BUILTINPROTO)             \
-  _(JSOP_OBJWITHPROTO)             \
-  _(JSOP_FUNWITHPROTO)             \
-  _(JSOP_CLASSCONSTRUCTOR)         \
-  _(JSOP_DERIVEDCONSTRUCTOR)       \
-  _(JSOP_IMPORTMETA)               \
-  _(JSOP_DYNAMIC_IMPORT)           \
-  _(JSOP_INC)                      \
-  _(JSOP_DEC)                      \
-  _(JSOP_INSTRUMENTATION_ACTIVE)   \
-  _(JSOP_INSTRUMENTATION_CALLBACK) \
-  _(JSOP_INSTRUMENTATION_SCRIPT_ID)
+#define OPCODE_LIST(_)              \
+  _(JSOP_NOP)                       \
+  _(JSOP_NOP_DESTRUCTURING)         \
+  _(JSOP_LABEL)                     \
+  _(JSOP_ITERNEXT)                  \
+  _(JSOP_POP)                       \
+  _(JSOP_POPN)                      \
+  _(JSOP_DUPAT)                     \
+  _(JSOP_ENTERWITH)                 \
+  _(JSOP_LEAVEWITH)                 \
+  _(JSOP_DUP)                       \
+  _(JSOP_DUP2)                      \
+  _(JSOP_SWAP)                      \
+  _(JSOP_PICK)                      \
+  _(JSOP_UNPICK)                    \
+  _(JSOP_GOTO)                      \
+  _(JSOP_IFEQ)                      \
+  _(JSOP_IFNE)                      \
+  _(JSOP_AND)                       \
+  _(JSOP_OR)                        \
+  _(JSOP_NOT)                       \
+  _(JSOP_POS)                       \
+  _(JSOP_TONUMERIC)                 \
+  _(JSOP_LOOPHEAD)                  \
+  _(JSOP_LOOPENTRY)                 \
+  _(JSOP_VOID)                      \
+  _(JSOP_UNDEFINED)                 \
+  _(JSOP_HOLE)                      \
+  _(JSOP_NULL)                      \
+  _(JSOP_TRUE)                      \
+  _(JSOP_FALSE)                     \
+  _(JSOP_ZERO)                      \
+  _(JSOP_ONE)                       \
+  _(JSOP_INT8)                      \
+  _(JSOP_INT32)                     \
+  _(JSOP_UINT16)                    \
+  _(JSOP_UINT24)                    \
+  _(JSOP_RESUMEINDEX)               \
+  _(JSOP_DOUBLE)                    \
+  _(JSOP_BIGINT)                    \
+  _(JSOP_STRING)                    \
+  _(JSOP_SYMBOL)                    \
+  _(JSOP_OBJECT)                    \
+  _(JSOP_CALLSITEOBJ)               \
+  _(JSOP_REGEXP)                    \
+  _(JSOP_LAMBDA)                    \
+  _(JSOP_LAMBDA_ARROW)              \
+  _(JSOP_SETFUNNAME)                \
+  _(JSOP_BITOR)                     \
+  _(JSOP_BITXOR)                    \
+  _(JSOP_BITAND)                    \
+  _(JSOP_LSH)                       \
+  _(JSOP_RSH)                       \
+  _(JSOP_URSH)                      \
+  _(JSOP_ADD)                       \
+  _(JSOP_SUB)                       \
+  _(JSOP_MUL)                       \
+  _(JSOP_DIV)                       \
+  _(JSOP_MOD)                       \
+  _(JSOP_POW)                       \
+  _(JSOP_LT)                        \
+  _(JSOP_LE)                        \
+  _(JSOP_GT)                        \
+  _(JSOP_GE)                        \
+  _(JSOP_EQ)                        \
+  _(JSOP_NE)                        \
+  _(JSOP_STRICTEQ)                  \
+  _(JSOP_STRICTNE)                  \
+  _(JSOP_CONDSWITCH)                \
+  _(JSOP_CASE)                      \
+  _(JSOP_DEFAULT)                   \
+  _(JSOP_LINENO)                    \
+  _(JSOP_BITNOT)                    \
+  _(JSOP_NEG)                       \
+  _(JSOP_NEWARRAY)                  \
+  _(JSOP_NEWARRAY_COPYONWRITE)      \
+  _(JSOP_INITELEM_ARRAY)            \
+  _(JSOP_NEWOBJECT)                 \
+  _(JSOP_NEWINIT)                   \
+  _(JSOP_INITELEM)                  \
+  _(JSOP_INITELEM_GETTER)           \
+  _(JSOP_INITELEM_SETTER)           \
+  _(JSOP_INITELEM_INC)              \
+  _(JSOP_MUTATEPROTO)               \
+  _(JSOP_INITPROP)                  \
+  _(JSOP_INITLOCKEDPROP)            \
+  _(JSOP_INITHIDDENPROP)            \
+  _(JSOP_INITPROP_GETTER)           \
+  _(JSOP_INITPROP_SETTER)           \
+  _(JSOP_GETELEM)                   \
+  _(JSOP_SETELEM)                   \
+  _(JSOP_STRICTSETELEM)             \
+  _(JSOP_CALLELEM)                  \
+  _(JSOP_DELELEM)                   \
+  _(JSOP_STRICTDELELEM)             \
+  _(JSOP_GETELEM_SUPER)             \
+  _(JSOP_SETELEM_SUPER)             \
+  _(JSOP_STRICTSETELEM_SUPER)       \
+  _(JSOP_IN)                        \
+  _(JSOP_HASOWN)                    \
+  _(JSOP_GETGNAME)                  \
+  _(JSOP_BINDGNAME)                 \
+  _(JSOP_SETGNAME)                  \
+  _(JSOP_STRICTSETGNAME)            \
+  _(JSOP_SETNAME)                   \
+  _(JSOP_STRICTSETNAME)             \
+  _(JSOP_GETPROP)                   \
+  _(JSOP_SETPROP)                   \
+  _(JSOP_STRICTSETPROP)             \
+  _(JSOP_CALLPROP)                  \
+  _(JSOP_DELPROP)                   \
+  _(JSOP_STRICTDELPROP)             \
+  _(JSOP_GETPROP_SUPER)             \
+  _(JSOP_SETPROP_SUPER)             \
+  _(JSOP_STRICTSETPROP_SUPER)       \
+  _(JSOP_LENGTH)                    \
+  _(JSOP_GETBOUNDNAME)              \
+  _(JSOP_GETALIASEDVAR)             \
+  _(JSOP_SETALIASEDVAR)             \
+  _(JSOP_GETNAME)                   \
+  _(JSOP_BINDNAME)                  \
+  _(JSOP_DELNAME)                   \
+  _(JSOP_GETIMPORT)                 \
+  _(JSOP_GETINTRINSIC)              \
+  _(JSOP_SETINTRINSIC)              \
+  _(JSOP_BINDVAR)                   \
+  _(JSOP_DEFVAR)                    \
+  _(JSOP_DEFCONST)                  \
+  _(JSOP_DEFLET)                    \
+  _(JSOP_DEFFUN)                    \
+  _(JSOP_GETLOCAL)                  \
+  _(JSOP_SETLOCAL)                  \
+  _(JSOP_GETARG)                    \
+  _(JSOP_SETARG)                    \
+  _(JSOP_CHECKLEXICAL)              \
+  _(JSOP_INITLEXICAL)               \
+  _(JSOP_INITGLEXICAL)              \
+  _(JSOP_CHECKALIASEDLEXICAL)       \
+  _(JSOP_INITALIASEDLEXICAL)        \
+  _(JSOP_UNINITIALIZED)             \
+  _(JSOP_CALL)                      \
+  _(JSOP_CALL_IGNORES_RV)           \
+  _(JSOP_CALLITER)                  \
+  _(JSOP_FUNCALL)                   \
+  _(JSOP_FUNAPPLY)                  \
+  _(JSOP_NEW)                       \
+  _(JSOP_EVAL)                      \
+  _(JSOP_STRICTEVAL)                \
+  _(JSOP_SPREADCALL)                \
+  _(JSOP_SPREADNEW)                 \
+  _(JSOP_SPREADEVAL)                \
+  _(JSOP_STRICTSPREADEVAL)          \
+  _(JSOP_OPTIMIZE_SPREADCALL)       \
+  _(JSOP_IMPLICITTHIS)              \
+  _(JSOP_GIMPLICITTHIS)             \
+  _(JSOP_INSTANCEOF)                \
+  _(JSOP_TYPEOF)                    \
+  _(JSOP_TYPEOFEXPR)                \
+  _(JSOP_THROWMSG)                  \
+  _(JSOP_THROW)                     \
+  _(JSOP_TRY)                       \
+  _(JSOP_FINALLY)                   \
+  _(JSOP_GOSUB)                     \
+  _(JSOP_RETSUB)                    \
+  _(JSOP_PUSHLEXICALENV)            \
+  _(JSOP_POPLEXICALENV)             \
+  _(JSOP_FRESHENLEXICALENV)         \
+  _(JSOP_RECREATELEXICALENV)        \
+  _(JSOP_DEBUGLEAVELEXICALENV)      \
+  _(JSOP_PUSHVARENV)                \
+  _(JSOP_POPVARENV)                 \
+  _(JSOP_EXCEPTION)                 \
+  _(JSOP_DEBUGGER)                  \
+  _(JSOP_ARGUMENTS)                 \
+  _(JSOP_REST)                      \
+  _(JSOP_TOASYNCITER)               \
+  _(JSOP_TOID)                      \
+  _(JSOP_TOSTRING)                  \
+  _(JSOP_TABLESWITCH)               \
+  _(JSOP_ITER)                      \
+  _(JSOP_MOREITER)                  \
+  _(JSOP_ISNOITER)                  \
+  _(JSOP_ENDITER)                   \
+  _(JSOP_ISGENCLOSING)              \
+  _(JSOP_GENERATOR)                 \
+  _(JSOP_INITIALYIELD)              \
+  _(JSOP_YIELD)                     \
+  _(JSOP_AWAIT)                     \
+  _(JSOP_TRYSKIPAWAIT)              \
+  _(JSOP_AFTERYIELD)                \
+  _(JSOP_FINALYIELDRVAL)            \
+  _(JSOP_RESUME)                    \
+  _(JSOP_ASYNCAWAIT)                \
+  _(JSOP_ASYNCRESOLVE)              \
+  _(JSOP_CALLEE)                    \
+  _(JSOP_ENVCALLEE)                 \
+  _(JSOP_SUPERBASE)                 \
+  _(JSOP_SUPERFUN)                  \
+  _(JSOP_GETRVAL)                   \
+  _(JSOP_SETRVAL)                   \
+  _(JSOP_RETRVAL)                   \
+  _(JSOP_RETURN)                    \
+  _(JSOP_FUNCTIONTHIS)              \
+  _(JSOP_GLOBALTHIS)                \
+  _(JSOP_CHECKISOBJ)                \
+  _(JSOP_CHECKISCALLABLE)           \
+  _(JSOP_CHECKTHIS)                 \
+  _(JSOP_CHECKTHISREINIT)           \
+  _(JSOP_CHECKRETURN)               \
+  _(JSOP_NEWTARGET)                 \
+  _(JSOP_SUPERCALL)                 \
+  _(JSOP_SPREADSUPERCALL)           \
+  _(JSOP_THROWSETCONST)             \
+  _(JSOP_THROWSETALIASEDCONST)      \
+  _(JSOP_THROWSETCALLEE)            \
+  _(JSOP_INITHIDDENPROP_GETTER)     \
+  _(JSOP_INITHIDDENPROP_SETTER)     \
+  _(JSOP_INITHIDDENELEM)            \
+  _(JSOP_INITHIDDENELEM_GETTER)     \
+  _(JSOP_INITHIDDENELEM_SETTER)     \
+  _(JSOP_CHECKOBJCOERCIBLE)         \
+  _(JSOP_DEBUGCHECKSELFHOSTED)      \
+  _(JSOP_JUMPTARGET)                \
+  _(JSOP_IS_CONSTRUCTING)           \
+  _(JSOP_TRY_DESTRUCTURING)         \
+  _(JSOP_CHECKCLASSHERITAGE)        \
+  _(JSOP_INITHOMEOBJECT)            \
+  _(JSOP_BUILTINPROTO)              \
+  _(JSOP_OBJWITHPROTO)              \
+  _(JSOP_FUNWITHPROTO)              \
+  _(JSOP_CLASSCONSTRUCTOR)          \
+  _(JSOP_DERIVEDCONSTRUCTOR)        \
+  _(JSOP_IMPORTMETA)                \
+  _(JSOP_DYNAMIC_IMPORT)            \
+  _(JSOP_INC)                       \
+  _(JSOP_DEC)                       \
+  _(JSOP_INSTRUMENTATION_ACTIVE)    \
+  _(JSOP_INSTRUMENTATION_CALLBACK)  \
+  _(JSOP_INSTRUMENTATION_SCRIPT_ID) \
+  _(JSOP_COALESCE)
 
 enum class ScriptGCThingType { RegExp, Function, Scope, BigInt };
 
@@ -357,11 +358,13 @@ class BaselineCodeGen {
   // Load script atom |index| into |dest|.
   void loadScriptAtom(Register index, Register dest);
 
+  // Computes the frame size. See BaselineFrame::debugFrameSize_.
+  void computeFrameSize(Register dest);
+
   void prepareVMCall();
 
-  void storeFrameSizeAndPushDescriptor(uint32_t frameBaseSize, uint32_t argSize,
-                                       const Address& frameSizeAddr,
-                                       Register scratch1, Register scratch2);
+  void storeFrameSizeAndPushDescriptor(uint32_t argSize, Register scratch1,
+                                       Register scratch2);
 
   enum class CallVMPhase { BeforePushingLocals, AfterPushingLocals };
   bool callVMInternal(VMFunctionId id, RetAddrEntry::Kind kind,
@@ -411,6 +414,8 @@ class BaselineCodeGen {
   MOZ_MUST_USE bool emitEnterGeneratorCode(Register script,
                                            Register resumeIndex,
                                            Register scratch);
+  MOZ_MUST_USE bool emitGeneratorThrowOrReturnCallVM();
+
   void emitInterpJumpToResumeEntry(Register script, Register resumeIndex,
                                    Register scratch);
   void emitJumpToInterpretOpLabel();
@@ -462,6 +467,7 @@ class BaselineCodeGen {
   MOZ_MUST_USE bool emitToBoolean();
   MOZ_MUST_USE bool emitTest(bool branchIfTrue);
   MOZ_MUST_USE bool emitAndOr(bool branchIfTrue);
+  MOZ_MUST_USE bool emitCoalesce();
 
   MOZ_MUST_USE bool emitCall(JSOp op);
   MOZ_MUST_USE bool emitSpreadCall(JSOp op);
@@ -533,6 +539,12 @@ class BaselineCompilerHandler {
 #endif
   FixedList<Label> labels_;
   RetAddrEntryVector retAddrEntries_;
+
+  // Native code offsets for OSR at JSOP_LOOPENTRY ops.
+  using OSREntryVector =
+      Vector<BaselineScript::OSREntry, 16, SystemAllocPolicy>;
+  OSREntryVector osrEntries_;
+
   JSScript* script_;
   jsbytecode* pc_;
 
@@ -570,11 +582,7 @@ class BaselineCompilerHandler {
   JSScript* script() const { return script_; }
   JSScript* maybeScript() const { return script_; }
 
-  JSFunction* function() const {
-    // Not delazifying here is ok as the function is guaranteed to have
-    // been delazified before compilation started.
-    return script_->functionNonDelazifying();
-  }
+  JSFunction* function() const { return script_->function(); }
   JSFunction* maybeFunction() const { return function(); }
 
   ModuleObject* module() const { return script_->module(); }
@@ -592,6 +600,7 @@ class BaselineCompilerHandler {
   BytecodeAnalysis& analysis() { return analysis_; }
 
   RetAddrEntryVector& retAddrEntries() { return retAddrEntries_; }
+  OSREntryVector& osrEntries() { return osrEntries_; }
 
   MOZ_MUST_USE bool recordCallRetAddr(JSContext* cx, RetAddrEntry::Kind kind,
                                       uint32_t retOffset);
@@ -609,18 +618,14 @@ class BaselineCompilerHandler {
 using BaselineCompilerCodeGen = BaselineCodeGen<BaselineCompilerHandler>;
 
 class BaselineCompiler final : private BaselineCompilerCodeGen {
-  // Stores the native code offset for a bytecode pc.
-  struct PCMappingEntry {
-    uint32_t pcOffset;
-    uint32_t nativeOffset;
-    PCMappingSlotInfo slotInfo;
+  // Native code offsets for bytecode ops in the script's resume offsets list.
+  ResumeOffsetEntryVector resumeOffsetEntries_;
 
-    // If set, insert a PCMappingIndexEntry before encoding the
-    // current entry.
-    bool addIndexEntry;
-  };
-
-  js::Vector<PCMappingEntry, 16, SystemAllocPolicy> pcMappingEntries_;
+  // Native code offsets for debug traps if the script is compiled with debug
+  // instrumentation.
+  using DebugTrapEntryVector =
+      Vector<BaselineScript::DebugTrapEntry, 0, SystemAllocPolicy>;
+  DebugTrapEntryVector debugTrapEntries_;
 
   CodeOffset profilerPushToggleOffset_;
 
@@ -640,29 +645,9 @@ class BaselineCompiler final : private BaselineCompilerCodeGen {
   }
 
  private:
-  PCMappingSlotInfo getStackTopSlotInfo() {
-    MOZ_ASSERT(frame.numUnsyncedSlots() <= 2);
-    switch (frame.numUnsyncedSlots()) {
-      case 0:
-        return PCMappingSlotInfo::MakeSlotInfo();
-      case 1: {
-        PCMappingSlotInfo::SlotLocation loc = frame.stackValueSlotLocation(-1);
-        return PCMappingSlotInfo::MakeSlotInfo(loc);
-      }
-      case 2:
-      default: {
-        PCMappingSlotInfo::SlotLocation loc1 = frame.stackValueSlotLocation(-1);
-        PCMappingSlotInfo::SlotLocation loc2 = frame.stackValueSlotLocation(-2);
-        return PCMappingSlotInfo::MakeSlotInfo(loc1, loc2);
-      }
-    }
-  }
-
   MethodStatus emitBody();
 
   MOZ_MUST_USE bool emitDebugTrap();
-
-  MOZ_MUST_USE bool addPCMappingEntry(bool addIndexEntry);
 };
 
 // Interface used by BaselineCodeGen for BaselineInterpreterGenerator.
@@ -692,6 +677,10 @@ class BaselineInterpreterHandler {
   // Offsets of some callVMs for BaselineDebugModeOSR.
   BaselineInterpreter::CallVMOffsets callVMOffsets_;
 
+  // Offset of the GeneratorThrowOrReturn callVM. See also
+  // emitGeneratorThrowOrReturnCallVM.
+  uint32_t generatorThrowOrReturnCallOffset_ = 0;
+
   // The current JSOp we are emitting interpreter code for.
   mozilla::Maybe<JSOp> currentOp_;
 
@@ -715,6 +704,13 @@ class BaselineInterpreterHandler {
 
   BaselineInterpreter::ICReturnOffsetVector& icReturnOffsets() {
     return icReturnOffsets_;
+  }
+
+  uint32_t generatorThrowOrReturnCallOffset() const {
+    return generatorThrowOrReturnCallOffset_;
+  }
+  void setGeneratorThrowOrReturnCallOffset(uint32_t offset) {
+    generatorThrowOrReturnCallOffset_ = offset;
   }
 
   void setCurrentOp(JSOp op) { currentOp_.emplace(op); }
@@ -771,6 +767,10 @@ class BaselineInterpreterGenerator final : private BaselineInterpreterCodeGen {
 
   // Like interpretOpOffset_ but skips the debug trap for the current op.
   uint32_t interpretOpNoDebugTrapOffset_ = 0;
+
+  // Offset of the jump (tail call) to the debug trap handler trampoline code.
+  // When the debugger is enabled, NOPs are patched to calls to this location.
+  uint32_t debugTrapHandlerOffset_ = 0;
 
  public:
   explicit BaselineInterpreterGenerator(JSContext* cx);

@@ -482,15 +482,20 @@ bool WebGLContext::CreateAndInitGL(
 
   if (IsWebGL2()) {
     flags |= gl::CreateContextFlags::PREFER_ES3;
-  } else if (!StaticPrefs::webgl_1_allow_core_profiles()) {
-    flags |= gl::CreateContextFlags::REQUIRE_COMPAT_PROFILE;
+  } else {
+    // Request and prefer ES2 context for WebGL1.
+    flags |= gl::CreateContextFlags::PREFER_EXACT_VERSION;
+
+    if (!StaticPrefs::webgl_1_allow_core_profiles()) {
+      flags |= gl::CreateContextFlags::REQUIRE_COMPAT_PROFILE;
+    }
   }
 
   {
     auto powerPref = mOptions.powerPreference;
 
     // If "Use hardware acceleration when available" option is disabled:
-    if (!gfxConfig::IsEnabled(Feature::HW_COMPOSITING)) {
+    if (!gfxConfig::IsEnabled(gfx::Feature::HW_COMPOSITING)) {
       powerPref = dom::WebGLPowerPreference::Low_power;
     }
 
@@ -2132,6 +2137,12 @@ CheckedUint32 WebGLContext::GetUnpackSize(bool isFunc3D, uint32_t width,
   return totalBytes;
 }
 
+void WebGLContext::ClearVRFrame() {
+#if defined(MOZ_WIDGET_ANDROID)
+  mVRScreen = nullptr;
+#endif
+}
+
 #if defined(MOZ_WIDGET_ANDROID)
 already_AddRefed<layers::SharedSurfaceTextureClient>
 WebGLContext::GetVRFrame() {
@@ -2162,7 +2173,9 @@ WebGLContext::GetVRFrame() {
   if (IsContextLost()) return nullptr;
 
   RefPtr<SharedSurfaceTextureClient> sharedSurface = mVRScreen->Front();
-  if (!sharedSurface || !sharedSurface->Surf()) return nullptr;
+  if (!sharedSurface || !sharedSurface->Surf() ||
+      !sharedSurface->Surf()->IsBufferAvailable())
+    return nullptr;
 
   // Make sure that the WebGL buffer is committed to the attached SurfaceTexture
   // on Android.

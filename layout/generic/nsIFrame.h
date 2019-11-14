@@ -602,6 +602,7 @@ class nsIFrame : public nsQueryFrame {
         mAllDescendantsAreInvisible(false),
         mHasBSizeChange(false),
         mInScrollAnchorChain(false),
+        mHasColumnSpanSiblings(false),
         mDescendantMayDependOnItsStaticPosition(false) {
     MOZ_ASSERT(mComputedStyle);
     MOZ_ASSERT(mPresContext);
@@ -893,8 +894,12 @@ class nsIFrame : public nsQueryFrame {
    * It's usually the 'writing-mode' computed value, but there are exceptions:
    *   * inner table frames copy the value from the table frame
    *     (@see nsTableRowGroupFrame::Init, nsTableRowFrame::Init etc)
-   *   * the root element frame propagates its value to its ancestors
-   *     (@see nsCanvasFrame::MaybePropagateRootElementWritingMode)
+   *   * the root element frame propagates its value to its ancestors.
+   *     The value may obtain from the principal <body> element.
+   *     (@see nsCSSFrameConstructor::ConstructDocElementFrame)
+   *   * the internal anonymous frames of the root element copy their value
+   *     from the parent.
+   *     (@see nsFrame::Init)
    *   * a scrolled frame propagates its value to its ancestor scroll frame
    *     (@see nsHTMLScrollFrame::ReloadChildFrames)
    */
@@ -1059,8 +1064,7 @@ class nsIFrame : public nsQueryFrame {
    */
   void SetSize(mozilla::WritingMode aWritingMode,
                const mozilla::LogicalSize& aSize) {
-    if ((!aWritingMode.IsVertical() && !aWritingMode.IsBidiLTR()) ||
-        aWritingMode.IsVerticalRL()) {
+    if (aWritingMode.IsPhysicalRTL()) {
       nscoord oldWidth = mRect.Width();
       SetSize(aSize.GetPhysicalSize(aWritingMode));
       mRect.x -= mRect.Width() - oldWidth;
@@ -1253,12 +1257,7 @@ class nsIFrame : public nsQueryFrame {
   NS_DECLARE_FRAME_PROPERTY_WITHOUT_DTOR(PlaceholderFrameProperty,
                                          nsPlaceholderFrame)
 
-  // HasColumnSpanSiblings property stores whether the frame has any
-  // column-span siblings under the same multi-column ancestor. That is, the
-  // frame's element has column-span descendants without an intervening
-  // multi-column container element in between them. If the frame having
-  // this bit set is removed, we need to reframe the multi-column container
-  NS_DECLARE_FRAME_PROPERTY_SMALL_VALUE(HasColumnSpanSiblings, bool)
+  NS_DECLARE_FRAME_PROPERTY_RELEASABLE(OffsetPathCache, mozilla::gfx::Path)
 
   mozilla::FrameBidiData GetBidiData() const {
     bool exists;
@@ -1417,7 +1416,7 @@ class nsIFrame : public nsQueryFrame {
   virtual nscoord GetLogicalBaseline(mozilla::WritingMode aWM) const = 0;
 
   /**
-   * Synthesize a first(last) inline-axis baseline from our margin-box.
+   * Synthesize a first(last) inline-axis baseline based on our margin-box.
    * An alphabetical baseline is at the start(end) edge and a central baseline
    * is at the center of our block-axis margin-box (aWM tells which to use).
    * https://drafts.csswg.org/css-align-3/#synthesize-baselines
@@ -1431,7 +1430,7 @@ class nsIFrame : public nsQueryFrame {
       mozilla::WritingMode aWM, BaselineSharingGroup aGroup) const;
 
   /**
-   * Synthesize a first(last) inline-axis baseline from our border-box.
+   * Synthesize a first(last) inline-axis baseline based on our border-box.
    * An alphabetical baseline is at the start(end) edge and a central baseline
    * is at the center of our block-axis border-box (aWM tells which to use).
    * https://drafts.csswg.org/css-align-3/#synthesize-baselines
@@ -1446,9 +1445,24 @@ class nsIFrame : public nsQueryFrame {
       mozilla::WritingMode aWM, BaselineSharingGroup aGroup) const;
 
   /**
+   * Synthesize a first(last) inline-axis baseline based on our content-box.
+   * An alphabetical baseline is at the start(end) edge and a central baseline
+   * is at the center of our block-axis content-box (aWM tells which to use).
+   * https://drafts.csswg.org/css-align-3/#synthesize-baselines
+   * @note The returned value is only valid when reflow is not needed.
+   * @note You should only call this on frames with a WM that's parallel to aWM.
+   * @param aWM the writing-mode of the alignment context
+   * @return an offset from our border-box block-axis start(end) edge for
+   * a first(last) baseline respectively
+   * (implemented in nsIFrameInlines.h)
+   */
+  inline nscoord SynthesizeBaselineBOffsetFromContentBox(
+      mozilla::WritingMode aWM, BaselineSharingGroup aGroup) const;
+
+  /**
    * Return the position of the frame's inline-axis baseline, or synthesize one
    * for the given alignment context. The returned baseline is the distance from
-   * the block-axis border-box start(end) edge for aBaselineGroup eFirst(eLast).
+   * the block-axis border-box start(end) edge for aBaselineGroup ::First(Last).
    * @note The returned value is only valid when reflow is not needed.
    * @note You should only call this on frames with a WM that's parallel to aWM.
    * @param aWM the writing-mode of the alignment context
@@ -1479,7 +1493,7 @@ class nsIFrame : public nsQueryFrame {
   /**
    * Return true if the frame has a first(last) inline-axis natural baseline per
    * CSS Box Alignment.  If so, then the returned baseline is the distance from
-   * the block-axis border-box start(end) edge for aBaselineGroup eFirst(eLast).
+   * the block-axis border-box start(end) edge for aBaselineGroup ::First(Last).
    * https://drafts.csswg.org/css-align-3/#natural-baseline
    * @note The returned value is only valid when reflow is not needed.
    * @note You should only call this on frames with a WM that's parallel to aWM.
@@ -1813,6 +1827,14 @@ class nsIFrame : public nsQueryFrame {
    */
   virtual bool IsSVGTransformed(Matrix* aOwnTransforms = nullptr,
                                 Matrix* aFromParentTransforms = nullptr) const;
+
+  /**
+   * Return true if this frame should form a backdrop root container.
+   * See: https://drafts.fxtf.org/filter-effects-2/#BackdropRootTriggers
+   */
+  bool FormsBackdropRoot(const nsStyleDisplay* aStyleDisplay,
+                         const nsStyleEffects* aStyleEffects,
+                         const nsStyleSVGReset* aStyleSvgReset);
 
   /**
    * Returns whether this frame will attempt to extend the 3d transforms of its
@@ -2353,17 +2375,23 @@ class nsIFrame : public nsQueryFrame {
                                   InlinePrefISizeData* aData) = 0;
 
   /**
-   * Return the horizontal components of padding, border, and margin
+   * Intrinsic size of a frame in a single axis.
+   *
+   * This can represent either isize or bsize.
+   */
+  struct IntrinsicSizeOffsetData {
+    nscoord padding = 0;
+    nscoord border = 0;
+    nscoord margin = 0;
+  };
+
+  /**
+   * Return the isize components of padding, border, and margin
    * that contribute to the intrinsic width that applies to the parent.
    * @param aPercentageBasis the percentage basis to use for padding/margin -
    *   i.e. the Containing Block's inline-size
    */
-  struct IntrinsicISizeOffsetData {
-    nscoord hPadding, hBorder, hMargin;
-
-    IntrinsicISizeOffsetData() : hPadding(0), hBorder(0), hMargin(0) {}
-  };
-  virtual IntrinsicISizeOffsetData IntrinsicISizeOffsets(
+  virtual IntrinsicSizeOffsetData IntrinsicISizeOffsets(
       nscoord aPercentageBasis = NS_UNCONSTRAINEDSIZE) = 0;
 
   /**
@@ -2372,7 +2400,7 @@ class nsIFrame : public nsQueryFrame {
    * @param aPercentageBasis the percentage basis to use for padding/margin -
    *   i.e. the Containing Block's inline-size
    */
-  IntrinsicISizeOffsetData IntrinsicBSizeOffsets(
+  IntrinsicSizeOffsetData IntrinsicBSizeOffsets(
       nscoord aPercentageBasis = NS_UNCONSTRAINEDSIZE);
 
   virtual mozilla::IntrinsicSize GetIntrinsicSize() = 0;
@@ -2548,6 +2576,24 @@ class nsIFrame : public nsQueryFrame {
   virtual void Reflow(nsPresContext* aPresContext, ReflowOutput& aReflowOutput,
                       const ReflowInput& aReflowInput,
                       nsReflowStatus& aStatus) = 0;
+
+  // Option flags for ReflowChild() and FinishReflowChild()
+  // member functions
+  enum class ReflowChildFlags : uint32_t {
+    Default = 0,
+    NoMoveView = 1 << 0,
+    NoMoveFrame = (1 << 1) | NoMoveView,
+    NoSizeView = 1 << 2,
+    NoVisibility = 1 << 3,
+
+    // Only applies to ReflowChild; if true, don't delete the next-in-flow, even
+    // if the reflow is fully complete.
+    NoDeleteNextInFlowChild = 1 << 4,
+
+    // Only applies to FinishReflowChild.  Tell it to call
+    // ApplyRelativePositioning.
+    ApplyRelativePositioning = 1 << 5
+  };
 
   /**
    * Post-reflow hook. After a frame is reflowed this method will be called
@@ -2805,6 +2851,11 @@ class nsIFrame : public nsQueryFrame {
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wtype-limits"
 #endif
+#ifdef __clang__
+#  pragma clang diagnostic push
+#  pragma clang diagnostic ignored "-Wunknown-pragmas"
+#  pragma clang diagnostic ignored "-Wtautological-unsigned-zero-compare"
+#endif
 
 #define FRAME_TYPE(name_, first_class_, last_class_)                 \
   bool Is##name_##Frame() const {                                    \
@@ -2816,6 +2867,9 @@ class nsIFrame : public nsQueryFrame {
 
 #ifdef __GNUC__
 #  pragma GCC diagnostic pop
+#endif
+#ifdef __clang__
+#  pragma clang diagnostic pop
 #endif
 
   /**
@@ -3715,7 +3769,7 @@ class nsIFrame : public nsQueryFrame {
       nsBoxLayoutState& aBoxLayoutState) = 0;
 
   // Implemented in nsBox, used in nsBoxFrame
-  uint32_t GetXULOrdinal();
+  int32_t GetXULOrdinal();
 
   virtual nscoord GetXULFlex() = 0;
   virtual nscoord GetXULBoxAscent(nsBoxLayoutState& aBoxLayoutState) = 0;
@@ -3739,7 +3793,9 @@ class nsIFrame : public nsQueryFrame {
   virtual nsBoxLayout* GetXULLayoutManager() { return nullptr; }
   nsresult GetXULClientRect(nsRect& aContentRect);
 
-  virtual uint32_t GetXULLayoutFlags() { return 0; }
+  virtual ReflowChildFlags GetXULLayoutFlags() {
+    return ReflowChildFlags::Default;
+  }
 
   // For nsSprocketLayout
   virtual Valignment GetXULVAlign() const = 0;
@@ -3915,6 +3971,10 @@ class nsIFrame : public nsQueryFrame {
    */
   inline bool IsFlexItem() const;
   /**
+   * Is this a grid item? (i.e. a non-abs-pos child of a grid container)
+   */
+  inline bool IsGridItem() const;
+  /**
    * Is this a flex or grid item? (i.e. a non-abs-pos child of a flex/grid
    * container)
    */
@@ -3926,7 +3986,6 @@ class nsIFrame : public nsQueryFrame {
    */
   inline bool IsTableCaption() const;
 
-  inline bool IsBlockInside() const;
   inline bool IsBlockOutside() const;
   inline bool IsInlineOutside() const;
   inline mozilla::StyleDisplay GetDisplay() const;
@@ -3960,7 +4019,7 @@ class nsIFrame : public nsQueryFrame {
   Maybe<mozilla::StyleVerticalAlignKeyword> VerticalAlignEnum() const;
 
   void CreateOwnLayerIfNeeded(nsDisplayListBuilder* aBuilder,
-                              nsDisplayList* aList,
+                              nsDisplayList* aList, uint16_t aType,
                               bool* aCreatedContainerItem = nullptr);
 
   /**
@@ -4172,33 +4231,37 @@ class nsIFrame : public nsQueryFrame {
     mForceDescendIntoIfVisible = aForce;
   }
 
-  bool BuiltDisplayList() { return mBuiltDisplayList; }
-  void SetBuiltDisplayList(bool aBuilt) { mBuiltDisplayList = aBuilt; }
+  bool BuiltDisplayList() const { return mBuiltDisplayList; }
+  void SetBuiltDisplayList(const bool aBuilt) { mBuiltDisplayList = aBuilt; }
 
-  bool IsFrameModified() { return mFrameIsModified; }
-  void SetFrameIsModified(bool aFrameIsModified) {
+  bool IsFrameModified() const { return mFrameIsModified; }
+  void SetFrameIsModified(const bool aFrameIsModified) {
     mFrameIsModified = aFrameIsModified;
   }
 
-  bool HasOverrideDirtyRegion() { return mHasOverrideDirtyRegion; }
-  void SetHasOverrideDirtyRegion(bool aHasDirtyRegion) {
+  bool HasOverrideDirtyRegion() const { return mHasOverrideDirtyRegion; }
+  void SetHasOverrideDirtyRegion(const bool aHasDirtyRegion) {
     mHasOverrideDirtyRegion = aHasDirtyRegion;
   }
 
-  bool MayHaveWillChangeBudget() { return mMayHaveWillChangeBudget; }
-  void SetMayHaveWillChangeBudget(bool aHasBudget) {
+  bool MayHaveWillChangeBudget() const { return mMayHaveWillChangeBudget; }
+  void SetMayHaveWillChangeBudget(const bool aHasBudget) {
     mMayHaveWillChangeBudget = aHasBudget;
   }
 
   bool HasBSizeChange() const { return mHasBSizeChange; }
-  void SetHasBSizeChange(bool aHasBSizeChange) {
+  void SetHasBSizeChange(const bool aHasBSizeChange) {
     mHasBSizeChange = aHasBSizeChange;
+  }
+
+  bool HasColumnSpanSiblings() const { return mHasColumnSpanSiblings; }
+  void SetHasColumnSpanSiblings(bool aHasColumnSpanSiblings) {
+    mHasColumnSpanSiblings = aHasColumnSpanSiblings;
   }
 
   bool DescendantMayDependOnItsStaticPosition() const {
     return mDescendantMayDependOnItsStaticPosition;
   }
-
   void SetDescendantMayDependOnItsStaticPosition(bool aValue) {
     mDescendantMayDependOnItsStaticPosition = aValue;
   }
@@ -4217,6 +4280,11 @@ class nsIFrame : public nsQueryFrame {
    */
   mozilla::gfx::CompositorHitTestInfo GetCompositorHitTestInfo(
       nsDisplayListBuilder* aBuilder);
+
+  /**
+   * Copies aWM to mWritingMode on 'this' and all its ancestors.
+   */
+  inline void PropagateWritingModeToSelfAndAncestors(mozilla::WritingMode aWM);
 
  protected:
   static void DestroyAnonymousContent(nsPresContext* aPresContext,
@@ -4272,11 +4340,6 @@ class nsIFrame : public nsQueryFrame {
   }
 
  protected:
-  /**
-   * Copies aRootElemWM to mWritingMode on 'this' and all its ancestors.
-   */
-  inline void PropagateRootElementWritingMode(mozilla::WritingMode aRootElemWM);
-
   void MarkInReflow() {
 #ifdef DEBUG_dbaron_off
     // bug 81268
@@ -4428,6 +4491,20 @@ class nsIFrame : public nsQueryFrame {
    * True if we are or contain the scroll anchor for a scrollable frame.
    */
   bool mInScrollAnchorChain : 1;
+
+  /**
+   * Suppose a frame was split into multiple parts to separate parts containing
+   * column-spans from parts not containing column-spans. This bit is set on all
+   * continuations *not* containing column-spans except for the those after the
+   * last column-span/non-column-span boundary (i.e., the bit really means it
+   * has a *later* sibling across a split). Note that the last part is always
+   * created to containing no columns-spans even if it has no children. See
+   * nsCSSFrameConstructor::CreateColumnSpanSiblings() for the implementation.
+   *
+   * If the frame having this bit set is removed, we need to reframe the
+   * multi-column container.
+   */
+  bool mHasColumnSpanSiblings : 1;
 
   /**
    * True if we may have any descendant whose positioning may depend on its
@@ -4637,6 +4714,8 @@ class nsIFrame : public nsQueryFrame {
   virtual nsresult GetFrameName(nsAString& aResult) const = 0;
 #endif
 };
+
+MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(nsIFrame::ReflowChildFlags)
 
 //----------------------------------------------------------------------
 

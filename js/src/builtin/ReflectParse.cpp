@@ -17,6 +17,7 @@
 #include "builtin/Array.h"
 #include "builtin/Reflect.h"
 #include "frontend/ModuleSharedContext.h"
+#include "frontend/ParseInfo.h"
 #include "frontend/ParseNode.h"
 #include "frontend/Parser.h"
 #include "js/CharacterEncoding.h"
@@ -101,6 +102,7 @@ enum BinaryOperator {
   BINOP_IN,
   BINOP_INSTANCEOF,
   BINOP_PIPELINE,
+  BINOP_COALESCE,
 
   BINOP_LIMIT
 };
@@ -177,6 +179,7 @@ static const char* const binopNames[] = {
     "in",         /* BINOP_IN */
     "instanceof", /* BINOP_INSTANCEOF */
     "|>",         /* BINOP_PIPELINE */
+    "??",         /* BINOP_COALESCE */
 };
 
 static const char* const unopNames[] = {
@@ -1826,6 +1829,8 @@ BinaryOperator ASTSerializer::binop(ParseNodeKind kind) {
       return BINOP_INSTANCEOF;
     case ParseNodeKind::PipelineExpr:
       return BINOP_PIPELINE;
+    case ParseNodeKind::CoalesceExpr:
+      return BINOP_COALESCE;
     default:
       return BINOP_ERR;
   }
@@ -2565,7 +2570,7 @@ bool ASTSerializer::leftAssociate(ListNode* node, MutableHandleValue dst) {
 
   ParseNodeKind kind = node->getKind();
   bool lor = kind == ParseNodeKind::OrExpr;
-  bool logop = lor || (kind == ParseNodeKind::AndExpr);
+  bool logop = lor || kind == ParseNodeKind::AndExpr;
 
   ParseNode* head = node->head();
   RootedValue left(cx);
@@ -2678,6 +2683,7 @@ bool ASTSerializer::expression(ParseNode* pn, MutableHandleValue dst) {
                                            dst);
     }
 
+    case ParseNodeKind::CoalesceExpr:
     case ParseNodeKind::OrExpr:
     case ParseNodeKind::AndExpr:
       return leftAssociate(&pn->as<ListNode>(), dst);
@@ -3161,7 +3167,7 @@ bool ASTSerializer::literal(ParseNode* pn, MutableHandleValue dst) {
       break;
 
     case ParseNodeKind::RegExpExpr: {
-      RootedObject re1(cx, pn->as<RegExpLiteral>().objbox()->object());
+      RootedObject re1(cx, pn->as<RegExpLiteral>().getOrCreate(cx));
       LOCAL_ASSERT(re1 && re1->is<RegExpObject>());
 
       RootedObject re2(cx, CloneRegExpObject(cx, re1.as<RegExpObject>()));
@@ -3178,7 +3184,7 @@ bool ASTSerializer::literal(ParseNode* pn, MutableHandleValue dst) {
       break;
 
     case ParseNodeKind::BigIntExpr: {
-      BigInt* x = pn->as<BigIntLiteral>().box()->value();
+      BigInt* x = pn->as<BigIntLiteral>().getOrCreateBigInt(cx);
       cx->check(x);
       val.setBigInt(x);
       break;
@@ -3631,10 +3637,12 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
 
   CompileOptions options(cx);
   options.setFileAndLine(filename.get(), lineno);
-  options.setCanLazilyParse(false);
+  options.setForceFullParse();
   options.allowHTMLComments = target == ParseGoal::Script;
   mozilla::Range<const char16_t> chars = linearChars.twoByteRange();
-  UsedNameTracker usedNames(cx);
+
+  LifoAllocScope allocScope(&cx->tempLifoAlloc());
+  ParseInfo parseInfo(cx, allocScope);
 
   RootedScriptSourceObject sourceObject(
       cx, frontend::CreateScriptSourceObject(cx, options, mozilla::Nothing()));
@@ -3643,8 +3651,8 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
   }
 
   Parser<FullParseHandler, char16_t> parser(
-      cx, cx->tempLifoAlloc(), options, chars.begin().get(), chars.length(),
-      /* foldConstants = */ false, usedNames, nullptr, nullptr, sourceObject,
+      cx, options, chars.begin().get(), chars.length(),
+      /* foldConstants = */ false, parseInfo, nullptr, nullptr, sourceObject,
       target);
   if (!parser.checkOptions()) {
     return false;
@@ -3678,6 +3686,10 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
     }
 
     pn = pn->as<ModuleNode>().body();
+  }
+
+  if (!parser.publishDeferredItems()) {
+    return false;
   }
 
   RootedValue val(cx);

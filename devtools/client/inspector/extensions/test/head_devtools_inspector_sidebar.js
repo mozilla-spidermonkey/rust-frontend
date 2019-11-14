@@ -1,4 +1,3 @@
-/* vim: set ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -15,6 +14,9 @@ ChromeUtils.defineModuleGetter(
   "ContentTaskUtils",
   "resource://testing-common/ContentTaskUtils.jsm"
 );
+
+const ACCORDION_LABEL_SELECTOR = ".accordion-header-label";
+const ACCORDION_CONTENT_SELECTOR = ".accordion-content";
 
 // Retrieve the array of all the objectValueGrip actors from the
 // inspector extension sidebars state
@@ -127,13 +129,13 @@ async function testSetExpressionSidebarPanel(panel, expected) {
     ok(accordion, "Got an Accordion component as expected");
 
     is(
-      accordion.querySelector("._content").firstChild,
+      accordion.querySelector(ACCORDION_CONTENT_SELECTOR).firstChild,
       objectInspector,
       "The ObjectInspector should be inside the Accordion content"
     );
 
     is(
-      accordion.querySelector("._header").textContent.trim(),
+      accordion.querySelector(ACCORDION_LABEL_SELECTOR).textContent,
       rootTitle,
       "The Accordion has the expected label"
     );

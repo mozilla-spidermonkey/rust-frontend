@@ -49,6 +49,7 @@ class imgRequest final : public nsIStreamListener,
   typedef mozilla::image::Image Image;
   typedef mozilla::image::ImageCacheKey ImageCacheKey;
   typedef mozilla::image::ProgressTracker ProgressTracker;
+  typedef mozilla::dom::ReferrerPolicy ReferrerPolicy;
 
  public:
   imgRequest(imgLoader* aLoader, const ImageCacheKey& aCacheKey);
@@ -90,6 +91,9 @@ class imgRequest final : public nsIStreamListener,
   void StartDecoding();
 
   inline uint64_t InnerWindowID() const { return mInnerWindowId; }
+  void SetInnerWindowID(uint64_t aInnerWindowId) {
+    mInnerWindowId = aInnerWindowId;
+  }
 
   // Set the cache validation information (expiry time, whether we must
   // validate, etc) on the cache entry based on the request information.
@@ -142,7 +146,6 @@ class imgRequest final : public nsIStreamListener,
   // OK to use on any thread.
   nsresult GetURI(nsIURI** aURI);
   nsresult GetFinalURI(nsIURI** aURI);
-  bool IsScheme(const char* aScheme) const;
   bool IsChrome() const;
   bool IsData() const;
 

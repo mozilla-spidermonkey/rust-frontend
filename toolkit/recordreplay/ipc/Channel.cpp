@@ -209,11 +209,6 @@ static bool MessageSubjectToSimulatedDelay(MessageType aType) {
 }
 
 void Channel::SendMessage(Message&& aMsg) {
-  MOZ_RELEASE_ASSERT(NS_IsMainThread() ||
-                     aMsg.mType == MessageType::BeginFatalError ||
-                     aMsg.mType == MessageType::FatalError ||
-                     aMsg.mType == MessageType::MiddlemanCallRequest);
-
   // Block until the channel is initialized.
   if (!mInitialized) {
     MonitorAutoLock lock(mMonitor);
@@ -244,6 +239,13 @@ void Channel::SendMessage(Message&& aMsg) {
         mAvailableTime + TimeDuration::FromMilliseconds(gSimulatedLatency);
 
     aMsg.mReceiveTime = (receiveTime - mStartTime).ToMilliseconds();
+  }
+
+  // Send messages atomically, except when crashing.
+  Maybe<MonitorAutoLock> lock;
+  if (aMsg.mType != MessageType::BeginFatalError &&
+      aMsg.mType != MessageType::FatalError) {
+    lock.emplace(mMonitor);
   }
 
   const char* ptr = (const char*)&aMsg;

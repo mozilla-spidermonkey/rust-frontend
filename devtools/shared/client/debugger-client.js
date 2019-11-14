@@ -10,11 +10,7 @@ const {
   callFunctionWithAsyncStack,
 } = require("devtools/shared/platform/stack");
 const EventEmitter = require("devtools/shared/event-emitter");
-const {
-  ThreadStateTypes,
-  UnsolicitedNotifications,
-  UnsolicitedPauses,
-} = require("./constants");
+const { UnsolicitedNotifications } = require("./constants");
 
 loader.lazyRequireGetter(
   this,
@@ -35,11 +31,7 @@ loader.lazyRequireGetter(
   "devtools/shared/fronts/root",
   true
 );
-loader.lazyRequireGetter(
-  this,
-  "ObjectClient",
-  "devtools/shared/client/object-client"
-);
+loader.lazyRequireGetter(this, "ObjectFront", "devtools/shared/fronts/object");
 loader.lazyRequireGetter(this, "Front", "devtools/shared/protocol", true);
 
 /**
@@ -58,7 +50,6 @@ function DebuggerClient(transport) {
   this.traits = {};
 
   this.request = this.request.bind(this);
-  this.localTransport = this._transport.onOutputStreamReady === undefined;
 
   /*
    * As the first thing on the connection, expect a greeting packet from
@@ -66,6 +57,11 @@ function DebuggerClient(transport) {
    */
   this.mainRoot = null;
   this.expectReply("root", packet => {
+    if (packet.error) {
+      console.error("Error when waiting for root actor", packet);
+      return;
+    }
+
     this.mainRoot = new RootFront(this, packet);
 
     // Root Front is a special case, managing itself as it doesn't have any parent.
@@ -580,15 +576,9 @@ DebuggerClient.prototype = {
       return;
     }
 
-    // support older browsers for Fx69+ for using the old thread front
-    if (!this.traits.hasThreadFront && packet.from.includes("context")) {
-      this.sendToDeprecatedThreadClient(packet);
-      return;
-    }
-
     // If we have a registered Front for this actor, let it handle the packet
     // and skip all the rest of this unpleasantness.
-    const front = this.getActor(packet.from);
+    const front = this.getFrontByID(packet.from);
     if (front) {
       front.onPacket(packet);
       return;
@@ -628,60 +618,6 @@ DebuggerClient.prototype = {
       } else {
         emitReply();
       }
-    }
-  },
-
-  // support older browsers for Fx69+
-  // The code duplication here is intentional until we drop support for
-  // these versions. Once that happens this code can be deleted.
-  sendToDeprecatedThreadClient(packet) {
-    const deprecatedThreadClient = this.getActor(packet.from);
-    if (deprecatedThreadClient && packet.type) {
-      const type = packet.type;
-      if (deprecatedThreadClient.events.includes(type)) {
-        deprecatedThreadClient.emit(type, packet);
-        // we ignore the rest, as the client is expected to handle this packet.
-        return;
-      }
-    }
-
-    let activeRequest;
-    // See if we have a handler function waiting for a reply from this
-    // actor. (Don't count unsolicited notifications or pauses as
-    // replies.)
-    if (
-      this._activeRequests.has(packet.from) &&
-      !(
-        packet.type == ThreadStateTypes.paused &&
-        packet.why.type in UnsolicitedPauses
-      )
-    ) {
-      activeRequest = this._activeRequests.get(packet.from);
-      this._activeRequests.delete(packet.from);
-    }
-
-    // If there is a subsequent request for the same actor, hand it off to the
-    // transport.  Delivery of packets on the other end is always async, even
-    // in the local transport case.
-    this._attemptNextRequest(packet.from);
-
-    // Packets that indicate thread state changes get special treatment.
-    if (
-      packet.type in ThreadStateTypes &&
-      deprecatedThreadClient &&
-      typeof deprecatedThreadClient._onThreadState == "function"
-    ) {
-      deprecatedThreadClient._onThreadState(packet);
-    }
-
-    // Only try to notify listeners on events, not responses to requests
-    // that lack a packet type.
-    if (packet.type) {
-      this.emit(packet.type, packet);
-    }
-
-    if (activeRequest) {
-      activeRequest.emit("json-reply", packet);
     }
   },
 
@@ -923,7 +859,13 @@ DebuggerClient.prototype = {
   removeActorPool: function(pool) {
     this._pools.delete(pool);
   },
-  getActor: function(actorID) {
+
+  /**
+   * Return the Front for the Actor whose ID is the one passed in argument.
+   *
+   * @param {String} actorID: The actor ID to look for.
+   */
+  getFrontByID: function(actorID) {
     const pool = this.poolFor(actorID);
     return pool ? pool.get(actorID) : null;
   },
@@ -943,12 +885,12 @@ DebuggerClient.prototype = {
   activeAddon: null,
 
   /**
-   * Creates an object client for this DebuggerClient and the grip in parameter,
-   * @param {Object} grip: The grip to create the ObjectClient for.
-   * @returns {ObjectClient}
+   * Creates an object front for this DebuggerClient and the grip in parameter,
+   * @param {Object} grip: The grip to create the ObjectFront for.
+   * @returns {ObjectFront}
    */
-  createObjectClient: function(grip) {
-    return new ObjectClient(this, grip);
+  createObjectFront: function(grip) {
+    return new ObjectFront(this, grip);
   },
 
   get transport() {

@@ -12,7 +12,7 @@ use crate::partition_slice::partition_slice;
 use crate::regalloc::affinity::Affinity;
 use crate::regalloc::liveness::Liveness;
 use crate::regalloc::liverange::LiveRange;
-use std::vec::Vec;
+use alloc::vec::Vec;
 
 type ValueList = EntityList<Value>;
 
@@ -191,7 +191,6 @@ impl LiveValueTracker {
                 .idom_sets
                 .get(&idom)
                 .expect("No stored live set for dominator");
-            let ctx = liveness.context(layout);
             // Get just the values that are live-in to `ebb`.
             for &value in idom_live_list.as_slice(&self.idom_pool) {
                 let lr = liveness
@@ -199,7 +198,7 @@ impl LiveValueTracker {
                     .expect("Immediate dominator value has no live range");
 
                 // Check if this value is live-in here.
-                if let Some(endpoint) = lr.livein_local_end(ebb, ctx) {
+                if let Some(endpoint) = lr.livein_local_end(ebb, layout) {
                     self.live.push(value, endpoint, lr);
                 }
             }

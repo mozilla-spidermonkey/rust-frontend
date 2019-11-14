@@ -7,11 +7,14 @@
 #include "builtin/TestingFunctions.h"
 
 #include "mozilla/Atomics.h"
+#include "mozilla/Casting.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Move.h"
+#include "mozilla/Span.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/TextUtils.h"
+#include "mozilla/Tuple.h"
 #include "mozilla/Unused.h"
 
 #include <algorithm>
@@ -38,6 +41,7 @@
 #  include "irregexp/RegExpParser.h"
 #endif
 #include "gc/Heap.h"
+#include "gc/Zone.h"
 #include "jit/BaselineJIT.h"
 #include "jit/InlinableNatives.h"
 #include "jit/JitRealm.h"
@@ -77,6 +81,7 @@
 #include "vm/TraceLogging.h"
 #include "wasm/AsmJS.h"
 #include "wasm/WasmBaselineCompile.h"
+#include "wasm/WasmInstance.h"
 #include "wasm/WasmJS.h"
 #include "wasm/WasmModule.h"
 #include "wasm/WasmSignalHandlers.h"
@@ -94,7 +99,12 @@
 using namespace js;
 
 using mozilla::ArrayLength;
+using mozilla::AssertedCast;
+using mozilla::AsWritableChars;
+using mozilla::MakeSpan;
 using mozilla::Maybe;
+using mozilla::Tie;
+using mozilla::Tuple;
 
 using JS::AutoStableStringChars;
 using JS::CompileOptions;
@@ -151,6 +161,10 @@ static bool GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   if (!JS_SetProperty(cx, info, "generational-gc", TrueHandleValue)) {
+    return false;
+  }
+
+  if (!JS_SetProperty(cx, info, "oom-backtraces", FalseHandleValue)) {
     return false;
   }
 
@@ -236,6 +250,15 @@ static bool GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
+#ifdef XP_WIN
+  value = BooleanValue(true);
+#else
+  value = BooleanValue(false);
+#endif
+  if (!JS_SetProperty(cx, info, "windows", value)) {
+    return false;
+  }
+
 #ifdef JS_CODEGEN_ARM64
   value = BooleanValue(true);
 #else
@@ -308,6 +331,15 @@ static bool GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
+#ifdef MOZ_UBSAN
+  value = BooleanValue(true);
+#else
+  value = BooleanValue(false);
+#endif
+  if (!JS_SetProperty(cx, info, "ubsan", value)) {
+    return false;
+  }
+
 #ifdef JS_GC_ZEAL
   value = BooleanValue(true);
 #else
@@ -353,15 +385,6 @@ static bool GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-#ifdef JS_OOM_DO_BACKTRACES
-  value = BooleanValue(true);
-#else
-  value = BooleanValue(false);
-#endif
-  if (!JS_SetProperty(cx, info, "oom-backtraces", value)) {
-    return false;
-  }
-
 #ifdef ENABLE_TYPED_OBJECTS
   value = BooleanValue(true);
 #else
@@ -371,7 +394,7 @@ static bool GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-#ifdef EXPOSE_INTL_API
+#ifdef ENABLE_INTL_API
   value = BooleanValue(true);
 #else
   value = BooleanValue(false);
@@ -440,7 +463,7 @@ static bool GC(JSContext* cx, unsigned argc, Value* vp) {
   if (args.length() >= 1) {
     Value arg = args[0];
     if (arg.isString()) {
-      if (!JS_StringEqualsAscii(cx, arg.toString(), "zone", &zone)) {
+      if (!JS_StringEqualsLiteral(cx, arg.toString(), "zone", &zone)) {
         return false;
       }
     } else if (arg.isObject()) {
@@ -449,18 +472,32 @@ static bool GC(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
-  bool shrinking = false;
+  JSGCInvocationKind gckind = GC_NORMAL;
+  JS::GCReason reason = JS::GCReason::API;
   if (args.length() >= 2) {
     Value arg = args[1];
     if (arg.isString()) {
-      if (!JS_StringEqualsAscii(cx, arg.toString(), "shrinking", &shrinking)) {
+      bool shrinking = false;
+      bool last_ditch = false;
+      if (!JS_StringEqualsLiteral(cx, arg.toString(), "shrinking",
+                                  &shrinking)) {
         return false;
+      }
+      if (!JS_StringEqualsLiteral(cx, arg.toString(), "last-ditch",
+                                  &last_ditch)) {
+        return false;
+      }
+      if (shrinking) {
+        gckind = GC_SHRINK;
+      } else if (last_ditch) {
+        gckind = GC_SHRINK;
+        reason = JS::GCReason::LAST_DITCH;
       }
     }
   }
 
 #ifndef JS_MORE_DETERMINISTIC
-  size_t preBytes = cx->runtime()->gc.heapSize.gcBytes();
+  size_t preBytes = cx->runtime()->gc.heapSize.bytes();
 #endif
 
   if (zone) {
@@ -469,13 +506,12 @@ static bool GC(JSContext* cx, unsigned argc, Value* vp) {
     JS::PrepareForFullGC(cx);
   }
 
-  JSGCInvocationKind gckind = shrinking ? GC_SHRINK : GC_NORMAL;
-  JS::NonIncrementalGC(cx, gckind, JS::GCReason::API);
+  JS::NonIncrementalGC(cx, gckind, reason);
 
   char buf[256] = {'\0'};
 #ifndef JS_MORE_DETERMINISTIC
   SprintfLiteral(buf, "before %zu, after %zu\n", preBytes,
-                 cx->runtime()->gc.heapSize.gcBytes());
+                 cx->runtime()->gc.heapSize.bytes());
 #endif
   return ReturnStringCopy(cx, args, buf);
 }
@@ -513,9 +549,8 @@ static bool MinorGC(JSContext* cx, unsigned argc, Value* vp) {
   _("dynamicHeapGrowth", JSGC_DYNAMIC_HEAP_GROWTH, true)                     \
   _("dynamicMarkSlice", JSGC_DYNAMIC_MARK_SLICE, true)                       \
   _("allocationThreshold", JSGC_ALLOCATION_THRESHOLD, true)                  \
-  _("allocationThresholdFactor", JSGC_ALLOCATION_THRESHOLD_FACTOR, true)     \
-  _("allocationThresholdFactorAvoidInterrupt",                               \
-    JSGC_ALLOCATION_THRESHOLD_FACTOR_AVOID_INTERRUPT, true)                  \
+  _("nonIncrementalFactor", JSGC_NON_INCREMENTAL_FACTOR, true)               \
+  _("avoidInterruptFactor", JSGC_AVOID_INTERRUPT_FACTOR, true)               \
   _("minEmptyChunkCount", JSGC_MIN_EMPTY_CHUNK_COUNT, true)                  \
   _("maxEmptyChunkCount", JSGC_MAX_EMPTY_CHUNK_COUNT, true)                  \
   _("compactingEnabled", JSGC_COMPACTING_ENABLED, true)                      \
@@ -551,8 +586,8 @@ static bool GCParameter(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  JSFlatString* flatStr = JS_FlattenString(cx, str);
-  if (!flatStr) {
+  JSLinearString* linearStr = JS_EnsureLinearString(cx, str);
+  if (!linearStr) {
     return false;
   }
 
@@ -563,7 +598,7 @@ static bool GCParameter(JSContext* cx, unsigned argc, Value* vp) {
           cx, "the first argument must be one of:" GC_PARAMETER_ARGS_LIST);
       return false;
     }
-    if (JS_FlatStringEqualsAscii(flatStr, paramMap[paramIndex].name)) {
+    if (JS_LinearStringEqualsAscii(linearStr, paramMap[paramIndex].name)) {
       break;
     }
   }
@@ -611,13 +646,7 @@ static bool GCParameter(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  bool ok;
-  {
-    JSRuntime* rt = cx->runtime();
-    AutoLockGC lock(rt);
-    ok = rt->gc.setParameter(param, value, lock);
-  }
-
+  bool ok = cx->runtime()->gc.setParameter(param, value);
   if (!ok) {
     JS_ReportErrorASCII(cx, "Parameter value out of range");
     return false;
@@ -697,6 +726,16 @@ static bool WasmCachingIsSupported(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool WasmHugeMemoryIsSupported(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+#ifdef WASM_SUPPORTS_HUGE_MEMORY
+  args.rval().setBoolean(true);
+#else
+  args.rval().setBoolean(false);
+#endif
+  return true;
+}
+
 static bool WasmUsesCranelift(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 #ifdef ENABLE_WASM_CRANELIFT
@@ -746,6 +785,12 @@ static bool WasmReftypesEnabled(JSContext* cx, unsigned argc, Value* vp) {
 static bool WasmGcEnabled(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   args.rval().setBoolean(wasm::HasGcSupport(cx));
+  return true;
+}
+
+static bool WasmMultiValueEnabled(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  args.rval().setBoolean(wasm::HasMultiValueSupport(cx));
   return true;
 }
 
@@ -804,6 +849,8 @@ static bool WasmTextToBinary(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
+  size_t textLen = args[0].toString()->length();
+
   AutoStableStringChars twoByteChars(cx);
   if (!twoByteChars.initTwoByte(cx, args[0].toString())) {
     return false;
@@ -824,8 +871,8 @@ static bool WasmTextToBinary(JSContext* cx, unsigned argc, Value* vp) {
   wasm::Bytes bytes;
   UniqueChars error;
   wasm::Uint32Vector offsets;
-  if (!wasm::TextToBinary(twoByteChars.twoByteChars(), stackLimit, &bytes,
-                          &offsets, &error)) {
+  if (!wasm::TextToBinary(twoByteChars.twoByteChars(), textLen, stackLimit,
+                          &bytes, &offsets, &error)) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_WASM_TEXT_FAIL,
                               error.get() ? error.get() : "out of memory");
@@ -874,6 +921,42 @@ static bool WasmTextToBinary(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool ConvertToTier(JSContext* cx, HandleValue value,
+                          const wasm::Code& code, wasm::Tier* tier) {
+  RootedString option(cx, JS::ToString(cx, value));
+
+  if (!option) {
+    return false;
+  }
+
+  bool stableTier = false;
+  bool bestTier = false;
+  bool baselineTier = false;
+  bool ionTier = false;
+
+  if (!JS_StringEqualsLiteral(cx, option, "stable", &stableTier) ||
+      !JS_StringEqualsLiteral(cx, option, "best", &bestTier) ||
+      !JS_StringEqualsLiteral(cx, option, "baseline", &baselineTier) ||
+      !JS_StringEqualsLiteral(cx, option, "ion", &ionTier)) {
+    return false;
+  }
+
+  if (stableTier) {
+    *tier = code.stableTier();
+  } else if (bestTier) {
+    *tier = code.bestTier();
+  } else if (baselineTier) {
+    *tier = wasm::Tier::Baseline;
+  } else if (ionTier) {
+    *tier = wasm::Tier::Optimized;
+  } else {
+    // You can omit the argument but you can't pass just anything you like
+    return false;
+  }
+
+  return true;
+}
+
 static bool WasmExtractCode(JSContext* cx, unsigned argc, Value* vp) {
   if (!cx->options().wasm()) {
     JS_ReportErrorASCII(cx, "wasm support unavailable");
@@ -894,39 +977,12 @@ static bool WasmExtractCode(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  bool stableTier = false;
-  bool bestTier = false;
-  bool baselineTier = false;
-  bool ionTier = false;
-  if (args.length() > 1) {
-    JSString* opt = JS::ToString(cx, args[1]);
-    if (!opt) {
-      return false;
-    }
-    if (!JS_StringEqualsAscii(cx, opt, "stable", &stableTier) ||
-        !JS_StringEqualsAscii(cx, opt, "best", &bestTier) ||
-        !JS_StringEqualsAscii(cx, opt, "baseline", &baselineTier) ||
-        !JS_StringEqualsAscii(cx, opt, "ion", &ionTier)) {
-      return false;
-    }
-    // You can omit the argument but you can't pass just anything you like
-    if (!(stableTier || bestTier || baselineTier || ionTier)) {
-      args.rval().setNull();
-      return true;
-    }
-  } else {
-    stableTier = true;
-  }
-
-  wasm::Tier tier;
-  if (stableTier) {
-    tier = module->module().code().stableTier();
-  } else if (bestTier) {
-    tier = module->module().code().bestTier();
-  } else if (baselineTier) {
-    tier = wasm::Tier::Baseline;
-  } else {
-    tier = wasm::Tier::Optimized;
+  wasm::Tier tier = module->module().code().stableTier();
+  ;
+  if (args.length() > 1 &&
+      !ConvertToTier(cx, args[1], module->module().code(), &tier)) {
+    args.rval().setNull();
+    return false;
   }
 
   RootedValue result(cx);
@@ -935,6 +991,51 @@ static bool WasmExtractCode(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   args.rval().set(result);
+  return true;
+}
+
+static bool WasmDisassemble(JSContext* cx, unsigned argc, Value* vp) {
+  if (!cx->options().wasm()) {
+    JS_ReportErrorASCII(cx, "wasm support unavailable");
+    return false;
+  }
+
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  args.rval().set(UndefinedValue());
+
+  if (!args.get(0).isObject()) {
+    JS_ReportErrorASCII(cx, "argument is not an object");
+    return false;
+  }
+
+  RootedFunction func(cx, args[0].toObject().maybeUnwrapIf<JSFunction>());
+
+  if (!func || !wasm::IsWasmExportedFunction(func)) {
+    JS_ReportErrorASCII(cx, "argument is not an exported wasm function");
+    return false;
+  }
+
+  wasm::Instance& instance = wasm::ExportedFunctionToInstance(func);
+  uint32_t funcIndex = wasm::ExportedFunctionToFuncIndex(func);
+
+  wasm::Tier tier = instance.code().stableTier();
+
+  if (args.length() > 1 &&
+      !ConvertToTier(cx, args[1], instance.code(), &tier)) {
+    JS_ReportErrorASCII(cx, "invalid tier");
+    return false;
+  }
+
+  if (!instance.code().hasTier(tier)) {
+    JS_ReportErrorASCII(cx, "function missing selected tier");
+    return false;
+  }
+
+  instance.disassembleExport(cx, funcIndex, tier, [](const char* text) {
+    fprintf(stderr, "%s\n", text);
+  });
+
   return true;
 }
 
@@ -1021,12 +1122,13 @@ static bool InternalConst(JSContext* cx, unsigned argc, Value* vp) {
   if (!str) {
     return false;
   }
-  JSFlatString* flat = JS_FlattenString(cx, str);
-  if (!flat) {
+  JSLinearString* linear = JS_EnsureLinearString(cx, str);
+  if (!linear) {
     return false;
   }
 
-  if (JS_FlatStringEqualsAscii(flat, "INCREMENTAL_MARK_STACK_BASE_CAPACITY")) {
+  if (JS_LinearStringEqualsLiteral(linear,
+                                   "INCREMENTAL_MARK_STACK_BASE_CAPACITY")) {
     args.rval().setNumber(uint32_t(js::INCREMENTAL_MARK_STACK_BASE_CAPACITY));
   } else {
     JS_ReportErrorASCII(cx, "unknown const name");
@@ -1127,23 +1229,9 @@ static bool ScheduleGC(JSContext* cx, unsigned argc, Value* vp) {
   } else if (args[0].isNumber()) {
     /* Schedule a GC to happen after |arg| allocations. */
     JS_ScheduleGC(cx, std::max(int(args[0].toNumber()), 0));
-  } else if (args[0].isObject()) {
-    /* Ensure that |zone| is collected during the next GC. */
-    Zone* zone = UncheckedUnwrap(&args[0].toObject())->zone();
-    PrepareZoneForGC(zone);
-  } else if (args[0].isString()) {
-    /* This allows us to schedule the atoms zone for GC. */
-    Zone* zone = args[0].toString()->zoneFromAnyThread();
-    if (!CurrentThreadCanAccessZone(zone)) {
-      RootedObject callee(cx, &args.callee());
-      ReportUsageErrorASCII(cx, callee, "Specified zone not accessible for GC");
-      return false;
-    }
-    PrepareZoneForGC(zone);
   } else {
     RootedObject callee(cx, &args.callee());
-    ReportUsageErrorASCII(cx, callee,
-                          "Bad argument - expecting number, object or string");
+    ReportUsageErrorASCII(cx, callee, "Bad argument - expecting number");
     return false;
   }
 
@@ -1201,19 +1289,6 @@ static bool VerifyPostBarriers(JSContext* cx, unsigned argc, Value* vp) {
   }
   args.rval().setUndefined();
   return true;
-}
-
-static bool GCState(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-
-  if (args.length() != 0) {
-    RootedObject callee(cx, &args.callee());
-    ReportUsageErrorASCII(cx, callee, "Too many arguments");
-    return false;
-  }
-
-  const char* state = StateName(cx->runtime()->gc.state());
-  return ReturnStringCopy(cx, args, state);
 }
 
 static bool CurrentGC(JSContext* cx, unsigned argc, Value* vp) {
@@ -1314,6 +1389,66 @@ static bool DumpGCArenaInfo(JSContext* cx, unsigned argc, Value* vp) {
 
 #endif /* JS_GC_ZEAL */
 
+static bool GCState(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (args.length() > 1) {
+    RootedObject callee(cx, &args.callee());
+    ReportUsageErrorASCII(cx, callee, "Too many arguments");
+    return false;
+  }
+
+  const char* state;
+
+  if (args.length() == 1) {
+    if (!args[0].isObject()) {
+      RootedObject callee(cx, &args.callee());
+      ReportUsageErrorASCII(cx, callee, "Expected object");
+      return false;
+    }
+
+    JSObject* obj = UncheckedUnwrap(&args[0].toObject());
+    state = gc::StateName(obj->zone()->gcState());
+  } else {
+    state = gc::StateName(cx->runtime()->gc.state());
+  }
+
+  return ReturnStringCopy(cx, args, state);
+}
+
+static bool ScheduleZoneForGC(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (args.length() != 1) {
+    RootedObject callee(cx, &args.callee());
+    ReportUsageErrorASCII(cx, callee, "Expecting a single argument");
+    return false;
+  }
+
+  if (args[0].isObject()) {
+    // Ensure that |zone| is collected during the next GC.
+    Zone* zone = UncheckedUnwrap(&args[0].toObject())->zone();
+    PrepareZoneForGC(zone);
+  } else if (args[0].isString()) {
+    // This allows us to schedule the atoms zone for GC.
+    Zone* zone = args[0].toString()->zoneFromAnyThread();
+    if (!CurrentThreadCanAccessZone(zone)) {
+      RootedObject callee(cx, &args.callee());
+      ReportUsageErrorASCII(cx, callee, "Specified zone not accessible for GC");
+      return false;
+    }
+    PrepareZoneForGC(zone);
+  } else {
+    RootedObject callee(cx, &args.callee());
+    ReportUsageErrorASCII(cx, callee,
+                          "Bad argument - expecting object or string");
+    return false;
+  }
+
+  args.rval().setUndefined();
+  return true;
+}
+
 static bool StartGC(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -1336,7 +1471,8 @@ static bool StartGC(JSContext* cx, unsigned argc, Value* vp) {
   if (args.length() >= 2) {
     Value arg = args[1];
     if (arg.isString()) {
-      if (!JS_StringEqualsAscii(cx, arg.toString(), "shrinking", &shrinking)) {
+      if (!JS_StringEqualsLiteral(cx, arg.toString(), "shrinking",
+                                  &shrinking)) {
         return false;
       }
     }
@@ -1688,17 +1824,36 @@ static bool DisableTrackAllocations(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-static void FinalizeExternalString(const JSStringFinalizer* fin,
-                                   char16_t* chars);
+static bool SetTestFilenameValidationCallback(JSContext* cx, unsigned argc,
+                                              Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
 
-static const JSStringFinalizer ExternalStringFinalizer = {
-    FinalizeExternalString};
+  // Accept all filenames that start with "safe". In system code also accept
+  // filenames starting with "system".
+  auto testCb = [](const char* filename, bool isSystemRealm) -> bool {
+    if (strstr(filename, "safe") == filename) {
+      return true;
+    }
+    if (isSystemRealm && strstr(filename, "system") == filename) {
+      return true;
+    }
+    return false;
+  };
+  JS::SetFilenameValidationCallback(testCb);
 
-static void FinalizeExternalString(const JSStringFinalizer* fin,
-                                   char16_t* chars) {
-  MOZ_ASSERT(fin == &ExternalStringFinalizer);
-  js_free(chars);
+  args.rval().setUndefined();
+  return true;
 }
+
+struct TestExternalString : public JSExternalStringCallbacks {
+  void finalize(char16_t* chars) const override { js_free(chars); }
+  size_t sizeOfBuffer(const char16_t* chars,
+                      mozilla::MallocSizeOf mallocSizeOf) const override {
+    return mallocSizeOf(chars);
+  }
+};
+
+static constexpr TestExternalString TestExternalStringCallbacks;
 
 static bool NewExternalString(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -1722,7 +1877,7 @@ static bool NewExternalString(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   JSString* res =
-      JS_NewExternalString(cx, buf.get(), len, &ExternalStringFinalizer);
+      JS_NewExternalString(cx, buf.get(), len, &TestExternalStringCallbacks);
   if (!res) {
     return false;
   }
@@ -1755,7 +1910,7 @@ static bool NewMaybeExternalString(JSContext* cx, unsigned argc, Value* vp) {
 
   bool allocatedExternal;
   JSString* res = JS_NewMaybeExternalString(
-      cx, buf.get(), len, &ExternalStringFinalizer, &allocatedExternal);
+      cx, buf.get(), len, &TestExternalStringCallbacks, &allocatedExternal);
   if (!res) {
     return false;
   }
@@ -1823,21 +1978,21 @@ static bool IsRope(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-static bool EnsureFlatString(JSContext* cx, unsigned argc, Value* vp) {
+static bool EnsureLinearString(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   if (args.length() != 1 || !args[0].isString()) {
-    JS_ReportErrorASCII(cx,
-                        "ensureFlatString takes exactly one string argument.");
+    JS_ReportErrorASCII(
+        cx, "ensureLinearString takes exactly one string argument.");
     return false;
   }
 
-  JSFlatString* flat = args[0].toString()->ensureFlat(cx);
-  if (!flat) {
+  JSLinearString* linear = args[0].toString()->ensureLinear(cx);
+  if (!linear) {
     return false;
   }
 
-  args.rval().setString(flat);
+  args.rval().setString(linear);
   return true;
 }
 
@@ -2005,6 +2160,12 @@ bool RunIterativeFailureTest(JSContext* cx,
 #  ifdef JS_GC_ZEAL
   JS_SetGCZeal(cx, 0, JS_DEFAULT_ZEAL_FREQ);
 #  endif
+
+  // Delazify the function here if necessary so we don't end up testing that.
+  if (params.testFunction->isInterpreted() &&
+      !JSFunction::getOrCreateScript(cx, params.testFunction)) {
+    return false;
+  }
 
   size_t compartmentCount = CountCompartments(cx);
 
@@ -2306,9 +2467,9 @@ static bool SettlePromiseNow(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   Rooted<PromiseObject*> promise(cx, &args[0].toObject().as<PromiseObject>());
-  if (IsPromiseForAsync(promise)) {
+  if (IsPromiseForAsyncFunctionOrGenerator(promise)) {
     JS_ReportErrorASCII(
-        cx, "async function's promise shouldn't be manually settled");
+        cx, "async function/generator's promise shouldn't be manually settled");
     return false;
   }
 
@@ -2386,9 +2547,10 @@ static bool ResolvePromise(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
-  if (IsPromiseForAsync(promise)) {
+  if (IsPromiseForAsyncFunctionOrGenerator(promise)) {
     JS_ReportErrorASCII(
-        cx, "async function's promise shouldn't be manually resolved");
+        cx,
+        "async function/generator's promise shouldn't be manually resolved");
     return false;
   }
 
@@ -2422,9 +2584,10 @@ static bool RejectPromise(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
-  if (IsPromiseForAsync(promise)) {
+  if (IsPromiseForAsyncFunctionOrGenerator(promise)) {
     JS_ReportErrorASCII(
-        cx, "async function's promise shouldn't be manually rejected");
+        cx,
+        "async function/generator's promise shouldn't be manually rejected");
     return false;
   }
 
@@ -2817,7 +2980,13 @@ static bool testingFunc_inJit(JSContext* cx, unsigned argc, Value* vp) {
 
   // Use frame iterator to inspect caller.
   FrameIter iter(cx);
-  MOZ_ASSERT(!iter.done());
+
+  // We may be invoked directly, not in a JS context, e.g. if inJit is added as
+  // a callback on the event queue.
+  if (iter.done()) {
+    args.rval().setBoolean(false);
+    return true;
+  }
 
   if (iter.hasScript()) {
     // Detect repeated attempts to compile, resetting the counter if inJit
@@ -2845,13 +3014,21 @@ static bool testingFunc_inIon(JSContext* cx, unsigned argc, Value* vp) {
 
   // Use frame iterator to inspect caller.
   FrameIter iter(cx);
-  MOZ_ASSERT(!iter.done());
+
+  // We may be invoked directly, not in a JS context, e.g. if inJson is added as
+  // a callback on the event queue.
+  if (iter.done()) {
+    args.rval().setBoolean(false);
+    return true;
+  }
 
   if (iter.hasScript()) {
     // Detect repeated attempts to compile, resetting the counter if inIon
     // succeeds. Note: This script may have be inlined into its caller.
     if (iter.isIon()) {
       iter.script()->resetWarmUpResetCounter();
+    } else if (!iter.script()->canIonCompile()) {
+      return ReturnStringCopy(cx, args, "Unable to Ion-compile this script.");
     } else if (iter.script()->getWarmUpResetCount() >= JitWarmupResetLimit) {
       return ReturnStringCopy(
           cx, args, "Compilation is being repeatedly prevented. Giving up.");
@@ -2938,10 +3115,10 @@ class CloneBufferObject : public NativeObject {
   static const size_t NUM_SLOTS = 2;
 
  public:
-  static const Class class_;
+  static const JSClass class_;
 
   static CloneBufferObject* Create(JSContext* cx) {
-    RootedObject obj(cx, JS_NewObject(cx, Jsvalify(&class_)));
+    RootedObject obj(cx, JS_NewObject(cx, &class_));
     if (!obj) {
       return nullptr;
     }
@@ -3148,20 +3325,21 @@ class CloneBufferObject : public NativeObject {
     return CallNonGenericMethod<is, getCloneBufferAsArrayBuffer_impl>(cx, args);
   }
 
-  static void Finalize(FreeOp* fop, JSObject* obj) {
+  static void Finalize(JSFreeOp* fop, JSObject* obj) {
     obj->as<CloneBufferObject>().discard();
   }
 };
 
-static const ClassOps CloneBufferObjectClassOps = {nullptr, /* addProperty */
-                                                   nullptr, /* delProperty */
-                                                   nullptr, /* enumerate */
-                                                   nullptr, /* newEnumerate */
-                                                   nullptr, /* resolve */
-                                                   nullptr, /* mayResolve */
-                                                   CloneBufferObject::Finalize};
+static const JSClassOps CloneBufferObjectClassOps = {
+    nullptr, /* addProperty */
+    nullptr, /* delProperty */
+    nullptr, /* enumerate */
+    nullptr, /* newEnumerate */
+    nullptr, /* resolve */
+    nullptr, /* mayResolve */
+    CloneBufferObject::Finalize};
 
-const Class CloneBufferObject::class_ = {
+const JSClass CloneBufferObject::class_ = {
     "CloneBuffer",
     JSCLASS_HAS_RESERVED_SLOTS(CloneBufferObject::NUM_SLOTS) |
         JSCLASS_FOREGROUND_FINALIZE,
@@ -3181,13 +3359,13 @@ static mozilla::Maybe<JS::StructuredCloneScope> ParseCloneScope(
     return scope;
   }
 
-  if (StringEqualsAscii(scopeStr, "SameProcessSameThread")) {
+  if (StringEqualsLiteral(scopeStr, "SameProcessSameThread")) {
     scope.emplace(JS::StructuredCloneScope::SameProcessSameThread);
-  } else if (StringEqualsAscii(scopeStr, "SameProcessDifferentThread")) {
+  } else if (StringEqualsLiteral(scopeStr, "SameProcessDifferentThread")) {
     scope.emplace(JS::StructuredCloneScope::SameProcessDifferentThread);
-  } else if (StringEqualsAscii(scopeStr, "DifferentProcess")) {
+  } else if (StringEqualsLiteral(scopeStr, "DifferentProcess")) {
     scope.emplace(JS::StructuredCloneScope::DifferentProcess);
-  } else if (StringEqualsAscii(scopeStr, "DifferentProcessForIndexedDB")) {
+  } else if (StringEqualsLiteral(scopeStr, "DifferentProcessForIndexedDB")) {
     scope.emplace(JS::StructuredCloneScope::DifferentProcessForIndexedDB);
   }
 
@@ -3221,10 +3399,10 @@ bool js::testingFunc_serialize(JSContext* cx, unsigned argc, Value* vp) {
         return false;
       }
 
-      if (StringEqualsAscii(poli, "allow")) {
+      if (StringEqualsLiteral(poli, "allow")) {
+        policy.allowSharedMemory();
+      } else if (StringEqualsLiteral(poli, "deny")) {
         // default
-      } else if (StringEqualsAscii(poli, "deny")) {
-        policy.denySharedArrayBuffer();
       } else {
         JS_ReportErrorASCII(cx, "Invalid policy value for 'SharedArrayBuffer'");
         return false;
@@ -3277,6 +3455,7 @@ static bool Deserialize(JSContext* cx, unsigned argc, Value* vp) {
   Rooted<CloneBufferObject*> obj(cx,
                                  &args[0].toObject().as<CloneBufferObject>());
 
+  JS::CloneDataPolicy policy;
   JS::StructuredCloneScope scope =
       obj->isSynthetic() ? JS::StructuredCloneScope::DifferentProcess
                          : JS::StructuredCloneScope::SameProcessSameThread;
@@ -3287,6 +3466,30 @@ static bool Deserialize(JSContext* cx, unsigned argc, Value* vp) {
     }
 
     RootedValue v(cx);
+    if (!JS_GetProperty(cx, opts, "SharedArrayBuffer", &v)) {
+      return false;
+    }
+
+    if (!v.isUndefined()) {
+      JSString* str = JS::ToString(cx, v);
+      if (!str) {
+        return false;
+      }
+      JSLinearString* poli = str->ensureLinear(cx);
+      if (!poli) {
+        return false;
+      }
+
+      if (StringEqualsLiteral(poli, "allow")) {
+        policy.allowSharedMemory();
+      } else if (StringEqualsLiteral(poli, "deny")) {
+        // default
+      } else {
+        JS_ReportErrorASCII(cx, "Invalid policy value for 'SharedArrayBuffer'");
+        return false;
+      }
+    }
+
     if (!JS_GetProperty(cx, opts, "scope", &v)) {
       return false;
     }
@@ -3328,7 +3531,7 @@ static bool Deserialize(JSContext* cx, unsigned argc, Value* vp) {
 
   RootedValue deserialized(cx);
   if (!JS_ReadStructuredClone(cx, *obj->data(), JS_STRUCTURED_CLONE_VERSION,
-                              scope, &deserialized, nullptr, nullptr)) {
+                              scope, &deserialized, policy, nullptr, nullptr)) {
     return false;
   }
   args.rval().set(deserialized);
@@ -4343,7 +4546,7 @@ static bool AllocationMarker(JSContext* cx, unsigned argc, Value* vp) {
     allocateInsideNursery = ToBoolean(nurseryVal);
   }
 
-  static const Class cls = {"AllocationMarker"};
+  static const JSClass cls = {"AllocationMarker"};
 
   auto newKind = allocateInsideNursery ? GenericObject : TenuredObject;
   RootedObject obj(cx, NewObjectWithGivenProto(cx, &cls, nullptr, newKind));
@@ -4400,6 +4603,10 @@ static void minorGC(JSContext* cx, JSGCStatus status, void* data) {
 static MajorGC majorGCInfo;
 static MinorGC minorGCInfo;
 
+static void enterNullRealm(JSContext* cx, JSGCStatus status, void* data) {
+  JSAutoNullableRealm enterRealm(cx, nullptr);
+}
+
 } /* namespace gcCallback */
 
 static bool SetGCCallback(JSContext* cx, unsigned argc, Value* vp) {
@@ -4430,8 +4637,8 @@ static bool SetGCCallback(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   int32_t phases = 0;
-  if (StringEqualsAscii(action, "minorGC") ||
-      StringEqualsAscii(action, "majorGC")) {
+  if (StringEqualsLiteral(action, "minorGC") ||
+      StringEqualsLiteral(action, "majorGC")) {
     if (!JS_GetProperty(cx, opts, "phases", &v)) {
       return false;
     }
@@ -4447,11 +4654,11 @@ static bool SetGCCallback(JSContext* cx, unsigned argc, Value* vp) {
         return false;
       }
 
-      if (StringEqualsAscii(phasesStr, "begin")) {
+      if (StringEqualsLiteral(phasesStr, "begin")) {
         phases = (1 << JSGC_BEGIN);
-      } else if (StringEqualsAscii(phasesStr, "end")) {
+      } else if (StringEqualsLiteral(phasesStr, "end")) {
         phases = (1 << JSGC_END);
-      } else if (StringEqualsAscii(phasesStr, "both")) {
+      } else if (StringEqualsLiteral(phasesStr, "both")) {
         phases = (1 << JSGC_BEGIN) | (1 << JSGC_END);
       } else {
         JS_ReportErrorASCII(cx, "Invalid callback phase");
@@ -4460,11 +4667,11 @@ static bool SetGCCallback(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
-  if (StringEqualsAscii(action, "minorGC")) {
+  if (StringEqualsLiteral(action, "minorGC")) {
     gcCallback::minorGCInfo.phases = phases;
     gcCallback::minorGCInfo.active = true;
     JS_SetGCCallback(cx, gcCallback::minorGC, &gcCallback::minorGCInfo);
-  } else if (StringEqualsAscii(action, "majorGC")) {
+  } else if (StringEqualsLiteral(action, "majorGC")) {
     if (!JS_GetProperty(cx, opts, "depth", &v)) {
       return false;
     }
@@ -4487,6 +4694,8 @@ static bool SetGCCallback(JSContext* cx, unsigned argc, Value* vp) {
     gcCallback::majorGCInfo.phases = phases;
     gcCallback::majorGCInfo.depth = depth;
     JS_SetGCCallback(cx, gcCallback::majorGC, &gcCallback::majorGCInfo);
+  } else if (StringEqualsLiteral(action, "enterNullRealm")) {
+    JS_SetGCCallback(cx, gcCallback::enterNullRealm, nullptr);
   } else {
     JS_ReportErrorASCII(cx, "Unknown GC callback action");
     return false;
@@ -4589,7 +4798,7 @@ static bool GetLcovInfo(JSContext* cx, unsigned argc, Value* vp) {
   UniqueChars content;
   {
     AutoRealm ar(cx, global);
-    content.reset(js::GetCodeCoverageSummary(cx, &length));
+    content = js::GetCodeCoverageSummary(cx, &length);
   }
 
   if (!content) {
@@ -5645,11 +5854,11 @@ static bool MonitorType(JSContext* cx, unsigned argc, Value* vp) {
   bool unknown = false;
   bool unknownObject = false;
   if (val.isString()) {
-    if (!JS_StringEqualsAscii(cx, val.toString(), "unknown", &unknown)) {
+    if (!JS_StringEqualsLiteral(cx, val.toString(), "unknown", &unknown)) {
       return false;
     }
-    if (!JS_StringEqualsAscii(cx, val.toString(), "unknownObject",
-                              &unknownObject)) {
+    if (!JS_StringEqualsLiteral(cx, val.toString(), "unknownObject",
+                                &unknownObject)) {
       return false;
     }
   }
@@ -5685,6 +5894,78 @@ static bool MonitorType(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   args.rval().setUndefined();
+  return true;
+}
+
+static bool MarkObjectPropertiesUnknown(JSContext* cx, unsigned argc,
+                                        Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  RootedObject callee(cx, &args.callee());
+
+  if (!args.get(0).isObject()) {
+    ReportUsageErrorASCII(cx, callee, "Argument must be an object");
+    return false;
+  }
+
+  RootedObject obj(cx, &args[0].toObject());
+  RootedObjectGroup group(cx, JSObject::getGroup(cx, obj));
+  if (!group) {
+    return false;
+  }
+
+  MarkObjectGroupUnknownProperties(cx, group);
+
+  args.rval().setUndefined();
+  return true;
+}
+
+static bool EncodeAsUtf8InBuffer(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  if (!args.requireAtLeast(cx, "encodeAsUtf8InBuffer", 2)) {
+    return false;
+  }
+
+  RootedObject callee(cx, &args.callee());
+
+  if (!args[0].isString()) {
+    ReportUsageErrorASCII(cx, callee, "First argument must be a String");
+    return false;
+  }
+
+  // Create the amounts array early so that the raw pointer into Uint8Array
+  // data has as short a lifetime as possible
+  RootedArrayObject array(cx, NewDenseFullyAllocatedArray(cx, 2));
+  if (!array) {
+    return false;
+  }
+  array->ensureDenseInitializedLength(cx, 0, 2);
+
+  uint32_t length;
+  bool isSharedMemory;
+  uint8_t* data;
+  if (!args[1].isObject() ||
+      !JS_GetObjectAsUint8Array(&args[1].toObject(), &length, &isSharedMemory,
+                                &data) ||
+      isSharedMemory ||  // excluded views of SharedArrayBuffers
+      !data) {           // exclude views of detached ArrayBuffers
+    ReportUsageErrorASCII(cx, callee, "Second argument must be a Uint8Array");
+    return false;
+  }
+
+  Maybe<Tuple<size_t, size_t>> amounts = JS_EncodeStringToUTF8BufferPartial(
+      cx, args[0].toString(), AsWritableChars(MakeSpan(data, length)));
+  if (!amounts) {
+    ReportOutOfMemory(cx);
+    return false;
+  }
+
+  size_t unitsRead, bytesWritten;
+  Tie(unitsRead, bytesWritten) = *amounts;
+
+  array->initDenseElement(0, Int32Value(AssertedCast<int32_t>(unitsRead)));
+  array->initDenseElement(1, Int32Value(AssertedCast<int32_t>(bytesWritten)));
+
+  args.rval().setObject(*array);
   return true;
 }
 
@@ -5921,12 +6202,13 @@ static bool PCCountProfiling_ScriptContents(JSContext* cx, unsigned argc,
 // clang-format off
 static const JSFunctionSpecWithHelp TestingFunctions[] = {
     JS_FN_HELP("gc", ::GC, 0, 0,
-"gc([obj] | 'zone' [, 'shrinking'])",
-"  Run the garbage collector. When obj is given, GC only its zone.\n"
-"  If 'zone' is given, GC any zones that were scheduled for\n"
-"  GC via schedulegc.\n"
-"  If 'shrinking' is passed as the optional second argument, perform a\n"
-"  shrinking GC rather than a normal GC."),
+"gc([obj] | 'zone' [, ('shrinking' | 'last-ditch') ])",
+"  Run the garbage collector.\n"
+"  The first parameter describes which zones to collect: if an object is\n"
+"  given, GC only its zone. If 'zone' is given, GC any zones that were\n"
+"  scheduled via schedulegc.\n"
+"  The second parameter is optional and may be 'shrinking' to perform a\n"
+"  shrinking GC or 'last-ditch' for a shrinking, last-ditch GC."),
 
     JS_FN_HELP("minorgc", ::MinorGC, 0, 0,
 "minorgc([aboutToOverflow])",
@@ -6001,6 +6283,11 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "disableTrackAllocations()",
 "  Stop capturing the JS stack at every allocation."),
 
+    JS_FN_HELP("setTestFilenameValidationCallback", SetTestFilenameValidationCallback, 0, 0,
+"setTestFilenameValidationCallback()",
+"  Set the filename validation callback to a callback that accepts only\n"
+"  filenames starting with 'safe' or (only in system realms) 'system'."),
+
     JS_FN_HELP("newExternalString", NewExternalString, 1, 0,
 "newExternalString(str)",
 "  Copies str's chars and returns a new external string."),
@@ -6009,9 +6296,9 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "newMaybeExternalString(str)",
 "  Like newExternalString but uses the JS_NewMaybeExternalString API."),
 
-    JS_FN_HELP("ensureFlatString", EnsureFlatString, 1, 0,
-"ensureFlatString(str)",
-"  Ensures str is a flat (null-terminated) string and returns it."),
+    JS_FN_HELP("ensureLinearString", EnsureLinearString, 1, 0,
+"ensureLinearString(str)",
+"  Ensures str is a linear (non-rope) string and returns it."),
 
     JS_FN_HELP("representativeStringArray", RepresentativeStringArray, 0, 0,
 "representativeStringArray()",
@@ -6142,10 +6429,8 @@ gc::ZealModeHelpText),
 "  collection that may be happening."),
 
     JS_FN_HELP("schedulegc", ScheduleGC, 1, 0,
-"schedulegc([num | obj | string])",
+"schedulegc([num])",
 "  If num is given, schedule a GC after num allocations.\n"
-"  If obj is given, schedule a GC of obj's zone.\n"
-"  If string is given, schedule a GC of the string's zone if possible.\n"
 "  Returns the number of allocations before the next trigger."),
 
     JS_FN_HELP("selectforgc", SelectForGC, 0, 0,
@@ -6159,10 +6444,6 @@ gc::ZealModeHelpText),
     JS_FN_HELP("verifypostbarriers", VerifyPostBarriers, 0, 0,
 "verifypostbarriers()",
 "  Does nothing (the post-write barrier verifier has been remove)."),
-
-    JS_FN_HELP("gcstate", GCState, 0, 0,
-"gcstate()",
-"  Report the global GC state."),
 
     JS_FN_HELP("currentgc", CurrentGC, 0, 0,
 "currentgc()",
@@ -6179,11 +6460,21 @@ gc::ZealModeHelpText),
 "  in arenas.\n"),
 #endif
 
+    JS_FN_HELP("gcstate", GCState, 0, 0,
+"gcstate([obj])",
+"  Report the global GC state, or the GC state for the zone containing |obj|."),
+
+    JS_FN_HELP("schedulezone", ScheduleZoneForGC, 1, 0,
+"schedulezone([obj | string])",
+"  If obj is given, schedule a GC of obj's zone.\n"
+"  If string is given, schedule a GC of the string's zone if possible."),
+
     JS_FN_HELP("startgc", StartGC, 1, 0,
 "startgc([n [, 'shrinking']])",
 "  Start an incremental GC and run a slice that processes about n objects.\n"
 "  If 'shrinking' is passesd as the optional second argument, perform a\n"
-"  shrinking GC rather than a normal GC."),
+"  shrinking GC rather than a normal GC. If no zones have been selected with\n"
+"  schedulegc(), a full GC will be performed."),
 
     JS_FN_HELP("finishgc", FinishGC, 0, 0,
 "finishgc()",
@@ -6280,6 +6571,11 @@ gc::ZealModeHelpText),
 "wasmCachingIsSupported()",
 "  Returns a boolean indicating whether WebAssembly caching is supported by the runtime."),
 
+    JS_FN_HELP("wasmHugeMemoryIsSupported", WasmHugeMemoryIsSupported, 0, 0,
+"wasmHugeMemoryIsSupported()",
+"  Returns a boolean indicating whether WebAssembly supports using a large"
+"  virtual memory reservation in order to elide bounds checks on this platform."),
+
     JS_FN_HELP("wasmUsesCranelift", WasmUsesCranelift, 0, 0,
 "wasmUsesCranelift()",
 "  Returns a boolean indicating whether Cranelift is currently enabled for backend\n"
@@ -6312,6 +6608,12 @@ gc::ZealModeHelpText),
 "  cannot be satisfied then null is returned.  If the request is 'ion' then block\n"
 "  until background compilation is complete."),
 
+    JS_FN_HELP("wasmDis", WasmDisassemble, 1, 0,
+"wasmDis(function[, tier])",
+"  Disassembles generated machine code from an exported WebAssembly function.\n"
+"  The tier is a string, 'stable', 'best', 'baseline', or 'ion'; the default is\n"
+"  'stable'."),
+
     JS_FN_HELP("wasmHasTier2CompilationCompleted", WasmHasTier2CompilationCompleted, 1, 0,
 "wasmHasTier2CompilationCompleted(module)",
 "  Returns a boolean indicating whether a given module has finished compiled code for tier2. \n"
@@ -6329,6 +6631,10 @@ gc::ZealModeHelpText),
     JS_FN_HELP("wasmGcEnabled", WasmGcEnabled, 1, 0,
 "wasmGcEnabled()",
 "  Returns a boolean indicating whether the WebAssembly GC types proposal is enabled."),
+
+    JS_FN_HELP("wasmMultiValueEnabled", WasmMultiValueEnabled, 1, 0,
+"wasmMultiValueEnabled()",
+"  Returns a boolean indicating whether the WebAssembly multi-value proposal is enabled."),
 
     JS_FN_HELP("wasmDebugSupport", WasmDebugSupport, 1, 0,
 "wasmDebugSupport()",
@@ -6388,7 +6694,7 @@ gc::ZealModeHelpText),
 "serialize(data, [transferables, [policy]])",
 "  Serialize 'data' using JS_WriteStructuredClone. Returns a structured\n"
 "  clone buffer object. 'policy' may be an options hash. Valid keys:\n"
-"    'SharedArrayBuffer' - either 'allow' (the default) or 'deny'\n"
+"    'SharedArrayBuffer' - either 'allow' or 'deny' (the default)\n"
 "      to specify whether SharedArrayBuffers may be serialized.\n"
 "    'scope' - SameProcessSameThread, SameProcessDifferentThread,\n"
 "      DifferentProcess, or DifferentProcessForIndexedDB. Determines how some\n"
@@ -6399,8 +6705,11 @@ gc::ZealModeHelpText),
 
     JS_FN_HELP("deserialize", Deserialize, 1, 0,
 "deserialize(clonebuffer[, opts])",
-"  Deserialize data generated by serialize. 'opts' is an options hash with one\n"
-"  recognized key 'scope', which limits the clone buffers that are considered\n"
+"  Deserialize data generated by serialize. 'opts' may be an options hash.\n"
+"  Valid keys:\n"
+"    'SharedArrayBuffer' - either 'allow' or 'deny' (the default)\n"
+"      to specify whether SharedArrayBuffers may be serialized.\n"
+"    'scope', which limits the clone buffers that are considered\n"
 "  valid. Allowed values: 'SameProcessSameThread', 'SameProcessDifferentThread',\n"
 "  'DifferentProcess', and 'DifferentProcessForIndexedDB'. So for example, a\n"
 "  DifferentProcessForIndexedDB clone buffer may be deserialized in any scope, but\n"
@@ -6700,6 +7009,18 @@ gc::ZealModeHelpText),
 "    baselineCompile();  for (var i=0; i<1; i++) {} ...\n"
 "  The interpreter will enter the new jitcode at the loop header unless\n"
 "  baselineCompile returned a string or threw an error.\n"),
+
+    JS_FN_HELP("markObjectPropertiesUnknown", MarkObjectPropertiesUnknown, 1, 0,
+"markObjectPropertiesUnknown(obj)",
+"  Mark all objects in obj's object group as having unknown properties.\n"),
+
+    JS_FN_HELP("encodeAsUtf8InBuffer", EncodeAsUtf8InBuffer, 2, 0,
+"encodeAsUtf8InBuffer(str, uint8Array)",
+"  Encode as many whole code points from the string str into the provided\n"
+"  Uint8Array as will completely fit in it, converting lone surrogates to\n"
+"  REPLACEMENT CHARACTER.  Return an array [r, w] where |r| is the\n"
+"  number of 16-bit units read and |w| is the number of bytes of UTF-8\n"
+"  written."),
 
     JS_FS_HELP_END
 };

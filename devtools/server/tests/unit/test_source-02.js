@@ -1,4 +1,3 @@
-/* -*- js-indent-level: 2; indent-tabs-mode: nil -*- */
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 /* eslint-disable no-shadow, max-nested-callbacks */
@@ -71,10 +70,6 @@ function test_source() {
           column: 2,
         },
         {
-          line: 2,
-          column: 8,
-        },
-        {
           line: 3,
           column: 14,
         },
@@ -100,7 +95,7 @@ function test_source() {
       Assert.ok(!!response);
 
       Assert.deepEqual(response, {
-        2: [2, 8],
+        2: [2],
         3: [14, 17, 24],
         4: [4],
         6: [0],

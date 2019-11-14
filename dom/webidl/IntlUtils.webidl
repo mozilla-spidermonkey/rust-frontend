@@ -2,17 +2,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+[GenerateConversionToJS]
 dictionary DisplayNameOptions {
   DOMString style;
   sequence<DOMString> keys;
 };
 
+[GenerateInit]
 dictionary DisplayNameResult {
   DOMString locale;
   DOMString style;
   record<DOMString, DOMString> values;
 };
 
+[GenerateInit]
 dictionary LocaleInfo {
   DOMString locale;
   DOMString direction;
@@ -21,7 +24,8 @@ dictionary LocaleInfo {
 /**
  * The IntlUtils interface provides helper functions for localization.
  */
-[NoInterfaceObject]
+[NoInterfaceObject,
+ Exposed=Window]
 interface IntlUtils {
   /**
    * Helper function to retrieve the localized values for a list of requested

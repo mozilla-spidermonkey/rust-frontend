@@ -30,6 +30,20 @@ var ThirdPartyCookies = null;
 var tabbrowser = null;
 var gTrackingPageURL = TRACKING_PAGE;
 
+const sBrandBundle = Services.strings.createBundle(
+  "chrome://branding/locale/brand.properties"
+);
+const sNoTrackerIconTooltip = gNavigatorBundle.getFormattedString(
+  "trackingProtection.icon.noTrackersDetectedTooltip",
+  [sBrandBundle.GetStringFromName("brandShortName")]
+);
+const sActiveIconTooltip = gNavigatorBundle.getString(
+  "trackingProtection.icon.activeTooltip2"
+);
+const sDisabledIconTooltip = gNavigatorBundle.getString(
+  "trackingProtection.icon.disabledTooltip2"
+);
+
 registerCleanupFunction(function() {
   TrackingProtection = gProtectionsHandler = ThirdPartyCookies = tabbrowser = null;
   UrlClassifierTestUtils.cleanupTestTrackers();
@@ -39,21 +53,9 @@ registerCleanupFunction(function() {
   Services.prefs.clearUserPref(DTSCBN_PREF);
 });
 
-// This is a special version of "hidden" that doesn't check for item
-// visibility and just asserts the display and opacity attributes.
-// That way we can test elements even when their panel is hidden...
-function hidden(sel) {
-  let win = tabbrowser.ownerGlobal;
-  let el = win.document.querySelector(sel);
-  let display = win.getComputedStyle(el).getPropertyValue("display", null);
-  let opacity = win.getComputedStyle(el).getPropertyValue("opacity", null);
-  return display === "none" || opacity === "0";
-}
-
-function clickButton(sel) {
-  let win = tabbrowser.ownerGlobal;
-  let el = win.document.querySelector(sel);
-  el.doCommand();
+function notFound(id) {
+  let doc = tabbrowser.ownerGlobal.document;
+  return doc.getElementById(id).classList.contains("notFound");
 }
 
 function testBenignPage() {
@@ -75,21 +77,22 @@ function testBenignPage() {
     !gProtectionsHandler.iconBox.hasAttribute("hasException"),
     "icon box shows no exception"
   );
-  ok(
-    !gProtectionsHandler.iconBox.hasAttribute("tooltiptext"),
-    "icon box has no tooltip"
+  is(
+    gProtectionsHandler._trackingProtectionIconTooltipLabel.textContent,
+    sNoTrackerIconTooltip,
+    "correct tooltip"
   );
   ok(
     BrowserTestUtils.is_visible(gProtectionsHandler.iconBox),
     "icon box is visible"
   );
   ok(
-    hidden("#protections-popup-category-cookies"),
-    "Not showing cookie restrictions category"
+    notFound("protections-popup-category-cookies"),
+    "Cookie restrictions category is not found"
   );
   ok(
-    hidden("#protections-popup-category-tracking-protection"),
-    "Not showing trackers category"
+    notFound("protections-popup-category-tracking-protection"),
+    "Trackers category is not found"
   );
 }
 
@@ -113,8 +116,8 @@ function testBenignPageWithException() {
     "shield shows exception"
   );
   is(
-    gProtectionsHandler.iconBox.getAttribute("tooltiptext"),
-    gNavigatorBundle.getString("trackingProtection.icon.disabledTooltip"),
+    gProtectionsHandler._trackingProtectionIconTooltipLabel.textContent,
+    sDisabledIconTooltip,
     "correct tooltip"
   );
 
@@ -124,12 +127,12 @@ function testBenignPageWithException() {
   );
 
   ok(
-    hidden("#protections-popup-category-cookies"),
-    "Not showing cookie restrictions category"
+    notFound("protections-popup-category-cookies"),
+    "Cookie restrictions category is not found"
   );
   ok(
-    hidden("#protections-popup-category-tracking-protection"),
-    "Not showing trackers category"
+    notFound("protections-popup-category-tracking-protection"),
+    "Trackers category is not found"
   );
 }
 
@@ -170,26 +173,24 @@ function testTrackingPage(window) {
     "icon box shows no exception"
   );
   is(
-    gProtectionsHandler.iconBox.getAttribute("tooltiptext"),
-    blockedByTP
-      ? gNavigatorBundle.getString("trackingProtection.icon.activeTooltip")
-      : "",
+    gProtectionsHandler._trackingProtectionIconTooltipLabel.textContent,
+    blockedByTP ? sActiveIconTooltip : sNoTrackerIconTooltip,
     "correct tooltip"
   );
 
   ok(
-    !hidden("#protections-popup-category-tracking-protection"),
-    "Showing trackers category"
+    !notFound("protections-popup-category-tracking-protection"),
+    "Trackers category is detected"
   );
   if (gTrackingPageURL == COOKIE_PAGE) {
     ok(
-      !hidden("#protections-popup-category-cookies"),
-      "Showing cookie restrictions category"
+      !notFound("protections-popup-category-cookies"),
+      "Cookie restrictions category is detected"
     );
   } else {
     ok(
-      hidden("#protections-popup-category-cookies"),
-      "Not showing cookie restrictions category"
+      notFound("protections-popup-category-cookies"),
+      "Cookie restrictions category is not found"
     );
   }
 }
@@ -214,8 +215,8 @@ function testTrackingPageUnblocked(blockedByTP, window) {
     "shield shows exception"
   );
   is(
-    gProtectionsHandler.iconBox.getAttribute("tooltiptext"),
-    gNavigatorBundle.getString("trackingProtection.icon.disabledTooltip"),
+    gProtectionsHandler._trackingProtectionIconTooltipLabel.textContent,
+    sDisabledIconTooltip,
     "correct tooltip"
   );
 
@@ -225,18 +226,18 @@ function testTrackingPageUnblocked(blockedByTP, window) {
   );
 
   ok(
-    !hidden("#protections-popup-category-tracking-protection"),
-    "Showing trackers category"
+    !notFound("protections-popup-category-tracking-protection"),
+    "Trackers category is detected"
   );
   if (gTrackingPageURL == COOKIE_PAGE) {
     ok(
-      !hidden("#protections-popup-category-cookies"),
-      "Showing cookie restrictions category"
+      !notFound("protections-popup-category-cookies"),
+      "Cookie restrictions category is detected"
     );
   } else {
     ok(
-      hidden("#protections-popup-category-cookies"),
-      "Not showing cookie restrictions category"
+      notFound("protections-popup-category-cookies"),
+      "Cookie restrictions category is not found"
     );
   }
 }

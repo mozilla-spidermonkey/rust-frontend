@@ -78,6 +78,10 @@ Preferences.addAll([
   { id: "privacy.trackingprotection.fingerprinting.enabled", type: "bool" },
   { id: "privacy.trackingprotection.cryptomining.enabled", type: "bool" },
 
+  // Social tracking
+  { id: "privacy.trackingprotection.socialtracking.enabled", type: "bool" },
+  { id: "privacy.socialtracking.block_cookies.enabled", type: "bool" },
+
   // Tracker list
   { id: "urlclassifier.trackingTable", type: "string" },
 
@@ -122,6 +126,7 @@ Preferences.addAll([
   { id: "signon.rememberSignons", type: "bool" },
   { id: "signon.generation.enabled", type: "bool" },
   { id: "signon.autofillForms", type: "bool" },
+  { id: "signon.management.page.breach-alerts.enabled", type: "bool" },
 
   // Buttons
   { id: "pref.privacy.disable_button.view_passwords", type: "bool" },
@@ -232,6 +237,17 @@ function dataCollectionCheckboxHandler({
 
   Preferences.get(PREF_UPLOAD_ENABLED).on("change", updateCheckbox);
   updateCheckbox();
+}
+
+// Sets the "Learn how" SUMO link in the Strict/Custom options of Content Blocking.
+function addCustomBlockingLearnMore() {
+  let links = document.querySelectorAll(".contentBlockWarningLink");
+  let contentBlockingWarningUrl =
+    Services.urlFormatter.formatURLPref("app.support.baseURL") +
+    "turn-off-etp-desktop";
+  for (let link of links) {
+    link.setAttribute("href", contentBlockingWarningUrl);
+  }
 }
 
 var gPrivacyPane = {
@@ -403,6 +419,10 @@ var gPrivacyPane = {
       gPrivacyPane.networkCookieBehaviorReadPrefs.bind(gPrivacyPane)
     );
 
+    setEventListener("a11yPrivacyCheckbox", "command", ev => {
+      this.updateA11yPrefs(ev.target.checked);
+    });
+
     setEventListener(
       "trackingProtectionExceptions",
       "command",
@@ -486,6 +506,14 @@ var gPrivacyPane = {
 
     this._initPasswordGenerationUI();
     this._initMasterPasswordUI();
+    // set up the breach alerts Learn More link with the correct URL
+    const breachAlertsLearnMoreLink = document.getElementById(
+      "breachAlertsLearnMoreLink"
+    );
+    const breachAlertsLearnMoreUrl =
+      Services.urlFormatter.formatURLPref("app.support.baseURL") +
+      "lockwise-alerts";
+    breachAlertsLearnMoreLink.setAttribute("href", breachAlertsLearnMoreUrl);
 
     this._initSafeBrowsing();
 
@@ -604,7 +632,9 @@ var gPrivacyPane = {
         "command",
         gPrivacyPane.updateSubmitHealthReport
       );
-      this.initOptOutStudyCheckbox();
+      if (AppConstants.MOZ_NORMANDY) {
+        this.initOptOutStudyCheckbox();
+      }
       this.initAddonRecommendationsCheckbox();
     }
     this._initA11yState();
@@ -724,8 +754,24 @@ var gPrivacyPane = {
     let link = document.getElementById("contentBlockingLearnMore");
     let contentBlockingUrl =
       Services.urlFormatter.formatURLPref("app.support.baseURL") +
-      "content-blocking";
+      "enhanced-tracking-protection";
     link.setAttribute("href", contentBlockingUrl);
+
+    // Toggles the text "Cross-site and social media trackers" based on the
+    // social tracking pref. If the pref is false, the text reads
+    // "Cross-site trackers".
+    const STP_COOKIES_PREF = "privacy.socialtracking.block_cookies.enabled";
+    if (Services.prefs.getBoolPref(STP_COOKIES_PREF)) {
+      let contentBlockOptionSocialMedia = document.getElementById(
+        "blockCookiesSocialMedia"
+      );
+      document.l10n.setAttributes(
+        contentBlockOptionSocialMedia,
+        "sitedata-option-block-cross-site-and-social-media-trackers"
+      );
+    }
+
+    addCustomBlockingLearnMore();
   },
 
   populateCategoryContents() {
@@ -777,6 +823,13 @@ var gPrivacyPane = {
             : "-fp"
         );
         rulesArray.push(
+          Services.prefs.getBoolPref(
+            "privacy.socialtracking.block_cookies.enabled"
+          )
+            ? "stp"
+            : "-stp"
+        );
+        rulesArray.push(
           defaults.getBoolPref("privacy.trackingprotection.enabled")
             ? "tp"
             : "-tp"
@@ -787,6 +840,7 @@ var gPrivacyPane = {
             : "-tpPrivate"
         );
       }
+
       // Hide all cookie options first, until we learn which one should be showing.
       document.querySelector(selector + " .all-cookies-option").hidden = true;
       document.querySelector(
@@ -798,6 +852,7 @@ var gPrivacyPane = {
       document.querySelector(
         selector + " .all-third-party-cookies-option"
       ).hidden = true;
+      document.querySelector(selector + " .social-media-option").hidden = true;
 
       for (let item of rulesArray) {
         // Note "cookieBehavior0", will result in no UI changes, so is not listed here.
@@ -840,6 +895,23 @@ var gPrivacyPane = {
           case "-cm":
             document.querySelector(
               selector + " .cryptominers-option"
+            ).hidden = true;
+            break;
+          case "stp":
+            // Store social tracking cookies pref
+            const STP_COOKIES_PREF =
+              "privacy.socialtracking.block_cookies.enabled";
+
+            if (Services.prefs.getBoolPref(STP_COOKIES_PREF)) {
+              document.querySelector(
+                selector + " .social-media-option"
+              ).hidden = false;
+            }
+            break;
+          case "-stp":
+            // Store social tracking cookies pref
+            document.querySelector(
+              selector + " .social-media-option"
             ).hidden = true;
             break;
           case "cookieBehavior1":
@@ -1002,6 +1074,12 @@ var gPrivacyPane = {
   trackingProtectionWritePrefs() {
     let enabledPref = Preferences.get("privacy.trackingprotection.enabled");
     let pbmPref = Preferences.get("privacy.trackingprotection.pbmode.enabled");
+    let stpPref = Preferences.get(
+      "privacy.trackingprotection.socialtracking.enabled"
+    );
+    let stpCookiePref = Preferences.get(
+      "privacy.socialtracking.block_cookies.enabled"
+    );
     let tpMenu = document.getElementById("trackingProtectionMenu");
     let tpCheckbox = document.getElementById(
       "contentBlockingTrackingProtectionCheckbox"
@@ -1022,14 +1100,23 @@ var gPrivacyPane = {
       case "always":
         enabledPref.value = true;
         pbmPref.value = true;
+        if (stpCookiePref.value) {
+          stpPref.value = true;
+        }
         break;
       case "private":
         enabledPref.value = false;
         pbmPref.value = true;
+        if (stpCookiePref.value) {
+          stpPref.value = false;
+        }
         break;
       case "never":
         enabledPref.value = false;
         pbmPref.value = false;
+        if (stpCookiePref.value) {
+          stpPref.value = false;
+        }
         break;
     }
   },
@@ -1433,7 +1520,6 @@ var gPrivacyPane = {
       blockCookiesMenu.selectedIndex = 0;
       return this.writeBlockCookiesFrom();
     }
-
     return Ci.nsICookieService.BEHAVIOR_ACCEPT;
   },
 
@@ -1484,8 +1570,10 @@ var gPrivacyPane = {
           continue;
         }
 
-        if (tab.pinned || !otherGBrowser.discardBrowser(tab)) {
+        if (tab.pinned || tab.selected) {
           otherGBrowser.reloadTab(tab);
+        } else {
+          otherGBrowser.discardBrowser(tab);
         }
       }
     });
@@ -1770,12 +1858,9 @@ var gPrivacyPane = {
       Ci.nsIPKCS11ModuleDB
     );
     if (secmodDB.isFIPSEnabled) {
-      var bundle = document.getElementById("bundlePreferences");
-      Services.prompt.alert(
-        window,
-        bundle.getString("pw_change_failed_title"),
-        bundle.getString("pw_change2empty_in_fips_mode")
-      );
+      let title = document.getElementById("fips-title").textContent;
+      let desc = document.getElementById("fips-desc").textContent;
+      Services.prompt.alert(window, title, desc);
       this._initMasterPasswordUI();
     } else {
       gSubDialog.open(
@@ -1818,12 +1903,10 @@ var gPrivacyPane = {
    */
   showPasswords() {
     if (LoginHelper.managementURI) {
-      window.docShell.messageManager.sendAsyncMessage(
-        "PasswordManager:OpenPreferences",
-        {
-          entryPoint: "preferences",
-        }
-      );
+      let loginManager = window.getWindowGlobalChild().getActor("LoginManager");
+      loginManager.sendAsyncMessage("PasswordManager:OpenPreferences", {
+        entryPoint: "preferences",
+      });
       return;
     }
     Services.telemetry.recordEvent("pwmgr", "open_management", "preferences");
@@ -2140,14 +2223,11 @@ var gPrivacyPane = {
    * handles events coming from the UI for it.
    */
   initOptOutStudyCheckbox(doc) {
-    const allowedByPolicy = Services.policies.isAllowed("Shield");
-
     // The checkbox should be disabled if any of the below are true. This
     // prevents the user from changing the value in the box.
     //
     // * the policy forbids shield
-    // * the Shield Study preference is locked
-    // * the FHR pref is false
+    // * Normandy is disabled
     //
     // The checkbox should match the value of the preference only if all of
     // these are true. Otherwise, the checkbox should remain unchecked. This
@@ -2155,16 +2235,27 @@ var gPrivacyPane = {
     // so showing a checkbox would be confusing.
     //
     // * the policy allows Shield
-    // * the FHR pref is true
     // * Normandy is enabled
-    dataCollectionCheckboxHandler({
-      checkbox: document.getElementById("optOutStudiesEnabled"),
-      matchPref: () =>
-        allowedByPolicy &&
-        Services.prefs.getBoolPref(PREF_NORMANDY_ENABLED, false),
-      isDisabled: () => !allowedByPolicy,
-      pref: PREF_OPT_OUT_STUDIES_ENABLED,
-    });
+
+    const allowedByPolicy = Services.policies.isAllowed("Shield");
+    const checkbox = document.getElementById("optOutStudiesEnabled");
+
+    if (
+      allowedByPolicy &&
+      Services.prefs.getBoolPref(PREF_NORMANDY_ENABLED, false)
+    ) {
+      if (Services.prefs.getBoolPref(PREF_OPT_OUT_STUDIES_ENABLED, false)) {
+        checkbox.setAttribute("checked", "true");
+      } else {
+        checkbox.removeAttribute("checked");
+      }
+      checkbox.setAttribute("preference", PREF_OPT_OUT_STUDIES_ENABLED);
+      checkbox.removeAttribute("disabled");
+    } else {
+      checkbox.removeAttribute("preference");
+      checkbox.removeAttribute("checked");
+      checkbox.setAttribute("disabled", "true");
+    }
   },
 
   initAddonRecommendationsCheckbox() {

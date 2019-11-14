@@ -53,6 +53,12 @@ namespace recordreplay {
   /* developer tools server-side code instead of the recording process itself. */ \
   _Macro(SetDebuggerRunsInMiddleman)                           \
                                                                \
+  /* Periodically sent to replaying processes to make sure they are */ \
+  /* responsive and determine how much progress they have made. This can be */ \
+  /* sent while the process is unpaused, but only when it will not be */ \
+  /* rewinding. */                                             \
+  _Macro(Ping)                                                 \
+                                                               \
   /* Sent to recording processes when exiting, or to force a hanged replaying */ \
   /* process to crash. */                                      \
   _Macro(Terminate)                                            \
@@ -71,6 +77,9 @@ namespace recordreplay {
                                                                \
   /* Pause after executing a manifest, specifying its response. */ \
   _Macro(ManifestFinished)                                     \
+                                                               \
+  /* Respond to a ping message */                              \
+  _Macro(PingResponse)                                         \
                                                                \
   /* A critical error occurred and execution cannot continue. The child will */ \
   /* stop executing after sending this message and will wait to be terminated. */ \
@@ -143,6 +152,7 @@ struct Message {
     return mType == MessageType::CreateCheckpoint ||
            mType == MessageType::SetDebuggerRunsInMiddleman ||
            mType == MessageType::MiddlemanCallResponse ||
+           mType == MessageType::Ping ||
            mType == MessageType::Terminate ||
            mType == MessageType::Introduction;
   }
@@ -259,15 +269,11 @@ typedef EmptyMessage<MessageType::BeginFatalError> BeginFatalErrorMessage;
 static const gfx::SurfaceFormat gSurfaceFormat = gfx::SurfaceFormat::R8G8B8X8;
 
 struct PaintMessage : public Message {
-  // Checkpoint whose state is being painted.
-  uint32_t mCheckpointId;
-
   uint32_t mWidth;
   uint32_t mHeight;
 
-  PaintMessage(uint32_t aCheckpointId, uint32_t aWidth, uint32_t aHeight)
+  PaintMessage(uint32_t aWidth, uint32_t aHeight)
       : Message(MessageType::Paint, sizeof(*this)),
-        mCheckpointId(aCheckpointId),
         mWidth(aWidth),
         mHeight(aHeight) {}
 };
@@ -297,6 +303,23 @@ typedef BinaryMessage<MessageType::MiddlemanCallResponse>
 typedef EmptyMessage<MessageType::ResetMiddlemanCalls>
     ResetMiddlemanCallsMessage;
 
+struct PingMessage : public Message {
+  uint32_t mId;
+
+  explicit PingMessage(uint32_t aId)
+      : Message(MessageType::Ping, sizeof(*this)),
+        mId(aId) {}
+};
+
+struct PingResponseMessage : public Message {
+  uint32_t mId;
+  uint64_t mProgress;
+
+  PingResponseMessage(uint32_t aId, uint64_t aProgress)
+      : Message(MessageType::PingResponse, sizeof(*this)),
+        mId(aId), mProgress(aProgress) {}
+};
+
 class Channel {
  public:
   // Note: the handler is responsible for freeing its input message. It will be
@@ -319,7 +342,7 @@ class Channel {
   // Descriptor used to communicate with the other side.
   int mFd;
 
-  // For synchronizing initialization of the channel.
+  // For synchronizing initialization of the channel and ensuring atomic sends.
   Monitor mMonitor;
 
   // Buffer for message data received from the other side of the channel.

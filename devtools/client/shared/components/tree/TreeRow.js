@@ -1,5 +1,3 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -47,8 +45,8 @@ define(function(require, exports, module) {
     static get propTypes() {
       return {
         member: PropTypes.shape({
-          object: PropTypes.obSject,
-          name: PropTypes.sring,
+          object: PropTypes.object,
+          name: PropTypes.string,
           type: PropTypes.string.isRequired,
           rowClass: PropTypes.string.isRequired,
           level: PropTypes.number.isRequired,
@@ -62,8 +60,8 @@ define(function(require, exports, module) {
           loading: PropTypes.bool,
         }),
         decorator: PropTypes.object,
-        renderCell: PropTypes.object,
-        renderLabelCell: PropTypes.object,
+        renderCell: PropTypes.func,
+        renderLabelCell: PropTypes.func,
         columns: PropTypes.array.isRequired,
         id: PropTypes.string.isRequired,
         provider: PropTypes.object.isRequired,

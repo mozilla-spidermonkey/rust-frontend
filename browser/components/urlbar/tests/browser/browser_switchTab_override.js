@@ -33,15 +33,15 @@ add_task(async function test_switchtab_override() {
   EventUtils.synthesizeKey("KEY_ArrowDown");
   let result = await UrlbarTestUtils.getDetailsOfResultAt(
     window,
-    UrlbarTestUtils.getSelectedIndex(window)
+    UrlbarTestUtils.getSelectedRowIndex(window)
   );
   Assert.equal(result.type, UrlbarUtils.RESULT_TYPE.TAB_SWITCH);
 
   // Check to see if the switchtab label is visible and
   // all other labels are hidden
-  const allLabels = document.getElementById("urlbar-display-box").children;
+  const allLabels = document.getElementById("urlbar-label-box").children;
   for (let label of allLabels) {
-    if (label.id == "switchtab") {
+    if (label.id == "urlbar-label-switchtab") {
       Assert.ok(BrowserTestUtils.is_visible(label));
     } else {
       Assert.ok(BrowserTestUtils.is_hidden(label));

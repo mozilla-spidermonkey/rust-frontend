@@ -4,7 +4,7 @@
 
 "use strict";
 
-var { DebuggerServer } = require("devtools/server/main");
+var { DebuggerServer } = require("devtools/server/debugger-server");
 
 var protocol = require("devtools/shared/protocol");
 const { longStringSpec } = require("devtools/shared/specs/string");
@@ -34,7 +34,7 @@ exports.LongStringActor = protocol.ActorClassWithSpec(longStringSpec, {
   },
 
   substring: function(start, end) {
-    return Promise.resolve(this.str.substring(start, end));
+    return this.str.substring(start, end);
   },
 
   release: function() {},

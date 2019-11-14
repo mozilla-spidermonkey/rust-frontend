@@ -15,6 +15,7 @@
 #include "js/Id.h"
 #include "js/RootingAPI.h"
 #include "js/Value.h"
+#include "util/Poison.h"
 
 /*
  * [SMDOC] GC Barriers
@@ -276,15 +277,13 @@
  *
  * Barriers for use outside of the JS engine call into the same barrier
  * implementations at InternalBarrierMethods<T>::post via an indirect call to
- * Heap(.+)WriteBarriers.
+ * Heap(.+)PostWriteBarrier.
  *
  * These clases are designed to be used to wrap GC thing pointers or values that
  * act like them (i.e. JS::Value and jsid).  It is possible to use them for
  * other types by supplying the necessary barrier implementations but this
  * is not usually necessary and should be done with caution.
  */
-
-class JSFlatString;
 
 namespace js {
 
@@ -420,7 +419,7 @@ class MOZ_NON_MEMMOVABLE BarrieredBase {
   // instantiation. Friending to the generic template leads to a number of
   // unintended consequences, including template resolution ambiguity and a
   // circular dependency with Tracing.h.
-  T* unsafeUnbarrieredForTracing() { return &value; }
+  T* unsafeUnbarrieredForTracing() const { return const_cast<T*>(&value); }
 };
 
 // Base class for barriered pointer types that intercept only writes.
@@ -933,10 +932,10 @@ struct MovableCellHasher<WeakHeapPtr<T>> {
   static void rekey(Key& k, const Key& newKey) { k.unsafeSet(newKey); }
 };
 
-/* Useful for hashtables with a GCPtr as key. */
+/* Useful for hashtables with a HeapPtr as key. */
 template <class T>
-struct GCPtrHasher {
-  typedef GCPtr<T> Key;
+struct HeapPtrHasher {
+  typedef HeapPtr<T> Key;
   typedef T Lookup;
 
   static HashNumber hash(Lookup obj) { return DefaultHasher<T>::hash(obj); }
@@ -986,14 +985,18 @@ class MOZ_STACK_CLASS StackGCCellPtr {
 
 namespace mozilla {
 
-/* Specialized hashing policy for GCPtrs. */
 template <class T>
-struct DefaultHasher<js::GCPtr<T>> : js::GCPtrHasher<T> {};
+struct DefaultHasher<js::HeapPtr<T>> : js::HeapPtrHasher<T> {};
+
+template <class T>
+struct DefaultHasher<js::GCPtr<T>> {
+  // Not implemented. GCPtr can't be used as a hash table key because it has a
+  // post barrier but doesn't support relocation.
+};
 
 template <class T>
 struct DefaultHasher<js::PreBarriered<T>> : js::PreBarrieredHasher<T> {};
 
-/* Specialized hashing policy for WeakHeapPtrs. */
 template <class T>
 struct DefaultHasher<js::WeakHeapPtr<T>> : js::WeakHeapPtrHasher<T> {};
 
@@ -1018,6 +1021,7 @@ namespace jit {
 class JitCode;
 }  // namespace jit
 
+using PreBarrieredId = PreBarriered<jsid>;
 using PreBarrieredObject = PreBarriered<JSObject*>;
 using PreBarrieredValue = PreBarriered<Value>;
 
@@ -1026,8 +1030,8 @@ using GCPtrArrayObject = GCPtr<ArrayObject*>;
 using GCPtrBaseShape = GCPtr<BaseShape*>;
 using GCPtrAtom = GCPtr<JSAtom*>;
 using GCPtrBigInt = GCPtr<BigInt*>;
-using GCPtrFlatString = GCPtr<JSFlatString*>;
 using GCPtrFunction = GCPtr<JSFunction*>;
+using GCPtrLinearString = GCPtr<JSLinearString*>;
 using GCPtrObject = GCPtr<JSObject*>;
 using GCPtrScript = GCPtr<JSScript*>;
 using GCPtrString = GCPtr<JSString*>;
@@ -1054,6 +1058,7 @@ using WeakHeapPtrWasmInstanceObject = WeakHeapPtr<WasmInstanceObject*>;
 using WeakHeapPtrWasmTableObject = WeakHeapPtr<WasmTableObject*>;
 
 using HeapPtrJitCode = HeapPtr<jit::JitCode*>;
+using HeapPtrObject = HeapPtr<JSObject*>;
 using HeapPtrRegExpShared = HeapPtr<RegExpShared*>;
 using HeapPtrValue = HeapPtr<Value>;
 

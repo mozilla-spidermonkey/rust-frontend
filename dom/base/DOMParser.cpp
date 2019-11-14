@@ -9,6 +9,7 @@
 #include "nsNetUtil.h"
 #include "nsDOMString.h"
 #include "MainThreadUtils.h"
+#include "SystemPrincipal.h"
 #include "nsIStreamListener.h"
 #include "nsStringStream.h"
 #include "nsIScriptError.h"
@@ -51,10 +52,6 @@ NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(DOMParser, mOwner)
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(DOMParser)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(DOMParser)
-
-static const char* StringFromSupportedType(SupportedType aType) {
-  return SupportedTypeValues::strings[static_cast<int>(aType)].value;
-}
 
 already_AddRefed<Document> DOMParser::ParseFromString(const nsAString& aStr,
                                                       SupportedType aType,
@@ -101,6 +98,22 @@ already_AddRefed<Document> DOMParser::ParseFromString(const nsAString& aStr,
 
   return ParseFromStream(stream, NS_LITERAL_STRING("UTF-8"), utf8str.Length(),
                          aType, aRv);
+}
+
+already_AddRefed<Document> DOMParser::ParseFromSafeString(const nsAString& aStr,
+                                                          SupportedType aType,
+                                                          ErrorResult& aRv) {
+  // Since we disable cross docGroup node adoption, it is safe to create
+  // new document with the system principal, then the new document will be
+  // placed in the same docGroup as the chrome document.
+  nsCOMPtr<nsIPrincipal> docPrincipal = mPrincipal;
+  if (!nsContentUtils::IsSystemPrincipal(mPrincipal)) {
+    mPrincipal = SystemPrincipal::Create();
+  }
+
+  RefPtr<Document> ret = ParseFromString(aStr, aType, aRv);
+  mPrincipal = docPrincipal;
+  return ret.forget();
 }
 
 already_AddRefed<Document> DOMParser::ParseFromBuffer(const Uint8Array& aBuf,
@@ -166,11 +179,12 @@ already_AddRefed<Document> DOMParser::ParseFromStream(nsIInputStream* aStream,
 
   // Create a fake channel
   nsCOMPtr<nsIChannel> parserChannel;
-  NS_NewInputStreamChannel(getter_AddRefs(parserChannel), mDocumentURI,
-                           nullptr,  // aStream
-                           mPrincipal, nsILoadInfo::SEC_FORCE_INHERIT_PRINCIPAL,
-                           nsIContentPolicy::TYPE_OTHER,
-                           nsDependentCString(StringFromSupportedType(aType)));
+  NS_NewInputStreamChannel(
+      getter_AddRefs(parserChannel), mDocumentURI,
+      nullptr,  // aStream
+      mPrincipal, nsILoadInfo::SEC_FORCE_INHERIT_PRINCIPAL,
+      nsIContentPolicy::TYPE_OTHER,
+      nsDependentCSubstring(SupportedTypeValues::GetString(aType)));
   if (NS_WARN_IF(!parserChannel)) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
     return nullptr;

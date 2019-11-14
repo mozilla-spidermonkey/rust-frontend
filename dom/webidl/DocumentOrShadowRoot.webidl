@@ -8,8 +8,7 @@
  * http://w3c.github.io/webcomponents/spec/shadow/#extensions-to-the-documentorshadowroot-mixin
  */
 
-[NoInterfaceObject]
-interface DocumentOrShadowRoot {
+interface mixin DocumentOrShadowRoot {
   // Not implemented yet: bug 1430308.
   // Selection? getSelection();
   Element? elementFromPoint(float x, float y);
@@ -33,4 +32,10 @@ interface DocumentOrShadowRoot {
   readonly attribute Element? fullscreenElement;
   [BinaryName="fullscreenElement"]
   readonly attribute Element? mozFullScreenElement;
+};
+
+// https://drafts.csswg.org/web-animations-1/#extensions-to-the-documentorshadowroot-interface-mixin
+partial interface mixin DocumentOrShadowRoot {
+  [Func="Document::IsWebAnimationsGetAnimationsEnabled"]
+  sequence<Animation> getAnimations();
 };

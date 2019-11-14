@@ -7,16 +7,26 @@
 #ifndef debugger_Environment_h
 #define debugger_Environment_h
 
-#include "debugger/Debugger.h"
-#include "gc/Rooting.h"
-#include "js/Class.h"
-#include "js/PropertySpec.h"
-#include "js/RootingAPI.h"
-#include "js/TypeDecls.h"
-#include "vm/GlobalObject.h"
-#include "vm/NativeObject.h"
+#include "mozilla/Assertions.h"  // for AssertionConditionType, MOZ_ASSERT
+#include "mozilla/Attributes.h"  // for MOZ_MUST_USE
+#include "mozilla/Maybe.h"       // for Maybe
+
+#include "jstypes.h"            // for JS_PUBLIC_API
+#include "NamespaceImports.h"   // for Value, HandleId, HandleObject
+#include "debugger/Debugger.h"  // for Env
+#include "gc/Rooting.h"         // for HandleDebuggerEnvironment
+#include "js/PropertySpec.h"    // for JSFunctionSpec, JSPropertySpec
+#include "js/RootingAPI.h"      // for Handle, MutableHandle
+#include "vm/NativeObject.h"    // for NativeObject
+#include "vm/Scope.h"           // for ScopeKind
+
+class JS_PUBLIC_API JSObject;
+struct JS_PUBLIC_API JSContext;
+class JSTracer;
 
 namespace js {
+
+class GlobalObject;
 
 enum class DebuggerEnvironmentType { Declarative, With, Object };
 
@@ -26,7 +36,7 @@ class DebuggerEnvironment : public NativeObject {
 
   static const unsigned RESERVED_SLOTS = 1;
 
-  static const Class class_;
+  static const JSClass class_;
 
   static NativeObject* initClass(JSContext* cx, Handle<GlobalObject*> global,
                                  HandleObject dbgCtor);
@@ -34,7 +44,7 @@ class DebuggerEnvironment : public NativeObject {
                                      HandleObject referent,
                                      HandleNativeObject debugger);
 
-  static void trace(JSTracer* trc, JSObject* obj);
+  void trace(JSTracer* trc);
 
   DebuggerEnvironmentType type() const;
   mozilla::Maybe<ScopeKind> scopeKind() const;
@@ -62,7 +72,7 @@ class DebuggerEnvironment : public NativeObject {
                                        HandleId id, HandleValue value);
 
  private:
-  static const ClassOps classOps_;
+  static const JSClassOps classOps_;
 
   static const JSPropertySpec properties_[];
   static const JSFunctionSpec methods_[];
@@ -79,26 +89,7 @@ class DebuggerEnvironment : public NativeObject {
 
   static MOZ_MUST_USE bool construct(JSContext* cx, unsigned argc, Value* vp);
 
-  static MOZ_MUST_USE bool typeGetter(JSContext* cx, unsigned argc, Value* vp);
-  static MOZ_MUST_USE bool scopeKindGetter(JSContext* cx, unsigned argc,
-                                           Value* vp);
-  static MOZ_MUST_USE bool parentGetter(JSContext* cx, unsigned argc,
-                                        Value* vp);
-  static MOZ_MUST_USE bool objectGetter(JSContext* cx, unsigned argc,
-                                        Value* vp);
-  static MOZ_MUST_USE bool calleeGetter(JSContext* cx, unsigned argc,
-                                        Value* vp);
-  static MOZ_MUST_USE bool inspectableGetter(JSContext* cx, unsigned argc,
-                                             Value* vp);
-  static MOZ_MUST_USE bool optimizedOutGetter(JSContext* cx, unsigned argc,
-                                              Value* vp);
-
-  static MOZ_MUST_USE bool namesMethod(JSContext* cx, unsigned argc, Value* vp);
-  static MOZ_MUST_USE bool findMethod(JSContext* cx, unsigned argc, Value* vp);
-  static MOZ_MUST_USE bool getVariableMethod(JSContext* cx, unsigned argc,
-                                             Value* vp);
-  static MOZ_MUST_USE bool setVariableMethod(JSContext* cx, unsigned argc,
-                                             Value* vp);
+  struct CallData;
 };
 
 } /* namespace js */

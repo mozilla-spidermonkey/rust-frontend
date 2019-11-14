@@ -48,6 +48,7 @@ const std::string TlsAgent::kServerEcdhRsa = "ecdh_rsa";
 const std::string TlsAgent::kServerEcdhEcdsa = "ecdh_ecdsa";
 const std::string TlsAgent::kServerDsa = "dsa";
 const std::string TlsAgent::kDelegatorEcdsa256 = "delegator_ecdsa256";
+const std::string TlsAgent::kDelegatorRsae2048 = "delegator_rsae2048";
 
 static const uint8_t kCannedTls13ServerHello[] = {
     0x03, 0x03, 0x9c, 0xbc, 0x14, 0x9b, 0x0e, 0x2e, 0xfa, 0x0d, 0xf3,
@@ -128,10 +129,14 @@ void TlsAgent::SetState(State s) {
                                           ScopedCERTCertificate* cert,
                                           ScopedSECKEYPrivateKey* priv) {
   cert->reset(PK11_FindCertFromNickname(name.c_str(), nullptr));
+  EXPECT_NE(nullptr, cert);
+  if (!cert) return false;
   EXPECT_NE(nullptr, cert->get());
   if (!cert->get()) return false;
 
   priv->reset(PK11_FindKeyByAnyCert(cert->get(), nullptr));
+  EXPECT_NE(nullptr, priv);
+  if (!priv) return false;
   EXPECT_NE(nullptr, priv->get());
   if (!priv->get()) return false;
 
@@ -162,7 +167,10 @@ void TlsAgent::DelegateCredential(const std::string& name,
                                   SECItem* dc) {
   ScopedCERTCertificate cert;
   ScopedSECKEYPrivateKey cert_priv;
-  EXPECT_TRUE(TlsAgent::LoadCertificate(name, &cert, &cert_priv));
+  EXPECT_TRUE(TlsAgent::LoadCertificate(name, &cert, &cert_priv))
+      << "Could not load delegate certificate: " << name
+      << "; test db corrupt?";
+
   EXPECT_EQ(SECSuccess,
             SSL_DelegateCredential(cert.get(), cert_priv.get(), dc_pub.get(),
                                    dc_cert_verify_alg, dc_valid_for, now, dc));
@@ -278,6 +286,9 @@ bool TlsAgent::EnsureTlsSetup(PRFileDesc* modelSocket) {
   EXPECT_EQ(SECSuccess, rv);
   if (rv != SECSuccess) return false;
 
+  // All these tests depend on having this disabled to start with.
+  SetOption(SSL_ENABLE_EXTENDED_MASTER_SECRET, PR_FALSE);
+
   return true;
 }
 
@@ -337,7 +348,7 @@ SECStatus TlsAgent::GetClientAuthDataHook(void* self, PRFileDesc* fd,
   ScopedCERTCertificate peerCert(SSL_PeerCertificate(agent->ssl_fd()));
   EXPECT_TRUE(peerCert) << "Client should be able to see the server cert";
 
-  // See bug 1457716
+  // See bug 1573945
   // CheckCertReqAgainstDefaultCAs(caNames);
 
   ScopedCERTCertificate cert;
@@ -834,6 +845,13 @@ void TlsAgent::ResetPreliminaryInfo() {
   expected_cipher_suite_ = 0;
 }
 
+void TlsAgent::UpdatePreliminaryChannelInfo() {
+  SECStatus rv = SSL_GetPreliminaryChannelInfo(ssl_fd_.get(), &pre_info_,
+                                               sizeof(pre_info_));
+  EXPECT_EQ(SECSuccess, rv);
+  EXPECT_EQ(sizeof(pre_info_), pre_info_.length);
+}
+
 void TlsAgent::ValidateCipherSpecs() {
   PRInt32 cipherSpecs = SSLInt_CountCipherSpecs(ssl_fd());
   // We use one ciphersuite in each direction.
@@ -896,6 +914,7 @@ void TlsAgent::Connected() {
   // Preliminary values are exposed through callbacks during the handshake.
   // If either expected values were set or the callbacks were called, check
   // that the final values are correct.
+  UpdatePreliminaryChannelInfo();
   EXPECT_EQ(expected_version_, info_.protocolVersion);
   EXPECT_EQ(expected_cipher_suite_, info_.cipherSuite);
 

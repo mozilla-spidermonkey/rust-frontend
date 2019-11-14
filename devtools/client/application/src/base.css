@@ -12,26 +12,26 @@
   --body-20-font-size: 15px;
   --body-20-font-weight: 400;
   --body-20-font-weight-bold: 700;
+  --title-10-font-size: 13px;
   --title-20-font-size: 17px;
   --title-20-font-weight: 600;
   --title-30-font-size: 22px;
   --title-30-font-weight: 300;
 
   /* Global styles */
-  --base-font-size: var(--body-10-font-size);
-  --base-font-weight: var(--body-10-font-weight);
   --base-line-height: 1.8;
   --list-line-height: 1.25;
 
  /* Global colours */
-  --bg-color: var(--grey-10);
-  --text-color: var(--grey-90);
-
-  /* Global layout vars */
-  --base-unit: 4px;
+  --separator-color: var(--theme-splitter-color);
+  --bg-color: var(--theme-toolbar-background);
+  --highlight-color: var(--theme-toolbar-background-hover);
 
   /* extra, raw colors */
   --blue-50-a30: rgba(10, 132, 255, 0.3);
+
+  /* Global layout vars */
+  --base-unit: 4px;
 }
 
 /*
@@ -58,13 +58,14 @@ a {
   cursor: pointer;
 }
 
-h1,
-.application--title {
-  font-size: var(--title-30-font-size);
-  font-weight: var(--title-30-font-weight);
-  line-height: var(--base-line-height);
-}
-
 p {
   margin: 0;
+}
+
+/*
+ * utility classes
+ */
+
+.technical-text {
+  font-family: monospace;
 }

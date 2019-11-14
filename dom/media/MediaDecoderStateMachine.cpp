@@ -25,14 +25,17 @@
 #include "nsIMemoryReporter.h"
 #include "nsPrintfCString.h"
 #include "nsTArray.h"
+#include "AudioSegment.h"
 #include "DOMMediaStream.h"
 #include "ImageContainer.h"
 #include "MediaDecoder.h"
 #include "MediaDecoderStateMachine.h"
 #include "MediaShutdownManager.h"
+#include "MediaTrackGraph.h"
 #include "MediaTimer.h"
 #include "ReaderProxy.h"
 #include "TimeUnits.h"
+#include "VideoSegment.h"
 #include "VideoUtils.h"
 
 namespace mozilla {
@@ -3776,13 +3779,13 @@ void MediaDecoderStateMachine::RemoveOutputStream(DOMMediaStream* aStream) {
 }
 
 void MediaDecoderStateMachine::EnsureOutputStreamManager(
-    MediaStreamGraphImpl* aGraph) {
+    SharedDummyTrack* aDummyStream) {
   MOZ_ASSERT(NS_IsMainThread());
   if (mOutputStreamManager) {
     return;
   }
-  mOutputStreamManager = new OutputStreamManager(aGraph, mOutputStreamPrincipal,
-                                                 mAbstractMainThread);
+  mOutputStreamManager = new OutputStreamManager(
+      aDummyStream, mOutputStreamPrincipal, mAbstractMainThread);
 }
 
 void MediaDecoderStateMachine::EnsureOutputStreamManagerHasTracks(
@@ -3799,16 +3802,16 @@ void MediaDecoderStateMachine::EnsureOutputStreamManagerHasTracks(
   }
   if (aLoadedInfo.HasAudio()) {
     MOZ_ASSERT(!mOutputStreamManager->HasTrackType(MediaSegment::AUDIO));
-    RefPtr<SourceMediaStream> dummy =
+    RefPtr<SourceMediaTrack> dummy =
         mOutputStreamManager->AddTrack(MediaSegment::AUDIO);
-    LOG("Pre-created audio track with underlying stream %p", dummy.get());
+    LOG("Pre-created audio track with underlying track %p", dummy.get());
     Unused << dummy;
   }
   if (aLoadedInfo.HasVideo()) {
     MOZ_ASSERT(!mOutputStreamManager->HasTrackType(MediaSegment::VIDEO));
-    RefPtr<SourceMediaStream> dummy =
+    RefPtr<SourceMediaTrack> dummy =
         mOutputStreamManager->AddTrack(MediaSegment::VIDEO);
-    LOG("Pre-created video track with underlying stream %p", dummy.get());
+    LOG("Pre-created video track with underlying track %p", dummy.get());
     Unused << dummy;
   }
 }

@@ -39,6 +39,7 @@
 #include "MainThreadUtils.h"
 #include "nsINode.h"
 #include "nsIWidget.h"
+#include "nsIHttpChannel.h"
 #include "nsThreadUtils.h"
 #include "mozilla/LoadInfo.h"
 #include "mozilla/net/NeckoCommon.h"
@@ -57,10 +58,10 @@
 #include "mozilla/net/SocketProcessParent.h"
 #include "mozilla/net/SSLTokensCache.h"
 #include "mozilla/Unused.h"
-#include "ReferrerPolicy.h"
 #include "nsContentSecurityManager.h"
 #include "nsContentUtils.h"
 #include "nsExceptionHandler.h"
+#include "mozilla/StaticPrefs_network.h"
 
 #ifdef MOZ_WIDGET_GTK
 #  include "nsGIOProtocolHandler.h"
@@ -83,9 +84,9 @@ using mozilla::dom::ServiceWorkerDescriptor;
 // but the old names are still used to preserve backward compatibility.
 #define NECKO_BUFFER_CACHE_COUNT_PREF "network.buffer.cache.count"
 #define NECKO_BUFFER_CACHE_SIZE_PREF "network.buffer.cache.size"
-#define NETWORK_NOTIFY_CHANGED_PREF "network.notify.changed"
 #define NETWORK_CAPTIVE_PORTAL_PREF "network.captive-portal-service.enabled"
 #define WEBRTC_PREF_PREFIX "media.peerconnection."
+#define NETWORK_DNS_PREF "network.dns."
 
 #define MAX_RECURSION_COUNT 50
 
@@ -185,7 +186,6 @@ uint32_t nsIOService::gDefaultSegmentCount = 24;
 
 bool nsIOService::sIsDataURIUniqueOpaqueOrigin = false;
 bool nsIOService::sBlockToplevelDataUriNavigations = false;
-bool nsIOService::sBlockFTPSubresources = false;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -202,7 +202,6 @@ nsIOService::nsIOService()
       mHttpHandlerAlreadyShutingDown(false),
       mNetworkLinkServiceInitialized(false),
       mChannelEventSinks(NS_CHANNEL_EVENT_SINK_CATEGORY),
-      mNetworkNotifyChanged(true),
       mTotalRequests(0),
       mCacheWon(0),
       mNetWon(0),
@@ -217,13 +216,13 @@ static const char* gCallbackPrefs[] = {
     MANAGE_OFFLINE_STATUS_PREF,
     NECKO_BUFFER_CACHE_COUNT_PREF,
     NECKO_BUFFER_CACHE_SIZE_PREF,
-    NETWORK_NOTIFY_CHANGED_PREF,
     NETWORK_CAPTIVE_PORTAL_PREF,
     nullptr,
 };
 
 static const char* gCallbackPrefsForSocketProcess[] = {
     WEBRTC_PREF_PREFIX,
+    NETWORK_DNS_PREF,
     nullptr,
 };
 
@@ -243,8 +242,8 @@ nsresult nsIOService::Init() {
     mRestrictedPortList.AppendElement(gBadPortList[i]);
 
   // Further modifications to the port list come from prefs
-  Preferences::RegisterPrefixCallbacks(
-      PREF_CHANGE_METHOD(nsIOService::PrefsChanged), gCallbackPrefs, this);
+  Preferences::RegisterPrefixCallbacks(nsIOService::PrefsChanged,
+                                       gCallbackPrefs, this);
   PrefsChanged();
 
   // Register for profile change notifications
@@ -265,8 +264,6 @@ nsresult nsIOService::Init() {
   Preferences::AddBoolVarCache(
       &sBlockToplevelDataUriNavigations,
       "security.data_uri.block_toplevel_data_uri_navigations", false);
-  Preferences::AddBoolVarCache(&sBlockFTPSubresources,
-                               "security.block_ftp_subresources", true);
   Preferences::AddBoolVarCache(&mOfflineMirrorsConnectivity,
                                OFFLINE_MIRRORS_CONNECTIVITY, true);
 
@@ -416,7 +413,7 @@ nsresult nsIOService::LaunchSocketProcess() {
   }
 
   Preferences::RegisterPrefixCallbacks(
-      PREF_CHANGE_METHOD(nsIOService::NotifySocketProcessPrefsChanged),
+      nsIOService::NotifySocketProcessPrefsChanged,
       gCallbackPrefsForSocketProcess, this);
 
   // The subprocess is launched asynchronously, so we wait for a callback to
@@ -440,7 +437,7 @@ void nsIOService::DestroySocketProcess() {
   }
 
   Preferences::UnregisterPrefixCallbacks(
-      PREF_CHANGE_METHOD(nsIOService::NotifySocketProcessPrefsChanged),
+      nsIOService::NotifySocketProcessPrefsChanged,
       gCallbackPrefsForSocketProcess, this);
 
   mSocketProcess->Shutdown();
@@ -449,6 +446,12 @@ void nsIOService::DestroySocketProcess() {
 
 bool nsIOService::SocketProcessReady() {
   return mSocketProcess && mSocketProcess->IsConnected();
+}
+
+// static
+void nsIOService::NotifySocketProcessPrefsChanged(const char* aName,
+                                                  void* aSelf) {
+  static_cast<nsIOService*>(aSelf)->NotifySocketProcessPrefsChanged(aName);
 }
 
 void nsIOService::NotifySocketProcessPrefsChanged(const char* aName) {
@@ -766,6 +769,34 @@ nsIOService::HostnameIsLocalIPAddress(nsIURI* aURI, bool* aResult) {
     NetAddr netAddr;
     PRNetAddrToNetAddr(&addr, &netAddr);
     if (IsIPAddrLocal(&netAddr)) {
+      *aResult = true;
+    }
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsIOService::HostnameIsSharedIPAddress(nsIURI* aURI, bool* aResult) {
+  NS_ENSURE_ARG_POINTER(aURI);
+
+  nsCOMPtr<nsIURI> innerURI = NS_GetInnermostURI(aURI);
+  NS_ENSURE_ARG_POINTER(innerURI);
+
+  nsAutoCString host;
+  nsresult rv = innerURI->GetAsciiHost(host);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  *aResult = false;
+
+  PRNetAddr addr;
+  PRStatus result = PR_StringToNetAddr(host.get(), &addr);
+  if (result == PR_SUCCESS) {
+    NetAddr netAddr;
+    PRNetAddrToNetAddr(&addr, &netAddr);
+    if (IsIPAddrShared(&netAddr)) {
       *aResult = true;
     }
   }
@@ -1227,6 +1258,11 @@ nsIOService::AllowPort(int32_t inPort, const char* scheme, bool* _retval) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// static
+void nsIOService::PrefsChanged(const char* pref, void* self) {
+  static_cast<nsIOService*>(self)->PrefsChanged(pref);
+}
+
 void nsIOService::PrefsChanged(const char* pref) {
   // Look for extra ports to block
   if (!pref || strcmp(pref, PORT_PREF("banned")) == 0)
@@ -1266,14 +1302,6 @@ void nsIOService::PrefsChanged(const char* pref) {
       if (size > 0 && size < 1024 * 1024) gDefaultSegmentSize = size;
     NS_WARNING_ASSERTION(!(size & (size - 1)),
                          "network segment size is not a power of 2!");
-  }
-
-  if (!pref || strcmp(pref, NETWORK_NOTIFY_CHANGED_PREF) == 0) {
-    bool allow;
-    nsresult rv = Preferences::GetBool(NETWORK_NOTIFY_CHANGED_PREF, &allow);
-    if (NS_SUCCEEDED(rv)) {
-      mNetworkNotifyChanged = allow;
-    }
   }
 
   if (!pref || strcmp(pref, NETWORK_CAPTIVE_PORTAL_PREF) == 0) {
@@ -1347,7 +1375,7 @@ nsIOService::NotifyWakeup() {
 
   NS_ASSERTION(observerService, "The observer service should not be null");
 
-  if (observerService && mNetworkNotifyChanged) {
+  if (observerService && StaticPrefs::network_notify_changed()) {
     (void)observerService->NotifyObservers(nullptr, NS_NETWORK_LINK_TOPIC,
                                            (u"" NS_NETWORK_LINK_DATA_CHANGED));
   }
@@ -1584,6 +1612,8 @@ nsresult nsIOService::OnNetworkLinkEvent(const char* data) {
   } else if (!strcmp(data, NS_NETWORK_LINK_DATA_UNKNOWN)) {
     nsresult rv = mNetworkLinkService->GetIsLinkUp(&isUp);
     NS_ENSURE_SUCCESS(rv, rv);
+  } else if (!strcmp(data, NS_NETWORK_LINK_DATA_NETWORKID_CHANGED)) {
+    LOG(("nsIOService::OnNetworkLinkEvent Network id changed"));
   } else {
     NS_WARNING("Unhandled network event!");
     return NS_OK;
@@ -1638,27 +1668,6 @@ nsIOService::ExtractCharsetFromContentType(const nsACString& aTypeHeader,
   if (*aHadCharset && *aCharsetStart == *aCharsetEnd) {
     *aHadCharset = false;
   }
-  return NS_OK;
-}
-
-// parse policyString to policy enum value (see ReferrerPolicy.h)
-NS_IMETHODIMP
-nsIOService::ParseAttributePolicyString(const nsAString& policyString,
-                                        uint32_t* outPolicyEnum) {
-  NS_ENSURE_ARG(outPolicyEnum);
-  *outPolicyEnum = (uint32_t)AttributeReferrerPolicyFromString(policyString);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsIOService::GetReferrerPolicyString(uint32_t aPolicy, nsACString& aResult) {
-  if (aPolicy >= ArrayLength(kReferrerPolicyString)) {
-    aResult.AssignLiteral("unknown");
-    return NS_ERROR_INVALID_ARG;
-  }
-
-  aResult.AssignASCII(
-      ReferrerPolicyToString(static_cast<ReferrerPolicy>(aPolicy)));
   return NS_OK;
 }
 
@@ -1730,9 +1739,7 @@ nsresult nsIOService::SpeculativeConnectInternal(
     bool aAnonymous) {
   NS_ENSURE_ARG(aURI);
 
-  bool isHTTP, isHTTPS;
-  if (!(NS_SUCCEEDED(aURI->SchemeIs("http", &isHTTP)) && isHTTP) &&
-      !(NS_SUCCEEDED(aURI->SchemeIs("https", &isHTTPS)) && isHTTPS)) {
+  if (!aURI->SchemeIs("http") && !aURI->SchemeIs("https")) {
     // We don't speculatively connect to non-HTTP[S] URIs.
     return NS_OK;
   }
@@ -1817,9 +1824,6 @@ bool nsIOService::IsDataURIUniqueOpaqueOrigin() {
 bool nsIOService::BlockToplevelDataUriNavigations() {
   return sBlockToplevelDataUriNavigations;
 }
-
-/*static*/
-bool nsIOService::BlockFTPSubresources() { return sBlockFTPSubresources; }
 
 NS_IMETHODIMP
 nsIOService::NotImplemented() { return NS_ERROR_NOT_IMPLEMENTED; }

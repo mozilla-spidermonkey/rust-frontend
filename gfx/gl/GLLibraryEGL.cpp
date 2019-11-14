@@ -160,9 +160,7 @@ static EGLDisplay GetAndInitWARPDisplay(GLLibraryEGL& egl, void* displayType) {
 static EGLDisplay GetAndInitDisplayForWebRender(GLLibraryEGL& egl,
                                                 void* displayType) {
 #ifdef XP_WIN
-  const EGLint attrib_list[] = {LOCAL_EGL_EXPERIMENTAL_PRESENT_PATH_ANGLE,
-                                LOCAL_EGL_EXPERIMENTAL_PRESENT_PATH_FAST_ANGLE,
-                                LOCAL_EGL_NONE};
+  const EGLint attrib_list[] = {LOCAL_EGL_NONE};
   RefPtr<ID3D11Device> d3d11Device =
       gfx::DeviceManagerDx::Get()->GetCompositorDevice();
   if (!d3d11Device) {
@@ -280,6 +278,8 @@ AngleErrorReporting gAngleErrorReporter;
 
 static EGLDisplay GetAndInitDisplayForAccelANGLE(
     GLLibraryEGL& egl, nsACString* const out_failureId) {
+  EGLDisplay ret = 0;
+
   if (wr::RenderThread::IsInRenderThread()) {
     return GetAndInitDisplayForWebRender(egl, EGL_DEFAULT_DISPLAY);
   }
@@ -303,21 +303,16 @@ static EGLDisplay GetAndInitDisplayForAccelANGLE(
     //       will live longer than the ANGLE display so we're fine.
   });
 
-  EGLDisplay ret = nullptr;
-  if (d3d11ANGLE.IsEnabled()) {
-    ret = egl.fGetDisplay(
-        EGL_DEFAULT_DISPLAY);  // This will try d3d11, then d3d9.
-  } else {
-    // D3D9-only.
-    const EGLint attribs[] = {LOCAL_EGL_PLATFORM_ANGLE_TYPE_ANGLE,
-                              LOCAL_EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE,
-                              LOCAL_EGL_NONE};
-    ret = egl.fGetPlatformDisplayEXT(LOCAL_EGL_PLATFORM_ANGLE_ANGLE,
-                                     EGL_DEFAULT_DISPLAY, attribs);
+  if (gfxConfig::IsForcedOnByUser(Feature::D3D11_HW_ANGLE)) {
+    return GetAndInitDisplay(egl, LOCAL_EGL_D3D11_ONLY_DISPLAY_ANGLE);
   }
 
-  if (ret && !egl.fInitialize(ret, nullptr, nullptr)) {
-    ret = nullptr;
+  if (d3d11ANGLE.IsEnabled()) {
+    ret = GetAndInitDisplay(egl, LOCAL_EGL_D3D11_ELSE_D3D9_DISPLAY_ANGLE);
+  }
+
+  if (!ret) {
+    ret = GetAndInitDisplay(egl, EGL_DEFAULT_DISPLAY);
   }
 
   if (!ret && out_failureId->IsEmpty()) {
@@ -425,7 +420,7 @@ bool GLLibraryEGL::DoEnsureInitialized(bool forceAccel,
 
 #  ifdef MOZ_D3DCOMPILER_VISTA_DLL
       if (LoadLibraryForEGLOnWindows(
-              NS_LITERAL_STRING(NS_STRINGIFY(MOZ_D3DCOMPILER_VISTA_DLL))))
+              NS_LITERAL_STRING(MOZ_STRINGIFY(MOZ_D3DCOMPILER_VISTA_DLL))))
         break;
 #  endif
 

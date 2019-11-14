@@ -28,7 +28,6 @@
     )
 )]
 #![no_std]
-#![cfg_attr(not(feature = "std"), feature(alloc))]
 
 #[cfg(not(feature = "std"))]
 #[macro_use]
@@ -38,9 +37,10 @@ extern crate alloc as std;
 extern crate std;
 
 #[cfg(not(feature = "std"))]
-use hashmap_core::{
+use hashbrown::{
+    hash_map,
     hash_map::Entry::{Occupied, Vacant},
-    map as hash_map, HashMap,
+    HashMap,
 };
 #[cfg(feature = "std")]
 use std::collections::{
@@ -63,6 +63,8 @@ pub use crate::environ::{
 };
 pub use crate::func_translator::FuncTranslator;
 pub use crate::module_translator::translate_module;
+pub use crate::state::func_state::FuncTranslationState;
+pub use crate::state::module_state::ModuleTranslationState;
 pub use crate::translation_utils::{
     get_vmctx_value_label, DefinedFuncIndex, DefinedGlobalIndex, DefinedMemoryIndex,
     DefinedTableIndex, FuncIndex, Global, GlobalIndex, GlobalInit, Memory, MemoryIndex,

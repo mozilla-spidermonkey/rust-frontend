@@ -81,13 +81,16 @@ export const FAKE_REMOTE_SETTINGS_PROVIDER = {
   enabled: true,
 };
 
+const notificationText = new String("Fake notification text"); // eslint-disable-line
+notificationText.attributes = { tooltiptext: "Fake tooltip text" };
+
 export const FAKE_RECOMMENDATION = {
   id: "fake_id",
   template: "cfr_doorhanger",
   content: {
     category: "cfrDummy",
     bucket_id: "fake_bucket_id",
-    notification_text: "Fake Notification Text",
+    notification_text: notificationText,
     info_icon: {
       label: "Fake Info Icon Label",
       sumo_path: "a_help_path_fragment",
@@ -120,7 +123,6 @@ export const FAKE_RECOMMENDATION = {
         },
         {
           label: { string_id: "secondary_button_id_2" },
-          action: { id: "secondary_action" },
         },
         {
           label: { string_id: "secondary_button_id_3" },
@@ -149,6 +151,10 @@ export class FakeRemotePageManager {
         },
         ConfirmationHint: {
           show: sinon.stub(),
+        },
+        gProtectionsHandler: {
+          showProtectionsPopup: sinon.stub(),
+          openProtections: sinon.stub(),
         },
       },
     };

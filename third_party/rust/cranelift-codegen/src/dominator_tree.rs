@@ -6,10 +6,10 @@ use crate::ir::instructions::BranchInfo;
 use crate::ir::{Ebb, ExpandedProgramPoint, Function, Inst, Layout, ProgramOrder, Value};
 use crate::packed_option::PackedOption;
 use crate::timing;
+use alloc::vec::Vec;
 use core::cmp;
 use core::cmp::Ordering;
 use core::mem;
-use std::vec::Vec;
 
 /// RPO numbers are not first assigned in a contiguous way but as multiples of STRIDE, to leave
 /// room for modifications of the dominator tree.
@@ -226,7 +226,13 @@ impl DominatorTree {
 
     /// Allocate and compute a dominator tree.
     pub fn with_function(func: &Function, cfg: &ControlFlowGraph) -> Self {
-        let mut domtree = Self::new();
+        let ebb_capacity = func.layout.ebb_capacity();
+        let mut domtree = Self {
+            nodes: SecondaryMap::with_capacity(ebb_capacity),
+            postorder: Vec::with_capacity(ebb_capacity),
+            stack: Vec::new(),
+            valid: false,
+        };
         domtree.compute(func, cfg);
         domtree
     }

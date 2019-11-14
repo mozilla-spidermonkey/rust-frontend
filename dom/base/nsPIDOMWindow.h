@@ -140,7 +140,8 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
   friend nsGlobalWindowInner;
   friend nsGlobalWindowOuter;
 
-  explicit nsPIDOMWindowInner(nsPIDOMWindowOuter* aOuterWindow);
+  nsPIDOMWindowInner(nsPIDOMWindowOuter* aOuterWindow,
+                     mozilla::dom::WindowGlobalChild* aActor);
 
   ~nsPIDOMWindowInner();
 
@@ -156,13 +157,13 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
     return static_cast<nsPIDOMWindowInner*>(aFrom);
   }
 
-  // Returns true if this object has an outer window and it is the current inner
-  // window of that outer.
-  inline bool IsCurrentInnerWindow() const;
+  // Returns true if this object is the currently-active inner window for its
+  // BrowsingContext.
+  bool IsCurrentInnerWindow() const;
 
   // Returns true if the document of this window is the active document.  This
-  // is not identical to IsCurrentInnerWindow() because document.open() will
-  // keep the same document active but create a new window.
+  // is identical to IsCurrentInnerWindow() now that document.open() no longer
+  // creates new inner windows for the document it is called on.
   inline bool HasActiveDocument();
 
   // Returns true if this window is the same as mTopInnerWindow
@@ -695,7 +696,6 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
 
   ~nsPIDOMWindowOuter();
 
-  void RefreshMediaElementsVolume();
   void RefreshMediaElementsSuspend(SuspendTypes aSuspend);
   bool IsDisposableSuspend(SuspendTypes aSuspend) const;
   void MaybeNotifyMediaResumedFromBlock(SuspendTypes aSuspend);
@@ -755,6 +755,8 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
   nsresult SetAudioVolume(float aVolume);
 
   void MaybeActiveMediaComponents();
+
+  void RefreshMediaElementsVolume();
 
   void SetServiceWorkersTestingEnabled(bool aEnabled);
   bool GetServiceWorkersTestingEnabled();
@@ -876,18 +878,9 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
    *
    * aDocument must not be null.
    */
-  virtual nsresult SetNewDocument(Document* aDocument, nsISupports* aState,
-                                  bool aForceReuseInnerWindow) = 0;
-
-  /**
-   * Set the opener window.  aOriginalOpener is true if and only if this is the
-   * original opener for the window.  That is, it can only be true at most once
-   * during the life cycle of a window, and then only the first time
-   * SetOpenerWindow is called.  It might never be true, of course, if the
-   * window does not have an opener when it's created.
-   */
-  virtual void SetOpenerWindow(nsPIDOMWindowOuter* aOpener,
-                               bool aOriginalOpener) = 0;
+  virtual nsresult SetNewDocument(
+      Document* aDocument, nsISupports* aState, bool aForceReuseInnerWindow,
+      mozilla::dom::WindowGlobalChild* aActor = nullptr) = 0;
 
   /**
    * Ensure the size and position of this window are up-to-date by doing
@@ -922,6 +915,8 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
    * @param aIsFullscreen indicates whether the widget is in fullscreen.
    */
   virtual void FinishFullscreenChange(bool aIsFullscreen) = 0;
+
+  virtual void ForceFullScreenInWidget() = 0;
 
   // XXX: These focus methods all forward to the inner, could we change
   // consumers to call these on the inner directly?
@@ -979,18 +974,6 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
   virtual void PageHidden() = 0;
 
   /**
-   * Set a arguments for this window. This will be set on the window
-   * right away (if there's an existing document) and it will also be
-   * installed on the window when the next document is loaded.
-   *
-   * This function serves double-duty for passing both |arguments| and
-   * |dialogArguments| back from nsWindowWatcher to nsGlobalWindow. For the
-   * latter, the array is an array of length 0 whose only element is a
-   * DialogArgumentsHolder representing the JS value passed to showModalDialog.
-   */
-  virtual nsresult SetArguments(nsIArray* aArguments) = 0;
-
-  /**
    * Return the window id of this window
    */
   uint64_t WindowID() const { return mWindowID; }
@@ -1041,7 +1024,8 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
   virtual nsresult GetPrompter(nsIPrompt** aPrompt) = 0;
   virtual nsresult GetControllers(nsIControllers** aControllers) = 0;
   virtual already_AddRefed<mozilla::dom::Selection> GetSelection() = 0;
-  virtual already_AddRefed<nsPIDOMWindowOuter> GetOpener() = 0;
+  virtual mozilla::dom::Nullable<mozilla::dom::WindowProxyHolder>
+  GetOpener() = 0;
 
   // aLoadState will be passed on through to the windowwatcher.
   // aForceNoOpener will act just like a "noopener" feature in aOptions except

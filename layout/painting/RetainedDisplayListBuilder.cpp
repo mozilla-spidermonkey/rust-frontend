@@ -9,6 +9,8 @@
 
 #include "DisplayListChecker.h"
 #include "mozilla/StaticPrefs_layout.h"
+#include "nsIFrame.h"
+#include "nsIFrameInlines.h"
 #include "nsPlaceholderFrame.h"
 #include "nsSubDocumentFrame.h"
 #include "nsViewManager.h"
@@ -474,7 +476,8 @@ class MergeState {
         }  // aNewItem can't be the glass item on the builder yet.
 
         if (destItem->IsGlassItem()) {
-          if (destItem != oldItem || destItem != mBuilder->Builder()->GetGlassDisplayItem()) {
+          if (destItem != oldItem ||
+              destItem != mBuilder->Builder()->GetGlassDisplayItem()) {
             mBuilder->Builder()->SetGlassDisplayItem(destItem);
           }
         }
@@ -865,7 +868,7 @@ static void TakeAndAddModifiedAndFramesWithPropsFromRootFrame(
     }
 
     if (flags & RetainedDisplayListData::FrameFlags::HadWillChange) {
-      aBuilder->RemoveFromWillChangeBudget(frame);
+      aBuilder->RemoveFromWillChangeBudgets(frame);
     }
   }
 

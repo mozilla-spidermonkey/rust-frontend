@@ -10,6 +10,7 @@
  * liability, trademark and document use rules apply.
  */
 
+[GenerateConversionToJS]
 dictionary AudioWorkletNodeOptions : AudioNodeOptions {
              unsigned long             numberOfInputs = 1;
              unsigned long             numberOfOutputs = 1;
@@ -19,8 +20,12 @@ dictionary AudioWorkletNodeOptions : AudioNodeOptions {
 };
 
 [SecureContext, Pref="dom.audioworklet.enabled",
- Constructor (BaseAudioContext context, DOMString name, optional AudioWorkletNodeOptions options = {})]
+ Exposed=Window]
 interface AudioWorkletNode : AudioNode {
+    [Throws]
+    constructor(BaseAudioContext context, DOMString name,
+                optional AudioWorkletNodeOptions options = {});
+
     [Throws]
     readonly        attribute AudioParamMap              parameters;
     [Throws]

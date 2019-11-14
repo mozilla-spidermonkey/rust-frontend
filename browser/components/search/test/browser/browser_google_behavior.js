@@ -5,6 +5,11 @@
  * Test Google search plugin URLs
  * TODO: This test is a near duplicate of browser_searchEngine_behaviors.js but
  * specific to Google. This is required due to bug 1315953.
+ *
+ * Note: Although we have tests for codes in
+ * toolkit/components/tests/xpcshell/searchconfigs, we also need this test as an
+ * integration test to check the search service to selector integration is
+ * working correctly (especially the ESR codes).
  */
 
 "use strict";
@@ -108,6 +113,7 @@ async function testSearchEngine(engineDetails) {
         // FIXME: This is a bit "low-level"...
         BrowserSearch._loadSearch(
           "foo",
+          false,
           false,
           "contextmenu",
           Services.scriptSecurityManager.getSystemPrincipal()

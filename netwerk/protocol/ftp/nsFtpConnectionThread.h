@@ -216,6 +216,12 @@ class nsFtpState final : public nsBaseContentStream,
   bool mRetryPass;          // retrying the password
   bool mStorReplyReceived;  // FALSE if waiting for STOR
                             // completion status from server
+  bool mRlist1xxReceived;   // TRUE if we have received a LIST 1xx
+                            // response from the server
+  bool mRretr1xxReceived;   // TRUE if we have received a RETR 1xx
+                            // response from the server
+  bool mRstor1xxReceived;   // TRUE if we have received a STOR 1xx
+                            // response from the server
   nsresult mInternalError;  // represents internal state errors
   bool mReconnectAndLoginAgain;
   bool mCacheConnection;

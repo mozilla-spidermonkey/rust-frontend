@@ -13,7 +13,6 @@ transforms:
     - taskgraph.transforms.build:transforms
     - taskgraph.transforms.build_attrs:transforms
     - taskgraph.transforms.build_lints:transforms
-    - taskgraph.transforms.use_toolchains:transforms
     - taskgraph.transforms.job:transforms
     - taskgraph.transforms.task:transforms
 
@@ -47,7 +46,10 @@ job-defaults:
                         default: beta
                 release.*: release
                 esr.*: esr
-                default: null
+                default:
+                    by-project:
+                        try: nightly-try
+                        default: null
         # ACCEPTED_MAR_CHANNEL_IDS should usually be the same as the value MAR_CHANNEL_ID.
         # If more than one ID is needed, then you should use a comma separated list
         # of values.

@@ -21,15 +21,17 @@ use crate::device::TextureFilter;
 use euclid::{point2, size2};
 use crate::glyph_cache::GlyphCache;
 use crate::glyph_cache::GlyphCacheEntry;
-use crate::glyph_rasterizer::{BaseFontInstance, FontInstance, GlyphFormat, GlyphKey, GlyphRasterizer};
+use crate::glyph_rasterizer::{GLYPH_FLASHING, BaseFontInstance, FontInstance, GlyphFormat, GlyphKey, GlyphRasterizer};
 use crate::gpu_cache::{GpuCache, GpuCacheAddress, GpuCacheHandle};
 use crate::gpu_types::UvRectKind;
-use crate::image::{compute_tile_size, compute_tile_range, for_each_tile_in_range};
+use crate::image::{compute_tile_size, compute_tile_rect, compute_tile_range, for_each_tile_in_range};
+use crate::image::compute_valid_tiles_if_bounds_change;
 use crate::internal_types::{FastHashMap, FastHashSet, TextureSource, TextureUpdateList};
 use crate::profiler::{ResourceProfileCounters, TextureCacheProfileCounters};
 use crate::render_backend::{FrameId, FrameStamp};
-use crate::render_task::{RenderTaskCache, RenderTaskCacheKey, RenderTaskId};
-use crate::render_task::{RenderTaskCacheEntry, RenderTaskCacheEntryHandle, RenderTaskGraph};
+use crate::render_task_graph::{RenderTaskGraph, RenderTaskId};
+use crate::render_task_cache::{RenderTaskCache, RenderTaskCacheKey};
+use crate::render_task_cache::{RenderTaskCacheEntry, RenderTaskCacheEntryHandle};
 use smallvec::SmallVec;
 use std::collections::hash_map::Entry::{self, Occupied, Vacant};
 use std::collections::hash_map::{Iter, IterMut};
@@ -142,6 +144,9 @@ pub struct ImageProperties {
     pub descriptor: ImageDescriptor,
     pub external_image: Option<ExternalImageData>,
     pub tiling: Option<TileSize>,
+    // Potentially a subset of the image's total rectangle. This rectangle is what
+    // we map to the (layout space) display item bounds.
+    pub visible_rect: DeviceIntRect,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -163,13 +168,24 @@ struct BlobImageTemplate {
     descriptor: ImageDescriptor,
     tiling: Option<TileSize>,
     dirty_rect: BlobDirtyRect,
-    viewport_tiles: Option<TileRange>,
+    /// See ImageResource::visible_rect.
+    visible_rect: DeviceIntRect,
+    // If the active rect of the blob changes, this represents the
+    // range of tiles that remain valid. This must be taken into
+    // account in addition to the valid rect when submitting blob
+    // rasterization requests.
+    // `None` means the bounds have not changed (tiles are still valid).
+    // `Some(TileRange::zero())` means all of the tiles are invalid.
+    valid_tiles_after_bounds_change: Option<TileRange>,
 }
 
 struct ImageResource {
     data: CachedImageData,
     descriptor: ImageDescriptor,
     tiling: Option<TileSize>,
+    /// This is used to express images that are virtually very large
+    /// but with only a visible sub-set that is valid at a given time.
+    visible_rect: DeviceIntRect,
 }
 
 #[derive(Clone, Debug)]
@@ -420,9 +436,7 @@ pub struct BlobImageRasterizerEpoch(usize);
 
 /// Stores parameters for clearing blob image tiles.
 ///
-/// The clearing is necessary when originally requested tile range exceeds
-/// MAX_TILES_PER_REQUEST. In this case, some tiles are not rasterized by
-/// AsyncBlobImageRasterizer. They need to be cleared.
+/// TODO(nical) this can be removed.
 #[derive(Clone, Copy, Debug)]
 pub struct BlobImageClearParams {
     pub key: BlobImageKey,
@@ -585,7 +599,13 @@ impl ResourceCache {
                     if let ImageData::Raw(ref bytes) = img.data {
                         profile_counters.image_templates.inc(bytes.len());
                     }
-                    self.add_image_template(img.key, img.descriptor, img.data.into(), img.tiling);
+                    self.add_image_template(
+                        img.key,
+                        img.descriptor,
+                        img.data.into(),
+                        &img.descriptor.size.into(),
+                        img.tiling,
+                    );
                 }
                 ResourceUpdate::UpdateImage(img) => {
                     self.update_image_template(img.key, img.descriptor, img.data.into(), &img.dirty_rect);
@@ -595,6 +615,7 @@ impl ResourceCache {
                         img.key.as_image(),
                         img.descriptor,
                         CachedImageData::Blob,
+                        &img.visible_rect,
                         img.tiling,
                     );
                 }
@@ -607,7 +628,8 @@ impl ResourceCache {
                             &img.dirty_rect
                         ),
                     );
-                    self.discard_tiles_outside_visible_area(img.key, &img.visible_rect);
+                    self.discard_tiles_outside_visible_area(img.key, &img.visible_rect); // TODO: remove?
+                    self.set_image_visible_rect(img.key.as_image(), &img.visible_rect);
                 }
                 ResourceUpdate::DeleteImage(img) => {
                     self.delete_image_template(img);
@@ -620,6 +642,7 @@ impl ResourceCache {
                 }
                 ResourceUpdate::SetBlobImageVisibleArea(key, area) => {
                     self.discard_tiles_outside_visible_area(key, &area);
+                    self.set_image_visible_rect(key.as_image(), &area);
                 }
                 ResourceUpdate::AddFont(_) |
                 ResourceUpdate::AddFontInstance(_) => {
@@ -646,23 +669,17 @@ impl ResourceCache {
                     );
                 }
                 ResourceUpdate::UpdateBlobImage(ref img) => {
+                    debug_assert_eq!(img.visible_rect.size, img.descriptor.size);
                     self.update_blob_image(
                         img.key,
-                        &img.descriptor,
-                        &img.dirty_rect,
-                        Arc::clone(&img.data),
+                        Some(&img.descriptor),
+                        Some(&img.dirty_rect),
+                        Some(Arc::clone(&img.data)),
                         &img.visible_rect,
                     );
                 }
                 ResourceUpdate::SetBlobImageVisibleArea(ref key, ref area) => {
-                    if let Some(template) = self.blob_image_templates.get_mut(&key) {
-                        if let Some(tile_size) = template.tiling {
-                            template.viewport_tiles = Some(compute_tile_range(
-                                &area,
-                                tile_size,
-                            ));
-                        }
-                    }
+                    self.update_blob_image(*key, None, None, None, area);
                 }
                 _ => {}
             }
@@ -711,38 +728,13 @@ impl ResourceCache {
             self.blob_image_rasterizer = Some(rasterizer);
             self.blob_image_rasterizer_consumed_epoch = supp.epoch;
         }
-
-        // Discard blob image tiles that are not rendered by AsyncBlobImageRasterizer.
-        // It happens when originally requested tile range exceeds MAX_TILES_PER_REQUEST.
-        for req in supp.clear_requests {
-            let tiles = match self.rasterized_blob_images.get_mut(&req.key) {
-                Some(RasterizedBlob::Tiled(tiles)) => tiles,
-                _ => { continue; }
-            };
-
-            tiles.retain(|tile, _| {
-                !req.original_tile_range.contains(*tile) ||
-                req.actual_tile_range.contains(*tile)
-            });
-
-            let texture_cache = &mut self.texture_cache;
-            match self.cached_images.try_get_mut(&req.key.as_image()) {
-                Some(&mut ImageResult::Multi(ref mut entries)) => {
-                    entries.retain(|key, entry| {
-                        if !req.original_tile_range.contains(key.tile.unwrap()) ||
-                           req.actual_tile_range.contains(key.tile.unwrap()) {
-                            return true;
-                        }
-                        entry.mark_unused(texture_cache);
-                        return false;
-                    });
-                }
-                _ => {}
-            }
-        }
     }
 
-    pub fn add_rasterized_blob_images(&mut self, images: Vec<(BlobImageRequest, BlobImageResult)>) {
+    pub fn add_rasterized_blob_images(
+        &mut self,
+        images: Vec<(BlobImageRequest, BlobImageResult)>,
+        texture_cache_profile: &mut TextureCacheProfileCounters,
+    ) {
         for (request, result) in images {
             let data = match result {
                 Ok(data) => data,
@@ -751,6 +743,8 @@ impl ResourceCache {
                     continue;
                 }
             };
+
+            texture_cache_profile.rasterized_blob_pixels.inc(data.rasterized_rect.area() as usize);
 
             // First make sure we have an entry for this key (using a placeholder
             // if need be).
@@ -766,6 +760,20 @@ impl ResourceCache {
                 if let RasterizedBlob::Tiled(ref mut tiles) = *image {
                     tiles.insert(tile, data);
                 }
+
+                match self.cached_images.try_get_mut(&request.key.as_image()) {
+                    Some(&mut ImageResult::Multi(ref mut entries)) => {
+                        let cached_key = CachedImageKey {
+                            rendering: ImageRendering::Auto, // TODO(nical)
+                            tile: Some(tile),
+                        };
+                        if let Some(entry) = entries.try_get_mut(&cached_key) {
+                            entry.dirty_rect = DirtyRect::All;
+                        }
+                    }
+                    _ => {}
+                }
+
             } else {
                 if let RasterizedBlob::NonTiled(ref mut queue) = *image {
                     // If our new rasterized rect overwrites items in the queue, discard them.
@@ -855,6 +863,7 @@ impl ResourceCache {
         image_key: ImageKey,
         descriptor: ImageDescriptor,
         data: CachedImageData,
+        visible_rect: &DeviceIntRect,
         mut tiling: Option<TileSize>,
     ) {
         if tiling.is_none() && Self::should_tile(self.max_texture_size(), &descriptor, &data) {
@@ -867,6 +876,7 @@ impl ResourceCache {
             descriptor,
             data,
             tiling,
+            visible_rect: *visible_rect,
         };
 
         self.resources.image_templates.insert(image_key, resource);
@@ -934,6 +944,7 @@ impl ResourceCache {
             descriptor,
             data,
             tiling,
+            visible_rect: descriptor.size.into(),
         };
     }
 
@@ -947,9 +958,7 @@ impl ResourceCache {
         visible_rect: &DeviceIntRect,
     ) {
         let max_texture_size = self.max_texture_size();
-        tiling = get_blob_tiling(tiling, descriptor, max_texture_size);
-
-        let viewport_tiles = tiling.map(|tile_size| compute_tile_range(&visible_rect, tile_size));
+        tiling = get_blob_tiling(tiling, visible_rect.size, max_texture_size);
 
         self.blob_image_handler.as_mut().unwrap().add(key, data, visible_rect, tiling);
 
@@ -959,7 +968,8 @@ impl ResourceCache {
                 descriptor: *descriptor,
                 tiling,
                 dirty_rect: DirtyRect::All,
-                viewport_tiles,
+                valid_tiles_after_bounds_change: None,
+                visible_rect: *visible_rect,
             },
         );
     }
@@ -968,12 +978,15 @@ impl ResourceCache {
     pub fn update_blob_image(
         &mut self,
         key: BlobImageKey,
-        descriptor: &ImageDescriptor,
-        dirty_rect: &BlobDirtyRect,
-        data: Arc<BlobImageData>,
+        descriptor: Option<&ImageDescriptor>,
+        dirty_rect: Option<&BlobDirtyRect>,
+        data: Option<Arc<BlobImageData>>,
         visible_rect: &DeviceIntRect,
     ) {
-        self.blob_image_handler.as_mut().unwrap().update(key, data, visible_rect, dirty_rect);
+        if let Some(data) = data {
+            let dirty_rect = dirty_rect.unwrap();
+            self.blob_image_handler.as_mut().unwrap().update(key, data, visible_rect, dirty_rect);
+        }
 
         let max_texture_size = self.max_texture_size();
 
@@ -981,16 +994,43 @@ impl ResourceCache {
             .get_mut(&key)
             .expect("Attempt to update non-existent blob image");
 
-        let tiling = get_blob_tiling(image.tiling, descriptor, max_texture_size);
+        let mut valid_tiles_after_bounds_change = None;
 
-        let viewport_tiles = image.tiling.map(|tile_size| compute_tile_range(&visible_rect, tile_size));
+        if let Some(tile_size) = image.tiling {
+            valid_tiles_after_bounds_change = compute_valid_tiles_if_bounds_change(
+                &image.visible_rect,
+                visible_rect,
+                tile_size,
+            );
+        }
 
-        *image = BlobImageTemplate {
-            descriptor: *descriptor,
-            tiling,
-            dirty_rect: dirty_rect.union(&image.dirty_rect),
-            viewport_tiles,
-        };
+        match (image.valid_tiles_after_bounds_change, valid_tiles_after_bounds_change) {
+            (Some(old), Some(ref mut new)) => {
+                *new = new.intersection(&old).unwrap_or(TileRange::zero());
+            }
+            (Some(old), None) => {
+                valid_tiles_after_bounds_change = Some(old);
+            }
+            _ => {}
+        }
+
+        let blob_size = visible_rect.size;
+
+        if let Some(descriptor) = descriptor {
+            image.descriptor = *descriptor;
+        } else {
+            // make sure the descriptor size matches the visible rect.
+            // This might not be necessary but let's stay on the safe side.
+            image.descriptor.size = blob_size;
+        }
+
+        if let Some(dirty_rect) = dirty_rect {
+            image.dirty_rect = image.dirty_rect.union(dirty_rect);
+        }
+
+        image.tiling = get_blob_tiling(image.tiling, blob_size, max_texture_size);;
+        image.valid_tiles_after_bounds_change = valid_tiles_after_bounds_change;
+        image.visible_rect = *visible_rect;
     }
 
     pub fn delete_image_template(&mut self, image_key: ImageKey) {
@@ -1159,16 +1199,13 @@ impl ResourceCache {
                     rect: match template.tiling {
                         Some(tile_size) => {
                             let tile = request.tile.unwrap();
-                            LayoutIntRect {
-                                origin: point2(tile.x, tile.y) * tile_size as i32,
-                                size: blob_size(compute_tile_size(
-                                    &template.descriptor.size.into(),
-                                    tile_size,
-                                    tile,
-                                )),
-                            }
+                            blob_rect(compute_tile_rect(
+                                &template.visible_rect,
+                                tile_size,
+                                tile,
+                            ))
                         }
-                        None => blob_size(template.descriptor.size).into(),
+                        None => blob_size(template.visible_rect.size).into(),
                     },
                     format: template.descriptor.format,
                 };
@@ -1198,7 +1235,6 @@ impl ResourceCache {
             return (None, Vec::new());
         }
 
-        let mut blob_tiles_clear_requests = Vec::new();
         let mut blob_request_params = Vec::new();
         for key in keys {
             let template = self.blob_image_templates.get_mut(key).unwrap();
@@ -1206,87 +1242,49 @@ impl ResourceCache {
             if let Some(tile_size) = template.tiling {
                 // If we know that only a portion of the blob image is in the viewport,
                 // only request these visible tiles since blob images can be huge.
-                let mut tiles = template.viewport_tiles.unwrap_or_else(|| {
-                    // Default to requesting the full range of tiles.
-                    compute_tile_range(
-                        &DeviceIntRect {
-                            origin: point2(0, 0),
-                            size: template.descriptor.size,
-                        },
-                        tile_size,
-                    )
-                });
+                let tiles = compute_tile_range(
+                    &template.visible_rect,
+                    tile_size,
+                );
 
                 let image_dirty_rect = to_image_dirty_rect(&template.dirty_rect);
                 // Don't request tiles that weren't invalidated.
-                if let DirtyRect::Partial(dirty_rect) = image_dirty_rect {
-                    let dirty_rect = DeviceIntRect {
-                        origin: point2(
-                            dirty_rect.origin.x,
-                            dirty_rect.origin.y,
-                        ),
-                        size: size2(
-                            dirty_rect.size.width,
-                            dirty_rect.size.height,
-                        ),
-                    };
-                    let dirty_tiles = compute_tile_range(
-                        &dirty_rect,
-                        tile_size,
-                    );
+                let dirty_tiles = match image_dirty_rect {
+                    DirtyRect::Partial(dirty_rect) => {
+                        let dirty_rect = DeviceIntRect {
+                            origin: point2(
+                                dirty_rect.origin.x,
+                                dirty_rect.origin.y,
+                            ),
+                            size: size2(
+                                dirty_rect.size.width,
+                                dirty_rect.size.height,
+                            ),
+                        };
 
-                    tiles = tiles.intersection(&dirty_tiles).unwrap_or_else(TileRange::zero);
-                }
-
-                let original_tile_range = tiles;
-
-                // This code tries to keep things sane if Gecko sends
-                // nonsensical blob image requests.
-                // Constant here definitely needs to be tweaked.
-                const MAX_TILES_PER_REQUEST: i32 = 512;
-                // For truly nonsensical requests, we might run into overflow
-                // when computing width * height, so we first check each extent
-                // individually.
-                while !tiles.size.is_empty_or_negative()
-                    && (tiles.size.width > MAX_TILES_PER_REQUEST
-                        || tiles.size.height > MAX_TILES_PER_REQUEST
-                        || tiles.size.width * tiles.size.height > MAX_TILES_PER_REQUEST) {
-                    let limit = 46340; // sqrt(i32::MAX) rounded down to avoid overflow.
-                    let w = tiles.size.width.min(limit);
-                    let h = tiles.size.height.min(limit);
-                    let diff = w * h - MAX_TILES_PER_REQUEST;
-                    // Remove tiles in the largest dimension.
-                    if tiles.size.width > tiles.size.height {
-                        tiles.size.width -= diff / h + 1;
-                        tiles.origin.x += diff / (2 * h);
-                    } else {
-                        tiles.size.height -= diff / w + 1;
-                        tiles.origin.y += diff / (2 * w);
+                        compute_tile_range(
+                            &dirty_rect,
+                            tile_size,
+                        )
                     }
-                }
-
-                // When originally requested tile range exceeds MAX_TILES_PER_REQUEST,
-                // some tiles are not rasterized by AsyncBlobImageRasterizer.
-                // They need to be cleared.
-                if original_tile_range != tiles {
-                    let clear_params = BlobImageClearParams {
-                        key: *key,
-                        original_tile_range,
-                        actual_tile_range: tiles,
-                    };
-                    blob_tiles_clear_requests.push(clear_params);
-                }
+                    DirtyRect::All => tiles,
+                };
 
                 for_each_tile_in_range(&tiles, |tile| {
+                    let still_valid = template.valid_tiles_after_bounds_change
+                        .map(|valid_tiles| valid_tiles.contains(tile))
+                        .unwrap_or(true);
+
+                    if still_valid && !dirty_tiles.contains(tile) {
+                        return;
+                    }
+
                     let descriptor = BlobImageDescriptor {
-                        rect: LayoutIntRect {
-                            origin: point2(tile.x, tile.y) * tile_size as i32,
-                            size: blob_size(compute_tile_size(
-                                &template.descriptor.size.into(),
-                                tile_size,
-                                tile,
-                            )),
-                        },
+                        rect: blob_rect(compute_tile_rect(
+                            &template.visible_rect,
+                            tile_size,
+                            tile,
+                        )),
                         format: template.descriptor.format,
                     };
 
@@ -1305,6 +1303,8 @@ impl ResourceCache {
                         }
                     );
                 });
+
+                template.valid_tiles_after_bounds_change = None;
             } else {
                 let mut needs_upload = match self.cached_images.try_get(&key.as_image()) {
                     Some(&ImageResult::UntiledAuto(ref entry)) => {
@@ -1313,7 +1313,7 @@ impl ResourceCache {
                     _ => true,
                 };
 
-                // If the queue of ratserized updates is growing it probably means that
+                // If the queue of rasterized updates is growing it probably means that
                 // the texture is not getting uploaded because the display item is off-screen.
                 // In that case we are better off
                 // - Either not kicking rasterization for that image (avoid wasted cpu work
@@ -1339,7 +1339,7 @@ impl ResourceCache {
                     template.dirty_rect
                 };
 
-                assert!(template.descriptor.size.width > 0 && template.descriptor.size.height > 0);
+                assert!(template.visible_rect.size.width > 0 && template.visible_rect.size.height > 0);
                 blob_request_params.push(
                     BlobImageParams {
                         request: BlobImageRequest {
@@ -1347,7 +1347,7 @@ impl ResourceCache {
                             tile: None,
                         },
                         descriptor: BlobImageDescriptor {
-                            rect: blob_size(template.descriptor.size).into(),
+                            rect: blob_size(template.visible_rect.size).into(),
                             format: template.descriptor.format,
                         },
                         dirty_rect,
@@ -1359,7 +1359,7 @@ impl ResourceCache {
         self.blob_image_rasterizer_produced_epoch.0 += 1;
         let info = AsyncBlobImageInfo {
             epoch: self.blob_image_rasterizer_produced_epoch,
-            clear_requests: blob_tiles_clear_requests,
+            clear_requests: Vec::new(),
         };
         let handler = self.blob_image_handler.as_mut().unwrap();
         handler.prepare_resources(&self.resources, &blob_request_params);
@@ -1407,6 +1407,13 @@ impl ResourceCache {
                 });
             }
             _ => {}
+        }
+    }
+
+    fn set_image_visible_rect(&mut self, key: ImageKey, rect: &DeviceIntRect) {
+        if let Some(image) = self.resources.image_templates.get_mut(key) {
+            image.visible_rect = *rect;
+            image.descriptor.size = rect.size;
         }
     }
 
@@ -1548,6 +1555,7 @@ impl ResourceCache {
                 descriptor: image_template.descriptor,
                 external_image,
                 tiling: image_template.tiling,
+                visible_rect: image_template.visible_rect,
             }
         })
     }
@@ -1603,13 +1611,16 @@ impl ResourceCache {
             texture_cache_profile,
         );
 
-        self.rasterize_missing_blob_images();
+        self.rasterize_missing_blob_images(texture_cache_profile);
 
         // Apply any updates of new / updated images (incl. blobs) to the texture cache.
         self.update_texture_cache(gpu_cache);
     }
 
-    fn rasterize_missing_blob_images(&mut self) {
+    fn rasterize_missing_blob_images(
+        &mut self,
+        texture_cache_profile: &mut TextureCacheProfileCounters,
+    ) {
         if self.missing_blob_images.is_empty() {
             return;
         }
@@ -1631,7 +1642,7 @@ impl ResourceCache {
             .unwrap()
             .rasterize(&self.missing_blob_images, is_low_priority);
 
-        self.add_rasterized_blob_images(rasterized_blobs);
+        self.add_rasterized_blob_images(rasterized_blobs, texture_cache_profile);
 
         self.missing_blob_images.clear();
     }
@@ -1688,13 +1699,15 @@ impl ResourceCache {
 
                 if let Some(tile) = request.tile {
                     let tile_size = image_template.tiling.unwrap();
-                    let clipped_tile_size = compute_tile_size(&descriptor.size.into(), tile_size, tile);
-
+                    let clipped_tile_size = compute_tile_size(&image_template.visible_rect, tile_size, tile);
                     // The tiled image could be stored on the CPU as one large image or be
                     // already broken up into tiles. This affects the way we compute the stride
                     // and offset.
                     let tiled_on_cpu = image_template.data.is_blob();
                     if !tiled_on_cpu {
+                        // we don't expect to have partial tiles at the top and left of non-blob
+                        // images.
+                        debug_assert_eq!(image_template.visible_rect.origin, point2(0, 0));
                         let bpp = descriptor.format.bytes_per_pixel();
                         let stride = descriptor.compute_stride();
                         descriptor.stride = Some(stride);
@@ -1771,6 +1784,7 @@ impl ResourceCache {
     }
 
     pub fn set_debug_flags(&mut self, flags: DebugFlags) {
+        GLYPH_FLASHING.store(flags.contains(DebugFlags::GLYPH_FLASHING), std::sync::atomic::Ordering::Relaxed);
         self.texture_cache.set_debug_flags(flags);
     }
 
@@ -1872,11 +1886,18 @@ impl ResourceCache {
             self.delete_image_template(key);
         }
 
-        let blob_f = |key: &BlobImageKey| { f(&key.as_image()) };
-        debug_assert!(!self.resources.image_templates.images.keys().any(&f));
-        debug_assert!(!self.cached_images.resources.keys().any(&f));
-        debug_assert!(!self.blob_image_templates.keys().any(&blob_f));
-        debug_assert!(!self.rasterized_blob_images.keys().any(&blob_f));
+        #[cfg(features="leak_checks")]
+        let check_leaks = true;
+        #[cfg(not(features="leak_checks"))]
+        let check_leaks = false;
+
+        if check_leaks {
+            let blob_f = |key: &BlobImageKey| { f(&key.as_image()) };
+            assert!(!self.resources.image_templates.images.keys().any(&f));
+            assert!(!self.cached_images.resources.keys().any(&f));
+            assert!(!self.blob_image_templates.keys().any(&blob_f));
+            assert!(!self.rasterized_blob_images.keys().any(&blob_f));
+        }
     }
 }
 
@@ -1888,12 +1909,12 @@ impl Drop for ResourceCache {
 
 pub fn get_blob_tiling(
     tiling: Option<TileSize>,
-    descriptor: &ImageDescriptor,
+    size: DeviceIntSize,
     max_texture_size: i32,
 ) -> Option<TileSize> {
     if tiling.is_none() &&
-        (descriptor.size.width > max_texture_size ||
-         descriptor.size.height > max_texture_size) {
+        (size.width > max_texture_size ||
+         size.height > max_texture_size) {
         return Some(DEFAULT_TILE_SIZE);
     }
 
@@ -2032,6 +2053,7 @@ impl ResourceCache {
                         root.join(format!("images/{}.png", image_id)),
                         desc.size,
                         desc.format,
+                        desc.stride,
                         &arc,
                     );
                     let file_name = format!("{}.raw", image_id);
@@ -2087,6 +2109,7 @@ impl ResourceCache {
                         root.join(format!("blobs/{}.png", num_blobs)),
                         desc.size,
                         desc.format,
+                        desc.stride,
                         &result.data,
                     );
                     let file_name = format!("{}.raw", num_blobs);
@@ -2204,7 +2227,7 @@ impl ResourceCache {
                     &self.texture_cache.picture_tile_sizes(),
                     DeviceIntSize::zero(),
                     self.texture_cache.color_formats(),
-                    self.texture_cache.bgra_swizzle(),
+                    self.texture_cache.swizzle_settings(),
                 );
             }
         }
@@ -2273,6 +2296,7 @@ impl ResourceCache {
                 data,
                 descriptor: template.descriptor,
                 tiling: template.tiling,
+                visible_rect: template.descriptor.size.into(),
             });
         }
 
@@ -2287,4 +2311,12 @@ impl ResourceCache {
 #[inline]
 fn blob_size(device_size: DeviceIntSize) -> LayoutIntSize {
     size2(device_size.width, device_size.height)
+}
+
+#[inline]
+fn blob_rect(device_rect: DeviceIntRect) -> LayoutIntRect {
+    LayoutIntRect {
+        origin: point2(device_rect.origin.x, device_rect.origin.y),
+        size: blob_size(device_rect.size),
+    }
 }

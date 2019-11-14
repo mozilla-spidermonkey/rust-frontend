@@ -243,13 +243,14 @@ class nsRFPService final : public nsIObserver {
   void StartShutdown();
 
   void PrefChanged(const char* aPref);
+  static void PrefChanged(const char* aPref, void* aSelf);
 
   static void MaybeCreateSpoofingKeyCodes(const KeyboardLangs aLang,
                                           const KeyboardRegions aRegion);
   static void MaybeCreateSpoofingKeyCodesForEnUS();
 
   static void GetKeyboardLangAndRegion(const nsAString& aLanguage,
-                                       KeyboardLangs& aLang,
+                                       KeyboardLangs& aLocale,
                                        KeyboardRegions& aRegion);
   static bool GetSpoofedKeyCodeInfo(const mozilla::dom::Document* aDoc,
                                     const WidgetKeyboardEvent* aKeyboardEvent,

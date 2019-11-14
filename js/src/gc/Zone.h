@@ -12,6 +12,7 @@
 #include "mozilla/SegmentedVector.h"
 
 #include "gc/FindSCCs.h"
+#include "gc/NurseryAwareHashMap.h"
 #include "gc/ZoneAllocator.h"
 #include "js/GCHashTable.h"
 #include "vm/MallocProvider.h"
@@ -47,7 +48,14 @@ class ZoneAllCellIter;
 template <typename T>
 class ZoneCellIter;
 
+// A vector of FinalizationRecord objects, or CCWs to them.
+using FinalizationRecordVector = GCVector<HeapPtrObject, 1, ZoneAllocPolicy>;
+
 }  // namespace gc
+
+using StringWrapperMap =
+    NurseryAwareHashMap<JSString*, JSString*, DefaultHasher<JSString*>,
+                        ZoneAllocPolicy>;
 
 class MOZ_NON_TEMPORARY_CLASS ExternalStringCache {
   static const size_t NumEntries = 4;
@@ -142,7 +150,7 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   explicit Zone(JSRuntime* rt);
   ~Zone();
   MOZ_MUST_USE bool init(bool isSystem);
-  void destroy(js::FreeOp* fop);
+  void destroy(JSFreeOp* fop);
 
   static JS::Zone* from(ZoneAllocator* zoneAlloc) {
     return static_cast<Zone*>(zoneAlloc);
@@ -197,18 +205,16 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   };
 
   void discardJitCode(
-      js::FreeOp* fop,
+      JSFreeOp* fop,
       ShouldDiscardBaselineCode discardBaselineCode = DiscardBaselineCode,
       ShouldDiscardJitScripts discardJitScripts = KeepJitScripts);
 
-  void addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
-                              size_t* typePool, size_t* regexpZone,
-                              size_t* jitZone, size_t* baselineStubsOptimized,
-                              size_t* cachedCFG, size_t* uniqueIdMap,
-                              size_t* shapeCaches, size_t* atomsMarkBitmaps,
-                              size_t* compartmentObjects,
-                              size_t* crossCompartmentWrappersTables,
-                              size_t* compartmentsPrivateData);
+  void addSizeOfIncludingThis(
+      mozilla::MallocSizeOf mallocSizeOf, size_t* typePool, size_t* regexpZone,
+      size_t* jitZone, size_t* baselineStubsOptimized, size_t* cachedCFG,
+      size_t* uniqueIdMap, size_t* shapeCaches, size_t* atomsMarkBitmaps,
+      size_t* compartmentObjects, size_t* crossCompartmentWrappersTables,
+      size_t* compartmentsPrivateData, size_t* scriptCountsMapArg);
 
   // Iterate over all cells in the zone. See the definition of ZoneCellIter
   // in gc/GC-inl.h for the possible arguments and documentation.
@@ -306,17 +312,12 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   unsigned lastSweepGroupIndex() { return gcSweepGroupIndex; }
 #endif
 
-  void sweepAfterMinorGC();
-  void sweepBreakpoints(js::FreeOp* fop);
+  void sweepAfterMinorGC(JSTracer* trc);
   void sweepUniqueIds();
   void sweepWeakMaps();
-  void sweepCompartments(js::FreeOp* fop, bool keepAtleastOne, bool lastGC);
-
-  using DebuggerVector = js::Vector<js::Debugger*, 0, js::SystemAllocPolicy>;
+  void sweepCompartments(JSFreeOp* fop, bool keepAtleastOne, bool lastGC);
 
  private:
-  js::ZoneData<DebuggerVector*> debuggers;
-
   js::jit::JitZone* createJitZone(JSContext* cx);
 
   bool isQueuedForBackgroundSweep() { return isOnList(); }
@@ -327,10 +328,6 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   js::gc::UniqueIdMap& uniqueIds() { return uniqueIds_.ref(); }
 
  public:
-  bool hasDebuggers() const { return debuggers && debuggers->length(); }
-  DebuggerVector* getDebuggers() const { return debuggers; }
-  DebuggerVector* getOrCreateDebuggers(JSContext* cx);
-
   void notifyObservingDebuggers();
 
   void clearTables();
@@ -381,8 +378,28 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   // The set of compartments in this zone.
   js::MainThreadOrGCTaskData<CompartmentVector> compartments_;
 
+  // All cross-zone string wrappers in the zone.
+  js::MainThreadOrGCTaskData<js::StringWrapperMap> crossZoneStringWrappers_;
+
  public:
   CompartmentVector& compartments() { return compartments_.ref(); }
+
+  js::StringWrapperMap& crossZoneStringWrappers() {
+    return crossZoneStringWrappers_.ref();
+  }
+  const js::StringWrapperMap& crossZoneStringWrappers() const {
+    return crossZoneStringWrappers_.ref();
+  }
+
+  void dropStringWrappersOnGC();
+
+#ifdef JSGC_HASH_TABLE_CHECKS
+  void checkAllCrossCompartmentWrappersAfterMovingGC();
+  void checkStringWrappersAfterMovingGC();
+#endif
+
+  void sweepAllCrossCompartmentWrappers();
+  static void fixupAllCrossCompartmentWrappersAfterMovingGC(JSTracer* trc);
 
   // This zone's gray roots.
   using GrayRootVector =
@@ -421,10 +438,17 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   js::gc::WeakKeyTable& gcWeakKeys() { return gcWeakKeys_.ref(); }
   js::gc::WeakKeyTable& gcNurseryWeakKeys() { return gcNurseryWeakKeys_.ref(); }
 
+ private:
+  void sweepWeakKeysAfterMinorGC();
+
+ public:
   // A set of edges from this zone to other zones used during GC to calculate
   // sweep groups.
   NodeSet& gcSweepGroupEdges() {
     return gcGraphEdges;  // Defined in GraphNodeBase base class.
+  }
+  bool hasSweepGroupEdgeTo(Zone* otherZone) const {
+    return gcGraphEdges.has(otherZone);
   }
   MOZ_MUST_USE bool addSweepGroupEdgeTo(Zone* otherZone) {
     MOZ_ASSERT(otherZone->isGCMarking());
@@ -549,6 +573,7 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
 #endif
   void fixupInitialShapeTable();
   void fixupAfterMovingGC();
+  void fixupScriptMapsAfterMovingGC(JSTracer* trc);
 
   // Per-zone data for use by an embedder.
   js::ZoneData<void*> data;
@@ -606,7 +631,21 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   // a non-zero value since bug 1458011.
   uint32_t detachedTypedObjects = 0;
 
+  void finishRoots();
+
  private:
+  // A map from finalization group targets to a list of finalization records
+  // representing groups that the target is registered with and their associated
+  // holdings.
+  using FinalizationRecordMap =
+      GCHashMap<js::HeapPtrObject, js::gc::FinalizationRecordVector,
+                js::MovableCellHasher<js::HeapPtrObject>, js::ZoneAllocPolicy>;
+  js::ZoneOrGCTaskData<FinalizationRecordMap> finalizationRecordMap_;
+
+  FinalizationRecordMap& finalizationRecordMap() {
+    return finalizationRecordMap_.ref();
+  }
+
   js::ZoneOrGCTaskData<js::jit::JitZone*> jitZone_;
 
   js::MainThreadData<bool> gcScheduled_;
@@ -624,8 +663,35 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
 
   friend bool js::CurrentThreadCanAccessZone(Zone* zone);
   friend class js::gc::GCRuntime;
+
+ public:
+  // Script side-tables. These used to be held by Realm, but are now placed
+  // here in order to allow JSScript to access them during finalize (see bug
+  // 1568245; this change in 1575350). The tables are initialized lazily by
+  // JSScript.
+  js::UniquePtr<js::ScriptCountsMap> scriptCountsMap;
+  js::UniquePtr<js::ScriptLCovMap> scriptLCovMap;
+  js::UniquePtr<js::DebugScriptMap> debugScriptMap;
+#ifdef MOZ_VTUNE
+  js::UniquePtr<js::ScriptVTuneIdMap> scriptVTuneIdMap;
+#endif
+
+  void traceScriptTableRoots(JSTracer* trc);
+
+  void clearScriptCounts(Realm* realm);
+  void clearScriptLCov(Realm* realm);
+
+#ifdef JSGC_HASH_TABLE_CHECKS
+  void checkScriptMapsAfterMovingGC();
+#endif
 };
 
 }  // namespace JS
+
+namespace js {
+namespace gc {
+const char* StateName(JS::Zone::GCState state);
+}  // namespace gc
+}  // namespace js
 
 #endif  // gc_Zone_h

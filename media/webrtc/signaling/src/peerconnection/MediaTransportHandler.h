@@ -12,10 +12,10 @@
 #include "dtlsidentity.h"    // For DtlsDigest
 #include "mozilla/dom/RTCPeerConnectionBinding.h"
 #include "mozilla/dom/RTCConfigurationBinding.h"
-#include "nricectx.h"               // Need some enums
-#include "nsDOMNavigationTiming.h"  // DOMHighResTimeStamp
+#include "nricectx.h"  // Need some enums
 #include "signaling/src/common/CandidateInfo.h"
 #include "nr_socket_proxy_config.h"
+#include "RTCStatsReport.h"
 
 #include "nsString.h"
 
@@ -71,7 +71,7 @@ class MediaTransportHandler {
 
   // We will probably be able to move the proxy lookup stuff into
   // this class once we move mtransport to its own process.
-  virtual void SetProxyServer(NrSocketProxyConfig&& aProxyConfig) = 0;
+  virtual void SetProxyConfig(NrSocketProxyConfig&& aProxyConfig) = 0;
 
   virtual void EnsureProvisionalTransport(const std::string& aTransportId,
                                           const std::string& aLocalUfrag,
@@ -86,6 +86,7 @@ class MediaTransportHandler {
   // change between Init (ie; when the PC is created) and StartIceGathering
   // (ie; when we set the local description).
   virtual void StartIceGathering(bool aDefaultRouteOnly,
+                                 bool aObfuscateHostAddresses,
                                  // TODO: It probably makes sense to look
                                  // this up internally
                                  const nsTArray<NrIceStunAddr>& aStunAddrs) = 0;
@@ -109,20 +110,16 @@ class MediaTransportHandler {
 
   virtual void AddIceCandidate(const std::string& aTransportId,
                                const std::string& aCandidate,
-                               const std::string& aUFrag) = 0;
+                               const std::string& aUFrag,
+                               const std::string& aObfuscatedAddress) = 0;
 
   virtual void UpdateNetworkState(bool aOnline) = 0;
 
-  // dom::RTCStatsReportInternal doesn't have move semantics.
-  typedef MozPromise<std::unique_ptr<dom::RTCStatsReportInternal>, nsresult,
-                     true>
-      StatsPromise;
-  virtual RefPtr<StatsPromise> GetIceStats(
-      const std::string& aTransportId, DOMHighResTimeStamp aNow,
-      std::unique_ptr<dom::RTCStatsReportInternal>&& aReport) = 0;
+  virtual RefPtr<dom::RTCStatsPromise> GetIceStats(
+      const std::string& aTransportId, DOMHighResTimeStamp aNow) = 0;
 
   sigslot::signal2<const std::string&, const CandidateInfo&> SignalCandidate;
-  sigslot::signal1<const std::string&> SignalAlpnNegotiated;
+  sigslot::signal2<const std::string&, bool> SignalAlpnNegotiated;
   sigslot::signal1<dom::RTCIceGatheringState> SignalGatheringStateChange;
   sigslot::signal1<dom::RTCIceConnectionState> SignalConnectionStateChange;
 

@@ -64,6 +64,7 @@ const DOWNLOAD_ITEM_CHANGE_FIELDS = [
 ];
 
 // From https://fetch.spec.whatwg.org/#forbidden-header-name
+// Since bug 1367626 we allow extensions to set REFERER.
 const FORBIDDEN_HEADERS = [
   "ACCEPT-CHARSET",
   "ACCEPT-ENCODING",
@@ -79,7 +80,6 @@ const FORBIDDEN_HEADERS = [
   "HOST",
   "KEEP-ALIVE",
   "ORIGIN",
-  "REFERER",
   "TE",
   "TRAILER",
   "TRANSFER-ENCODING",
@@ -97,13 +97,18 @@ class DownloadItem {
     this.download = download;
     this.extension = extension;
     this.prechange = {};
+    this._error = null;
   }
 
   get url() {
     return this.download.source.url;
   }
   get referrer() {
-    return this.download.source.referrer;
+    const uri = this.download.source.referrerInfo
+      ? this.download.source.referrerInfo.originalReferrer
+      : null;
+
+    return uri && uri.spec;
   }
   get filename() {
     return this.download.target.path;
@@ -135,7 +140,7 @@ class DownloadItem {
     if (this.download.succeeded) {
       return "complete";
     }
-    if (this.download.canceled) {
+    if (this.download.canceled || this.error) {
       return "interrupted";
     }
     return "in_progress";
@@ -155,6 +160,9 @@ class DownloadItem {
     );
   }
   get error() {
+    if (this._error) {
+      return this._error;
+    }
     if (
       !this.download.startTime ||
       !this.download.stopped ||
@@ -174,6 +182,9 @@ class DownloadItem {
       return "CRASH";
     }
     return "USER_CANCELED";
+  }
+  set error(value) {
+    this._error = value && value.toString();
   }
   get bytesReceived() {
     return this.download.currentBytes;
@@ -549,7 +560,7 @@ this.downloads = class extends ExtensionAPI {
           }
 
           if (filename != null) {
-            if (filename.length == 0) {
+            if (!filename.length) {
               return Promise.reject({ message: "filename must not be empty" });
             }
 
@@ -632,6 +643,45 @@ this.downloads = class extends ExtensionAPI {
               }
             }
             return Promise.resolve();
+          }
+
+          function allowHttpStatus(download, status) {
+            const item = DownloadMap.byDownload.get(download);
+            if (item === null) {
+              return true;
+            }
+
+            let error = null;
+            switch (status) {
+              case 204: // No Content
+              case 205: // Reset Content
+              case 404: // Not Found
+                error = "SERVER_BAD_CONTENT";
+                break;
+
+              case 403: // Forbidden
+                error = "SERVER_FORBIDDEN";
+                break;
+
+              case 402: // Unauthorized
+              case 407: // Proxy authentication required
+                error = "SERVER_UNAUTHORIZED";
+                break;
+
+              default:
+                if (status >= 400) {
+                  error = "SERVER_FAILED";
+                }
+                break;
+            }
+
+            if (error) {
+              item.error = error;
+              return false;
+            }
+
+            // No error, ergo allow the request.
+            return true;
           }
 
           async function createTarget(downloadsDir) {
@@ -728,6 +778,13 @@ this.downloads = class extends ExtensionAPI {
                 isPrivate: options.incognito,
               };
 
+              // Unless the API user explicitly wants errors ignored,
+              // set the allowHttpStatus callback, which will instruct
+              // DownloadCore to cancel downloads on HTTP errors.
+              if (!options.allowHttpErrors) {
+                source.allowHttpStatus = allowHttpStatus;
+              }
+
               if (options.method || options.headers || options.body) {
                 source.adjustChannel = adjustChannel;
               }
@@ -750,7 +807,12 @@ this.downloads = class extends ExtensionAPI {
 
               // This is necessary to make pause/resume work.
               download.tryToKeepPartialData = true;
-              download.start();
+
+              // Do not handle errors.
+              // Extensions will use listeners to be informed about errors.
+              // Just ignore any errors from |start()| to avoid spamming the
+              // error console.
+              download.start().catch(() => {});
 
               return item.id;
             });
@@ -824,6 +886,7 @@ this.downloads = class extends ExtensionAPI {
               });
             }
 
+            item.error = null;
             return item.download.start();
           });
         },
@@ -1004,7 +1067,7 @@ this.downloads = class extends ExtensionAPI {
                 };
               }
             });
-            if (Object.keys(changes).length > 0) {
+            if (Object.keys(changes).length) {
               changes.id = item.id;
               fire.async(changes);
             }

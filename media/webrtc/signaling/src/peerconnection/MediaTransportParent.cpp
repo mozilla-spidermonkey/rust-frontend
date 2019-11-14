@@ -47,7 +47,7 @@ class MediaTransportParent::Impl : public sigslot::has_slots<> {
     NS_ENSURE_TRUE_VOID(mParent->SendOnCandidate(aTransportId, aCandidateInfo));
   }
 
-  void OnAlpnNegotiated(const std::string& aAlpn) {
+  void OnAlpnNegotiated(const std::string& aAlpn, bool aPrivacyRequested) {
     NS_ENSURE_TRUE_VOID(mParent->SendOnAlpnNegotiated(aAlpn));
   }
 
@@ -135,10 +135,9 @@ mozilla::ipc::IPCResult MediaTransportParent::RecvCreateIceCtx(
   return ipc::IPCResult::Ok();
 }
 
-mozilla::ipc::IPCResult MediaTransportParent::RecvSetProxyServer(
-    const dom::TabId& tabId, const net::LoadInfoArgs& args,
-    const nsCString& alpn) {
-  mImpl->mHandler->SetProxyServer(NrSocketProxyConfig(tabId, alpn, args));
+mozilla::ipc::IPCResult MediaTransportParent::RecvSetProxyConfig(
+    const net::WebrtcProxyConfig& aProxyConfig) {
+  mImpl->mHandler->SetProxyConfig(NrSocketProxyConfig(aProxyConfig));
   return ipc::IPCResult::Ok();
 }
 
@@ -158,8 +157,10 @@ MediaTransportParent::RecvSetTargetForDefaultLocalAddressLookup(
 }
 
 mozilla::ipc::IPCResult MediaTransportParent::RecvStartIceGathering(
-    const bool& defaultRouteOnly, const net::NrIceStunAddrArray& stunAddrs) {
-  mImpl->mHandler->StartIceGathering(defaultRouteOnly, stunAddrs);
+    const bool& defaultRouteOnly, const bool& obfuscateHostAddresses,
+    const net::NrIceStunAddrArray& stunAddrs) {
+  mImpl->mHandler->StartIceGathering(defaultRouteOnly, obfuscateHostAddresses,
+                                     stunAddrs);
   return ipc::IPCResult::Ok();
 }
 
@@ -197,8 +198,10 @@ mozilla::ipc::IPCResult MediaTransportParent::RecvSendPacket(
 }
 
 mozilla::ipc::IPCResult MediaTransportParent::RecvAddIceCandidate(
-    const string& transportId, const string& candidate, const string& ufrag) {
-  mImpl->mHandler->AddIceCandidate(transportId, candidate, ufrag);
+    const string& transportId, const string& candidate, const string& ufrag,
+    const string& obfuscatedAddr) {
+  mImpl->mHandler->AddIceCandidate(transportId, candidate, ufrag,
+                                   obfuscatedAddr);
   return ipc::IPCResult::Ok();
 }
 
@@ -210,26 +213,21 @@ mozilla::ipc::IPCResult MediaTransportParent::RecvUpdateNetworkState(
 
 mozilla::ipc::IPCResult MediaTransportParent::RecvGetIceStats(
     const string& transportId, const double& now,
-    const RTCStatsReportInternal& reportIn, GetIceStatsResolver&& aResolve) {
-  // Copy, because we are handed a const reference (lame), and put in a
-  // unique_ptr because RTCStatsReportInternal doesn't have move semantics
-  // (also lame).
-  std::unique_ptr<dom::RTCStatsReportInternal> report(
-      new dom::RTCStatsReportInternal(reportIn));
-
-  mImpl->mHandler->GetIceStats(transportId, now, std::move(report))
+    GetIceStatsResolver&& aResolve) {
+  mImpl->mHandler->GetIceStats(transportId, now)
       ->Then(
           GetCurrentThreadSerialEventTarget(), __func__,
           // IPDL doesn't give us a reject function, so we cannot reject async,
           // so we are forced to resolve with an unmodified result. Laaaaaaame.
-          [aResolve = std::move(aResolve),
-           reportIn](MediaTransportHandler::StatsPromise::ResolveOrRejectValue&&
-                         aResult) {
+          [aResolve = std::move(aResolve)](
+              dom::RTCStatsPromise::ResolveOrRejectValue&& aResult) {
             if (aResult.IsResolve()) {
-              MovableRTCStatsReportInternal copy(*aResult.ResolveValue());
-              aResolve(copy);
+              aResolve(
+                  dom::NotReallyMovableButLetsPretendItIsRTCStatsCollection(
+                      *aResult.ResolveValue()));
             } else {
-              aResolve(MovableRTCStatsReportInternal(reportIn));
+              dom::NotReallyMovableButLetsPretendItIsRTCStatsCollection empty;
+              aResolve(empty);
             }
           });
 

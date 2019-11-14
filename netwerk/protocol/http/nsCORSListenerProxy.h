@@ -16,6 +16,7 @@
 #include "nsIInterfaceRequestor.h"
 #include "nsIChannelEventSink.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
+#include "nsIHttpChannel.h"
 #include "nsIThreadRetargetableStreamListener.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Atomics.h"
@@ -52,9 +53,6 @@ class nsCORSListenerProxy final : public nsIStreamListener,
   NS_DECL_NSIINTERFACEREQUESTOR
   NS_DECL_NSICHANNELEVENTSINK
   NS_DECL_NSITHREADRETARGETABLESTREAMLISTENER
-
-  // Must be called at startup.
-  static void Startup();
 
   static void Shutdown();
 

@@ -314,9 +314,6 @@ bool OpenVRSession::Initialize(mozilla::gfx::VRSystemState& aSystemState) {
     return false;
   }
 
-  NS_DispatchToMainThread(NS_NewRunnableFunction(
-      "OpenVRSession::StartHapticThread", [this]() { StartHapticThread(); }));
-
   // Succeeded
   return true;
 }
@@ -873,7 +870,7 @@ bool OpenVRSession::CreateD3DObjects() {
 void OpenVRSession::Shutdown() {
   StopHapticTimer();
   StopHapticThread();
-  if (mVRSystem || mVRCompositor || mVRSystem) {
+  if (mVRSystem || mVRCompositor || mVRChaperone) {
     ::vr::VR_Shutdown();
     mVRCompositor = nullptr;
     mVRChaperone = nullptr;
@@ -2126,8 +2123,8 @@ bool OpenVRSession::SubmitFrame(const VRLayerTextureHandle& aTextureHandle,
     return false;
   }
 
-  const void* ioSurface = surf->GetIOSurfacePtr();
-  tex.handle = (void*)ioSurface;
+  CFTypeRefPtr<IOSurfaceRef> ioSurface = surf->GetIOSurfaceRef();
+  tex.handle = (void*)ioSurface.get();
 #else
   tex.handle = aTextureHandle;
 #endif
@@ -2174,6 +2171,13 @@ void OpenVRSession::VibrateHaptic(uint32_t aControllerIdx,
                                   uint32_t aHapticIndex, float aIntensity,
                                   float aDuration) {
   MutexAutoLock lock(mControllerHapticStateMutex);
+
+  // Initilize the haptic thread when the first time to do vibration.
+  if (!mHapticThread) {
+    NS_DispatchToMainThread(NS_NewRunnableFunction(
+        "OpenVRSession::StartHapticThread", [this]() { StartHapticThread(); }));
+  }
+
   if (aHapticIndex >= kNumOpenVRHaptics ||
       aControllerIdx >= kVRControllerMaxCount) {
     return;

@@ -707,9 +707,11 @@ function msg(type, data = null) {
       if (msgObj.data.type != type) {
         return;
       }
+      info(`Received response: ${type}`);
       gMsgMan.removeMessageListener(TEST_MSG, onMsg);
       resolve(msgObj.data.data);
     });
+    info(`Sending message: ${type}`);
     gMsgMan.sendAsyncMessage(TEST_MSG, {
       type,
       data,
@@ -746,10 +748,10 @@ function checkState(
       s => s.type == "formHistory"
     ),
 
-    tableHidden: expectedSuggestions.length == 0,
+    tableHidden: !expectedSuggestions.length,
 
     inputValue: expectedInputVal,
-    ariaExpanded: expectedSuggestions.length == 0 ? "false" : "true",
+    ariaExpanded: !expectedSuggestions.length ? "false" : "true",
   };
   if (expectedSelectedButtonIdx != undefined) {
     expectedState.selectedButtonIndex = expectedSelectedButtonIdx;

@@ -7,33 +7,37 @@
 #ifndef debugger_Object_h
 #define debugger_Object_h
 
-#include "mozilla/Assertions.h"
-#include "mozilla/Attributes.h"
-#include "mozilla/Maybe.h"
-#include "mozilla/Range.h"
+#include "mozilla/Assertions.h"  // for AssertionConditionType, MOZ_ASSERT
+#include "mozilla/Attributes.h"  // for MOZ_MUST_USE
+#include "mozilla/Maybe.h"       // for Maybe
+#include "mozilla/Range.h"       // for Range
+#include "mozilla/Result.h"      // for Result
 
-#include "jsapi.h"
+#include "jsapi.h"             // for JSContext
+#include "jstypes.h"           // for JS_PUBLIC_API
+#include "NamespaceImports.h"  // for Value, MutableHandleValue, HandleId
 
-#include "builtin/Promise.h"
-#include "debugger/Debugger.h"
-#include "gc/Rooting.h"
-#include "js/Class.h"
-#include "js/Promise.h"
-#include "js/PropertySpec.h"
-#include "js/Result.h"
-#include "js/RootingAPI.h"
-#include "js/TypeDecls.h"
-#include "vm/GlobalObject.h"
-#include "vm/JSContext.h"
-#include "vm/NativeObject.h"
+#include "gc/Rooting.h"       // for HandleDebuggerObject
+#include "js/Promise.h"       // for PromiseState
+#include "js/Proxy.h"         // for PropertyDescriptor
+#include "vm/JSObject.h"      // for JSObject (ptr only)
+#include "vm/NativeObject.h"  // for NativeObject
+
+class JS_PUBLIC_API JSAtom;
 
 namespace js {
+
+class Completion;
+class Debugger;
+class EvalOptions;
+class GlobalObject;
+class PromiseObject;
 
 enum { JSSLOT_DEBUGOBJECT_OWNER, JSSLOT_DEBUGOBJECT_COUNT };
 
 class DebuggerObject : public NativeObject {
  public:
-  static const Class class_;
+  static const JSClass class_;
 
   static NativeObject* initClass(JSContext* cx, Handle<GlobalObject*> global,
                                  HandleObject debugCtor);
@@ -41,7 +45,7 @@ class DebuggerObject : public NativeObject {
                                 HandleObject referent,
                                 HandleNativeObject debugger);
 
-  static void trace(JSTracer* trc, JSObject* obj);
+  void trace(JSTracer* trc);
 
   // Properties
   static MOZ_MUST_USE bool getClassName(JSContext* cx,
@@ -143,6 +147,10 @@ class DebuggerObject : public NativeObject {
   static MOZ_MUST_USE bool makeDebuggeeNativeFunction(
       JSContext* cx, HandleDebuggerObject object, HandleValue value,
       MutableHandleValue result);
+  static MOZ_MUST_USE bool isSameNative(JSContext* cx,
+                                        HandleDebuggerObject object,
+                                        HandleValue value,
+                                        MutableHandleValue result);
   static MOZ_MUST_USE bool unsafeDereference(JSContext* cx,
                                              HandleDebuggerObject object,
                                              MutableHandleObject result);
@@ -157,6 +165,7 @@ class DebuggerObject : public NativeObject {
   bool isArrowFunction() const;
   bool isAsyncFunction() const;
   bool isGeneratorFunction() const;
+  bool isClassConstructor() const;
   bool isGlobal() const;
   bool isScriptedProxy() const;
   bool isPromise() const;
@@ -171,7 +180,7 @@ class DebuggerObject : public NativeObject {
 
   static const unsigned RESERVED_SLOTS = 1;
 
-  static const ClassOps classOps_;
+  static const JSClassOps classOps_;
 
   static const JSPropertySpec properties_[];
   static const JSPropertySpec promiseProperties_[];
@@ -192,131 +201,8 @@ class DebuggerObject : public NativeObject {
                                           HandleDebuggerObject object);
   static MOZ_MUST_USE bool construct(JSContext* cx, unsigned argc, Value* vp);
 
-  // JSNative properties
-  static MOZ_MUST_USE bool callableGetter(JSContext* cx, unsigned argc,
-                                          Value* vp);
-  static MOZ_MUST_USE bool isBoundFunctionGetter(JSContext* cx, unsigned argc,
-                                                 Value* vp);
-  static MOZ_MUST_USE bool isArrowFunctionGetter(JSContext* cx, unsigned argc,
-                                                 Value* vp);
-  static MOZ_MUST_USE bool isAsyncFunctionGetter(JSContext* cx, unsigned argc,
-                                                 Value* vp);
-  static MOZ_MUST_USE bool isGeneratorFunctionGetter(JSContext* cx,
-                                                     unsigned argc, Value* vp);
-  static MOZ_MUST_USE bool protoGetter(JSContext* cx, unsigned argc, Value* vp);
-  static MOZ_MUST_USE bool classGetter(JSContext* cx, unsigned argc, Value* vp);
-  static MOZ_MUST_USE bool nameGetter(JSContext* cx, unsigned argc, Value* vp);
-  static MOZ_MUST_USE bool displayNameGetter(JSContext* cx, unsigned argc,
-                                             Value* vp);
-  static MOZ_MUST_USE bool parameterNamesGetter(JSContext* cx, unsigned argc,
-                                                Value* vp);
-  static MOZ_MUST_USE bool scriptGetter(JSContext* cx, unsigned argc,
-                                        Value* vp);
-  static MOZ_MUST_USE bool environmentGetter(JSContext* cx, unsigned argc,
-                                             Value* vp);
-  static MOZ_MUST_USE bool boundTargetFunctionGetter(JSContext* cx,
-                                                     unsigned argc, Value* vp);
-  static MOZ_MUST_USE bool boundThisGetter(JSContext* cx, unsigned argc,
-                                           Value* vp);
-  static MOZ_MUST_USE bool boundArgumentsGetter(JSContext* cx, unsigned argc,
-                                                Value* vp);
-  static MOZ_MUST_USE bool allocationSiteGetter(JSContext* cx, unsigned argc,
-                                                Value* vp);
-  static MOZ_MUST_USE bool errorMessageNameGetter(JSContext* cx, unsigned argc,
-                                                  Value* vp);
-  static MOZ_MUST_USE bool errorNotesGetter(JSContext* cx, unsigned argc,
-                                            Value* vp);
-  static MOZ_MUST_USE bool errorLineNumberGetter(JSContext* cx, unsigned argc,
-                                                 Value* vp);
-  static MOZ_MUST_USE bool errorColumnNumberGetter(JSContext* cx, unsigned argc,
-                                                   Value* vp);
-  static MOZ_MUST_USE bool isProxyGetter(JSContext* cx, unsigned argc,
-                                         Value* vp);
-  static MOZ_MUST_USE bool proxyTargetGetter(JSContext* cx, unsigned argc,
-                                             Value* vp);
-  static MOZ_MUST_USE bool proxyHandlerGetter(JSContext* cx, unsigned argc,
-                                              Value* vp);
-  static MOZ_MUST_USE bool isPromiseGetter(JSContext* cx, unsigned argc,
-                                           Value* vp);
-  static MOZ_MUST_USE bool promiseStateGetter(JSContext* cx, unsigned argc,
-                                              Value* vp);
-  static MOZ_MUST_USE bool promiseValueGetter(JSContext* cx, unsigned argc,
-                                              Value* vp);
-  static MOZ_MUST_USE bool promiseReasonGetter(JSContext* cx, unsigned argc,
-                                               Value* vp);
-  static MOZ_MUST_USE bool promiseLifetimeGetter(JSContext* cx, unsigned argc,
-                                                 Value* vp);
-  static MOZ_MUST_USE bool promiseTimeToResolutionGetter(JSContext* cx,
-                                                         unsigned argc,
-                                                         Value* vp);
-  static MOZ_MUST_USE bool promiseAllocationSiteGetter(JSContext* cx,
-                                                       unsigned argc,
-                                                       Value* vp);
-  static MOZ_MUST_USE bool promiseResolutionSiteGetter(JSContext* cx,
-                                                       unsigned argc,
-                                                       Value* vp);
-  static MOZ_MUST_USE bool promiseIDGetter(JSContext* cx, unsigned argc,
-                                           Value* vp);
-  static MOZ_MUST_USE bool promiseDependentPromisesGetter(JSContext* cx,
-                                                          unsigned argc,
-                                                          Value* vp);
+  struct CallData;
 
-  // JSNative methods
-  static MOZ_MUST_USE bool isExtensibleMethod(JSContext* cx, unsigned argc,
-                                              Value* vp);
-  static MOZ_MUST_USE bool isSealedMethod(JSContext* cx, unsigned argc,
-                                          Value* vp);
-  static MOZ_MUST_USE bool isFrozenMethod(JSContext* cx, unsigned argc,
-                                          Value* vp);
-  static MOZ_MUST_USE bool getPropertyMethod(JSContext* cx, unsigned argc,
-                                             Value* vp);
-  static MOZ_MUST_USE bool setPropertyMethod(JSContext* cx, unsigned argc,
-                                             Value* vp);
-  static MOZ_MUST_USE bool getOwnPropertyNamesMethod(JSContext* cx,
-                                                     unsigned argc, Value* vp);
-  static MOZ_MUST_USE bool getOwnPropertySymbolsMethod(JSContext* cx,
-                                                       unsigned argc,
-                                                       Value* vp);
-  static MOZ_MUST_USE bool getOwnPropertyDescriptorMethod(JSContext* cx,
-                                                          unsigned argc,
-                                                          Value* vp);
-  static MOZ_MUST_USE bool preventExtensionsMethod(JSContext* cx, unsigned argc,
-                                                   Value* vp);
-  static MOZ_MUST_USE bool sealMethod(JSContext* cx, unsigned argc, Value* vp);
-  static MOZ_MUST_USE bool freezeMethod(JSContext* cx, unsigned argc,
-                                        Value* vp);
-  static MOZ_MUST_USE bool definePropertyMethod(JSContext* cx, unsigned argc,
-                                                Value* vp);
-  static MOZ_MUST_USE bool definePropertiesMethod(JSContext* cx, unsigned argc,
-                                                  Value* vp);
-  static MOZ_MUST_USE bool deletePropertyMethod(JSContext* cx, unsigned argc,
-                                                Value* vp);
-  static MOZ_MUST_USE bool callMethod(JSContext* cx, unsigned argc, Value* vp);
-  static MOZ_MUST_USE bool applyMethod(JSContext* cx, unsigned argc, Value* vp);
-  static MOZ_MUST_USE bool asEnvironmentMethod(JSContext* cx, unsigned argc,
-                                               Value* vp);
-  static MOZ_MUST_USE bool forceLexicalInitializationByNameMethod(JSContext* cx,
-                                                                  unsigned argc,
-                                                                  Value* vp);
-  static MOZ_MUST_USE bool executeInGlobalMethod(JSContext* cx, unsigned argc,
-                                                 Value* vp);
-  static MOZ_MUST_USE bool executeInGlobalWithBindingsMethod(JSContext* cx,
-                                                             unsigned argc,
-                                                             Value* vp);
-  static MOZ_MUST_USE bool makeDebuggeeValueMethod(JSContext* cx, unsigned argc,
-                                                   Value* vp);
-  static MOZ_MUST_USE bool makeDebuggeeNativeFunctionMethod(JSContext* cx,
-                                                            unsigned argc,
-                                                            Value* vp);
-  static MOZ_MUST_USE bool unsafeDereferenceMethod(JSContext* cx, unsigned argc,
-                                                   Value* vp);
-  static MOZ_MUST_USE bool unwrapMethod(JSContext* cx, unsigned argc,
-                                        Value* vp);
-  static MOZ_MUST_USE bool setInstrumentationMethod(JSContext* cx,
-                                                    unsigned argc, Value* vp);
-  static MOZ_MUST_USE bool setInstrumentationActiveMethod(JSContext* cx,
-                                                          unsigned argc,
-                                                          Value* vp);
   static MOZ_MUST_USE bool getErrorReport(JSContext* cx,
                                           HandleObject maybeError,
                                           JSErrorReport*& report);

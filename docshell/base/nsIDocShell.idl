@@ -84,9 +84,11 @@ interface nsIDocShell : nsIDocShellTreeItem
    * however, the URL dispatcher will go through its normal process of content
    * loading.
    *
-   * @param loadState   - This is the extended load info for this load.
+   * @param aLoadState This is the extended load info for this load.
+   * @param aSetNavigating If we should set isNavigating to true while initiating
+   *                       the load.
    */
-  [noscript]void loadURI(in nsDocShellLoadStatePtr loadState);
+  [noscript]void loadURI(in nsDocShellLoadStatePtr aLoadState, in boolean aSetNavigating);
 
   /**
    * Do either a history.pushState() or history.replaceState() operation,
@@ -388,7 +390,7 @@ interface nsIDocShell : nsIDocShellTreeItem
    * Currently only set for GeckoView to allow handling of load requests
    * at the application level.
    */
-  attribute nsILoadURIDelegate loadURIDelegate;
+  readonly attribute nsILoadURIDelegate loadURIDelegate;
 
   /**
    * Cancel the XPCOM timers for each meta-refresh URI in this docshell,
@@ -771,31 +773,10 @@ interface nsIDocShell : nsIDocShellTreeItem
   readonly attribute bool asyncPanZoomEnabled;
 
   /**
-   * The sandbox flags on the docshell. These reflect the value of the sandbox
-   * attribute of the associated IFRAME or CSP-protectable content, if
-   * existent. See the HTML5 spec for more details.
-   * These flags on the docshell reflect the current state of the sandbox
-   * attribute, which is modifiable. They are only used when loading new
-   * content, sandbox flags are also immutably set on the document when it is
-   * loaded.
-   * The sandbox flags of a document depend on the sandbox flags on its
-   * docshell and of its parent document, if any.
-   * See nsSandboxFlags.h for the possible flags.
-   */
-  attribute unsigned long sandboxFlags;
-
-  /**
-   * When a new browsing context is opened by a sandboxed document, it needs to
-   * keep track of the browsing context that opened it, so that it can be
-   * navigated by it.  This is the "one permitted sandboxed navigator".
-   */
-  attribute nsIDocShell onePermittedSandboxedNavigator;
-
-  /**
    * Returns true if we are sandboxed from aTargetDocShell.
    * aTargetDocShell - the browsing context we are attempting to navigate.
    */
-  [noscript,notxpcom,nostdcall] bool isSandboxedFrom(in nsIDocShell aTargetDocShell);
+  [noscript,notxpcom,nostdcall] bool isSandboxedFrom(in BrowsingContext aTargetBC);
 
   /**
    * This member variable determines whether a document has Mixed Active Content that
@@ -878,10 +859,6 @@ interface nsIDocShell : nsIDocShellTreeItem
    */
   void makeEditable(in boolean inWaitForUriLoad);
 
-  /**
-   * Get the SHEntry associated with a child docshell
-   */
-  nsISHEntry getChildSHEntry(in long aChildOffset);
 
   /**
    * Add a Child SHEntry for a frameset page, given the child's loadtype.
@@ -966,8 +943,8 @@ interface nsIDocShell : nsIDocShellTreeItem
    * is collecting information.
    */
   [noscript,notxpcom,nostdcall] void notifyJSRunToCompletionStart(in string aReason,
-                                                                  in wstring functionName,
-                                                                  in wstring fileName,
+                                                                  in AString functionName,
+                                                                  in AString fileName,
                                                                   in unsigned long lineNumber,
                                                                   in jsval asyncStack,
                                                                   in string asyncCause);
@@ -1063,20 +1040,6 @@ interface nsIDocShell : nsIDocShellTreeItem
   [infallible] attribute nsIDocShell_MetaViewportOverride metaViewportOverride;
 
   /**
-   * This value is `true` if its corresponding unit of related browsing contexts
-   * (TabGroup) contains only 1 toplevel window, and that window is the outer
-   * window corresponding to this docshell.
-   *
-   * The value is `false` otherwise. This is the case if the docshell is an
-   * iframe, has window.opener set, or another window with window.opener
-   * referring to this window exists.
-   *
-   * If this value is `false`, it would be web content visible for a load
-   * occuring in this docshell to be performed within a different docshell.
-   */
-  [infallible] readonly attribute boolean isOnlyToplevelInTabGroup;
-
-  /**
    * Returns `true` if this docshell was created due to a Large-Allocation
    * header, and has not seen the initiating load yet.
    */
@@ -1111,6 +1074,12 @@ interface nsIDocShell : nsIDocShellTreeItem
 
   void setColorMatrix(in Array<float> aMatrix);
 
+  /**
+   * Returns true if the current load is a forced reload,
+   * e.g. started by holding shift whilst triggering reload.
+   */
+  readonly attribute bool isForceReloading;
+
   Array<float> getColorMatrix();
 
   /**
@@ -1127,11 +1096,6 @@ interface nsIDocShell : nsIDocShellTreeItem
   mozilla::HTMLEditor* GetHTMLEditor();
   nsresult SetHTMLEditor(mozilla::HTMLEditor* aHTMLEditor);
 %}
-
-  /**
-   * BrowsingContext associated with the DocShell.
-   */
-  readonly attribute BrowsingContext browsingContext;
 
   /**
    * Allowed CSS display modes. This needs to be kept in

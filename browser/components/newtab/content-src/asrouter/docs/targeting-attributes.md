@@ -36,8 +36,14 @@ Please note that some targeting attributes require stricter controls on the tele
 * [hasPinnedTabs](#haspinnedtabs)
 * [hasAccessedFxAPanel](#hasaccessedfxapanel)
 * [isWhatsNewPanelEnabled](#iswhatsnewpanelenabled)
-* [earliestFirefoxVersion](#earliestfirefoxversion)
 * [isFxABadgeEnabled](#isfxabadgeenabled)
+* [totalBlockedCount](#totalblockedcount)
+* [recentBookmarks](#recentbookmarks)
+* [userPrefs](#userprefs)
+* [attachedFxAOAuthClients](#attachedfxaoauthclients)
+* [platformName](#platformname)
+* [personalizedCfrScores](#personalizedcfrscores)
+* [personalizedCfrThreshold](#personalizedcfrthreshold)
 
 ## Detailed usage
 
@@ -172,7 +178,7 @@ type ECMA262DateString = string;
 ```
 
 ### `devToolsOpenedCount`
-Number of usages of the web console or scratchpad.
+Number of usages of the web console.
 
 #### Examples
 * Has the user opened the web console more than 10 times?
@@ -499,16 +505,6 @@ Boolean pref that controls if the What's New panel feature is enabled
 declare const isWhatsNewPanelEnabled: boolean;
 ```
 
-### `earliestFirefoxVersion`
-
-Integer value of the first Firefox version the profile ran on
-
-#### Definition
-
-```ts
-declare const earliestFirefoxVersion: boolean;
-```
-
 ### `isFxABadgeEnabled`
 
 Boolean pref that controls if the FxA toolbar button is badged by Messaging System.
@@ -517,4 +513,105 @@ Boolean pref that controls if the FxA toolbar button is badged by Messaging Syst
 
 ```ts
 declare const isFxABadgeEnabled: boolean;
+```
+
+### `totalBlockedCount`
+
+Total number of events from the content blocking database
+
+#### Definition
+
+```ts
+declare const totalBlockedCount: number;
+```
+
+### `recentBookmarks`
+
+An array of GUIDs of recent bookmarks as provided by [`NewTabUtils.getRecentBookmarks`](https://searchfox.org/mozilla-central/rev/e0b0c38ee83f99d3cf868bad525ace4a395039f1/toolkit/modules/NewTabUtils.jsm#1087)
+
+#### Definition
+
+```ts
+interface Bookmark {
+  bookmarkGuid: string;
+  url: string;
+  title: string;
+  ...
+}
+declare const recentBookmarks: Array<Bookmark>
+```
+
+### `userPrefs`
+
+Information about user facing prefs configurable from `about:preferences`.
+
+#### Examples
+```java
+userPrefs.cfrFeatures == false
+```
+
+#### Definition
+
+```ts
+declare const userPrefs: {
+  cfrFeatures: boolean;
+  cfrAddons: boolean;
+  snippets: boolean;
+}
+```
+
+### `attachedFxAOAuthClients`
+
+Information about connected services associated with the FxA Account.
+
+#### Definition
+
+```
+interface OAuthClient {
+  id: string;
+  // FxA service name
+  name: string;
+  lastAccessTime: UnixEpochNumber;
+}
+
+declare const attachedFxAOAuthClients: Array<OAuthClient>
+```
+
+#### Examples
+```javascript
+{
+  id: "7377719276ad44ee",
+  name: "Pocket",
+  lastAccessTime: 1513599164000
+}
+```
+
+### `platformName`
+
+[Platform information](https://searchfox.org/mozilla-central/rev/05a22d864814cb1e4352faa4004e1f975c7d2eb9/toolkit/modules/AppConstants.jsm#156).
+
+#### Definition
+
+```
+declare const platformName = "linux" | "win" | "macosx" | "android" | "other";
+```
+
+### `personalizedCfrScores`
+
+#### Definition
+
+See more in [CFR Machine Learning Experiment](https://bugzilla.mozilla.org/show_bug.cgi?id=1594422).
+
+```
+declare const personalizedCfrScores = { [cfrId: string]: number (float); }
+```
+
+### `personalizedCfrThreshold`
+
+#### Definition
+
+See more in [CFR Machine Learning Experiment](https://bugzilla.mozilla.org/show_bug.cgi?id=1594422).
+
+```
+declare const personalizedCfrThreshold = float;
 ```

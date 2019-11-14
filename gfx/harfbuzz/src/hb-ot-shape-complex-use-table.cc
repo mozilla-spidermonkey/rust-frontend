@@ -15,6 +15,10 @@
  * UnicodeData.txt does not have a header.
  */
 
+#include "hb.hh"
+
+#ifndef HB_NO_OT_SHAPE
+
 #include "hb-ot-shape-complex-use.hh"
 
 #pragma GCC diagnostic push
@@ -343,7 +347,7 @@ static const USE_TABLE_ELEMENT_TYPE use_table[] = {
 
   /* 1C00 */     B,     B,     B,     B,     B,     B,     B,     B,     B,     B,     B,     B,     B,     B,     B,     B,
   /* 1C10 */     B,     B,     B,     B,     B,     B,     B,     B,     B,     B,     B,     B,     B,     B,     B,     B,
-  /* 1C20 */     B,     B,     B,     B,   SUB,   SUB,  VPst,  VPre,  VPre,  VPst,  VPst,  VPst,  VBlw,  FAbv,  FAbv,  FAbv,
+  /* 1C20 */     B,     B,     B,     B,   SUB,   SUB,  VPst,  VPre,  VPre,  VPre,  VPst,  VPst,  VBlw,  FAbv,  FAbv,  FAbv,
   /* 1C30 */  FAbv,  FAbv,  FAbv,  FAbv, VMPre, VMPre, FMAbv, CMBlw,     O,     O,     O,     O,     O,     O,     O,     O,
   /* 1C40 */     B,     B,     B,     B,     B,     B,     B,     B,     B,     B,     O,     O,     O,     B,     B,     B,
 
@@ -851,4 +855,6 @@ hb_use_get_category (hb_codepoint_t u)
 #undef VMPst
 #undef VMAbv
 
+
+#endif
 /* == End of generated table == */

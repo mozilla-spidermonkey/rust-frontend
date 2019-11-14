@@ -45,6 +45,7 @@
 #include "mozilla/Omnijar.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
+#include "nsPrintfCString.h"
 
 #include <stdlib.h>
 
@@ -103,7 +104,7 @@ nsCOMPtr<nsIFile> gDataDirProfile = nullptr;
 
 // These are required to allow nsXREDirProvider to be usable in xpcshell tests.
 // where gAppData is null.
-#if defined(XP_MACOSX) || defined(XP_WIN)
+#if defined(XP_MACOSX) || defined(XP_WIN) || defined(XP_UNIX)
 static const char* GetAppName() {
   if (gAppData) {
     return gAppData->name;
@@ -461,6 +462,14 @@ nsXREDirProvider::GetFile(const char* aProperty, bool* aPersistent,
 #endif
   } else if (!strcmp(aProperty, XRE_USER_SYS_EXTENSION_DEV_DIR)) {
     return GetSysUserExtensionsDevDirectory(aFile);
+  } else if (!strcmp(aProperty, XRE_USER_RUNTIME_DIR)) {
+#if defined(XP_UNIX)
+    nsPrintfCString path("/run/user/%d/%s/", getuid(), GetAppName());
+    ToLowerCase(path);
+    return NS_NewNativeLocalFile(path, false, aFile);
+#else
+    return NS_ERROR_FAILURE;
+#endif
   } else if (!strcmp(aProperty, XRE_APP_DISTRIBUTION_DIR)) {
     bool persistent = false;
     rv = GetFile(NS_GRE_DIR, &persistent, getter_AddRefs(file));
@@ -560,25 +569,6 @@ static void LoadDirIntoArray(nsIFile* dir, const char* const* aAppendList,
   bool exists;
   if (NS_SUCCEEDED(subdir->Exists(&exists)) && exists) {
     aDirectories.AppendObject(subdir);
-  }
-}
-
-static void LoadDirsIntoArray(const nsCOMArray<nsIFile>& aSourceDirs,
-                              const char* const* aAppendList,
-                              nsCOMArray<nsIFile>& aDirectories) {
-  nsCOMPtr<nsIFile> appended;
-  bool exists;
-
-  for (int32_t i = 0; i < aSourceDirs.Count(); ++i) {
-    aSourceDirs[i]->Clone(getter_AddRefs(appended));
-    if (!appended) continue;
-
-    nsAutoCString leaf;
-    appended->GetNativeLeafName(leaf);
-    if (!Substring(leaf, leaf.Length() - 4).EqualsLiteral(".xpi")) {
-      LoadDirIntoArray(appended, aAppendList, aDirectories);
-    } else if (NS_SUCCEEDED(appended->Exists(&exists)) && exists)
-      aDirectories.AppendObject(appended);
   }
 }
 
@@ -851,36 +841,15 @@ static nsresult DeleteDirIfExists(nsIFile* dir) {
 static const char* const kAppendPrefDir[] = {"defaults", "preferences",
                                              nullptr};
 
-#ifdef DEBUG_bsmedberg
-static void DumpFileArray(const char* key, nsCOMArray<nsIFile> dirs) {
-  fprintf(stderr, "nsXREDirProvider::GetFilesInternal(%s)\n", key);
-
-  nsAutoCString path;
-  for (int32_t i = 0; i < dirs.Count(); ++i) {
-    dirs[i]->GetNativePath(path);
-    fprintf(stderr, "  %s\n", path.get());
-  }
-}
-#endif  // DEBUG_bsmedberg
-
 nsresult nsXREDirProvider::GetFilesInternal(const char* aProperty,
                                             nsISimpleEnumerator** aResult) {
   nsresult rv = NS_OK;
   *aResult = nullptr;
 
-  if (!strcmp(aProperty, XRE_EXTENSIONS_DIR_LIST)) {
-    nsCOMArray<nsIFile> directories;
-
-    static const char* const kAppendNothing[] = {nullptr};
-
-    LoadDirsIntoArray(mAppBundleDirectories, kAppendNothing, directories);
-
-    rv = NS_NewArrayEnumerator(aResult, directories, NS_GET_IID(nsIFile));
-  } else if (!strcmp(aProperty, NS_APP_PREFS_DEFAULTS_DIR_LIST)) {
+  if (!strcmp(aProperty, NS_APP_PREFS_DEFAULTS_DIR_LIST)) {
     nsCOMArray<nsIFile> directories;
 
     LoadDirIntoArray(mXULAppDir, kAppendPrefDir, directories);
-    LoadDirsIntoArray(mAppBundleDirectories, kAppendPrefDir, directories);
 
     rv = NS_NewArrayEnumerator(aResult, directories, NS_GET_IID(nsIFile));
   } else if (!strcmp(aProperty, NS_APP_CHROME_DIR_LIST)) {
@@ -890,37 +859,8 @@ nsresult nsXREDirProvider::GetFilesInternal(const char* aProperty,
     static const char* const kAppendChromeDir[] = {"chrome", nullptr};
     nsCOMArray<nsIFile> directories;
     LoadDirIntoArray(mXULAppDir, kAppendChromeDir, directories);
-    LoadDirsIntoArray(mAppBundleDirectories, kAppendChromeDir, directories);
 
     rv = NS_NewArrayEnumerator(aResult, directories, NS_GET_IID(nsIFile));
-  } else if (!strcmp(aProperty, NS_APP_PLUGINS_DIR_LIST)) {
-    nsCOMArray<nsIFile> directories;
-
-    if (mozilla::Preferences::GetBool("plugins.load_appdir_plugins", false)) {
-      nsCOMPtr<nsIFile> appdir;
-      rv = XRE_GetBinaryPath(getter_AddRefs(appdir));
-      if (NS_SUCCEEDED(rv)) {
-        appdir->SetNativeLeafName(NS_LITERAL_CSTRING("plugins"));
-        directories.AppendObject(appdir);
-      }
-    }
-
-    static const char* const kAppendPlugins[] = {"plugins", nullptr};
-
-    // The root dirserviceprovider does quite a bit for us: we're mainly
-    // interested in xulapp and extension-provided plugins.
-    LoadDirsIntoArray(mAppBundleDirectories, kAppendPlugins, directories);
-
-    if (mProfileDir) {
-      nsCOMArray<nsIFile> profileDir;
-      profileDir.AppendObject(mProfileDir);
-      LoadDirsIntoArray(profileDir, kAppendPlugins, directories);
-    }
-
-    rv = NS_NewArrayEnumerator(aResult, directories, NS_GET_IID(nsIFile));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = NS_SUCCESS_AGGREGATE_RESULT;
   } else
     rv = NS_ERROR_FAILURE;
 
@@ -1260,6 +1200,31 @@ nsresult nsXREDirProvider::GetLegacyInstallHash(nsAString& aPathHash) {
   rv = installDir->GetPath(installPath);
   NS_ENSURE_SUCCESS(rv, rv);
 
+#ifdef XP_WIN
+#  if defined(MOZ_THUNDERBIRD) || defined(MOZ_SUITE)
+  // Convert a 64-bit install path to what would have been the 32-bit install
+  // path to allow users to migrate their profiles from one to the other.
+  PWSTR pathX86 = nullptr;
+  HRESULT hres =
+      SHGetKnownFolderPath(FOLDERID_ProgramFilesX86, 0, nullptr, &pathX86);
+  if (SUCCEEDED(hres)) {
+    nsDependentString strPathX86(pathX86);
+    if (!StringBeginsWith(installPath, strPathX86,
+                          nsCaseInsensitiveStringComparator())) {
+      PWSTR path = nullptr;
+      hres = SHGetKnownFolderPath(FOLDERID_ProgramFiles, 0, nullptr, &path);
+      if (SUCCEEDED(hres)) {
+        if (StringBeginsWith(installPath, nsDependentString(path),
+                             nsCaseInsensitiveStringComparator())) {
+          installPath.Replace(0, wcslen(path), strPathX86);
+        }
+      }
+      CoTaskMemFree(path);
+    }
+  }
+  CoTaskMemFree(pathX86);
+#  endif
+#endif
   return HashInstallPath(installPath, aPathHash);
 }
 

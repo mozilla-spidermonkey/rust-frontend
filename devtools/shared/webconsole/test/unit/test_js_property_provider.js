@@ -1,4 +1,3 @@
-/* -*- js-indent-level: 2; indent-tabs-mode: nil -*- */
 // Any copyright is dedicated to the Public Domain.
 // http://creativecommons.org/publicdomain/zero/1.0/
 
@@ -132,6 +131,33 @@ function runChecks(dbgObject, environment, sandbox) {
     results = propertyProvider("this.this");
     test_has_no_results(results);
   }
+
+  info("Test that suggestions are given for 'globalThis'");
+  results = propertyProvider("g");
+  test_has_result(results, "globalThis");
+
+  info("Test that suggestions are given for 'globalThis.'");
+  results = propertyProvider("globalThis.");
+  test_has_result(results, "testObject");
+
+  info("Test that suggestions are given for '(globalThis).'");
+  results = propertyProvider("(globalThis).");
+  test_has_result(results, "testObject");
+
+  info(
+    "Test that suggestions are given for deep 'globalThis' properties access"
+  );
+  results = propertyProvider("(globalThis).testObject.propA.");
+  test_has_result(results, "shift");
+
+  results = propertyProvider("(globalThis).testObject.propA[");
+  test_has_result(results, `"shift"`);
+
+  results = propertyProvider("(globalThis)['testObject']['propA'][");
+  test_has_result(results, `"shift"`);
+
+  results = propertyProvider("(globalThis).testObject['propA'].");
+  test_has_result(results, "shift");
 
   info("Testing lexical scope issues (Bug 1207868)");
   results = propertyProvider("foobar");

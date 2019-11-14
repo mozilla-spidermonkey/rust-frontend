@@ -152,13 +152,6 @@ static bool HandleMessageInMiddleman(ipc::Side aSide,
 // Return whether a message should be sent to the recording child, even if it
 // is not currently active.
 static bool AlwaysForwardMessage(const IPC::Message& aMessage) {
-  // Always forward messages in repaint stress mode, as the active child is
-  // almost always a replaying child and lost messages make it hard to load
-  // pages completely.
-  if (InRepaintStressMode()) {
-    return true;
-  }
-
   IPC::Message::msgid_t type = aMessage.type();
 
   // Forward close messages so that the tab shuts down properly even if it is
@@ -280,8 +273,9 @@ class MiddlemanProtocol : public ipc::IToplevelProtocol {
     MOZ_RELEASE_ASSERT(!mSyncMessageReply);
     mSyncMessageReply = new Message();
     if (mSyncMessageIsCall
-        ? !mOpposite->GetIPCChannel()->Call(mSyncMessage, mSyncMessageReply)
-        : !mOpposite->GetIPCChannel()->Send(mSyncMessage, mSyncMessageReply)) {
+            ? !mOpposite->GetIPCChannel()->Call(mSyncMessage, mSyncMessageReply)
+            : !mOpposite->GetIPCChannel()->Send(mSyncMessage,
+                                                mSyncMessageReply)) {
       MOZ_RELEASE_ASSERT(mSide == ipc::ChildSide);
       BeginShutdown();
     }
@@ -295,15 +289,16 @@ class MiddlemanProtocol : public ipc::IToplevelProtocol {
     aProtocol->MaybeSendSyncMessage(false);
   }
 
-  void HandleSyncMessage(const Message& aMessage, Message*& aReply, bool aCall) {
+  void HandleSyncMessage(const Message& aMessage, Message*& aReply,
+                         bool aCall) {
     MOZ_RELEASE_ASSERT(mOppositeMessageLoop);
 
     mSyncMessage = new Message();
     mSyncMessage->CopyFrom(aMessage);
     mSyncMessageIsCall = aCall;
 
-    mOppositeMessageLoop->PostTask(
-        NewRunnableFunction("StaticMaybeSendSyncMessage", StaticMaybeSendSyncMessage, this));
+    mOppositeMessageLoop->PostTask(NewRunnableFunction(
+        "StaticMaybeSendSyncMessage", StaticMaybeSendSyncMessage, this));
 
     if (mSide == ipc::ChildSide) {
       AutoMarkMainThreadWaitingForIPDLReply blocked;

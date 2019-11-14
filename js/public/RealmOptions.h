@@ -19,14 +19,14 @@
 
 #include "js/Class.h"  // JSTraceOp
 
-struct JSContext;
-class JSObject;
+struct JS_PUBLIC_API JSContext;
+class JS_PUBLIC_API JSObject;
 
 namespace JS {
 
-class Compartment;
-class Realm;
-class Zone;
+class JS_PUBLIC_API Compartment;
+class JS_PUBLIC_API Realm;
+class JS_PUBLIC_API Zone;
 
 }  // namespace JS
 
@@ -134,9 +134,21 @@ class JS_PUBLIC_API RealmCreationOptions {
     return *this;
   }
 
-  bool getBigIntEnabled() const { return bigint_; }
-  RealmCreationOptions& setBigIntEnabled(bool flag) {
-    bigint_ = flag;
+  bool getReadableByteStreamsEnabled() const { return readableByteStreams_; }
+  RealmCreationOptions& setReadableByteStreamsEnabled(bool flag) {
+    readableByteStreams_ = flag;
+    return *this;
+  }
+
+  bool getBYOBStreamReadersEnabled() const { return byobStreamReaders_; }
+  RealmCreationOptions& setBYOBStreamReadersEnabled(bool enabled) {
+    byobStreamReaders_ = enabled;
+    return *this;
+  }
+
+  bool getWritableStreamsEnabled() const { return writableStreams_; }
+  RealmCreationOptions& setWritableStreamsEnabled(bool enabled) {
+    writableStreams_ = enabled;
     return *this;
   }
 
@@ -152,6 +164,12 @@ class JS_PUBLIC_API RealmCreationOptions {
     return *this;
   }
 
+  bool getWeakRefsEnabled() const { return weakRefs_; }
+  RealmCreationOptions& setWeakRefsEnabled(bool flag) {
+    weakRefs_ = flag;
+    return *this;
+  }
+
   // This flag doesn't affect JS engine behavior.  It is used by Gecko to
   // mark whether content windows and workers are "Secure Context"s. See
   // https://w3c.github.io/webappsec-secure-contexts/
@@ -159,12 +177,6 @@ class JS_PUBLIC_API RealmCreationOptions {
   bool secureContext() const { return secureContext_; }
   RealmCreationOptions& setSecureContext(bool flag) {
     secureContext_ = flag;
-    return *this;
-  }
-
-  bool clampAndJitterTime() const { return clampAndJitterTime_; }
-  RealmCreationOptions& setClampAndJitterTime(bool flag) {
-    clampAndJitterTime_ = flag;
     return *this;
   }
 
@@ -181,11 +193,13 @@ class JS_PUBLIC_API RealmCreationOptions {
   bool cloneSingletons_ = false;
   bool sharedMemoryAndAtomics_ = false;
   bool streams_ = false;
-  bool bigint_ = false;
+  bool readableByteStreams_ = false;
+  bool byobStreamReaders_ = false;
+  bool writableStreams_ = false;
   bool fields_ = false;
   bool awaitFix_ = false;
+  bool weakRefs_ = false;
   bool secureContext_ = false;
-  bool clampAndJitterTime_ = true;
 };
 
 /**
@@ -207,6 +221,18 @@ class JS_PUBLIC_API RealmBehaviors {
   bool disableLazyParsing() const { return disableLazyParsing_; }
   RealmBehaviors& setDisableLazyParsing(bool flag) {
     disableLazyParsing_ = flag;
+    return *this;
+  }
+
+  bool deferredParserAlloc() const { return deferredParserAlloc_; }
+  RealmBehaviors& setDeferredParserAlloc(bool flag) {
+    deferredParserAlloc_ = flag;
+    return *this;
+  }
+
+  bool clampAndJitterTime() const { return clampAndJitterTime_; }
+  RealmBehaviors& setClampAndJitterTime(bool flag) {
+    clampAndJitterTime_ = flag;
     return *this;
   }
 
@@ -254,6 +280,7 @@ class JS_PUBLIC_API RealmBehaviors {
  private:
   bool discardSource_ = false;
   bool disableLazyParsing_ = false;
+  bool clampAndJitterTime_ = true;
   Override extraWarningsOverride_ = {};
 
   // To XDR singletons, we need to ensure that all singletons are all used as
@@ -261,6 +288,7 @@ class JS_PUBLIC_API RealmBehaviors {
   // singleton, instead of returning the value which is baked in the JSScript.
   bool singletonsAsTemplates_ = true;
   bool isNonLive_ = false;
+  bool deferredParserAlloc_ = false;
 };
 
 /**

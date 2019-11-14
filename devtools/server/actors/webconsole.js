@@ -1,5 +1,3 @@
-/* -*- js-indent-level: 2; indent-tabs-mode: nil -*- */
-/* vim: set ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -12,13 +10,11 @@ const { webconsoleSpec } = require("devtools/shared/specs/webconsole");
 
 const Services = require("Services");
 const { Cc, Ci, Cu } = require("chrome");
-const { DebuggerServer } = require("devtools/server/main");
+const { DebuggerServer } = require("devtools/server/debugger-server");
 const { ActorPool } = require("devtools/server/actors/common");
 const { ThreadActor } = require("devtools/server/actors/thread");
 const { ObjectActor } = require("devtools/server/actors/object");
-const {
-  LongStringActor,
-} = require("devtools/server/actors/object/long-string");
+const { LongStringActor } = require("devtools/server/actors/string");
 const {
   createValueGrip,
   stringIsLong,
@@ -191,9 +187,10 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
     this.conn.addActorPool(this._actorPool);
 
     this._prefs = {};
-    this.dbg = this.parentActor.makeDebugger();
+    this.dbg = this.parentActor.dbg;
 
     this._gripDepth = 0;
+    this._evalCounter = 0;
     this._listeners = new Set();
     this._lastConsoleInputEvaluation = undefined;
 
@@ -215,11 +212,7 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
       );
     }
 
-    this.traits = {
-      transferredResponseSize: true,
-      selectedObjectActor: true, // 44+
-      fetchCacheDescriptor: true,
-    };
+    this.traits = {};
 
     if (this.dbg.replaying && !isWorker) {
       this.dbg.onConsoleMessage = this.onReplayingMessage.bind(this);
@@ -411,17 +404,13 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
 
   typeName: "console",
 
-  get globalDebugObject() {
-    return this.parentActor.threadActor.globalDebugObject;
-  },
-
   grip: function() {
     return { actor: this.actorID };
   },
 
   hasNativeConsoleAPI: function(window) {
-    if (isWorker) {
-      // Can't use XPCNativeWrapper as a way to check for console API in workers
+    if (isWorker || !(window instanceof Ci.nsIDOMWindow)) {
+      // We can only use XPCNativeWrapper on non-worker nsIDOMWindow.
       return true;
     }
 
@@ -474,7 +463,6 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
     this._webConsoleCommandsCache = null;
     this._lastConsoleInputEvaluation = null;
     this._evalWindow = null;
-    this.dbg.disable();
     this.dbg = null;
     this.conn = null;
   },
@@ -571,7 +559,6 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
             Error("sources not yet implemented")
           ),
         createEnvironmentActor: env => this.createEnvironmentActor(env),
-        getGlobalDebugObject: () => this.globalDebugObject,
       },
       this.conn
     );
@@ -590,9 +577,9 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
    *         A LongStringActor object that wraps the given string.
    */
   longStringGrip: function(string, pool) {
-    const actor = new LongStringActor(string);
+    const actor = new LongStringActor(this.conn, string);
     pool.addActor(actor);
-    return actor.grip();
+    return actor.form();
   },
 
   /**
@@ -647,7 +634,7 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
    * inspect an object in the developer toolbox.
    */
   inspectObject(dbgObj, inspectFromAnnotation) {
-    this.conn.sendActorEvent(this.actorID, "inspectObject", {
+    this.emit("inspectObject", {
       objectActor: this.createValueGrip(dbgObj),
       inspectFromAnnotation,
     });
@@ -663,17 +650,17 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
   /**
    * Handler for the "startListeners" request.
    *
-   * @param array events
+   * @param array listeners
    *        An array of events to start sent by the Web Console client.
    * @return object
    *        The response object which holds the startedListeners array.
    */
-  /* eslint-disable complexity */
-  startListeners: async function(events) {
+  // eslint-disable-next-line complexity
+  startListeners: async function(listeners) {
     const startedListeners = [];
     const window = !this.parentActor.isRootActor ? this.window : null;
 
-    for (const event of events) {
+    for (const event of listeners) {
       switch (event) {
         case "PageError":
           // Workers don't support this message type yet
@@ -790,9 +777,7 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
                 this
               );
             }
-            this.consoleProgressListener.startMonitor(
-              this.consoleProgressListener.MONITOR_FILE_ACTIVITY
-            );
+            this.consoleProgressListener.startMonitor();
             startedListeners.push(event);
           }
           break;
@@ -841,23 +826,22 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
       traits: this.traits,
     };
   },
-  /* eslint-enable complexity */
 
   /**
    * Handler for the "stopListeners" request.
    *
-   * @param array events
+   * @param array listeners
    *        An array of events to stop sent by the Web Console client.
    * @return object
    *        The response packet to send to the client: holds the
    *        stoppedListeners array.
    */
-  stopListeners: function(events) {
+  stopListeners: function(listeners) {
     const stoppedListeners = [];
 
     // If no specific listeners are requested to be detached, we stop all
     // listeners.
-    const eventsToDetach = events || [
+    const eventsToDetach = listeners || [
       "PageError",
       "ConsoleAPI",
       "NetworkActivity",
@@ -900,9 +884,7 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
           break;
         case "FileActivity":
           if (this.consoleProgressListener) {
-            this.consoleProgressListener.stopMonitor(
-              this.consoleProgressListener.MONITOR_FILE_ACTIVITY
-            );
+            this.consoleProgressListener.stopMonitor();
             this.consoleProgressListener = null;
           }
           stoppedListeners.push(event);
@@ -1038,14 +1020,14 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
     }
 
     return {
-      from: this.actorID,
       messages: messages,
     };
   },
 
   /**
-   * Handler for the "evaluateJSAsync" request. This method evaluates the given
-   * JavaScript string and sends back a packet with a unique ID.
+   * Handler for the "evaluateJSAsync" request. This method evaluates a given
+   * JavaScript string with an associated `resultID`.
+   *
    * The result will be returned later as an unsolicited `evaluationResult`,
    * that can be associated back to this request via the `resultID` field.
    *
@@ -1056,23 +1038,33 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
    *         `resultID` field.
    */
   evaluateJSAsync: async function(request) {
-    try {
-      // Execute the script that may pause.
-      let response = this.evaluateJS(request);
-      // Wait for any potential returned Promise.
-      response = await this._maybeWaitForResponseResult(response);
-      // Finally, emit an unsolicited evaluationResult packet with the evaluation result.
-      this.emit("evaluationResult", {
-        from: this.actorID,
-        type: "evaluationResult",
-        resultID: request.resultID,
-        ...response,
-      });
-      return;
-    } catch (e) {
-      const message = `Encountered error while waiting for Helper Result: ${e}`;
-      DevToolsUtils.reportException("evaluateJSAsync", Error(message));
-    }
+    // Use Date instead of UUID as this code is used by workers, which
+    // don't have access to the UUID XPCOM component.
+    // Also use a counter in order to prevent mixing up response when calling
+    // evaluateJSAsync during the same millisecond.
+    const resultID = Date.now() + "-" + this._evalCounter++;
+
+    // Execute the evaluation in the next event loop in order to immediately
+    // reply with the resultID.
+    DevToolsUtils.executeSoon(async () => {
+      try {
+        // Execute the script that may pause.
+        let response = this.evaluateJS(request);
+        // Wait for any potential returned Promise.
+        response = await this._maybeWaitForResponseResult(response);
+        // Finally, emit an unsolicited evaluationResult packet with the evaluation result.
+        this.emit("evaluationResult", {
+          type: "evaluationResult",
+          resultID,
+          ...response,
+        });
+        return;
+      } catch (e) {
+        const message = `Encountered error while waiting for Helper Result: ${e}`;
+        DevToolsUtils.reportException("evaluateJSAsync", Error(message));
+      }
+    });
+    return { resultID };
   },
 
   /**
@@ -1142,7 +1134,7 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
    * @return object
    *         The evaluation response packet.
    */
-  /* eslint-disable complexity */
+  // eslint-disable-next-line complexity
   evaluateJS: function(request) {
     const input = request.text;
     const timestamp = Date.now();
@@ -1233,7 +1225,8 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
             // in the debugger's compartment, and then call the "toString"
             // property from there.
             if (typeof error.unsafeDereference === "function") {
-              errorMessage = error.unsafeDereference().toString();
+              const rawError = error.unsafeDereference();
+              errorMessage = rawError ? rawError.toString() : "";
             }
           }
         }
@@ -1289,7 +1282,14 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
     let resultGrip;
     if (!awaitResult) {
       try {
-        resultGrip = this.createValueGrip(result);
+        const objectActor = this.parentActor.threadActor.getThreadLifetimeObject(
+          result
+        );
+        if (objectActor) {
+          resultGrip = this.parentActor.threadActor.createValueGrip(result);
+        } else {
+          resultGrip = this.createValueGrip(result);
+        }
       } catch (e) {
         errorMessage = e;
       }
@@ -1308,7 +1308,6 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
     }
 
     return {
-      from: this.actorID,
       input: input,
       result: resultGrip,
       awaitResult,
@@ -1323,7 +1322,6 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
       notes: errorNotes,
     };
   },
-  /* eslint-enable complexity */
 
   /**
    * The Autocomplete request handler.
@@ -1350,7 +1348,6 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
   ) {
     let dbgObject = null;
     let environment = null;
-    let hadDebuggee = false;
     let matches = [];
     let matchProp;
     let isElementAccess;
@@ -1383,8 +1380,6 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
           );
         }
       } else {
-        // This is the general case (non-paused debugger)
-        hadDebuggee = this.dbg.hasDebuggee(this.evalWindow);
         dbgObject = this.dbg.addDebuggee(this.evalWindow);
       }
 
@@ -1398,20 +1393,14 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
         authorizedEvaluations,
       });
 
-      if (!hadDebuggee && dbgObject) {
-        this.dbg.removeDebuggee(this.evalWindow);
-      }
-
       if (result === null) {
         return {
-          from: this.actorID,
           matches: null,
         };
       }
 
       if (result && result.isUnsafeGetter === true) {
         return {
-          from: this.actorID,
           isUnsafeGetter: true,
           getterPath: result.getterPath,
         };
@@ -1468,7 +1457,6 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
     }
 
     return {
-      from: this.actorID,
       matches,
       matchProp,
       isElementAccess: isElementAccess === true,
@@ -1634,12 +1622,9 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
     }
 
     if (msg.messageType == "PageError") {
-      const packet = {
-        from: this.actorID,
-        type: "pageError",
+      this.emit("pageError", {
         pageError: this.preparePageErrorForRemote(msg),
-      };
-      this.conn.send(packet);
+      });
     }
   },
 
@@ -1651,22 +1636,16 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
    *        The message we need to send to the client.
    */
   onConsoleServiceMessage: function(message) {
-    let packet;
     if (message instanceof Ci.nsIScriptError) {
-      packet = {
-        from: this.actorID,
-        type: "pageError",
+      this.emit("pageError", {
         pageError: this.preparePageErrorForRemote(message),
-      };
+      });
     } else {
-      packet = {
-        from: this.actorID,
-        type: "logMessage",
+      this.emit("logMessage", {
         message: this._createStringGrip(message.message),
         timeStamp: message.timeStamp,
-      };
+      });
     }
-    this.conn.send(packet);
   },
 
   getActorIdForInternalSourceId(id) {
@@ -1785,7 +1764,7 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
    *        The console API call we need to send to the remote client.
    */
   onConsoleAPICall: function(message) {
-    this.conn.sendActorEvent(this.actorID, "consoleAPICall", {
+    this.emit("consoleAPICall", {
       message: this.prepareConsoleMessageForRemote(message),
     });
   },
@@ -1919,6 +1898,39 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
   },
 
   /**
+   * Send a message to all the netmonitor message managers, and resolve when
+   * all of them replied with the expected responseName message.
+   *
+   * @param {String} messageName
+   *        Name of the message to send via the netmonitor message managers.
+   * @param {String} responseName
+   *        Name of the message that should be received when the message has
+   *        been processed by the netmonitor instance.
+   * @param {Object} args
+   *        argument object passed with the initial message.
+   */
+  async _sendMessageToNetmonitors(messageName, responseName, args) {
+    if (!this.netmonitors) {
+      return;
+    }
+    await Promise.all(
+      this.netmonitors.map(({ messageManager }) => {
+        const onResponseReceived = new Promise(resolve => {
+          messageManager.addMessageListener(
+            responseName,
+            function onResponse() {
+              messageManager.removeMessageListener(responseName, onResponse);
+              resolve();
+            }
+          );
+        });
+        messageManager.sendAsyncMessage(messageName, args);
+        return onResponseReceived;
+      })
+    );
+  },
+
+  /**
    * Block a request based on certain filtering options.
    *
    * Currently, an exact URL match is the only supported filter type.
@@ -1929,13 +1941,11 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
    *   An object containing a `url` key with a URL to block.
    */
   async blockRequest(filter) {
-    if (this.netmonitors) {
-      for (const { messageManager } of this.netmonitors) {
-        messageManager.sendAsyncMessage("debug:block-request", {
-          filter,
-        });
-      }
-    }
+    await this._sendMessageToNetmonitors(
+      "debug:block-request",
+      "debug:block-request:response",
+      { filter }
+    );
 
     return {};
   },
@@ -1951,13 +1961,29 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
    *   An object containing a `url` key with a URL to unblock.
    */
   async unblockRequest(filter) {
-    if (this.netmonitors) {
-      for (const { messageManager } of this.netmonitors) {
-        messageManager.sendAsyncMessage("debug:unblock-request", {
-          filter,
-        });
-      }
-    }
+    await this._sendMessageToNetmonitors(
+      "debug:unblock-request",
+      "debug:unblock-request:response",
+      { filter }
+    );
+
+    return {};
+  },
+
+  /**
+   * Sets the list of blocked request URLs as provided by the netmonitor frontend
+   *
+   * This match will be a (String).includes match, not an exact URL match
+   *
+   * @param object filter
+   *   An object containing a `url` key with a URL to unblock.
+   */
+  async setBlockedUrls(urls) {
+    await this._sendMessageToNetmonitors(
+      "debug:set-blocked-urls",
+      "debug:set-blocked-urls:response",
+      { urls }
+    );
 
     return {};
   },
@@ -1971,12 +1997,9 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
    *        The requested file URI.
    */
   onFileActivity: function(fileURI) {
-    const packet = {
-      from: this.actorID,
-      type: "fileActivity",
+    this.emit("fileActivity", {
       uri: fileURI,
-    };
-    this.conn.send(packet);
+    });
   },
 
   // End of event handlers for various listeners.
@@ -2058,13 +2081,8 @@ const WebConsoleActor = ActorClassWithSpec(webconsoleSpec, {
    *        Notification topic.
    */
   _onObserverNotification: function(subject, topic) {
-    switch (topic) {
-      case "last-pb-context-exited":
-        this.conn.send({
-          from: this.actorID,
-          type: "lastPrivateContextExited",
-        });
-        break;
+    if (topic === "last-pb-context-exited") {
+      this.emit("lastPrivateContextExited");
     }
   },
 

@@ -31,7 +31,6 @@ const DEVTOOLS_ENABLED_PREF = "devtools.enabled";
 
 const DEVTOOLS_POLICY_DISABLED_PREF = "devtools.policy.disabled";
 const PROFILER_POPUP_ENABLED_PREF = "devtools.performance.popup.enabled";
-const WEBIDE_ENABLED_PREF = "devtools.webide.enabled";
 
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
@@ -65,7 +64,7 @@ ChromeUtils.defineModuleGetter(
 ChromeUtils.defineModuleGetter(
   this,
   "ProfilerMenuButton",
-  "resource://devtools/client/performance-new/popup/menu-button.jsm"
+  "resource://devtools/client/performance-new/popup/menu-button.jsm.js"
 );
 
 // We don't want to spend time initializing the full loader here so we create
@@ -143,13 +142,6 @@ XPCOMUtils.defineLazyGetter(this, "KeyShortcuts", function() {
       ),
       modifiers,
     },
-    // Open ScratchPad window
-    {
-      id: "scratchpad",
-      shortcut: KeyShortcutsBundle.GetStringFromName("scratchpad.commandkey"),
-      modifiers: "shift",
-    },
-
     // The following keys are also registered in /client/definitions.js
     // and should be synced.
 
@@ -163,6 +155,12 @@ XPCOMUtils.defineLazyGetter(this, "KeyShortcuts", function() {
     {
       toolId: "webconsole",
       shortcut: KeyShortcutsBundle.GetStringFromName("webconsole.commandkey"),
+      modifiers,
+    },
+    // Key for opening the Debugger
+    {
+      toolId: "jsdebugger",
+      shortcut: KeyShortcutsBundle.GetStringFromName("jsdebugger.commandkey2"),
       modifiers,
     },
     // Key for opening the Network Monitor
@@ -210,22 +208,9 @@ XPCOMUtils.defineLazyGetter(this, "KeyShortcuts", function() {
     // like on Chrome DevTools.
     shortcuts.push({
       id: "inspectorMac",
+      toolId: "inspector",
       shortcut: KeyShortcutsBundle.GetStringFromName("inspector.commandkey"),
       modifiers: "accel,shift",
-    });
-  }
-
-  // Only add the WebIDE shortcut if WebIDE is enabled.
-  const isWebIDEEnabled = Services.prefs.getBoolPref(
-    WEBIDE_ENABLED_PREF,
-    false
-  );
-  if (isWebIDEEnabled) {
-    // Open WebIDE window
-    shortcuts.push({
-      id: "webide",
-      shortcut: KeyShortcutsBundle.GetStringFromName("webide.commandkey"),
-      modifiers: "shift",
     });
   }
 
@@ -267,7 +252,7 @@ function isProfilerButtonEnabled() {
 
 XPCOMUtils.defineLazyGetter(this, "ProfilerPopupBackground", function() {
   return ChromeUtils.import(
-    "resource://devtools/client/performance-new/popup/background.jsm"
+    "resource://devtools/client/performance-new/popup/background.jsm.js"
   );
 });
 
@@ -356,7 +341,9 @@ DevToolsStartup.prototype = {
     }
     if (flags.debugger) {
       this.commandLine = true;
-      this.handleDebuggerFlag(cmdLine);
+      const binaryPath =
+        typeof flags.debugger == "string" ? flags.debugger : null;
+      this.handleDebuggerFlag(cmdLine, binaryPath);
     }
 
     if (flags.debuggerServer) {
@@ -376,7 +363,6 @@ DevToolsStartup.prototype = {
     }
 
     const console = cmdLine.handleFlag("jsconsole", false);
-    const debuggerFlag = cmdLine.handleFlag("jsdebugger", false);
     const devtools = cmdLine.handleFlag("devtools", false);
 
     let debuggerServer;
@@ -389,6 +375,15 @@ DevToolsStartup.prototype = {
       // We get an error if the option is given but not followed by a value.
       // By catching and trying again, the value is effectively optional.
       debuggerServer = cmdLine.handleFlag("start-debugger-server", false);
+    }
+
+    let debuggerFlag;
+    try {
+      debuggerFlag = cmdLine.handleFlagWithParam("jsdebugger", false);
+    } catch (e) {
+      // We get an error if the option is given but not followed by a value.
+      // By catching and trying again, the value is effectively optional.
+      debuggerFlag = cmdLine.handleFlag("jsdebugger", false);
     }
 
     return { console, debugger: debuggerFlag, devtools, debuggerServer };
@@ -928,7 +923,7 @@ DevToolsStartup.prototype = {
     return remoteDebuggingEnabled;
   },
 
-  handleDebuggerFlag: function(cmdLine) {
+  handleDebuggerFlag: function(cmdLine, binaryPath) {
     if (!this._isRemoteDebuggingEnabled()) {
       return;
     }
@@ -946,7 +941,7 @@ DevToolsStartup.prototype = {
     const { BrowserToolboxProcess } = ChromeUtils.import(
       "resource://devtools/client/framework/ToolboxProcess.jsm"
     );
-    BrowserToolboxProcess.init();
+    BrowserToolboxProcess.init(null, null, null, binaryPath);
 
     if (pauseOnStartup) {
       // Spin the event loop until the debugger connects.
@@ -1016,7 +1011,7 @@ DevToolsStartup.prototype = {
         invisibleToDebugger: true,
       });
       const { DebuggerServer: debuggerServer } = serverLoader.require(
-        "devtools/server/main"
+        "devtools/server/debugger-server"
       );
       const { SocketListener } = serverLoader.require(
         "devtools/shared/security/socket"
@@ -1115,7 +1110,8 @@ DevToolsStartup.prototype = {
   /* eslint-disable max-len */
   helpInfo:
     "  --jsconsole        Open the Browser Console.\n" +
-    "  --jsdebugger       Open the Browser Toolbox.\n" +
+    "  --jsdebugger [<path>] Open the Browser Toolbox. Defaults to the local build\n" +
+    "                     but can be overridden by a firefox path.\n" +
     "  --wait-for-jsdebugger Spin event loop until JS debugger connects.\n" +
     "                     Enables debugging (some) application startup code paths.\n" +
     "                     Only has an effect when `--jsdebugger` is also supplied.\n" +
@@ -1155,7 +1151,7 @@ const JsonView = {
     // Register for messages coming from the child process.
     // This is never removed as there is no particular need to unregister
     // it during shutdown.
-    Services.ppmm.addMessageListener("devtools:jsonview:save", this.onSave);
+    Services.mm.addMessageListener("devtools:jsonview:save", this.onSave);
   },
 
   // Message handlers for events from child processes
@@ -1165,8 +1161,8 @@ const JsonView = {
    * in the parent process.
    */
   onSave: function(message) {
-    const chrome = Services.wm.getMostRecentWindow("navigator:browser");
-    const browser = chrome.gBrowser.selectedBrowser;
+    const browser = message.target;
+    const chrome = browser.ownerGlobal;
     if (message.data === null) {
       // Save original contents
       chrome.saveBrowser(browser);

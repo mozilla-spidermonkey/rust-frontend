@@ -5,13 +5,13 @@
  */
 
 dictionary WebrtcGlobalStatisticsReport {
-  sequence<RTCStatsReportInternal> reports;
+  sequence<RTCStatsReportInternal> reports = [];
 };
 
 callback WebrtcGlobalStatisticsCallback = void (WebrtcGlobalStatisticsReport reports);
 callback WebrtcGlobalLoggingCallback = void (sequence<DOMString> logMessages);
 
-[ChromeOnly]
+[ChromeOnly, Exposed=Window]
 namespace WebrtcGlobalInformation {
 
   [Throws]

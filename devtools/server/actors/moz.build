@@ -7,6 +7,7 @@
 DIRS += [
     'accessibility',
     'addon',
+    'descriptors',
     'emulation',
     'highlighters',
     'inspector',
@@ -38,6 +39,7 @@ DevToolsModules(
     'highlighters.css',
     'highlighters.js',
     'layout.js',
+    'manifest.js',
     'memory.js',
     'object.js',
     'pause-scoped.js',
@@ -46,7 +48,6 @@ DevToolsModules(
     'performance.js',
     'preference.js',
     'process.js',
-    'promises.js',
     'reflow.js',
     'root.js',
     'screenshot.js',

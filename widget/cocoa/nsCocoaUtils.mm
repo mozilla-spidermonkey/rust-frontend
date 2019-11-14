@@ -7,6 +7,7 @@
 
 #include <cmath>
 
+#include "AppleUtils.h"
 #include "gfx2DGlue.h"
 #include "gfxPlatform.h"
 #include "gfxUtils.h"
@@ -21,7 +22,7 @@
 #include "nsIAppShellService.h"
 #include "nsIOSPermissionRequest.h"
 #include "nsIRunnable.h"
-#include "nsIXULWindow.h"
+#include "nsIAppWindow.h"
 #include "nsIBaseWindow.h"
 #include "nsIServiceManager.h"
 #include "nsMenuUtilsX.h"
@@ -273,7 +274,7 @@ nsIWidget* nsCocoaUtils::GetHiddenWindowWidget() {
     return nullptr;
   }
 
-  nsCOMPtr<nsIXULWindow> hiddenWindow;
+  nsCOMPtr<nsIAppWindow> hiddenWindow;
   appShell->GetHiddenWindow(getter_AddRefs(hiddenWindow));
   if (!hiddenWindow) {
     // Don't warn, this happens during shutdown, bug 358607.
@@ -283,7 +284,7 @@ nsIWidget* nsCocoaUtils::GetHiddenWindowWidget() {
   nsCOMPtr<nsIBaseWindow> baseHiddenWindow;
   baseHiddenWindow = do_GetInterface(hiddenWindow);
   if (!baseHiddenWindow) {
-    NS_WARNING("Couldn't get nsIBaseWindow from hidden window (nsIXULWindow)");
+    NS_WARNING("Couldn't get nsIBaseWindow from hidden window (nsIAppWindow)");
     return nullptr;
   }
 
@@ -469,7 +470,8 @@ nsresult nsCocoaUtils::CreateNSImageFromCGImage(CGImageRef aInputImage, NSImage*
 }
 
 nsresult nsCocoaUtils::CreateNSImageFromImageContainer(imgIContainer* aImage, uint32_t aWhichFrame,
-                                                       NSImage** aResult, CGFloat scaleFactor) {
+                                                       NSImage** aResult, CGFloat scaleFactor,
+                                                       bool* aIsEntirelyBlack) {
   RefPtr<SourceSurface> surface;
   int32_t width = 0, height = 0;
   aImage->GetWidth(&width);
@@ -499,13 +501,14 @@ nsresult nsCocoaUtils::CreateNSImageFromImageContainer(imgIContainer* aImage, ui
 
     surface = drawTarget->Snapshot();
   } else {
-    surface = aImage->GetFrame(aWhichFrame, imgIContainer::FLAG_SYNC_DECODE);
+    surface = aImage->GetFrame(aWhichFrame,
+                               imgIContainer::FLAG_SYNC_DECODE | imgIContainer::FLAG_ASYNC_NOTIFY);
   }
 
   NS_ENSURE_TRUE(surface, NS_ERROR_FAILURE);
 
   CGImageRef imageRef = NULL;
-  nsresult rv = nsCocoaUtils::CreateCGImageFromSurface(surface, &imageRef);
+  nsresult rv = nsCocoaUtils::CreateCGImageFromSurface(surface, &imageRef, aIsEntirelyBlack);
   if (NS_FAILED(rv) || !imageRef) {
     return NS_ERROR_FAILURE;
   }
@@ -520,6 +523,41 @@ nsresult nsCocoaUtils::CreateNSImageFromImageContainer(imgIContainer* aImage, ui
   NSSize size = NSMakeSize(width, height);
   [*aResult setSize:size];
   [[[*aResult representations] objectAtIndex:0] setSize:size];
+  return NS_OK;
+}
+
+nsresult nsCocoaUtils::CreateDualRepresentationNSImageFromImageContainer(imgIContainer* aImage,
+                                                                         uint32_t aWhichFrame,
+                                                                         NSImage** aResult,
+                                                                         bool* aIsEntirelyBlack) {
+  int32_t width = 0, height = 0;
+  aImage->GetWidth(&width);
+  aImage->GetHeight(&height);
+  NSSize size = NSMakeSize(width, height);
+  *aResult = [[NSImage alloc] init];
+  [*aResult setSize:size];
+
+  NSImage* newRepresentation = nil;
+  nsresult rv = nsCocoaUtils::CreateNSImageFromImageContainer(
+      aImage, aWhichFrame, &newRepresentation, 1.0f, aIsEntirelyBlack);
+  if (NS_FAILED(rv) || !newRepresentation) {
+    return NS_ERROR_FAILURE;
+  }
+
+  [[[newRepresentation representations] objectAtIndex:0] setSize:size];
+  [*aResult addRepresentation:[[newRepresentation representations] objectAtIndex:0]];
+  [newRepresentation release];
+  newRepresentation = nil;
+
+  rv = nsCocoaUtils::CreateNSImageFromImageContainer(aImage, aWhichFrame, &newRepresentation, 2.0f,
+                                                     aIsEntirelyBlack);
+  if (NS_FAILED(rv) || !newRepresentation) {
+    return NS_ERROR_FAILURE;
+  }
+
+  [[[newRepresentation representations] objectAtIndex:0] setSize:size];
+  [*aResult addRepresentation:[[newRepresentation representations] objectAtIndex:0]];
+  [newRepresentation release];
   return NS_OK;
 }
 
@@ -545,6 +583,16 @@ NSString* nsCocoaUtils::ToNSString(const nsAString& aString) {
   }
   return [NSString stringWithCharacters:reinterpret_cast<const unichar*>(aString.BeginReading())
                                  length:aString.Length()];
+}
+
+// static
+NSString* nsCocoaUtils::ToNSString(const nsACString& aCString) {
+  if (aCString.IsEmpty()) {
+    return [NSString string];
+  }
+  return [[[NSString alloc] initWithBytes:aCString.BeginReading()
+                                   length:aCString.Length()
+                                 encoding:NSUTF8StringEncoding] autorelease];
 }
 
 // static
@@ -1040,6 +1088,45 @@ TimeStamp nsCocoaUtils::GetEventTimeStamp(NSTimeInterval aEventTime) {
   return TimeStamp::FromSystemTime(tick);
 }
 
+static NSString* ActionOnDoubleClickSystemPref() {
+  NSUserDefaults* userDefaults = [NSUserDefaults standardUserDefaults];
+  NSString* kAppleActionOnDoubleClickKey = @"AppleActionOnDoubleClick";
+  id value = [userDefaults objectForKey:kAppleActionOnDoubleClickKey];
+  if ([value isKindOfClass:[NSString class]]) {
+    return value;
+  }
+  return nil;
+}
+
+@interface NSWindow (NSWindowShouldZoomOnDoubleClick)
++ (BOOL)_shouldZoomOnDoubleClick;  // present on 10.7 and above
+@end
+
+bool nsCocoaUtils::ShouldZoomOnTitlebarDoubleClick() {
+  if ([NSWindow respondsToSelector:@selector(_shouldZoomOnDoubleClick)]) {
+    return [NSWindow _shouldZoomOnDoubleClick];
+  }
+  if (nsCocoaFeatures::OnElCapitanOrLater()) {
+    return [ActionOnDoubleClickSystemPref() isEqualToString:@"Maximize"];
+  }
+  return false;
+}
+
+bool nsCocoaUtils::ShouldMinimizeOnTitlebarDoubleClick() {
+  // Check the system preferences.
+  // We could also check -[NSWindow _shouldMiniaturizeOnDoubleClick]. It's not clear to me which
+  // approach would be preferable; neither is public API.
+  if (nsCocoaFeatures::OnElCapitanOrLater()) {
+    return [ActionOnDoubleClickSystemPref() isEqualToString:@"Minimize"];
+  }
+
+  // Pre-10.11:
+  NSUserDefaults* userDefaults = [NSUserDefaults standardUserDefaults];
+  NSString* kAppleMiniaturizeOnDoubleClickKey = @"AppleMiniaturizeOnDoubleClick";
+  id value1 = [userDefaults objectForKey:kAppleMiniaturizeOnDoubleClickKey];
+  return [value1 isKindOfClass:[NSValue class]] && [value1 boolValue];
+}
+
 // AVAuthorizationStatus is not needed unless we are running on 10.14.
 // However, on pre-10.14 SDK's, AVAuthorizationStatus and its enum values
 // are both defined and prohibited from use by compile-time checks. We
@@ -1139,6 +1226,79 @@ nsresult nsCocoaUtils::GetVideoCapturePermissionState(uint16_t& aPermissionState
 
 nsresult nsCocoaUtils::GetAudioCapturePermissionState(uint16_t& aPermissionState) {
   return GetPermissionState(AVMediaTypeAudio, aPermissionState);
+}
+
+// Set |aPermissionState| to PERMISSION_STATE_AUTHORIZED if this application
+// has already been granted permission to record the screen in macOS Security
+// and Privacy system settings. If we do not have permission (because the user
+// hasn't yet been asked yet or the user previously denied the prompt), use
+// PERMISSION_STATE_DENIED. Returns NS_ERROR_NOT_IMPLEMENTED on macOS 10.14
+// and earlier.
+nsresult nsCocoaUtils::GetScreenCapturePermissionState(uint16_t& aPermissionState) {
+  aPermissionState = nsIOSPermissionRequest::PERMISSION_STATE_NOTDETERMINED;
+
+  // Only attempt to check screen recording authorization status on 10.15+.
+  // On earlier macOS versions, screen recording is allowed by default.
+  if (@available(macOS 10.15, *)) {
+    // Unlike with camera and microphone capture, there is no support for
+    // checking the screen recording permission status. Instead, an application
+    // can use the presence of window names (which are privacy sensitive) in
+    // the window info list as an indication. The list only includes window
+    // names if the calling application has been authorized to record the
+    // screen. However, this does not allow us to differentiate between the
+    // denied and not-yet-decided state which is what is what
+    // AVAuthorizationStatusNotDetermined indicates for camera and microphone.
+    AutoCFRelease<CFArrayRef> windowArray =
+        CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
+    if (!windowArray) {
+      LOG("GetScreenCapturePermissionState() ERROR: got NULL window info list");
+      return NS_ERROR_UNEXPECTED;
+    }
+
+    CFIndex windowCount = CFArrayGetCount(windowArray);
+    LOG("GetScreenCapturePermissionState() returned %ld windows", windowCount);
+    if (windowCount == 0) {
+      return NS_ERROR_UNEXPECTED;
+    }
+
+    uint32_t windowsWithNames = 0;
+    for (CFIndex i = 0; i < windowCount; i++) {
+      CFDictionaryRef windowDict =
+          reinterpret_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(windowArray, i));
+
+      // Check for the presence of the window name
+      CFStringRef windowName =
+          reinterpret_cast<CFStringRef>(CFDictionaryGetValue(windowDict, kCGWindowName));
+      if (windowName) {
+        windowsWithNames++;
+      } else {
+        // We encountered a window with no name property indicating we
+        // don't have screen recording permission. No need to continue.
+        break;
+      }
+    }
+
+    LOG("GetScreenCapturePermissionState(): %d/%d named windows", windowsWithNames,
+        (uint32_t)windowCount);
+
+    if (windowsWithNames == windowCount) {
+      // All windows in the list have the name property. We have already
+      // been given permission to record the screen.
+      LOG("screen authorization status: authorized");
+      aPermissionState = nsIOSPermissionRequest::PERMISSION_STATE_AUTHORIZED;
+    } else {
+      // We don't have permission to record the screen and we can't
+      // differntiate between the scenario when the user explicitly
+      // denied permission and when the user has not been asked yet.
+      LOG("screen authorization status: not authorized");
+      aPermissionState = nsIOSPermissionRequest::PERMISSION_STATE_DENIED;
+    }
+
+    return NS_OK;
+  }
+
+  LOG("GetScreenCapturePermissionState(): nothing to do, not on 10.15+");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 nsresult nsCocoaUtils::RequestVideoCapturePermission(RefPtr<Promise>& aPromise) {
@@ -1252,6 +1412,21 @@ void nsCocoaUtils::ResolveAudioCapturePromises(bool aGranted) {
     ResolveMediaCapturePromises(aGranted, sAudioCapturePromises);
   }));
   NS_DispatchToMainThread(runnable.forget());
+}
+
+//
+// Attempt to trigger a dialog requesting permission to record the screen.
+// Unlike with the camera and microphone, there is no API to request permission
+// to record the screen or to receive a callback when permission is explicitly
+// allowed or denied. Here we attempt to trigger the dialog by attempting to
+// capture a 1x1 pixel section of the screen. The permission dialog is not
+// guaranteed to be displayed because the user may have already been prompted
+// in which case macOS does not display the dialog again.
+//
+nsresult nsCocoaUtils::MaybeRequestScreenCapturePermission() {
+  AutoCFRelease<CGImageRef> image =
+      CGDisplayCreateImageForRect(kCGDirectMainDisplay, CGRectMake(0, 0, 1, 1));
+  return NS_OK;
 }
 
 void nsCocoaUtils::ResolveVideoCapturePromises(bool aGranted) {

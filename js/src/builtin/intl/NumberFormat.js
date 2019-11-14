@@ -11,17 +11,6 @@
  */
 var numberFormatInternalProperties = {
     localeData: numberFormatLocaleData,
-    _availableLocales: null,
-    availableLocales: function() // eslint-disable-line object-shorthand
-    {
-        var locales = this._availableLocales;
-        if (locales)
-            return locales;
-
-        locales = intl_NumberFormat_availableLocales();
-        addSpecialMissingLanguageTags(locales);
-        return (this._availableLocales = locales);
-    },
     relevantExtensionKeys: ["nu"],
 };
 
@@ -41,7 +30,7 @@ function resolveNumberFormatInternals(lazyNumberFormatData) {
     var localeData = NumberFormat.localeData;
 
     // Step 8.
-    var r = ResolveLocale(callFunction(NumberFormat.availableLocales, NumberFormat),
+    var r = ResolveLocale("NumberFormat",
                           lazyNumberFormatData.requestedLocales,
                           lazyNumberFormatData.opt,
                           NumberFormat.relevantExtensionKeys,
@@ -136,7 +125,7 @@ function UnwrapNumberFormat(nf) {
     if (IsObject(nf) &&
         GuardToNumberFormat(nf) === null &&
         !IsWrappedNumberFormat(nf) &&
-        nf instanceof GetNumberFormatConstructor())
+        nf instanceof GetBuiltinConstructor("NumberFormat"))
     {
         nf = nf[intlFallbackSymbol()];
     }
@@ -417,6 +406,8 @@ function InitializeNumberFormat(numberFormat, thisValue, locales, options) {
     //     opt: // opt object computed in InitializeNumberFormat
     //       {
     //         localeMatcher: "lookup" / "best fit",
+    //
+    //         nu: string matching a Unicode extension type, // optional
     //       }
     //
     //     minimumIntegerDigits: integer ∈ [1, 21],
@@ -466,6 +457,18 @@ function InitializeNumberFormat(numberFormat, thisValue, locales, options) {
     // Steps 5-6.
     var matcher = GetOption(options, "localeMatcher", "string", ["lookup", "best fit"], "best fit");
     opt.localeMatcher = matcher;
+
+// https://github.com/tc39/ecma402/pull/175
+#ifdef NIGHTLY_BUILD
+    var numberingSystem = GetOption(options, "numberingSystem", "string", undefined, undefined);
+
+    if (numberingSystem !== undefined) {
+        numberingSystem = intl_ValidateAndCanonicalizeUnicodeExtensionType(numberingSystem,
+                                                                           "numberingSystem");
+    }
+
+    opt.nu = numberingSystem;
+#endif
 
     // Compute formatting options.
     // Step 12.
@@ -594,7 +597,7 @@ function InitializeNumberFormat(numberFormat, thisValue, locales, options) {
     // TODO: spec issue - The current spec doesn't have the IsObject check,
     // which means |Intl.NumberFormat.call(null)| is supposed to throw here.
     if (numberFormat !== thisValue && IsObject(thisValue) &&
-        thisValue instanceof GetNumberFormatConstructor())
+        thisValue instanceof GetBuiltinConstructor("NumberFormat"))
     {
         _DefineDataProperty(thisValue, intlFallbackSymbol(), numberFormat,
                             ATTR_NONENUMERABLE | ATTR_NONCONFIGURABLE | ATTR_NONWRITABLE);
@@ -632,8 +635,7 @@ function Intl_NumberFormat_supportedLocalesOf(locales /*, options*/) {
     var options = arguments.length > 1 ? arguments[1] : undefined;
 
     // Step 1.
-    var availableLocales = callFunction(numberFormatInternalProperties.availableLocales,
-                                        numberFormatInternalProperties);
+    var availableLocales = "NumberFormat";
 
     // Step 2.
     var requestedLocales = CanonicalizeLocaleList(locales);
@@ -678,23 +680,26 @@ function numberFormatLocaleData() {
 }
 
 /**
- * Function to be bound and returned by Intl.NumberFormat.prototype.format.
+ * Create function to be cached and returned by Intl.NumberFormat.prototype.format.
  *
  * Spec: ECMAScript Internationalization API Specification, 11.1.4.
  */
-function numberFormatFormatToBind(value) {
-    // Step 1.
-    var nf = this;
+function createNumberFormatFormat(nf) {
+    // This function is not inlined in $Intl_NumberFormat_format_get to avoid
+    // creating a call-object on each call to $Intl_NumberFormat_format_get.
+    return function(value) {
+        // Step 1 (implicit).
 
-    // Step 2.
-    assert(IsObject(nf), "InitializeNumberFormat called with non-object");
-    assert(GuardToNumberFormat(nf) !== null, "InitializeNumberFormat called with non-NumberFormat");
+        // Step 2.
+        assert(IsObject(nf), "InitializeNumberFormat called with non-object");
+        assert(GuardToNumberFormat(nf) !== null, "InitializeNumberFormat called with non-NumberFormat");
 
-    // Steps 3-4.
-    var x = ToNumeric(value);
+        // Steps 3-4.
+        var x = ToNumeric(value);
 
-    // Step 5.
-    return intl_FormatNumber(nf, x, /* formatToParts = */ false);
+        // Step 5.
+        return intl_FormatNumber(nf, x, /* formatToParts = */ false);
+    };
 }
 
 /**
@@ -719,11 +724,8 @@ function $Intl_NumberFormat_format_get() {
 
     // Step 4.
     if (internals.boundFormat === undefined) {
-        // Steps 4.a-b.
-        var F = callFunction(FunctionBind, numberFormatFormatToBind, nf);
-
-        // Step 4.c.
-        internals.boundFormat = F;
+        // Steps 4.a-c.
+        internals.boundFormat = createNumberFormatFormat(nf);
     }
 
     // Step 5.

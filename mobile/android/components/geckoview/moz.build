@@ -8,14 +8,11 @@ if CONFIG['MOZ_ANDROID_HISTORY']:
     EXPORTS += [
         'GeckoViewHistory.h',
     ]
-
     SOURCES += [
         'GeckoViewHistory.cpp',
     ]
-
-    LOCAL_INCLUDES += [
-        '/docshell/base',
-        '/dom/base',
+    XPCOM_MANIFESTS += [
+        'components.conf',
     ]
     include('/ipc/chromium/chromium-config.mozbuild')
 
@@ -24,6 +21,7 @@ EXTRA_COMPONENTS += [
     'GeckoViewExternalAppService.js',
     'GeckoViewPermission.js',
     'GeckoViewPrompt.js',
+    'GeckoViewPush.js',
     'GeckoViewStartup.js',
 ]
 

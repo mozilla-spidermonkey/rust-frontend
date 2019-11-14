@@ -16,7 +16,6 @@
 #include "mozilla/dom/BindContext.h"
 #include "mozilla/dom/Document.h"
 #include "nsIScriptGlobalObject.h"
-#include "nsIDOMWindow.h"
 #include "nsServiceManagerUtils.h"
 #include "nsContentList.h"
 #include "nsContentPolicyUtils.h"
@@ -1171,7 +1170,7 @@ nsresult nsImageLoadingContent::LoadImage(nsIURI* aNewURI, bool aForce,
       do_QueryInterface(static_cast<nsIImageLoadingContent*>(this));
   nsCOMPtr<nsIReferrerInfo> referrerInfo = new ReferrerInfo();
   referrerInfo->InitWithNode(thisNode);
-  nsCOMPtr<nsIURI> referrer = referrerInfo->GetOriginalReferrer();
+
   nsresult rv = nsContentUtils::LoadImage(
       aNewURI, thisNode, aDocument, triggeringPrincipal, 0, referrerInfo, this,
       loadFlags, content->LocalName(), getter_AddRefs(req), policyType,
@@ -1794,8 +1793,8 @@ bool nsImageLoadingContent::ScriptedImageObserver::CancelRequests() {
 
 // Only HTMLInputElement.h overrides this for <img> tags
 // all other subclasses use this one, i.e. ignore referrer attributes
-mozilla::net::ReferrerPolicy nsImageLoadingContent::GetImageReferrerPolicy() {
-  return mozilla::net::RP_Unset;
+mozilla::dom::ReferrerPolicy nsImageLoadingContent::GetImageReferrerPolicy() {
+  return mozilla::dom::ReferrerPolicy::_empty;
 }
 
 Element* nsImageLoadingContent::FindImageMap() {

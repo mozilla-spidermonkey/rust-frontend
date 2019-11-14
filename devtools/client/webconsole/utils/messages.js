@@ -1,5 +1,3 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -118,7 +116,7 @@ function transformPacket(packet) {
   }
 }
 
-/* eslint-disable complexity */
+// eslint-disable-next-line complexity
 function transformConsoleAPICallPacket(packet) {
   const { message } = packet;
 
@@ -246,8 +244,8 @@ function transformConsoleAPICallPacket(packet) {
       }
     : null;
 
-  if (type === "logPointError" || type === "logPoint") {
-    frame.origin = "logPoint";
+  if (frame && (type === "logPointError" || type === "logPoint")) {
+    frame.options = { logPoint: true };
   }
 
   return new ConsoleMessage({
@@ -267,7 +265,6 @@ function transformConsoleAPICallPacket(packet) {
     chromeContext: message.chromeContext,
   });
 }
-/* eslint-enable complexity */
 
 function transformNavigationMessagePacket(packet) {
   const { url } = packet;
@@ -312,7 +309,7 @@ function transformPageErrorPacket(packet) {
       }
     : null;
 
-  const matchesCSS = /^(?:CSS|Layout)\b/.test(pageError.category);
+  const matchesCSS = pageError.category == "CSS Parser";
   const messageSource = matchesCSS
     ? MESSAGE_SOURCE.CSS
     : MESSAGE_SOURCE.JAVASCRIPT;
@@ -407,6 +404,7 @@ function transformEvaluationResultPacket(packet) {
     timeStamp,
     notes,
     private: packet.private,
+    allowRepeating: false,
   });
 }
 

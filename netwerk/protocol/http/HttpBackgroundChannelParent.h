@@ -25,7 +25,7 @@ class HttpBackgroundChannelParent final : public PHttpBackgroundChannelParent {
  public:
   explicit HttpBackgroundChannelParent();
 
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(HttpBackgroundChannelParent)
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(HttpBackgroundChannelParent, final)
 
   // Try to find associated HttpChannelParent with the same
   // channel Id.
@@ -52,12 +52,6 @@ class HttpBackgroundChannelParent final : public PHttpBackgroundChannelParent {
   bool OnStopRequest(const nsresult& aChannelStatus,
                      const ResourceTimingStruct& aTiming,
                      const nsHttpHeaderArray& aResponseTrailers);
-
-  // To send OnProgress message over background channel.
-  bool OnProgress(const int64_t& aProgress, const int64_t& aProgressMax);
-
-  // To send OnStatus message over background channel.
-  bool OnStatus(const nsresult& aStatus);
 
   // To send FlushedForDiversion and DivertMessages messages
   // over background channel.

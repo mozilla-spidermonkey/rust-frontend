@@ -57,3 +57,21 @@ export const hashify = hash => {
 export const pemToDER = pem => {
   return stringToArrayBuffer(window.atob(pem));
 };
+
+export const normalizeToKebabCase = string => {
+  let kebabString = string
+    // Turn all dots into dashes
+    .replace(/\./g, "-")
+    // Turn whitespace into dashes
+    .replace(/\s+/g, "-")
+    // Remove all non-characters or numbers
+    .replace(/[^a-z0-9\-]/gi, "")
+    // De-dupe dashes
+    .replace(/--/g, "-")
+    // Remove trailing and leading dashes
+    .replace(/^-/g, "")
+    .replace(/-$/g, "")
+    .toLowerCase();
+
+  return kebabString;
+};

@@ -53,9 +53,6 @@
         "perf-reftest-singletons": {
             "tests": ["perf_reftest_singletons"]
         },
-        "speedometer": {
-            "tests": ["speedometer", "stylebench"]
-        },
         "tp5o": {
             "tests": ["tp5o"],
             "pagesets_name": "tp5n.zip"
@@ -70,6 +67,10 @@
         },
         "h1": {
             "tests": ["ts_paint_heavy"]
+        },
+        "realworld-webextensions": {
+            "tests": ["startup_about_home_paint_realworld_webextensions"],
+            "webextensions_zip": "webextensions.zip"
         }
     }
 }

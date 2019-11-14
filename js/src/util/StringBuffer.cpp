@@ -6,8 +6,11 @@
 
 #include "util/StringBuffer.h"
 
+#include "mozilla/Latin1.h"
 #include "mozilla/Range.h"
 #include "mozilla/Unused.h"
+
+#include <algorithm>
 
 #include "vm/JSObject-inl.h"
 #include "vm/StringType-inl.h"
@@ -57,12 +60,14 @@ bool StringBuffer::inflateChars() {
    * value >= sInlineCapacity. Since Latin1CharBuffer::sInlineCapacity >
    * TwoByteCharBuffer::sInlineCapacitychars, we'd always malloc here.
    */
-  size_t capacity = Max(reserved_, latin1Chars().length());
+  size_t capacity = std::max(reserved_, latin1Chars().length());
   if (!twoByte.reserve(capacity)) {
     return false;
   }
 
-  twoByte.infallibleAppend(latin1Chars().begin(), latin1Chars().length());
+  twoByte.infallibleGrowByUninitialized(latin1Chars().length());
+
+  mozilla::ConvertLatin1toUtf16(mozilla::AsChars(latin1Chars()), twoByte);
 
   cb.destroy();
   cb.construct<TwoByteCharBuffer>(std::move(twoByte));
@@ -70,16 +75,16 @@ bool StringBuffer::inflateChars() {
 }
 
 template <typename CharT>
-JSFlatString* StringBuffer::finishStringInternal(JSContext* cx) {
+JSLinearString* StringBuffer::finishStringInternal(JSContext* cx) {
   size_t len = length();
+
+  if (JSAtom* staticStr = cx->staticStrings().lookup(begin<CharT>(), len)) {
+    return staticStr;
+  }
 
   if (JSInlineString::lengthFits<CharT>(len)) {
     mozilla::Range<const CharT> range(begin<CharT>(), len);
     return NewInlineString<CanGC>(cx, range);
-  }
-
-  if (!append('\0')) {
-    return nullptr;
   }
 
   UniquePtr<CharT[], JS::FreePolicy> buf(
@@ -89,7 +94,7 @@ JSFlatString* StringBuffer::finishStringInternal(JSContext* cx) {
     return nullptr;
   }
 
-  JSFlatString* str = NewStringDontDeflate<CanGC>(cx, std::move(buf), len);
+  JSLinearString* str = NewStringDontDeflate<CanGC>(cx, std::move(buf), len);
   if (!str) {
     return nullptr;
   }
@@ -97,7 +102,7 @@ JSFlatString* StringBuffer::finishStringInternal(JSContext* cx) {
   return str;
 }
 
-JSFlatString* JSStringBuilder::finishString() {
+JSLinearString* JSStringBuilder::finishString() {
   size_t len = length();
   if (len == 0) {
     return cx_->names().empty;

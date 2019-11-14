@@ -43,7 +43,6 @@
 #include "nsIContentPolicy.h"
 #include "nsContentPolicyUtils.h"
 #include "nsError.h"
-#include "nsNodeUtils.h"
 #include "nsIScriptGlobalObject.h"
 #include "mozAutoDocUpdate.h"
 #include "nsMimeTypes.h"
@@ -54,6 +53,7 @@
 #include "mozilla/dom/DocumentType.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/HTMLTemplateElement.h"
+#include "mozilla/dom/MutationObservers.h"
 #include "mozilla/dom/ProcessingInstruction.h"
 #include "mozilla/dom/ScriptLoader.h"
 #include "mozilla/dom/txMozillaXSLTProcessor.h"
@@ -369,7 +369,7 @@ nsXMLContentSink::OnTransformDone(nsresult aResult, Document* aResultDocument) {
     NS_ASSERTION(mDocument->ComputeIndexOf(rootElement) != -1,
                  "rootElement not in doc?");
     mDocument->BeginUpdate();
-    nsNodeUtils::ContentInserted(mDocument, rootElement);
+    MutationObservers::NotifyContentInserted(mDocument, rootElement);
     mDocument->EndUpdate();
   }
 
@@ -522,14 +522,8 @@ nsresult nsXMLContentSink::CloseElement(nsIContent* aContent) {
 
   // Some HTML nodes need DoneAddingChildren() called to initialize
   // properly (eg form state restoration).
-  if ((nodeInfo->NamespaceID() == kNameSpaceID_XHTML &&
-       (nodeInfo->NameAtom() == nsGkAtoms::select ||
-        nodeInfo->NameAtom() == nsGkAtoms::textarea ||
-        nodeInfo->NameAtom() == nsGkAtoms::video ||
-        nodeInfo->NameAtom() == nsGkAtoms::audio ||
-        nodeInfo->NameAtom() == nsGkAtoms::head ||
-        nodeInfo->NameAtom() == nsGkAtoms::object)) ||
-      nodeInfo->NameAtom() == nsGkAtoms::title) {
+  if (nsIContent::RequiresDoneAddingChildren(nodeInfo->NamespaceID(),
+                                             nodeInfo->NameAtom())) {
     aContent->DoneAddingChildren(HaveNotifiedForCurrentContent());
   }
 
@@ -957,16 +951,14 @@ nsresult nsXMLContentSink::HandleStartElement(
 
   // Some HTML nodes need DoneCreatingElement() called to initialize
   // properly (eg form state restoration).
-  if (nodeInfo->NamespaceID() == kNameSpaceID_XHTML) {
-    if (nodeInfo->NameAtom() == nsGkAtoms::input ||
-        nodeInfo->NameAtom() == nsGkAtoms::button ||
-        nodeInfo->NameAtom() == nsGkAtoms::menuitem ||
-        nodeInfo->NameAtom() == nsGkAtoms::audio ||
-        nodeInfo->NameAtom() == nsGkAtoms::video) {
-      content->DoneCreatingElement();
-    } else if (nodeInfo->NameAtom() == nsGkAtoms::head && !mCurrentHead) {
-      mCurrentHead = content;
-    }
+  if (nsIContent::RequiresDoneCreatingElement(nodeInfo->NamespaceID(),
+                                              nodeInfo->NameAtom())) {
+    content->DoneCreatingElement();
+  }
+
+  if (nodeInfo->NamespaceID() == kNameSpaceID_XHTML &&
+      nodeInfo->NameAtom() == nsGkAtoms::head && !mCurrentHead) {
+    mCurrentHead = content;
   }
 
   if (IsMonolithicContainer(nodeInfo)) {

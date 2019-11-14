@@ -10,6 +10,12 @@ const { emulationSpec } = require("devtools/shared/specs/emulation");
 
 loader.lazyRequireGetter(
   this,
+  "ScreenshotActor",
+  "devtools/server/actors/screenshot",
+  true
+);
+loader.lazyRequireGetter(
+  this,
   "TouchSimulator",
   "devtools/server/actors/emulation/touch-simulator",
   true
@@ -42,7 +48,11 @@ const EmulationActor = protocol.ActorClassWithSpec(emulationSpec, {
   },
 
   destroy() {
-    this.stopPrintMediaSimulation();
+    if (this._printSimulationEnabled) {
+      this.stopPrintMediaSimulation();
+    }
+
+    this.setEmulatedColorScheme();
     this.clearDPPXOverride();
     this.clearNetworkThrottling();
     this.clearTouchEventsOverride();
@@ -54,6 +64,7 @@ const EmulationActor = protocol.ActorClassWithSpec(emulationSpec, {
 
     this.targetActor = null;
     this.docShell = null;
+    this._screenshotActor = null;
     this._touchSimulator = null;
 
     protocol.Actor.prototype.destroy.call(this);
@@ -70,6 +81,15 @@ const EmulationActor = protocol.ActorClassWithSpec(emulationSpec, {
     }
     const form = this.targetActor.form();
     return this.conn._getOrCreateActor(form.consoleActor);
+  },
+
+  get screenshotActor() {
+    if (!this._screenshotActor) {
+      this._screenshotActor = new ScreenshotActor(this.conn, this.targetActor);
+      this.manage(this._screenshotActor);
+    }
+
+    return this._screenshotActor;
   },
 
   get touchSimulator() {
@@ -134,6 +154,48 @@ const EmulationActor = protocol.ActorClassWithSpec(emulationSpec, {
 
     return false;
   },
+
+  /* Color scheme simulation */
+
+  /**
+   * Returns the currently emulated color scheme.
+   */
+  getEmulatedColorScheme() {
+    return this._emulatedColorScheme;
+  },
+
+  /**
+   * Sets the currently emulated color scheme or if an invalid value is given,
+   * the override is cleared.
+   */
+  setEmulatedColorScheme(scheme = null) {
+    if (this._emulatedColorScheme === scheme) {
+      return;
+    }
+
+    let internalColorScheme;
+    switch (scheme) {
+      case "light":
+        internalColorScheme = Ci.nsIContentViewer.PREFERS_COLOR_SCHEME_LIGHT;
+        break;
+      case "dark":
+        internalColorScheme = Ci.nsIContentViewer.PREFERS_COLOR_SCHEME_DARK;
+        break;
+      case "no-preference":
+        internalColorScheme =
+          Ci.nsIContentViewer.PREFERS_COLOR_SCHEME_NO_PREFERENCE;
+        break;
+      default:
+        internalColorScheme = Ci.nsIContentViewer.PREFERS_COLOR_SCHEME_NONE;
+    }
+
+    this._emulatedColorScheme = scheme;
+    this.docShell.contentViewer.emulatePrefersColorScheme(internalColorScheme);
+  },
+
+  // The current emulated color scheme value. It's possible values are listed in the
+  // COLOR_SCHEMES constant in devtools/client/inspector/rules/constants.
+  _emulatedColorScheme: null,
 
   /* Network Throttling */
 
@@ -393,6 +455,16 @@ const EmulationActor = protocol.ActorClassWithSpec(emulationSpec, {
 
     this.setScreenOrientation(type, angle);
     this.win.dispatchEvent(orientationChangeEvent);
+  },
+
+  async captureScreenshot() {
+    return this.screenshotActor.capture({});
+  },
+
+  async setDocumentInRDMPane(inRDMPane) {
+    if (this.docShell && this.docShell.document) {
+      this.docShell.document.inRDMPane = inRDMPane;
+    }
   },
 });
 

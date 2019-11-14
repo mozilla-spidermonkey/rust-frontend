@@ -131,9 +131,9 @@ void WebRenderBridgeChild::EndTransaction(
   }
 
   this->SendSetDisplayList(
-    std::move(aRenderRoots), mDestroyedActors, GetFwdTransactionId(),
-    aTransactionId, aContainsSVGGroup, aVsyncId, aVsyncStartTime,
-    aRefreshStartTime, aTxnStartTime, aTxnURL, fwdTime, payloads);
+      std::move(aRenderRoots), mDestroyedActors, GetFwdTransactionId(),
+      aTransactionId, aContainsSVGGroup, aVsyncId, aVsyncStartTime,
+      aRefreshStartTime, aTxnStartTime, aTxnURL, fwdTime, payloads);
 
   // With multiple render roots, we may not have sent all of our
   // mParentCommands, so go ahead and go through our mParentCommands and ensure
@@ -380,6 +380,9 @@ void WebRenderBridgeChild::RemoveExpiredFontKeys(
 }
 
 CompositorBridgeChild* WebRenderBridgeChild::GetCompositorBridgeChild() {
+  if (!IPCOpen()) {
+    return nullptr;
+  }
   return static_cast<CompositorBridgeChild*>(Manager());
 }
 
@@ -576,6 +579,9 @@ void WebRenderBridgeChild::SetWebRenderLayerManager(
 }
 
 ipc::IShmemAllocator* WebRenderBridgeChild::GetShmemAllocator() {
+  if (!IPCOpen()) {
+    return nullptr;
+  }
   return static_cast<CompositorBridgeChild*>(Manager());
 }
 
@@ -632,6 +638,10 @@ void WebRenderBridgeChild::DeallocResourceShmem(RefCountedShmem& aShm) {
 }
 
 void WebRenderBridgeChild::Capture() { this->SendCapture(); }
+
+void WebRenderBridgeChild::SetTransactionLogging(bool aValue) {
+  this->SendSetTransactionLogging(aValue);
+}
 
 }  // namespace layers
 }  // namespace mozilla

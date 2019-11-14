@@ -44,7 +44,10 @@ function Notification(context, notificationsMap, id, options) {
       undefined,
       undefined,
       undefined,
-      context.principal, // ensures that Close button is shown on macOS.
+      // Principal is not set because doing so reveals buttons to control
+      // notification preferences, which are currently not implemented for
+      // notifications triggered via this extension API (bug 1589693).
+      undefined,
       context.incognito
     );
   } catch (e) {
@@ -154,7 +157,7 @@ this.notifications = class extends ExtensionAPI {
           name: "notifications.onClicked",
           register: fire => {
             let listener = (event, notificationId) => {
-              fire.async(notificationId, true);
+              fire.async(notificationId);
             };
 
             notificationsMap.on("clicked", listener);
@@ -169,7 +172,7 @@ this.notifications = class extends ExtensionAPI {
           name: "notifications.onShown",
           register: fire => {
             let listener = (event, notificationId) => {
-              fire.async(notificationId, true);
+              fire.async(notificationId);
             };
 
             notificationsMap.on("shown", listener);

@@ -30,13 +30,16 @@ include PBackgroundSharedTypes;
 
 include "mozilla/GfxMessageUtils.h";
 include "mozilla/layers/LayersMessageUtils.h";
+include "mozilla/ipc/TransportSecurityInfoUtils.h";
 
 using mozilla::gfx::Matrix4x4 from "mozilla/gfx/Matrix.h";
+using mozilla::gfx::MaybeMatrix4x4 from "mozilla/gfx/Matrix.h";
 using mozilla::gfx::SurfaceFormat from "mozilla/gfx/Types.h";
 using mozilla::LayoutDeviceIntPoint from "Units.h";
 using mozilla::LayoutDevicePoint from "Units.h";
 using mozilla::ScreenIntPoint from "Units.h";
 using ScreenIntSize from "Units.h";
+using ScreenRect from "Units.h";
 using struct mozilla::layers::ScrollableLayerGuid from "mozilla/layers/ScrollableLayerGuid.h";
 using struct mozilla::layers::ZoomConstraints from "mozilla/layers/ZoomConstraints.h";
 using mozilla::layers::LayersId from "mozilla/layers/LayersTypes.h";
@@ -90,6 +93,7 @@ using mozilla::ScrollAxis from "mozilla/PresShellForwards.h";
 using mozilla::ScrollFlags from "mozilla/PresShellForwards.h";
 using struct InputFormData from "mozilla/dom/SessionStoreMessageUtils.h";
 using struct CollectedInputDataValue from "mozilla/dom/SessionStoreMessageUtils.h";
+using refcounted class nsITransportSecurityInfo from "nsITransportSecurityInfo.h";
 
 namespace mozilla {
 namespace dom {
@@ -141,7 +145,6 @@ struct WebProgressStateChangeData
   nsIURI documentURI;
 };
 
-
 struct WebProgressLocationChangeData
 {
   bool isNavigating;
@@ -152,11 +155,18 @@ struct WebProgressLocationChangeData
   nsString title;
   nsString charset;
   nsIURI documentURI;
-  PrincipalInfo contentPrincipal;
-  PrincipalInfo contentStoragePrincipal;
-  CSPInfo? csp;
+  nsIPrincipal contentPrincipal;
+  nsIPrincipal contentStoragePrincipal;
+  nsIPrincipal contentBlockingAllowListPrincipal;
+  nsIContentSecurityPolicy csp;
   nsIReferrerInfo referrerInfo;
   uint64_t? requestContextID;
+};
+
+struct WebProgressSecurityChangeData
+{
+  nsITransportSecurityInfo securityInfo;
+  bool isSecureContext;
 };
 
 /**
@@ -166,7 +176,7 @@ struct WebProgressLocationChangeData
  * See `dom/docs/Fission-IPC-Diagram.svg` for an overview of the DOM IPC
  * actors.
  */
-nested(upto inside_cpow) sync protocol PBrowser
+nested(upto inside_cpow) sync refcounted protocol PBrowser
 {
     manager PContent;
 
@@ -204,16 +214,10 @@ parent:
     async PPaymentRequest();
 
     /**
-     * Construct a new WindowGlobal actor for a window global in the given
-     * BrowsingContext and with the given principal.
-     */
-    async PWindowGlobal(WindowGlobalInit init);
-
-    /**
      * Construct a new Remote iframe actor.
      */
     async PBrowserBridge(nsString aPresentationURL, nsString aRemoteType,
-                         BrowsingContext aBrowsingContext, uint32_t aChromeFlags,
+                         BrowsingContext aContext, uint32_t aChromeFlags,
                          TabId tabId);
 
     /**
@@ -604,6 +608,10 @@ parent:
                          RequestData aRequestData, nsresult aStatus,
                          nsString aMessage);
 
+    async OnSecurityChange(WebProgressData? aWebProgressData,
+                           RequestData aRequestData, uint32_t aState,
+                           WebProgressSecurityChangeData? aSecurityChangeData);
+
     async OnContentBlockingEvent(WebProgressData? aWebProgressData,
                                  RequestData aRequestData, uint32_t aEvent);
 
@@ -613,6 +621,8 @@ parent:
                              nsCString[] aPositions, int32_t[] aPositionDescendants,
                              InputFormData[] aInputs, CollectedInputDataValue[] aIdVals,
                              CollectedInputDataValue[] aXPathVals,
+                             nsCString[] aOrigins, nsString[] aKeys,
+                             nsString[] aValues, bool aIsFullStorage,
                              uint32_t aFlushId, bool aIsFinal, uint32_t aEpoch);
 
 child:
@@ -670,7 +680,7 @@ parent:
                             Shmem? visualData,
                             uint32_t stride, SurfaceFormat format,
                             LayoutDeviceIntRect dragRect,
-                            nsIPrincipal principal);
+                            nsIPrincipal principal, nsIContentSecurityPolicy csp);
 
     // After a compositor reset, it is necessary to reconnect each layers ID to
     // the compositor of the widget that will render those layers. Note that
@@ -695,9 +705,11 @@ parent:
     sync ResetPrefersReducedMotionOverrideForTest();
 
     /**
-     * Fire a `load` event on this PBrowser's embedding frame element.
+     * Called once this PBrowser's OOP subdoc no longer blocks its
+     * embedding element's and embedding doc's 'load' events.
      */
-    async FireFrameLoadEvent(bool aIsTrusted);
+    async MaybeFireEmbedderLoadEvents(bool aIsTrusted,
+                                      bool aFireLoadAtEmbeddingElement);
 
     async ScrollRectIntoView(nsRect aRect, ScrollAxis aVertical,
                              ScrollAxis aHorizontal, ScrollFlags aScrollFlags,
@@ -731,7 +743,8 @@ child:
 
     async SizeModeChanged(nsSizeMode sizeMode);
 
-    async ChildToParentMatrix(Matrix4x4 aMatrix);
+    async ChildToParentMatrix(MaybeMatrix4x4 aMatrix,
+                              ScreenRect aRemoteDocumentRect);
 
     async SetIsUnderHiddenEmbedderElement(bool aIsUnderHiddenEmbedderElement);
 
@@ -829,7 +842,8 @@ child:
      * don't need support RealDragEvent with input priority.
      */
     async RealDragEvent(WidgetDragEvent aEvent, uint32_t aDragAction,
-                        uint32_t aDropEffect, nsIPrincipal aPrincipal);
+                        uint32_t aDropEffect, nsIPrincipal aPrincipal,
+                        nsIContentSecurityPolicy csp);
 
     async PluginEvent(WidgetPluginEvent aEvent);
 
@@ -881,15 +895,12 @@ child:
      * @param aEnabled
      *        True if the child should render and upload layers, false if the
      *        child should clear layers.
-     * @param aForceRepaint
-     *        True if the child should force a paint even if it's already
-     *        visible.
      * @param aEpoch
      *        The layer observer epoch for this activation. This message should be
      *        ignored if this epoch has already been observed (via
      *        PaintWhileInterruptingJS).
      */
-    async RenderLayers(bool aEnabled, bool aForceRepaint, LayersObserverEpoch aEpoch);
+    async RenderLayers(bool aEnabled, LayersObserverEpoch aEpoch);
 child:
     /**
      * Notify the child that it shouldn't paint the offscreen displayport.
@@ -1014,16 +1025,33 @@ child:
     /**
      * Requests the content blocking log, which is sent back in response.
      */
-    async GetContentBlockingLog() returns(nsCString log, bool success);
+    async GetContentBlockingLog() returns(IPCStream ipcStream, bool success);
 
-    async SkipBrowsingContextDetach();
+    async SkipBrowsingContextDetach() returns (bool success);
+
 parent:
+    /**
+     * Fetches whether this window supports protected media, which is sent back in response.
+     */
+    async IsWindowSupportingProtectedMedia(uint64_t aOuterWindowID) returns(bool isSupported);
+
+    /**
+    * Fetches whether this window supports WebVR, which is sent back in response.
+    */
+    async IsWindowSupportingWebVR(uint64_t aOuterWindowID) returns(bool isSupported);
+
     /** Records a history visit. */
     async VisitURI(URIParams aURI, URIParams? aLastVisitedURI,
                    uint32_t aFlags);
 
     /** Fetches the visited status for an array of URIs (Android-only). */
     async QueryVisitedState(URIParams[] aURIs);
+
+    /**
+     * Construct a new WindowGlobal for an existing global in the content process
+     */
+    async NewWindowGlobal(ManagedEndpoint<PWindowGlobalParent> aEndpoint,
+                          WindowGlobalInit aInit);
 
 /*
  * FIXME: write protocol!

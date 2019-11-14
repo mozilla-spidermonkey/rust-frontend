@@ -36,7 +36,7 @@
 #define TYPED_ARRAY_CLASP(TYPE) (&TypedArrayObject::classes[Scalar::TYPE])
 #define ERROR_CLASP(TYPE) (&ErrorObject::classes[TYPE])
 
-#ifdef EXPOSE_INTL_API
+#ifdef ENABLE_INTL_API
 #  define IF_INTL(REAL, IMAGINARY) REAL
 #else
 #  define IF_INTL(REAL, IMAGINARY) IMAGINARY
@@ -48,14 +48,7 @@
 #  define IF_TYPEDOBJ(REAL, IMAGINARY) IMAGINARY
 #endif
 
-#ifdef ENABLE_SHARED_ARRAY_BUFFER
-#  define IF_SAB(REAL, IMAGINARY) REAL
-#else
-#  define IF_SAB(REAL, IMAGINARY) IMAGINARY
-#endif
-
-#define JS_FOR_PROTOTYPES_(REAL, IMAGINARY, REAL_IF_INTL, REAL_IF_BDATA,     \
-                           REAL_IF_SAB)                                      \
+#define JS_FOR_PROTOTYPES_(REAL, IMAGINARY, REAL_IF_INTL, REAL_IF_BDATA)     \
   IMAGINARY(Null, InitNullClass, dummy)                                      \
   REAL(Object, InitViaClassSpec, OCLASP(Plain))                              \
   REAL(Function, InitViaClassSpec, &JSFunction::class_)                      \
@@ -101,6 +94,14 @@
   REAL(Symbol, InitSymbolClass, OCLASP(Symbol))                              \
   REAL(SharedArrayBuffer, InitViaClassSpec, OCLASP(SharedArrayBuffer))       \
   REAL_IF_INTL(Intl, InitIntlClass, CLASP(Intl))                             \
+  REAL_IF_INTL(Collator, InitViaClassSpec, OCLASP(Collator))                 \
+  REAL_IF_INTL(DateTimeFormat, InitViaClassSpec, OCLASP(DateTimeFormat))     \
+  REAL_IF_INTL(Locale, InitViaClassSpec, OCLASP(Locale))                     \
+  REAL_IF_INTL(ListFormat, InitViaClassSpec, OCLASP(ListFormat))             \
+  REAL_IF_INTL(NumberFormat, InitViaClassSpec, OCLASP(NumberFormat))         \
+  REAL_IF_INTL(PluralRules, InitViaClassSpec, OCLASP(PluralRules))           \
+  REAL_IF_INTL(RelativeTimeFormat, InitViaClassSpec,                         \
+               OCLASP(RelativeTimeFormat))                                   \
   REAL_IF_BDATA(TypedObject, InitTypedObjectModuleObject,                    \
                 OCLASP(TypedObjectModule))                                   \
   REAL(Reflect, InitReflect, nullptr)                                        \
@@ -110,6 +111,9 @@
   REAL(Atomics, InitAtomicsClass, OCLASP(Atomics))                           \
   REAL(SavedFrame, InitViaClassSpec, &js::SavedFrame::class_)                \
   REAL(Promise, InitViaClassSpec, OCLASP(Promise))                           \
+  REAL(AsyncFunction, InitAsyncFunction, nullptr)                            \
+  REAL(GeneratorFunction, InitGeneratorFunction, nullptr)                    \
+  REAL(AsyncGeneratorFunction, InitAsyncGeneratorFunction, nullptr)          \
   REAL(ReadableStream, InitViaClassSpec, &js::ReadableStream::class_)        \
   REAL(ReadableStreamDefaultReader, InitViaClassSpec,                        \
        &js::ReadableStreamDefaultReader::class_)                             \
@@ -117,9 +121,11 @@
        &js::ReadableStreamDefaultController::class_)                         \
   REAL(ReadableByteStreamController, InitViaClassSpec,                       \
        &js::ReadableByteStreamController::class_)                            \
-  IMAGINARY(WritableStream, dummy, dummy)                                    \
-  IMAGINARY(WritableStreamDefaultWriter, dummy, dummy)                       \
-  IMAGINARY(WritableStreamDefaultController, dummy, dummy)                   \
+  REAL(WritableStream, InitViaClassSpec, &js::WritableStream::class_)        \
+  REAL(WritableStreamDefaultController, InitViaClassSpec,                    \
+       &js::WritableStreamDefaultController::class_)                         \
+  REAL(WritableStreamDefaultWriter, InitViaClassSpec,                        \
+       &js::WritableStreamDefaultWriter::class_)                             \
   REAL(ByteLengthQueuingStrategy, InitViaClassSpec,                          \
        &js::ByteLengthQueuingStrategy::class_)                               \
   REAL(CountQueuingStrategy, InitViaClassSpec,                               \
@@ -129,11 +135,12 @@
   IMAGINARY(WasmInstance, dummy, dummy)                                      \
   IMAGINARY(WasmMemory, dummy, dummy)                                        \
   IMAGINARY(WasmTable, dummy, dummy)                                         \
-  IMAGINARY(WasmGlobal, dummy, dummy)
+  IMAGINARY(WasmGlobal, dummy, dummy)                                        \
+  REAL(FinalizationGroup, InitViaClassSpec, OCLASP(FinalizationGroup))
 
 #define JS_FOR_PROTOTYPES(REAL, IMAGINARY)                      \
   JS_FOR_PROTOTYPES_(REAL, IMAGINARY, IF_INTL(REAL, IMAGINARY), \
-                     IF_TYPEDOBJ(REAL, IMAGINARY), IF_SAB(REAL, IMAGINARY))
+                     IF_TYPEDOBJ(REAL, IMAGINARY))
 
 #define JS_FOR_EACH_PROTOTYPE(MACRO) JS_FOR_PROTOTYPES(MACRO, MACRO)
 

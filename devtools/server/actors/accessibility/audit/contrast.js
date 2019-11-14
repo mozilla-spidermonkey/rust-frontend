@@ -13,12 +13,6 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
-  "getBounds",
-  "devtools/server/actors/highlighters/utils/accessibility",
-  true
-);
-loader.lazyRequireGetter(
-  this,
   "getCurrentZoom",
   "devtools/shared/layout/utils",
   true
@@ -37,7 +31,7 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
-  "getContrastRatioScore",
+  "getContrastRatioAgainstBackground",
   "devtools/shared/accessibility",
   true
 );
@@ -119,33 +113,58 @@ function getImageCtx(win, bounds, zoom, scale, node) {
 }
 
 /**
- * Calculates the contrast ratio of the referenced DOM node.
+ * Calculate the transformed RGBA when a color matrix is set in docShell by
+ * multiplying the color matrix with the RGBA vector.
  *
- * @param  {DOMNode} node
- *         The node for which we want to calculate the contrast ratio.
- * @param  {Object}  options
- *         - bounds   {Object}
- *                    Bounds for the accessible object.
- *         - win      {Object}
- *                    Target window.
- *
- * @return {Object}
- *         An object that may contain one or more of the following fields: error,
- *         isLargeText, value, min, max values for contrast.
+ * @param  {Array}  rgba
+ *         Original RGBA array which we want to transform.
+ * @param  {Array}  colorMatrix
+ *         Flattened 4x5 color matrix that is set in docShell.
+ *         A 4x5 matrix of the form:
+ *           1  2  3  4  5
+ *           6  7  8  9  10
+ *           11 12 13 14 15
+ *           16 17 18 19 20
+ *         will be set in docShell as:
+ *           [1, 6, 11, 16, 2, 7, 12, 17, 3, 8, 13, 18, 4, 9, 14, 19, 5, 10, 15, 20]
+ * @return {Array}
+ *         Transformed RGBA after the color matrix is multiplied with the original RGBA.
  */
-async function getContrastRatioFor(node, options = {}) {
-  const computedStyle = CssLogic.getComputedStyle(node);
-  const props = computedStyle ? getTextProperties(computedStyle) : null;
+function getTransformedRGBA(rgba, colorMatrix) {
+  const transformedRGBA = [0, 0, 0, 0];
 
-  if (!props) {
-    return {
-      error: true,
-    };
+  // Only use the first four columns of the color matrix corresponding to R, G, B and A
+  // color channels respectively. The fifth column is a fixed offset that does not need
+  // to be considered for the matrix multiplication. We end up multiplying a 4x4 color
+  // matrix with a 4x1 RGBA vector.
+  for (let i = 0; i < 16; i++) {
+    const row = i % 4;
+    const col = Math.floor(i / 4);
+    transformedRGBA[row] += colorMatrix[i] * rgba[col];
   }
 
-  const { color, isLargeText, isBoldText, size, opacity } = props;
-  const bounds = getBounds(options.win, options.bounds);
-  const zoom = 1 / getCurrentZoom(options.win);
+  return transformedRGBA;
+}
+
+/**
+ * Find RGBA or a range of RGBAs for the background pixels under the text.
+ *
+ * @param  {DOMNode}  node
+ *         Node for which we want to get the background color data.
+ * @param  {Object}  options
+ *         - bounds       {Object}
+ *                        Bounds for the accessible object.
+ *         - win          {Object}
+ *                        Target window.
+ *         - size         {Number}
+ *                        Font size of the selected text node
+ *         - isBoldText   {Boolean}
+ *                        True if selected text node is bold
+ * @return {Object}
+ *         Object with one or more of the following RGBA fields: value, min, max
+ */
+function getBackgroundFor(node, { win, bounds, size, isBoldText }) {
+  const zoom = 1 / getCurrentZoom(win);
   // When calculating colour contrast, we traverse image data for text nodes that are
   // drawn both with and without transparent text. Image data arrays are typically really
   // big. In cases when the font size is fairly large or when the page is zoomed in image
@@ -169,8 +188,8 @@ async function getContrastRatioFor(node, options = {}) {
   // is zoomed out (scaling in this case would've been scaling up).
   scale = scale > 1 ? 1 : scale;
 
-  const textContext = getImageCtx(options.win, bounds, zoom, scale);
-  const backgroundContext = getImageCtx(options.win, bounds, zoom, scale, node);
+  const textContext = getImageCtx(win, bounds, zoom, scale);
+  const backgroundContext = getImageCtx(win, bounds, zoom, scale, node);
 
   const { data: dataText } = textContext.getImageData(
     0,
@@ -185,7 +204,7 @@ async function getContrastRatioFor(node, options = {}) {
     bounds.height * scale
   );
 
-  const rgba = await worker.performTask(
+  return worker.performTask(
     "getBgRGBA",
     {
       dataTextBuf: dataText.buffer,
@@ -193,6 +212,45 @@ async function getContrastRatioFor(node, options = {}) {
     },
     [dataText.buffer, dataBackground.buffer]
   );
+}
+
+/**
+ * Calculates the contrast ratio of the referenced DOM node.
+ *
+ * @param  {DOMNode} node
+ *         The node for which we want to calculate the contrast ratio.
+ * @param  {Object}  options
+ *         - bounds                           {Object}
+ *                                            Bounds for the accessible object.
+ *         - win                              {Object}
+ *                                            Target window.
+ *         - appliedColorMatrix               {Array|null}
+ *                                            Simulation color matrix applied to
+ *                                            to the viewport, if it exists.
+ * @return {Object}
+ *         An object that may contain one or more of the following fields: error,
+ *         isLargeText, value, min, max values for contrast.
+ */
+async function getContrastRatioFor(node, options = {}) {
+  const computedStyle = CssLogic.getComputedStyle(node);
+  const props = computedStyle ? getTextProperties(computedStyle) : null;
+
+  if (!props) {
+    return {
+      error: true,
+    };
+  }
+
+  const { isLargeText, isBoldText, size, opacity } = props;
+  const { appliedColorMatrix } = options;
+  const color = appliedColorMatrix
+    ? getTransformedRGBA(props.color, appliedColorMatrix)
+    : props.color;
+  let rgba = await getBackgroundFor(node, {
+    ...options,
+    isBoldText,
+    size,
+  });
 
   if (!rgba) {
     // Fallback (original) contrast calculation algorithm. It tries to get the
@@ -215,49 +273,35 @@ async function getContrastRatioFor(node, options = {}) {
       a = opacity * a;
     }
 
-    const value = colorUtils.calculateContrastRatio([r, g, b, a], color);
-    return {
-      value,
-      color,
-      backgroundColor: [r, g, b, a],
-      isLargeText,
-      score: getContrastRatioScore(value, isLargeText),
-    };
+    return getContrastRatioAgainstBackground(
+      {
+        value: appliedColorMatrix
+          ? getTransformedRGBA([r, g, b, a], appliedColorMatrix)
+          : [r, g, b, a],
+      },
+      {
+        color,
+        isLargeText,
+      }
+    );
   }
 
-  if (rgba.value) {
-    const value = colorUtils.calculateContrastRatio(rgba.value, color);
-    return {
-      value,
-      color,
-      backgroundColor: rgba.value,
-      isLargeText,
-      score: getContrastRatioScore(value, isLargeText),
-    };
+  if (appliedColorMatrix) {
+    rgba = rgba.value
+      ? {
+          value: getTransformedRGBA(rgba.value, appliedColorMatrix),
+        }
+      : {
+          min: getTransformedRGBA(rgba.min, appliedColorMatrix),
+          max: getTransformedRGBA(rgba.max, appliedColorMatrix),
+        };
   }
 
-  let min = colorUtils.calculateContrastRatio(rgba.min, color);
-  let max = colorUtils.calculateContrastRatio(rgba.max, color);
-
-  // Flip minimum and maximum contrast ratios if necessary.
-  if (min > max) {
-    [min, max] = [max, min];
-    [rgba.min, rgba.max] = [rgba.max, rgba.min];
-  }
-
-  const score = getContrastRatioScore(min, isLargeText);
-
-  return {
-    min,
-    max,
+  return getContrastRatioAgainstBackground(rgba, {
     color,
-    backgroundColorMin: rgba.min,
-    backgroundColorMax: rgba.max,
     isLargeText,
-    score,
-    scoreMin: score,
-    scoreMax: getContrastRatioScore(max, isLargeText),
-  };
+  });
 }
 
 exports.getContrastRatioFor = getContrastRatioFor;
+exports.getBackgroundFor = getBackgroundFor;

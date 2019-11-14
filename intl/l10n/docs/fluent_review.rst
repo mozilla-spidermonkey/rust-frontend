@@ -53,7 +53,7 @@ comment explaining the format of the variable, and what kind of content it will
 be replaced with. This is the format suggested for such comments:
 
 
-.. code-block:: properties
+.. code-block:: fluent
 
   # This string is used on a new line below the add-on name
   # Variables:
@@ -127,7 +127,7 @@ Message References
 Consider the following example:
 
 
-.. code-block:: properties
+.. code-block:: fluent
 
   newtab-search-box-search-the-web-text = Search the Web
   newtab-search-box-search-the-web-input =
@@ -146,7 +146,7 @@ On the other hand, this approach is helpful if, for example, you want to
 reference another element of the UI in your message:
 
 
-.. code-block:: properties
+.. code-block:: fluent
 
   help-button = Help
   help-explanation = Click the { help-button} to access support
@@ -176,7 +176,7 @@ Variants and plurals
 Consider the following example:
 
 
-.. code-block:: properties
+.. code-block:: fluent
 
   items-selected =
       { $num ->
@@ -191,7 +191,7 @@ variant covered, since variants are private by design. The correct approach for
 the example would be to have a separate message for the :js:`0` case:
 
 
-.. code-block:: properties
+.. code-block:: fluent
 
   # Separate messages which serve different purposes.
   items-select = Select items
@@ -217,7 +217,7 @@ In general, also avoid putting a selector in the middle of a sentence, like in
 the example below:
 
 
-.. code-block:: properties
+.. code-block:: fluent
 
   items-selected =
       { $num ->
@@ -249,15 +249,19 @@ Firefox.
 
   Currently, there’s an `issue`__ preventing warnings to be displayed in
   Phabricator. Checks can be run locally using :bash:`./mach lint -l l10n -W`.
-	
-  __ https://github.com/mozilla/code-review/issues/32
-	
 
-Migrating Legacy Strings
-========================
+  __ https://github.com/mozilla/code-review/issues/32
+
+
+Migrating Strings From Legacy or Fluent Files
+=============================================
 
 If a patch is moving legacy strings (.properties, .DTD) to Fluent, it should
-also include a recipe to migrate existing strings to FTL messages.
+also include a recipe to migrate existing strings to FTL messages. The same is
+applicable if a patch moves existing Fluent messages to a different file, or
+changes the morphology of existing messages without actual changes to the
+content.
+
 Documentation on how to write and test migration recipes is available in `this
 page`__.
 

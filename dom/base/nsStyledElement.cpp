@@ -11,6 +11,7 @@
 #include "nsAttrValueInlines.h"
 #include "mozilla/dom/ElementInlines.h"
 #include "mozilla/dom/MutationEventBinding.h"
+#include "mozilla/dom/MutationObservers.h"
 #include "mozilla/InternalMutationEvent.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "nsDOMCSSDeclaration.h"
@@ -96,8 +97,8 @@ void nsStyledElement::InlineStyleDeclarationWillChange(
   aData.mModType =
       modification ? static_cast<uint8_t>(MutationEvent_Binding::MODIFICATION)
                    : static_cast<uint8_t>(MutationEvent_Binding::ADDITION);
-  nsNodeUtils::AttributeWillChange(this, kNameSpaceID_None, nsGkAtoms::style,
-                                   aData.mModType);
+  MutationObservers::NotifyAttributeWillChange(
+      this, kNameSpaceID_None, nsGkAtoms::style, aData.mModType);
 
   // XXXsmaug In order to make attribute handling more consistent, consider to
   //         call BeforeSetAttr and pass kCallAfterSetAttr to
@@ -133,7 +134,7 @@ nsICSSDeclaration* nsStyledElement::Style() {
 
   if (!slots->mStyle) {
     // Just in case...
-    ReparseStyleAttribute(true, false);
+    ReparseStyleAttribute(/* aForceInDataDoc */ true);
 
     slots->mStyle = new nsDOMCSSAttributeDeclaration(this, false);
     SetMayHaveStyle();
@@ -142,14 +143,12 @@ nsICSSDeclaration* nsStyledElement::Style() {
   return slots->mStyle;
 }
 
-nsresult nsStyledElement::ReparseStyleAttribute(bool aForceInDataDoc,
-                                                bool aForceIfAlreadyParsed) {
+nsresult nsStyledElement::ReparseStyleAttribute(bool aForceInDataDoc) {
   if (!MayHaveStyle()) {
     return NS_OK;
   }
   const nsAttrValue* oldVal = mAttrs.GetAttr(nsGkAtoms::style);
-  if (oldVal && (aForceIfAlreadyParsed ||
-                 oldVal->Type() != nsAttrValue::eCSSDeclaration)) {
+  if (oldVal && oldVal->Type() != nsAttrValue::eCSSDeclaration) {
     nsAttrValue attrValue;
     nsAutoString stringValue;
     oldVal->ToString(stringValue);
@@ -163,10 +162,6 @@ nsresult nsStyledElement::ReparseStyleAttribute(bool aForceInDataDoc,
   }
 
   return NS_OK;
-}
-
-void nsStyledElement::NodeInfoChanged(Document* aOldDoc) {
-  nsStyledElementBase::NodeInfoChanged(aOldDoc);
 }
 
 nsICSSDeclaration* nsStyledElement::GetExistingStyle() {

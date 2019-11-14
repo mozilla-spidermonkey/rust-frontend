@@ -992,12 +992,10 @@ struct ParamTraits<mozilla::Variant<Ts...>> {
       if (tag == N - 1) {
         // Recall, even though the template parameter is N, we are
         // actually interested in the N - 1 tag.
-        typename mozilla::detail::Nth<N - 1, Ts...>::Type val;
-        if (ReadParam(msg, iter, &val)) {
-          *result = mozilla::AsVariant(val);
-          return true;
-        }
-        return false;
+        // Default construct our field within the result outparameter and
+        // directly deserialize into the variant. Note that this means that
+        // every type in Ts needs to be default constructible
+        return ReadParam(msg, iter, &result->template emplace<N - 1>());
       } else {
         return Next::Read(msg, iter, tag, result);
       }
@@ -1065,6 +1063,8 @@ struct CrossOriginOpenerPolicyValidator {
     return e == nsILoadInfo::OPENER_POLICY_NULL ||
            e == nsILoadInfo::OPENER_POLICY_SAME_ORIGIN ||
            e == nsILoadInfo::OPENER_POLICY_SAME_SITE ||
+           e == nsILoadInfo::
+                    OPENER_POLICY_SAME_ORIGIN_EMBEDDER_POLICY_REQUIRE_CORP ||
            e == nsILoadInfo::OPENER_POLICY_SAME_ORIGIN_ALLOW_OUTGOING ||
            e == nsILoadInfo::OPENER_POLICY_SAME_SITE_ALLOW_OUTGOING;
   }
@@ -1075,18 +1075,17 @@ struct ParamTraits<nsILoadInfo::CrossOriginOpenerPolicy>
     : EnumSerializer<nsILoadInfo::CrossOriginOpenerPolicy,
                      CrossOriginOpenerPolicyValidator> {};
 
-struct CrossOriginPolicyValidator {
-  static bool IsLegalValue(nsILoadInfo::CrossOriginPolicy e) {
-    return e == nsILoadInfo::CROSS_ORIGIN_POLICY_NULL ||
-           e == nsILoadInfo::CROSS_ORIGIN_POLICY_ANONYMOUS ||
-           e == nsILoadInfo::CROSS_ORIGIN_POLICY_USE_CREDENTIALS;
+struct CrossOriginEmbedderPolicyValidator {
+  static bool IsLegalValue(nsILoadInfo::CrossOriginEmbedderPolicy e) {
+    return e == nsILoadInfo::EMBEDDER_POLICY_NULL ||
+           e == nsILoadInfo::EMBEDDER_POLICY_REQUIRE_CORP;
   }
 };
 
 template <>
-struct ParamTraits<nsILoadInfo::CrossOriginPolicy>
-    : EnumSerializer<nsILoadInfo::CrossOriginPolicy,
-                     CrossOriginPolicyValidator> {};
+struct ParamTraits<nsILoadInfo::CrossOriginEmbedderPolicy>
+    : EnumSerializer<nsILoadInfo::CrossOriginEmbedderPolicy,
+                     CrossOriginEmbedderPolicyValidator> {};
 
 // Helper class for reading bitfields.
 // If T has bitfields members, derive ParamTraits<T> from BitfieldHelper<T>.
@@ -1106,6 +1105,54 @@ struct BitfieldHelper {
     return false;
   }
 };
+
+// A couple of recursive helper functions, allows syntax like:
+// WriteParams(aMsg, aParam.foo, aParam.bar, aParam.baz)
+// ReadParams(aMsg, aIter, aParam.foo, aParam.bar, aParam.baz)
+
+// Base case
+void WriteParams(Message* aMsg);
+
+template <typename T0, typename... Tn>
+static void WriteParams(Message* aMsg, const T0& aArg,
+                        const Tn&... aRemainingArgs) {
+  WriteParam(aMsg, aArg);                // Write first arg
+  WriteParams(aMsg, aRemainingArgs...);  // Recurse for the rest
+}
+
+// Base case
+bool ReadParams(const Message* aMsg, PickleIterator* aIter);
+
+template <typename T0, typename... Tn>
+static bool ReadParams(const Message* aMsg, PickleIterator* aIter, T0& aArg,
+                       Tn&... aRemainingArgs) {
+  return ReadParam(aMsg, aIter, &aArg) &&             // Read first arg
+         ReadParams(aMsg, aIter, aRemainingArgs...);  // Recurse for the rest
+}
+
+// Macros that allow syntax like:
+// DEFINE_IPC_SERIALIZER_WITH_FIELDS(SomeType, member1, member2, member3)
+// Makes sure that serialize/deserialize code do the same members in the same
+// order.
+#define ACCESS_PARAM_FIELD(Field) aParam.Field
+
+#define DEFINE_IPC_SERIALIZER_WITH_FIELDS(Type, ...)                         \
+  template <>                                                                \
+  struct ParamTraits<Type> {                                                 \
+    typedef Type paramType;                                                  \
+    static void Write(Message* aMsg, const paramType& aParam) {              \
+      WriteParams(aMsg, MOZ_FOR_EACH_SEPARATED(ACCESS_PARAM_FIELD, (, ), (), \
+                                               (__VA_ARGS__)));              \
+    }                                                                        \
+                                                                             \
+    static bool Read(const Message* aMsg, PickleIterator* aIter,             \
+                     paramType* aResult) {                                   \
+      paramType& aParam = *aResult;                                          \
+      return ReadParams(aMsg, aIter,                                         \
+                        MOZ_FOR_EACH_SEPARATED(ACCESS_PARAM_FIELD, (, ), (), \
+                                               (__VA_ARGS__)));              \
+    }                                                                        \
+  };
 
 } /* namespace IPC */
 

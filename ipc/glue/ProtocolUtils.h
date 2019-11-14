@@ -627,11 +627,6 @@ inline bool LoggingEnabledFor(const char* aTopLevelProtocol) {
 #endif
 }
 
-enum class MessageDirection {
-  eSending,
-  eReceiving,
-};
-
 MOZ_NEVER_INLINE void LogMessageForProtocol(const char* aTopLevelProtocol,
                                             base::ProcessId aOtherPid,
                                             const char* aContextDescription,
@@ -666,15 +661,6 @@ MOZ_NEVER_INLINE void ArrayLengthReadError(const char* aElementName);
 MOZ_NEVER_INLINE void SentinelReadError(const char* aElementName);
 
 struct PrivateIPDLInterface {};
-
-nsresult Bridge(const PrivateIPDLInterface&, MessageChannel*, base::ProcessId,
-                MessageChannel*, base::ProcessId, ProtocolId, ProtocolId);
-
-bool Open(const PrivateIPDLInterface&, MessageChannel*, base::ProcessId,
-          Transport::Mode, ProtocolId, ProtocolId);
-
-bool UnpackChannelOpened(const PrivateIPDLInterface&, const IPC::Message&,
-                         TransportDescriptor*, base::ProcessId*, ProtocolId*);
 
 #if defined(XP_WIN)
 // This is a restricted version of Windows' DuplicateHandle() function
@@ -889,6 +875,8 @@ class ManagedEndpoint {
   bool IsValid() const { return mId != 0; }
 
   Maybe<int32_t> ActorId() const { return IsValid() ? Some(mId) : Nothing(); }
+
+  bool operator==(const ManagedEndpoint& _o) const { return mId == _o.mId; }
 
  private:
   friend struct IPC::ParamTraits<ManagedEndpoint<PFooSide>>;

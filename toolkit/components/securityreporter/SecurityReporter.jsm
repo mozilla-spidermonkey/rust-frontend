@@ -23,15 +23,6 @@ ChromeUtils.defineModuleGetter(
   "resource://gre/modules/UpdateUtils.jsm"
 );
 
-function getDERString(cert) {
-  var derArray = cert.getRawDER();
-  var derString = "";
-  for (var i = 0; i < derArray.length; i++) {
-    derString += String.fromCharCode(derArray[i]);
-  }
-  return derString;
-}
-
 function SecurityReporter() {}
 
 SecurityReporter.prototype = {
@@ -64,8 +55,8 @@ SecurityReporter.prototype = {
     let asciiCertChain = [];
 
     if (transportSecurityInfo.failedCertChain) {
-      for (let cert of transportSecurityInfo.failedCertChain.getEnumerator()) {
-        asciiCertChain.push(btoa(getDERString(cert)));
+      for (let cert of transportSecurityInfo.failedCertChain) {
+        asciiCertChain.push(cert.getBase64DERString());
       }
     }
 

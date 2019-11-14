@@ -38,6 +38,28 @@ enum MozContentPolicyType {
 };
 
 /**
+ * String versions of CLASSIFIED_* tracking flags from nsIClassifiedChannel.idl
+ */
+enum MozUrlClassificationFlags {
+  "fingerprinting",
+  "fingerprinting_content",
+  "cryptomining",
+  "cryptomining_content",
+  "tracking",
+  "tracking_ad",
+  "tracking_analytics",
+  "tracking_social",
+  "tracking_content",
+  "socialtracking",
+  "socialtracking_facebook",
+  "socialtracking_linkedin",
+  "socialtracking_twitter",
+  "any_basic_tracking",
+  "any_strict_tracking",
+  "any_social_tracking"
+};
+
+/**
  * A thin wrapper around nsIChannel and nsIHttpChannel that allows JS
  * callers to access them without XPConnect overhead.
  */
@@ -382,6 +404,41 @@ interface ChannelWrapper : EventTarget {
   void setResponseHeader(ByteString header,
                          ByteString value,
                          optional boolean merge = false);
+
+  /**
+   * Provides the tracking classification data when it is available.
+   */
+  [Cached, Frozen, GetterThrows, Pure]
+  readonly attribute MozUrlClassification? urlClassification;
+
+  /**
+   * Indicates if this response and its content window hierarchy is third
+   * party.
+   */
+  [Cached, Constant]
+  readonly attribute boolean thirdParty;
+
+  /**
+   * The current bytes sent of the request. This will be 0 if a request has not
+   * sent yet, or if the request is not an HTTP request.
+   */
+  [Cached, Pure]
+  readonly attribute unsigned long long requestSize;
+
+  /**
+   * The current bytes received of the response. This will be 0 if a response
+   * has not recieved yet, or if the request is not an HTTP response.
+   */
+  [Cached, Pure]
+  readonly attribute unsigned long long responseSize;
+};
+
+/**
+ * Wrapper for first and third party tracking classification data.
+ */
+dictionary MozUrlClassification {
+  required sequence<MozUrlClassificationFlags> firstParty;
+  required sequence<MozUrlClassificationFlags> thirdParty;
 };
 
 /**

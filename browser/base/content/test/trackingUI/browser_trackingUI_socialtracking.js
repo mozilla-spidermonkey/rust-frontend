@@ -4,129 +4,31 @@
 "use strict";
 
 const TRACKING_PAGE =
-  "http://example.org/browser/browser/base/content/test/trackingUI/trackingPage.html";
+  "http://example.com/browser/browser/base/content/test/trackingUI/trackingPage.html";
+
+const ST_PROTECTION_PREF = "privacy.trackingprotection.socialtracking.enabled";
+const ST_BLOCK_COOKIES_PREF = "privacy.socialtracking.block_cookies.enabled";
 
 add_task(async function setup() {
   await SpecialPowers.pushPrefEnv({
     set: [
-      ["privacy.socialtracking.block_cookies.enabled", true],
-      ["privacy.trackingprotection.socialtracking.enabled", true],
+      [ST_BLOCK_COOKIES_PREF, true],
       [
         "urlclassifier.features.socialtracking.blacklistHosts",
-        "socialtracking.example.com",
+        "social-tracking.example.org",
       ],
       [
         "urlclassifier.features.socialtracking.annotate.blacklistHosts",
-        "socialtracking.example.com",
+        "social-tracking.example.org",
       ],
+      // Whitelist trackertest.org loaded by default in trackingPage.html
+      ["urlclassifier.trackingSkipURLs", "trackertest.org"],
+      ["urlclassifier.trackingAnnotationSkipURLs", "trackertest.org"],
       ["privacy.trackingprotection.enabled", false],
-      ["privacy.trackingprotection.annotate_channels", false],
-      ["privacy.trackingprotection.cryptomining.enabled", false],
-      ["urlclassifier.features.cryptomining.annotate.blacklistHosts", ""],
-      ["urlclassifier.features.cryptomining.annotate.blacklistTables", ""],
-      ["privacy.trackingprotection.fingerprinting.enabled", false],
-      ["urlclassifier.features.fingerprinting.annotate.blacklistHosts", ""],
-      ["urlclassifier.features.fingerprinting.annotate.blacklistTables", ""],
+      ["privacy.trackingprotection.annotate_channels", true],
     ],
   });
 });
-
-async function testPopup(hasPopup, buttonToClick) {
-  let numPageLoaded = gProtectionsHandler._socialTrackingSessionPageLoad;
-  let numPopupShown = SpecialPowers.getIntPref(
-    "privacy.socialtracking.notification.counter",
-    0
-  );
-
-  let promise = BrowserTestUtils.openNewForegroundTab({
-    url: TRACKING_PAGE,
-    gBrowser,
-  });
-  let [tab] = await Promise.all([promise, waitForContentBlockingEvent()]);
-
-  ok(
-    !gProtectionsHandler._protectionsPopup.hasAttribute("detected"),
-    "socialtrackings are not detected"
-  );
-  ok(
-    !BrowserTestUtils.is_visible(
-      gProtectionsHandler._socialblockPopupNotification
-    ),
-    "popup is not visible"
-  );
-
-  promise = waitForContentBlockingEvent();
-  let popup = document.getElementById("notification-popup");
-  let popupShown = hasPopup
-    ? BrowserTestUtils.waitForEvent(popup, "PanelUpdated")
-    : null;
-
-  await ContentTask.spawn(tab.linkedBrowser, {}, function() {
-    content.postMessage("socialtracking", "*");
-  });
-
-  await Promise.all([promise, popupShown]);
-
-  ok(
-    gProtectionsHandler._protectionsPopup.hasAttribute("detected"),
-    "trackers are detected"
-  );
-  is(
-    BrowserTestUtils.is_visible(
-      gProtectionsHandler._socialblockPopupNotification
-    ),
-    hasPopup,
-    hasPopup ? "popup is visible" : "popup is not visible"
-  );
-
-  is(
-    gProtectionsHandler._socialTrackingSessionPageLoad,
-    numPageLoaded + 1,
-    "page loaded once"
-  );
-
-  if (hasPopup) {
-    // click on the button of the popup notification
-    if (typeof buttonToClick === "string") {
-      is(
-        SpecialPowers.getBoolPref(
-          "privacy.socialtracking.notification.enabled",
-          false
-        ),
-        true,
-        "notification still enabled"
-      );
-
-      let notification = PopupNotifications.panel.firstElementChild;
-      EventUtils.synthesizeMouseAtCenter(notification[buttonToClick], {});
-
-      is(
-        SpecialPowers.getBoolPref(
-          "privacy.socialtracking.notification.enabled",
-          true
-        ),
-        false,
-        "notification disabled now"
-      );
-    }
-
-    let lastSeen = SpecialPowers.getIntPref(
-      "privacy.socialtracking.notification.lastSeen",
-      0
-    );
-    ok(lastSeen, "last seen timestamp updated");
-    is(
-      SpecialPowers.getIntPref(
-        "privacy.socialtracking.notification.counter",
-        0
-      ),
-      numPopupShown + 1,
-      "notification counter increased"
-    );
-  }
-
-  BrowserTestUtils.removeTab(tab);
-}
 
 async function testIdentityState(hasException) {
   let promise = BrowserTestUtils.openNewForegroundTab({
@@ -145,8 +47,12 @@ async function testIdentityState(hasException) {
     await loaded;
   }
 
+  let categoryItem = document.getElementById(
+    "protections-popup-category-socialblock"
+  );
+
   ok(
-    !gProtectionsHandler._protectionsPopup.hasAttribute("detected"),
+    categoryItem.classList.contains("notFound"),
     "socialtrackings are not detected"
   );
 
@@ -155,17 +61,21 @@ async function testIdentityState(hasException) {
     "icon box is visible regardless the exception"
   );
 
-  promise = waitForContentBlockingEvent();
-
-  await ContentTask.spawn(tab.linkedBrowser, {}, function() {
+  await SpecialPowers.spawn(tab.linkedBrowser, [], function() {
     content.postMessage("socialtracking", "*");
   });
 
-  await promise;
+  await TestUtils.waitForCondition(() => {
+    return !categoryItem.classList.contains("notFound");
+  });
 
   ok(
     gProtectionsHandler._protectionsPopup.hasAttribute("detected"),
     "trackers are detected"
+  );
+  ok(
+    !categoryItem.classList.contains("notFound"),
+    "social trackers are detected"
   );
   ok(
     BrowserTestUtils.is_visible(gProtectionsHandler.iconBox),
@@ -208,7 +118,7 @@ async function testSubview(hasException) {
   }
 
   promise = waitForContentBlockingEvent();
-  await ContentTask.spawn(tab.linkedBrowser, {}, function() {
+  await SpecialPowers.spawn(tab.linkedBrowser, [], function() {
     content.postMessage("socialtracking", "*");
   });
   await promise;
@@ -218,7 +128,11 @@ async function testSubview(hasException) {
   let categoryItem = document.getElementById(
     "protections-popup-category-socialblock"
   );
-  ok(BrowserTestUtils.is_visible(categoryItem), "TP category item is visible");
+  ok(BrowserTestUtils.is_visible(categoryItem), "STP category item is visible");
+  ok(
+    categoryItem.classList.contains("blocked"),
+    "STP category item is blocked"
+  );
   let subview = document.getElementById("protections-popup-socialblockView");
   let viewShown = BrowserTestUtils.waitForEvent(subview, "ViewShown");
   categoryItem.click();
@@ -230,7 +144,7 @@ async function testSubview(hasException) {
   ok(BrowserTestUtils.is_visible(listItem), "List item is visible");
   is(
     listItem.querySelector("label").value,
-    "socialtracking.example.com",
+    "social-tracking.example.org",
     "Has the correct host"
   );
 
@@ -255,108 +169,116 @@ async function testSubview(hasException) {
   BrowserTestUtils.removeTab(tab);
 }
 
-add_task(async function testSocialTrackingPopups() {
-  let configs = [
-    {
-      description: "always-on notification",
-      results: [true, true],
-      prefs: [
-        ["privacy.socialtracking.notification.enabled", true],
-        ["privacy.socialtracking.notification.session.pageload.min", -1],
-        ["privacy.socialtracking.notification.lastSeen", 0],
-        ["privacy.socialtracking.notification.period.min", 0],
-        ["privacy.socialtracking.notification.counter", 0],
-        ["privacy.socialtracking.notification.max", 999],
-      ],
-    },
-    {
-      description: "always-off notification",
-      results: [false, false],
-      prefs: [
-        ["privacy.socialtracking.notification.enabled", false],
-        ["privacy.socialtracking.notification.session.pageload.min", -1],
-        ["privacy.socialtracking.notification.lastSeen", 0],
-        ["privacy.socialtracking.notification.period.min", 0],
-        ["privacy.socialtracking.notification.counter", 0],
-        ["privacy.socialtracking.notification.max", 999],
-      ],
-    },
-
-    {
-      description: "set minimum page loaded limitation",
-      results: [false, false, true],
-      prefs: [
-        ["privacy.socialtracking.notification.enabled", true],
-        ["privacy.socialtracking.notification.session.pageload.min", 2],
-        ["privacy.socialtracking.notification.lastSeen", 0],
-        ["privacy.socialtracking.notification.period.min", 0],
-        ["privacy.socialtracking.notification.counter", 0],
-        ["privacy.socialtracking.notification.max", 999],
-      ],
-    },
-    {
-      description: "set minimum period between popups",
-      results: [true, false],
-      prefs: [
-        ["privacy.socialtracking.notification.enabled", true],
-        ["privacy.socialtracking.notification.session.pageload.min", -1],
-        ["privacy.socialtracking.notification.lastSeen", 0],
-        ["privacy.socialtracking.notification.period.min", 3600000], // 1H
-        ["privacy.socialtracking.notification.counter", 0],
-        ["privacy.socialtracking.notification.max", 999],
-      ],
-    },
-    {
-      description: "define maximum number of notifications",
-      results: [true, true, false],
-      prefs: [
-        ["privacy.socialtracking.notification.enabled", true],
-        ["privacy.socialtracking.notification.session.pageload.min", -1],
-        ["privacy.socialtracking.notification.lastSeen", 0],
-        ["privacy.socialtracking.notification.period.min", 0],
-        ["privacy.socialtracking.notification.counter", 3],
-        ["privacy.socialtracking.notification.max", 5],
-      ],
-    },
-    {
-      description: "disable notification by clicking primaryButton",
-      results: [true, false],
-      button: "button",
-      prefs: [
-        ["privacy.socialtracking.notification.enabled", true],
-        ["privacy.socialtracking.notification.session.pageload.min", -1],
-        ["privacy.socialtracking.notification.lastSeen", 0],
-        ["privacy.socialtracking.notification.period.min", 0],
-        ["privacy.socialtracking.notification.counter", 0],
-        ["privacy.socialtracking.notification.max", 999],
-      ],
-    },
-    {
-      description: "disable notification by clicking secondaryButton",
-      results: [true, false],
-      button: "secondaryButton",
-      prefs: [
-        ["privacy.socialtracking.notification.enabled", true],
-        ["privacy.socialtracking.notification.session.pageload.min", -1],
-        ["privacy.socialtracking.notification.lastSeen", 0],
-        ["privacy.socialtracking.notification.period.min", 0],
-        ["privacy.socialtracking.notification.counter", 0],
-        ["privacy.socialtracking.notification.max", 999],
-      ],
-    },
-  ];
-
-  for (let config of configs) {
-    ok(config.description, config.description);
-    SpecialPowers.pushPrefEnv({
-      set: config.prefs,
-    });
-    for (let result of config.results) {
-      await testPopup(result, config.button);
-    }
-    SpecialPowers.popPrefEnv();
+async function testCategoryItem(blockLoads) {
+  if (blockLoads) {
+    Services.prefs.setBoolPref(ST_PROTECTION_PREF, true);
   }
-});
+
+  Services.prefs.setBoolPref(ST_BLOCK_COOKIES_PREF, false);
+
+  let promise = BrowserTestUtils.openNewForegroundTab({
+    url: TRACKING_PAGE,
+    gBrowser,
+  });
+  let [tab] = await Promise.all([promise, waitForContentBlockingEvent()]);
+
+  await openProtectionsPopup();
+
+  let categoryItem = document.getElementById(
+    "protections-popup-category-socialblock"
+  );
+
+  let noTrackersDetectedDesc = document.getElementById(
+    "protections-popup-no-trackers-found-description"
+  );
+
+  ok(categoryItem.hasAttribute("uidisabled"), "Category should be uidisabled");
+
+  ok(
+    !categoryItem.classList.contains("blocked"),
+    "Category not marked as blocked"
+  );
+  ok(!BrowserTestUtils.is_visible(categoryItem), "Item should be hidden");
+  ok(
+    !gProtectionsHandler._protectionsPopup.hasAttribute("detected"),
+    "trackers are not detected"
+  );
+
+  await SpecialPowers.spawn(tab.linkedBrowser, [], function() {
+    content.postMessage("socialtracking", "*");
+  });
+
+  ok(
+    !categoryItem.classList.contains("blocked"),
+    "Category not marked as blocked"
+  );
+  ok(!BrowserTestUtils.is_visible(categoryItem), "Item should be hidden");
+  ok(
+    !gProtectionsHandler._protectionsPopup.hasAttribute("detected"),
+    "trackers are not detected"
+  );
+  ok(
+    BrowserTestUtils.is_visible(noTrackersDetectedDesc),
+    "No Trackers Detcted should be shown"
+  );
+
+  BrowserTestUtils.removeTab(tab);
+
+  Services.prefs.setBoolPref(ST_BLOCK_COOKIES_PREF, true);
+
+  promise = BrowserTestUtils.openNewForegroundTab({
+    url: TRACKING_PAGE,
+    gBrowser,
+  });
+  [tab] = await Promise.all([promise, waitForContentBlockingEvent()]);
+
+  await openProtectionsPopup();
+
+  ok(!categoryItem.hasAttribute("uidisabled"), "Item shouldn't be uidisabled");
+
+  ok(categoryItem.classList.contains("blocked"), "Category marked as blocked");
+  ok(
+    categoryItem.classList.contains("notFound"),
+    "Category marked as not found"
+  );
+  // At this point we should still be showing "No Trackers Detected"
+  ok(!BrowserTestUtils.is_visible(categoryItem), "Item should not be visible");
+  ok(
+    BrowserTestUtils.is_visible(noTrackersDetectedDesc),
+    "No Trackers Detcted should be shown"
+  );
+  ok(
+    !gProtectionsHandler._protectionsPopup.hasAttribute("detected"),
+    "trackers are not detected"
+  );
+
+  await SpecialPowers.spawn(tab.linkedBrowser, [], function() {
+    content.postMessage("socialtracking", "*");
+  });
+
+  await TestUtils.waitForCondition(() => {
+    return !categoryItem.classList.contains("notFound");
+  });
+
+  ok(categoryItem.classList.contains("blocked"), "Category marked as blocked");
+  ok(
+    !categoryItem.classList.contains("notFound"),
+    "Category not marked as not found"
+  );
+  ok(BrowserTestUtils.is_visible(categoryItem), "Item should be visible");
+  ok(
+    !BrowserTestUtils.is_visible(noTrackersDetectedDesc),
+    "No Trackers Detcted should be hidden"
+  );
+  ok(
+    gProtectionsHandler._protectionsPopup.hasAttribute("detected"),
+    "trackers are not detected"
+  );
+
+  BrowserTestUtils.removeTab(tab);
+
+  Services.prefs.clearUserPref(ST_PROTECTION_PREF);
+}
 
 add_task(async function testIdentityUI() {
   requestLongerTimeout(2);
@@ -366,4 +288,7 @@ add_task(async function testIdentityUI() {
 
   await testSubview(false);
   await testSubview(true);
+
+  await testCategoryItem(false);
+  await testCategoryItem(true);
 });

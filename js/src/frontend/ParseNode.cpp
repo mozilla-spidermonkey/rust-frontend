@@ -12,6 +12,7 @@
 #include "jsnum.h"
 
 #include "frontend/Parser.h"
+#include "vm/RegExpObject.h"
 
 #include "vm/JSContext-inl.h"
 
@@ -375,9 +376,10 @@ void LexicalScopeNode::dumpImpl(GenericPrinter& out, int indent) {
 }
 #endif
 
-TraceListNode::TraceListNode(js::gc::Cell* gcThing, TraceListNode* traceLink)
-    : gcThing(gcThing), traceLink(traceLink) {
-  MOZ_ASSERT(gcThing->isTenured());
+TraceListNode::TraceListNode(js::gc::Cell* gcThing, TraceListNode* traceLink,
+                             NodeType type)
+    : gcThing(gcThing), traceLink(traceLink), type_(type) {
+  MOZ_ASSERT_IF(gcThing, gcThing->isTenured());
 }
 
 BigIntBox* TraceListNode::asBigIntBox() {
@@ -390,22 +392,38 @@ ObjectBox* TraceListNode::asObjectBox() {
   return static_cast<ObjectBox*>(this);
 }
 
-BigIntBox::BigIntBox(BigInt* bi, TraceListNode* traceLink)
-    : TraceListNode(bi, traceLink) {}
+BigIntBox::BigIntBox(JS::BigInt* bi, TraceListNode* traceLink)
+    : TraceListNode(bi, traceLink, TraceListNode::NodeType::BigInt) {}
 
-ObjectBox::ObjectBox(JSObject* obj, TraceListNode* traceLink)
-    : TraceListNode(obj, traceLink), emitLink(nullptr) {
-  MOZ_ASSERT(!object()->is<JSFunction>());
+ObjectBox::ObjectBox(JSObject* obj, TraceListNode* traceLink,
+                     TraceListNode::NodeType type)
+    : TraceListNode(obj, traceLink, type), emitLink(nullptr) {}
+
+bool BigIntLiteral::isZero() {
+  if (data_.is<BigIntBox*>()) {
+    return box()->value()->isZero();
+  }
+  return data_.as<BigIntCreationData>().isZero();
 }
 
-ObjectBox::ObjectBox(JSFunction* function, TraceListNode* traceLink)
-    : TraceListNode(function, traceLink), emitLink(nullptr) {
-  MOZ_ASSERT(object()->is<JSFunction>());
-  MOZ_ASSERT(asFunctionBox()->function() == function);
+BigInt* BigIntLiteral::value() { return box()->value(); }
+
+RegExpObject* RegExpCreationData::createRegExp(JSContext* cx) const {
+  MOZ_ASSERT(buf_);
+  return RegExpObject::createSyntaxChecked(cx, buf_.get(), length_, flags_,
+                                           TenuredObject);
+}
+
+RegExpObject* RegExpLiteral::getOrCreate(JSContext* cx) const {
+  if (data_.is<ObjectBox*>()) {
+    return &objbox()->object()->as<RegExpObject>();
+  }
+  return data_.as<RegExpCreationData>().createRegExp(cx);
 }
 
 FunctionBox* ObjectBox::asFunctionBox() {
   MOZ_ASSERT(isFunctionBox());
+
   return static_cast<FunctionBox*>(this);
 }
 
@@ -417,7 +435,9 @@ void TraceListNode::TraceList(JSTracer* trc, TraceListNode* listHead) {
 }
 
 void TraceListNode::trace(JSTracer* trc) {
-  TraceGenericPointerRoot(trc, &gcThing, "parser.traceListNode");
+  if (gcThing) {
+    TraceGenericPointerRoot(trc, &gcThing, "parser.traceListNode");
+  }
 }
 
 void FunctionBox::trace(JSTracer* trc) {
@@ -427,6 +447,9 @@ void FunctionBox::trace(JSTracer* trc) {
   }
   if (explicitName_) {
     TraceRoot(trc, &explicitName_, "funbox-explicitName");
+  }
+  if (functionCreationData_) {
+    functionCreationData_->trace(trc);
   }
 }
 

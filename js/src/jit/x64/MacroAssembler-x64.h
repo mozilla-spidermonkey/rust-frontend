@@ -546,12 +546,6 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   // Common interface.
   /////////////////////////////////////////////////////////////////
 
-  CodeOffsetJump jumpWithPatch(RepatchLabel* label) {
-    JmpSrc src = jmpSrc(label);
-    return CodeOffsetJump(size(),
-                          addPatchableJump(src, RelocationKind::HARDCODED));
-  }
-
   void movePtr(Register src, Register dest) { movq(src, dest); }
   void movePtr(Register src, const Operand& dest) { movq(src, dest); }
   void movePtr(ImmWord imm, Register dest) { mov(imm, dest); }
@@ -588,6 +582,9 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
     }
   }
   void load64(const Address& address, Register64 dest) {
+    movq(Operand(address), dest.reg);
+  }
+  void load64(const BaseIndex& address, Register64 dest) {
     movq(Operand(address), dest.reg);
   }
   template <typename T>
@@ -648,7 +645,13 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
     }
   }
   void store64(Register64 src, Address address) { storePtr(src.reg, address); }
+  void store64(Register64 src, const BaseIndex& address) {
+    storePtr(src.reg, address);
+  }
   void store64(Imm64 imm, Address address) {
+    storePtr(ImmWord(imm.value), address);
+  }
+  void store64(Imm64 imm, const BaseIndex& address) {
     storePtr(ImmWord(imm.value), address);
   }
 

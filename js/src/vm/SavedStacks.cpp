@@ -172,7 +172,7 @@ void LiveSavedFrameCache::findWithoutInvalidation(
   frame.set(nullptr);
 }
 
-struct SavedFrame::Lookup {
+struct MOZ_STACK_CLASS SavedFrame::Lookup {
   Lookup(JSAtom* source, uint32_t sourceId, uint32_t line, uint32_t column,
          JSAtom* functionDisplayName, JSAtom* asyncCause, SavedFrame* parent,
          JSPrincipals* principals,
@@ -227,18 +227,11 @@ struct SavedFrame::Lookup {
   Activation* activation;
 
   void trace(JSTracer* trc) {
-    TraceManuallyBarrieredEdge(trc, &source, "SavedFrame::Lookup::source");
-    if (functionDisplayName) {
-      TraceManuallyBarrieredEdge(trc, &functionDisplayName,
-                                 "SavedFrame::Lookup::functionDisplayName");
-    }
-    if (asyncCause) {
-      TraceManuallyBarrieredEdge(trc, &asyncCause,
-                                 "SavedFrame::Lookup::asyncCause");
-    }
-    if (parent) {
-      TraceManuallyBarrieredEdge(trc, &parent, "SavedFrame::Lookup::parent");
-    }
+    TraceRoot(trc, &source, "SavedFrame::Lookup::source");
+    TraceNullableRoot(trc, &functionDisplayName,
+                      "SavedFrame::Lookup::functionDisplayName");
+    TraceNullableRoot(trc, &asyncCause, "SavedFrame::Lookup::asyncCause");
+    TraceNullableRoot(trc, &parent, "SavedFrame::Lookup::parent");
   }
 };
 
@@ -347,7 +340,7 @@ bool SavedFrame::finishSavedFrameInit(JSContext* cx, HandleObject ctor,
   return FreezeObject(cx, proto);
 }
 
-static const ClassOps SavedFrameClassOps = {
+static const JSClassOps SavedFrameClassOps = {
     nullptr,               // addProperty
     nullptr,               // delProperty
     nullptr,               // enumerate
@@ -371,14 +364,14 @@ const ClassSpec SavedFrame::classSpec_ = {
     SavedFrame::finishSavedFrameInit,
     ClassSpec::DontDefineConstructor};
 
-/* static */ const Class SavedFrame::class_ = {
+/* static */ const JSClass SavedFrame::class_ = {
     "SavedFrame",
     JSCLASS_HAS_PRIVATE | JSCLASS_HAS_RESERVED_SLOTS(SavedFrame::JSSLOT_COUNT) |
         JSCLASS_HAS_CACHED_PROTO(JSProto_SavedFrame) |
         JSCLASS_FOREGROUND_FINALIZE,
     &SavedFrameClassOps, &SavedFrame::classSpec_};
 
-const Class SavedFrame::protoClass_ = {
+const JSClass SavedFrame::protoClass_ = {
     js_Object_str, JSCLASS_HAS_CACHED_PROTO(JSProto_SavedFrame),
     JS_NULL_CLASS_OPS, &SavedFrame::classSpec_};
 
@@ -400,7 +393,7 @@ const Class SavedFrame::protoClass_ = {
     JS_PS_END};
 
 /* static */
-void SavedFrame::finalize(FreeOp* fop, JSObject* obj) {
+void SavedFrame::finalize(JSFreeOp* fop, JSObject* obj) {
   MOZ_ASSERT(fop->onMainThread());
   JSPrincipals* p = obj->as<SavedFrame>().getPrincipals();
   if (p) {
@@ -543,8 +536,8 @@ SavedFrame* SavedFrame::create(JSContext* cx) {
   // accidentally cause O(n^2) behavior.
   SavedStacks::AutoReentrancyGuard guard(cx->realm()->savedStacks());
 
-  RootedNativeObject proto(
-      cx, GlobalObject::getOrCreateSavedFramePrototype(cx, global));
+  RootedObject proto(cx,
+                     GlobalObject::getOrCreateSavedFramePrototype(cx, global));
   if (!proto) {
     return nullptr;
   }
@@ -1322,9 +1315,9 @@ bool SavedStacks::copyAsyncStack(JSContext* cx, HandleObject asyncStack,
   return true;
 }
 
-void SavedStacks::sweep() {
-  frames.sweep();
-  pcLocationMap.sweep();
+void SavedStacks::traceWeak(JSTracer* trc) {
+  frames.traceWeak(trc);
+  pcLocationMap.traceWeak(trc);
 }
 
 void SavedStacks::trace(JSTracer* trc) { pcLocationMap.trace(trc); }

@@ -75,7 +75,7 @@ class MacroAssembler;
 
 class NurseryDecommitTask : public GCParallelTaskHelper<NurseryDecommitTask> {
  public:
-  explicit NurseryDecommitTask(JSRuntime* rt) : GCParallelTaskHelper(rt) {}
+  explicit NurseryDecommitTask(gc::GCRuntime* gc) : GCParallelTaskHelper(gc) {}
 
   void queueChunk(NurseryChunk* chunk, const AutoLockHelperThreadState& lock);
 
@@ -156,7 +156,7 @@ class TenuringTracer : public JSTracer {
 // nursery allocated and not promoted to the tenured heap. The finalizers for
 // these classes must do nothing except free data which was allocated via
 // Nursery::allocateBuffer.
-inline bool CanNurseryAllocateFinalizedClass(const js::Class* const clasp) {
+inline bool CanNurseryAllocateFinalizedClass(const JSClass* const clasp) {
   MOZ_ASSERT(clasp->hasFinalize());
   return clasp->flags & JSCLASS_SKIP_NURSERY_FINALIZE;
 }
@@ -180,7 +180,7 @@ class Nursery {
 
   using BufferSet = HashSet<void*, PointerHasher<void*>, SystemAllocPolicy>;
 
-  explicit Nursery(JSRuntime* rt);
+  explicit Nursery(gc::GCRuntime* gc);
   ~Nursery();
 
   MOZ_MUST_USE bool init(AutoLockGCBgAlloc& lock);
@@ -194,7 +194,7 @@ class Nursery {
   // collection.
   unsigned maxChunkCount() const {
     MOZ_ASSERT(capacity());
-    return JS_HOWMANY(capacity(), gc::ChunkSize);
+    return HowMany(capacity(), gc::ChunkSize);
   }
 
   void enable();
@@ -226,7 +226,7 @@ class Nursery {
   // Allocate and return a pointer to a new GC object with its |slots|
   // pointer pre-filled. Returns nullptr if the Nursery is full.
   JSObject* allocateObject(JSContext* cx, size_t size, size_t numDynamic,
-                           const js::Class* clasp);
+                           const JSClass* clasp);
 
   // Allocate and return a pointer to a new string. Returns nullptr if the
   // Nursery is full.
@@ -302,7 +302,7 @@ class Nursery {
   // Register a malloced buffer that is held by a nursery object, which
   // should be freed at the end of a minor GC. Buffers are unregistered when
   // their owning objects are tenured.
-  bool registerMallocedBuffer(void* buffer);
+  MOZ_MUST_USE bool registerMallocedBuffer(void* buffer);
 
   // Mark a malloced buffer as no longer needing to be freed.
   void removeMallocedBuffer(void* buffer) {
@@ -404,7 +404,7 @@ class Nursery {
   void joinDecommitTask() { decommitTask.join(); }
 
  private:
-  JSRuntime* runtime_;
+  gc::GCRuntime* const gc;
 
   // Vector of allocated chunks to allocate from.
   Vector<NurseryChunk*, 0, SystemAllocPolicy> chunks_;
@@ -557,7 +557,7 @@ class Nursery {
 
   MOZ_ALWAYS_INLINE bool isSubChunkMode() const;
 
-  JSRuntime* runtime() const { return runtime_; }
+  JSRuntime* runtime() const;
   gcstats::Statistics& stats() const;
 
   const js::gc::GCSchedulingTunables& tunables() const;

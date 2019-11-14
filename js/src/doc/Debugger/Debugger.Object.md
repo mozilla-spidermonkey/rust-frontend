@@ -192,6 +192,12 @@ from its prototype:
     always equal to `obj.script.isAsyncFunction`, assuming `obj.script` is a
     `Debugger.Script`.)
 
+`isClassConstructor`
+:   If the referent is a debuggee function, returns `true` if the referent is a class, 
+    or false if it is some other sort of function. If the referent is not a debuggee 
+    function, or not a function at all, this is `undefined`. (This is always equal to
+    `obj.script.isClassConstructor`, assuming `obj.script` is a `Debugger.Script`.)
+
 `isPromise`
 :   `true` if the referent is a Promise; `false` otherwise.
 
@@ -460,6 +466,10 @@ of exotic object like an opaque wrapper.
     can be accessed by code in the debuggee without going through a cross
     compartment wrapper.
 
+<code>isSameNative(<i>value</i>)</code>
+:   If <i>value</i> is a native function in the debugger's compartment, return
+    whether the referent is a native function for the same C++ native.
+
 <code>decompile([<i>pretty</i>])</code>
 :   If the referent is a function that is debuggee code, return the
     JavaScript source code for a function definition equivalent to the
@@ -534,6 +544,21 @@ of exotic object like an opaque wrapper.
     declarative environment, which is the eval code's `LexicalEnvironment`.)
 
     The <i>options</i> argument is as for [`Debugger.Frame.prototype.eval`][fr eval].
+
+<code>createSource(<i>options</i>)</code>
+:    If the referent is a global object, return a new JavaScript source in the
+    global's realm which has its properties filled in according to the `options`
+    object.  If the referent is not a global object, throw a `TypeError`
+    exception.  The `options` object can have the following properties:
+      * `text`: String contents of the JavaScript in the source.
+      * `url`: URL the resulting source should be associated with.
+      * `startLine`: Starting line of the source.
+      * `sourceMapURL`: Optional URL specifying the source's source map URL.
+        If not specified, the source map URL can be filled in if specified by
+        the source's text.
+      * `isScriptElement`: Optional boolean which will set the source's
+        `introductionType` to `"scriptElement"` if specified.  Otherwise, the
+        source's `introductionType` will be `undefined`.
 
 `asEnvironment()`
 :   If the referent is a global object, return the [`Debugger.Environment`][environment]

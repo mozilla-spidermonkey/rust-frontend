@@ -60,8 +60,8 @@ struct gfxFontFaceSrc {
   // see FLAG_FORMAT_* enum values below
   uint32_t mFormatFlags;
 
-  nsCString mLocalName;        // full font name if local
-  RefPtr<gfxFontSrcURI> mURI;  // uri if url
+  nsCString mLocalName;                          // full font name if local
+  RefPtr<gfxFontSrcURI> mURI;                    // uri if url
   nsCOMPtr<nsIReferrerInfo> mReferrerInfo;       // referrer info if url
   RefPtr<gfxFontSrcPrincipal> mOriginPrincipal;  // principal if url
 
@@ -297,6 +297,12 @@ class gfxUserFontSet {
 
   // rebuild if local rules have been used
   void RebuildLocalRules();
+
+  // Discard any font entries created for src:local(), so that they will
+  // be reloaded next time they're needed. This is called when the platform
+  // font list has changed, which means local font entries that were set up
+  // may no longer be valid.
+  void ForgetLocalFaces();
 
   class UserFontCache {
    public:

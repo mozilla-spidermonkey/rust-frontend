@@ -78,6 +78,7 @@ static StaticRefPtr<VRManager> sVRManagerSingleton;
 /* static */
 VRManager* VRManager::Get() {
   MOZ_ASSERT(sVRManagerSingleton != nullptr);
+  MOZ_ASSERT(XRE_IsParentProcess() || XRE_IsGPUProcess());
 
   return sVRManagerSingleton;
 }
@@ -152,10 +153,10 @@ VRManager::VRManager()
 
 void VRManager::OpenShmem() {
   if (mShmem == nullptr) {
-    mShmem = (new VRShMem(nullptr, mVRProcessEnabled, XRE_IsParentProcess()));
-    mShmem->CreateShMem();
+    mShmem = new VRShMem(nullptr, true /*aRequiresMutex*/);
 
 #if !defined(MOZ_WIDGET_ANDROID)
+    mShmem->CreateShMem(mVRProcessEnabled /*aCreateOnSharedMemory*/);
     // The VR Service accesses all hardware from a separate process
     // and replaces the other VRManager when enabled.
     // If the VR process is not enabled, create an in-process VRService.
@@ -165,6 +166,8 @@ void VRManager::OpenShmem() {
       mServiceHost->CreateService(mShmem->GetExternalShmem());
       return;
     }
+#else
+    mShmem->CreateShMemForAndroid();
 #endif
   } else {
     mShmem->ClearShMem();
@@ -305,6 +308,7 @@ void VRManager::TaskTimerCallback(nsITimer* aTimer, void* aClosure) {
     // When the apps goes the background (e.g. Android) we should stop the
     // tasks.
     self->StopTasks();
+    self->mState = VRManagerState::Idle;
   }
 }
 
@@ -558,6 +562,7 @@ void VRManager::EnumerateVRDisplays() {
       mFrameStarted = false;
       mBrowserState.Clear();
       mLastSensorState.Clear();
+      mEnumerationCompleted = false;
       mDisplayInfo.mGroupMask = kVRGroupContent;
       // We must block until enumeration has completed in order
       // to signal that the WebVR promise should be resolved at the
@@ -566,6 +571,9 @@ void VRManager::EnumerateVRDisplays() {
       // In Android, we need to make sure calling
       // GeckoVRManager::SetExternalContext() from an external VR service
       // before doing enumeration.
+      if (!mShmem->GetExternalShmem()) {
+        mShmem->CreateShMemForAndroid();
+      }
       if (mShmem->GetExternalShmem()) {
         mState = VRManagerState::Enumeration;
       }

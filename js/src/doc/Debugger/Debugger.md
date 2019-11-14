@@ -13,18 +13,6 @@ When called as a constructor, the `Debugger` object creates a new
 A `Debugger` instance inherits the following accessor properties from
 its prototype:
 
-`enabled`
-:   A boolean value indicating whether this `Debugger` instance's handlers,
-    breakpoints, and the like are currently enabled. It is an
-    accessor property with a getter and setter: assigning to it enables or
-    disables this `Debugger` instance; reading it produces true if the
-    instance is enabled, or false otherwise. This property is initially
-    `true` in a freshly created `Debugger` instance.
-
-    This property gives debugger code a single point of control for
-    disentangling itself from the debuggee, regardless of what sort of
-    events or handlers or "points" we add to the interface.
-
 `allowUnobservedAsmJS`
 :   A boolean value indicating whether asm.js code running inside this
     `Debugger` instance's debuggee globals is invisible to Debugger API
@@ -48,7 +36,7 @@ its prototype:
     accessed via the [`Debugger.Script`][script] `getOffsetsCoverage`
     function. In some cases, the code coverage might expose information which
     pre-date the modification of this flag. Code coverage reports are monotone,
-    thus one can take a snapshot when the Debugger is enabled, and output the
+    thus one can take a snapshot when coverage first is enabled, and output the
     difference.
 
     Setting this to `false` prevents this `Debugger` instance from requiring any
@@ -162,6 +150,24 @@ compartment.
     SpiderMonkey only calls `onEnterFrame` to report
     [visible][vf], non-`"debugger"` frames.
 
+<code>onNativeCall(<i>callee</i>, <i>reason</i>)</code>
+:   A call to a native function is being made from a debuggee realm.
+    <i>callee</i> is a [`Debugger.Object`] for the function being called, and
+    <i>reason</i> is a string describing the reason the call was made, and
+    has one of the following values:
+
+    `get`: The native is the getter for a property which is being accessed.
+    `set`: The native is the setter for a property being written to.
+    `call`: Any call not fitting into the above categories.
+
+    This method should return a [resumption value][rv] specifying how the
+    debuggee's execution should proceed.
+
+    SpiderMonkey only calls `onNativeCall` hooks when execution is inside a
+    debugger evaluation associated with the debugger that has the `onNativeCall`
+    hook.  Such evaluation methods include `Debugger.Object.executeInGlobal`,
+    `Debugger.Frame.eval`, and associated methods.
+
 <code>onExceptionUnwind(<i>frame</i>, <i>value</i>)</code>
 :   The exception <i>value</i> has been thrown, and has propagated to
     <i>frame</i>; <i>frame</i> is the youngest remaining stack frame, and is a
@@ -245,8 +251,8 @@ compartment.
     Note that, even though the presence of a `Debugger`'s `onNewGlobalObject`
     hook can have arbitrary side effects, the garbage collector does not
     consider the presence of the hook sufficient reason to keep the `Debugger`
-    alive. Thus, the behavior of code that uses `onNewGlobalObject` on unrooted,
-    enabled `Debugger`s may be affected by the garbage collector's activity, and
+    alive. Thus, the behavior of code that uses `onNewGlobalObject` on unrooted
+    `Debugger`s may be affected by the garbage collector's activity, and
     is not entirely deterministic.
 
 
@@ -407,6 +413,12 @@ other kinds of objects.
     eval code that has finished running, or unreachable functions. Whether
     such scripts appear can be affected by the garbage collector's
     behavior, so this function's behavior is not entirely deterministic.
+
+<code>findSourceURLs()</code>
+:   Return an array of strings containing the URLs of all known sources that
+    have been created in any debuggee realm.  The array will have one entry for
+    each source, so may have duplicates.  The URLs for the realms are
+    occasionally purged and the returned array might not be complete.
 
 <code>findObjects([<i>query</i>])</code>
 :   Return an array of [`Debugger.Object`][object] instances referring to each

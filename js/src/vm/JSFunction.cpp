@@ -16,6 +16,7 @@
 #include "mozilla/Range.h"
 #include "mozilla/Utf8.h"
 
+#include <algorithm>
 #include <string.h>
 
 #include "jsapi.h"
@@ -26,7 +27,6 @@
 #include "builtin/Eval.h"
 #include "builtin/Object.h"
 #include "builtin/SelfHostingDefines.h"
-#include "builtin/String.h"
 #include "frontend/BytecodeCompilation.h"
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/TokenStream.h"
@@ -58,6 +58,7 @@
 #include "wasm/AsmJS.h"
 
 #include "debugger/DebugAPI-inl.h"
+#include "vm/FrameIter-inl.h"  // js::FrameIter::unaliasedForEachActual
 #include "vm/Interpreter-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/Stack-inl.h"
@@ -494,17 +495,9 @@ static bool fun_resolve(JSContext* cx, HandleObject obj, HandleId id,
         return true;
       }
 
-      RootedString name(cx);
-      if (!JSFunction::getUnresolvedName(cx, fun, &name)) {
+      if (!JSFunction::getUnresolvedName(cx, fun, &v)) {
         return false;
       }
-
-      // Don't define an own .name property for unnamed functions.
-      if (!name) {
-        return true;
-      }
-
-      v.setString(name);
     }
 
     if (!NativeDefineDataProperty(cx, fun, id, v,
@@ -581,8 +574,8 @@ XDRResult js::XDRInterpretedFunction(XDRState<mode>* xdr,
     }
 
     atom = fun->displayAtom();
-    flagsword =
-        (fun->nargs() << 16) | (fun->flags().toRaw() & ~FunctionFlags::NO_XDR_FLAGS);
+    flagsword = (fun->nargs() << 16) |
+                (fun->flags().toRaw() & ~FunctionFlags::NO_XDR_FLAGS);
 
     // The environment of any function which is not reused will always be
     // null, it is later defined when a function is cloned or reused to
@@ -773,9 +766,13 @@ inline void JSFunction::trace(JSTracer* trc) {
     // yet at some points when parsing, and can be lazy with no lazy script
     // for self-hosted code.
     if (hasScript() && !hasUncompletedScript()) {
-      TraceManuallyBarrieredEdge(trc, &u.scripted.s.script_, "script");
-    } else if (hasLazyScript() && u.scripted.s.lazy_) {
-      TraceManuallyBarrieredEdge(trc, &u.scripted.s.lazy_, "lazyScript");
+      JSScript* script = static_cast<JSScript*>(u.scripted.s.script_);
+      TraceManuallyBarrieredEdge(trc, &script, "script");
+      u.scripted.s.script_ = script;
+    } else if (hasLazyScript()) {
+      LazyScript* lazy = static_cast<LazyScript*>(u.scripted.s.script_);
+      TraceManuallyBarrieredEdge(trc, &lazy, "lazy");
+      u.scripted.s.script_ = lazy;
     }
     // NOTE: The u.scripted.s.selfHostedLazy_ does not point to GC things.
 
@@ -1035,6 +1032,14 @@ bool js::FunctionHasDefaultHasInstance(JSFunction* fun,
     const Value hasInstance = fun->as<NativeObject>().getSlot(shape->slot());
     return IsNativeFunction(hasInstance, fun_symbolHasInstance);
   }
+
+#ifdef DEBUG
+  // The proto must be Function.__proto__. It has an immutable @@hasInstance
+  // property. (Callers should check this first.)
+  Value funProto = fun->global().getPrototype(JSProto_Function);
+  MOZ_ASSERT(fun->staticPrototype() == &funProto.toObject());
+#endif
+
   return true;
 }
 
@@ -1195,7 +1200,7 @@ static const JSFunctionSpec function_methods[] = {
               JSPROP_READONLY | JSPROP_PERMANENT),
     JS_FS_END};
 
-static const ClassOps JSFunctionClassOps = {
+static const JSClassOps JSFunctionClassOps = {
     nullptr,                                /* addProperty */
     nullptr,                                /* delProperty */
     fun_enumerate, nullptr,                 /* newEnumerate */
@@ -1209,30 +1214,26 @@ static const ClassSpec JSFunctionClassSpec = {
     CreateFunctionConstructor, CreateFunctionPrototype, nullptr, nullptr,
     function_methods,          function_properties};
 
-const Class JSFunction::class_ = {js_Function_str,
-                                  JSCLASS_HAS_CACHED_PROTO(JSProto_Function),
-                                  &JSFunctionClassOps, &JSFunctionClassSpec};
+const JSClass JSFunction::class_ = {js_Function_str,
+                                    JSCLASS_HAS_CACHED_PROTO(JSProto_Function),
+                                    &JSFunctionClassOps, &JSFunctionClassSpec};
 
-const Class* const js::FunctionClassPtr = &JSFunction::class_;
+const JSClass* const js::FunctionClassPtr = &JSFunction::class_;
 
 bool JSFunction::isDerivedClassConstructor() {
-  bool derived;
-  if (isInterpretedLazy()) {
+  bool derived = false;
+  if (hasSelfHostedLazyScript()) {
     // There is only one plausible lazy self-hosted derived
     // constructor.
-    if (isSelfHostedBuiltin()) {
-      JSAtom* name = GetClonedSelfHostedFunctionName(this);
+    JSAtom* name = GetClonedSelfHostedFunctionName(this);
 
-      // This function is called from places without access to a
-      // JSContext. Trace some plumbing to get what we want.
-      derived = name == compartment()
-                            ->runtimeFromAnyThread()
-                            ->commonNames->DefaultDerivedClassConstructor;
-    } else {
-      derived = lazyScript()->isDerivedClassConstructor();
-    }
-  } else {
-    derived = nonLazyScript()->isDerivedClassConstructor();
+    // This function is called from places without access to a
+    // JSContext. Trace some plumbing to get what we want.
+    derived = name == compartment()
+                          ->runtimeFromAnyThread()
+                          ->commonNames->DefaultDerivedClassConstructor;
+  } else if (hasBaseScript()) {
+    derived = baseScript()->isDerivedClassConstructor();
   }
   MOZ_ASSERT_IF(derived, isClassConstructor());
   return derived;
@@ -1281,28 +1282,23 @@ JSAtom* JSFunction::infallibleGetUnresolvedName(JSContext* cx) {
     return name;
   }
 
-  // Unnamed class expressions should not get a .name property at all.
-  if (isClassConstructor()) {
-    return nullptr;
-  }
-
   return cx->names().empty;
 }
 
 /* static */
 bool JSFunction::getUnresolvedName(JSContext* cx, HandleFunction fun,
-                                   MutableHandleString v) {
+                                   MutableHandleValue v) {
   if (fun->isBoundFunction()) {
     JSLinearString* name = JSFunction::getBoundFunctionName(cx, fun);
     if (!name) {
       return false;
     }
 
-    v.set(name);
+    v.setString(name);
     return true;
   }
 
-  v.set(fun->infallibleGetUnresolvedName(cx));
+  v.setString(fun->infallibleGetUnresolvedName(cx));
   return true;
 }
 
@@ -1451,7 +1447,7 @@ bool JSFunction::finishBoundFunctionInit(JSContext* cx, HandleFunction bound,
       return false;
     }
 
-    length = Max(0.0, targetLength.toNumber() - argCount);
+    length = std::max(0.0, targetLength.toNumber() - argCount);
   } else {
     // 19.2.3.2 Function.prototype.bind, step 5.
     bool hasLength;
@@ -1468,7 +1464,8 @@ bool JSFunction::finishBoundFunctionInit(JSContext* cx, HandleFunction bound,
       }
 
       if (targetLength.isNumber()) {
-        length = Max(0.0, JS::ToInteger(targetLength.toNumber()) - argCount);
+        length =
+            std::max(0.0, JS::ToInteger(targetLength.toNumber()) - argCount);
       }
     }
 
@@ -1497,9 +1494,9 @@ bool JSFunction::finishBoundFunctionInit(JSContext* cx, HandleFunction bound,
       bound->setPrefixedBoundFunctionName(name);
     } else {
       name = targetFn->infallibleGetUnresolvedName(cx);
-      if (name) {
-        bound->setAtom(name);
-      }
+      MOZ_ASSERT(name);
+
+      bound->setAtom(name);
     }
   }
 
@@ -1539,9 +1536,105 @@ bool JSFunction::finishBoundFunctionInit(JSContext* cx, HandleFunction bound,
   return true;
 }
 
+static bool DelazifyCanonicalScriptedFunction(JSContext* cx,
+                                              HandleFunction fun) {
+  Rooted<LazyScript*> lazy(cx, fun->lazyScript());
+
+  MOZ_ASSERT(!lazy->maybeScript(), "Script is already compiled!");
+  MOZ_ASSERT(lazy->function() == fun);
+
+  ScriptSource* ss = lazy->scriptSource();
+  size_t sourceStart = lazy->sourceStart();
+  size_t sourceLength = lazy->sourceEnd() - lazy->sourceStart();
+
+  if (ss->hasBinASTSource()) {
+#if defined(JS_BUILD_BINAST)
+    if (!frontend::CompileLazyBinASTFunction(
+            cx, lazy, ss->binASTSource() + sourceStart, sourceLength)) {
+      MOZ_ASSERT(fun->isInterpretedLazy());
+      MOZ_ASSERT(fun->lazyScript() == lazy);
+      MOZ_ASSERT(!lazy->hasScript());
+      return false;
+    }
+#else
+    MOZ_CRASH("Trying to delazify BinAST function in non-BinAST build");
+#endif /*JS_BUILD_BINAST */
+  } else {
+    MOZ_ASSERT(ss->hasSourceText());
+
+    // Parse and compile the script from source.
+    UncompressedSourceCache::AutoHoldEntry holder;
+
+    if (ss->hasSourceType<Utf8Unit>()) {
+      // UTF-8 source text.
+      ScriptSource::PinnedUnits<Utf8Unit> units(cx, ss, holder, sourceStart,
+                                                sourceLength);
+      if (!units.get()) {
+        return false;
+      }
+
+      if (!frontend::CompileLazyFunction(cx, lazy, units.get(), sourceLength)) {
+        // The frontend shouldn't fail after linking the function and the
+        // non-lazy script together.
+        MOZ_ASSERT(fun->isInterpretedLazy());
+        MOZ_ASSERT(fun->lazyScript() == lazy);
+        MOZ_ASSERT(!lazy->hasScript());
+        return false;
+      }
+    } else {
+      MOZ_ASSERT(ss->hasSourceType<char16_t>());
+
+      // UTF-16 source text.
+      ScriptSource::PinnedUnits<char16_t> units(cx, ss, holder, sourceStart,
+                                                sourceLength);
+      if (!units.get()) {
+        return false;
+      }
+
+      if (!frontend::CompileLazyFunction(cx, lazy, units.get(), sourceLength)) {
+        // The frontend shouldn't fail after linking the function and the
+        // non-lazy script together.
+        MOZ_ASSERT(fun->isInterpretedLazy());
+        MOZ_ASSERT(fun->lazyScript() == lazy);
+        MOZ_ASSERT(!lazy->hasScript());
+        return false;
+      }
+    }
+  }
+
+  RootedScript script(cx, fun->nonLazyScript());
+  MOZ_ASSERT(lazy->maybeScript() == script);
+
+  if (lazy->canRelazify()) {
+    // Remember the lazy script on the compiled script, so it can be
+    // stored on the function again in case of re-lazification.
+    // Only functions without inner functions are re-lazified.
+    script->setLazyScript(lazy);
+  } else if (lazy->isWrappedByDebugger()) {
+    // Associate the LazyScript with the JSScript even though the latter
+    // can't be relazified. This is needed to ensure the Debugger can find
+    // the LazyScript when wrapping the JSScript. Mark the script as
+    // unrelazifiable so we don't get confused later.
+    //
+    // See Debugger::wrapVariantReferent.
+    script->setLazyScript(lazy);
+    script->setDoNotRelazify(true);
+  }
+
+  // XDR the newly delazified function.
+  if (ss->hasEncoder()) {
+    RootedScriptSourceObject sourceObject(cx, script->sourceObject());
+    if (!ss->xdrEncodeFunction(cx, fun, sourceObject)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 /* static */
-bool JSFunction::createScriptForLazilyInterpretedFunction(JSContext* cx,
-                                                          HandleFunction fun) {
+bool JSFunction::delazifyLazilyInterpretedFunction(JSContext* cx,
+                                                   HandleFunction fun) {
   MOZ_ASSERT(fun->isInterpretedLazy());
   MOZ_ASSERT(cx->compartment() == fun->compartment());
 
@@ -1551,39 +1644,14 @@ bool JSFunction::createScriptForLazilyInterpretedFunction(JSContext* cx,
 
   if (fun->hasLazyScript()) {
     Rooted<LazyScript*> lazy(cx, fun->lazyScript());
-    RootedScript script(cx, lazy->maybeScript());
+    RootedFunction canonicalFun(cx, lazy->function());
 
-    // Only functions without inner functions or direct eval are
-    // re-lazified. Functions with either of those are on the static scope
-    // chain of their inner functions, or in the case of eval, possibly
-    // eval'd inner functions. This prohibits re-lazification as
-    // StaticScopeIter queries needsCallObject of those functions, which
-    // requires a non-lazy script.  Note that if this ever changes,
-    // XDRRelazificationInfo will have to be fixed.
-    bool isBinAST = lazy->scriptSource()->hasBinASTSource();
-    bool canRelazify = !lazy->numInnerFunctions() && !lazy->hasDirectEval();
-
-    if (script) {
-      // This function is non-canonical function, and the canonical
-      // function is already delazified.
-      fun->setUnlazifiedScript(script);
-      // Remember the lazy script on the compiled script, so it can be
-      // stored on the function again in case of re-lazification.
-      if (canRelazify) {
-        script->setLazyScript(lazy);
-      }
-      return true;
-    }
-
-    if (fun != lazy->functionNonDelazifying()) {
-      // This function is non-canonical function, and the canonical
-      // function is lazy.
-      // Delazify the canonical function, which will result in calling
-      // this function again with the canonical function.
-      if (!LazyScript::functionDelazifying(cx, lazy)) {
-        return false;
-      }
-      script = lazy->functionNonDelazifying()->nonLazyScript();
+    // If this function is non-canonical, then use the canonical function first
+    // to get the delazified script. This may result in calling this method
+    // again on the canonical function. This ensures the canonical function is
+    // always non-lazy if any of the clones are non-lazy.
+    if (fun != canonicalFun) {
+      JSScript* script = JSFunction::getOrCreateScript(cx, canonicalFun);
       if (!script) {
         return false;
       }
@@ -1592,95 +1660,15 @@ bool JSFunction::createScriptForLazilyInterpretedFunction(JSContext* cx,
       return true;
     }
 
-    // This is lazy canonical-function.
-
-    size_t lazyLength = lazy->sourceEnd() - lazy->sourceStart();
-    if (isBinAST) {
-#if defined(JS_BUILD_BINAST)
-      if (!frontend::CompileLazyBinASTFunction(
-              cx, lazy,
-              lazy->scriptSource()->binASTSource() + lazy->sourceStart(),
-              lazyLength)) {
-        MOZ_ASSERT(fun->isInterpretedLazy());
-        MOZ_ASSERT(fun->lazyScript() == lazy);
-        MOZ_ASSERT(!lazy->hasScript());
-        return false;
-      }
-#else
-      MOZ_CRASH("Trying to delazify BinAST function in non-BinAST build");
-#endif /*JS_BUILD_BINAST */
-    } else {
-      MOZ_ASSERT(lazy->scriptSource()->hasSourceText());
-
-      // Parse and compile the script from source.
-      UncompressedSourceCache::AutoHoldEntry holder;
-
-      if (lazy->scriptSource()->hasSourceType<Utf8Unit>()) {
-        // UTF-8 source text.
-        ScriptSource::PinnedUnits<Utf8Unit> units(
-            cx, lazy->scriptSource(), holder, lazy->sourceStart(), lazyLength);
-        if (!units.get()) {
-          return false;
-        }
-
-        if (!frontend::CompileLazyFunction(cx, lazy, units.get(), lazyLength)) {
-          // The frontend shouldn't fail after linking the function and the
-          // non-lazy script together.
-          MOZ_ASSERT(fun->isInterpretedLazy());
-          MOZ_ASSERT(fun->lazyScript() == lazy);
-          MOZ_ASSERT(!lazy->hasScript());
-          return false;
-        }
-      } else {
-        MOZ_ASSERT(lazy->scriptSource()->hasSourceType<char16_t>());
-
-        // UTF-16 source text.
-        ScriptSource::PinnedUnits<char16_t> units(
-            cx, lazy->scriptSource(), holder, lazy->sourceStart(), lazyLength);
-        if (!units.get()) {
-          return false;
-        }
-
-        if (!frontend::CompileLazyFunction(cx, lazy, units.get(), lazyLength)) {
-          // The frontend shouldn't fail after linking the function and the
-          // non-lazy script together.
-          MOZ_ASSERT(fun->isInterpretedLazy());
-          MOZ_ASSERT(fun->lazyScript() == lazy);
-          MOZ_ASSERT(!lazy->hasScript());
-          return false;
-        }
-      }
+    // Even if we relazified the canonical function, the GC may not have swept
+    // the non-lazy script yet. In this case, we can reuse it.
+    if (lazy->hasScript()) {
+      fun->setUnlazifiedScript(lazy->maybeScript());
+      return true;
     }
 
-    script = fun->nonLazyScript();
-
-    // Remember the compiled script on the lazy script itself, in case
-    // there are clones of the function still pointing to the lazy script.
-    if (!lazy->maybeScript()) {
-      lazy->initScript(script);
-    }
-
-    // Try to insert the newly compiled script into the lazy script cache.
-    if (canRelazify) {
-      // If an identical lazy script is encountered later a match can be
-      // determined based on line and column number.
-      MOZ_ASSERT(lazy->column() == script->column());
-
-      // Remember the lazy script on the compiled script, so it can be
-      // stored on the function again in case of re-lazification.
-      // Only functions without inner functions are re-lazified.
-      script->setLazyScript(lazy);
-    }
-
-    // XDR the newly delazified function.
-    if (script->scriptSource()->hasEncoder()) {
-      RootedScriptSourceObject sourceObject(cx, lazy->sourceObject());
-      if (!script->scriptSource()->xdrEncodeFunction(cx, fun, sourceObject)) {
-        return false;
-      }
-    }
-
-    return true;
+    // Finally, compile the script if it really doesn't exist.
+    return DelazifyCanonicalScriptedFunction(cx, fun);
   }
 
   /* Lazily cloned self-hosted script. */
@@ -1697,7 +1685,7 @@ void JSFunction::maybeRelazify(JSRuntime* rt) {
   // Try to relazify functions with a non-lazy script. Note: functions can be
   // marked as interpreted despite having no script yet at some points when
   // parsing.
-  if (!hasScript() || !u.scripted.s.script_) {
+  if (!hasScript() || hasUncompletedScript()) {
     return;
   }
 
@@ -1727,7 +1715,8 @@ void JSFunction::maybeRelazify(JSRuntime* rt) {
   }
 
   // Don't relazify functions with JIT code.
-  if (!u.scripted.s.script_->isRelazifiable()) {
+  JSScript* script = nonLazyScript();
+  if (!script->isRelazifiable()) {
     return;
   }
 
@@ -1738,8 +1727,6 @@ void JSFunction::maybeRelazify(JSRuntime* rt) {
     return;
   }
 
-  JSScript* script = nonLazyScript();
-
   flags_.clearInterpreted();
   flags_.setInterpretedLazy();
 
@@ -1748,8 +1735,8 @@ void JSFunction::maybeRelazify(JSRuntime* rt) {
 
   LazyScript* lazy = script->maybeLazyScript();
   if (lazy) {
-    u.scripted.s.lazy_ = lazy;
-    MOZ_ASSERT(!isSelfHostedBuiltin());
+    u.scripted.s.script_ = lazy;
+    MOZ_ASSERT(hasLazyScript());
   } else {
     // Lazy self-hosted builtins point to a SelfHostedLazyScript that may be
     // called from JIT scripted calls.
@@ -1944,18 +1931,20 @@ static bool CreateDynamicFunction(JSContext* cx, const CallArgs& args,
     return false;
   }
 
-  JSProtoKey protoKey = JSProto_Null;
+  JSProtoKey protoKey;
   if (isAsync) {
     if (isGenerator) {
       if (!CompileStandaloneAsyncGenerator(cx, &fun, options, srcBuf,
                                            parameterListEnd)) {
         return false;
       }
+      protoKey = JSProto_AsyncGeneratorFunction;
     } else {
       if (!CompileStandaloneAsyncFunction(cx, &fun, options, srcBuf,
                                           parameterListEnd)) {
         return false;
       }
+      protoKey = JSProto_AsyncFunction;
     }
   } else {
     if (isGenerator) {
@@ -1963,6 +1952,7 @@ static bool CreateDynamicFunction(JSContext* cx, const CallArgs& args,
                                       parameterListEnd)) {
         return false;
       }
+      protoKey = JSProto_GeneratorFunction;
     } else {
       if (!CompileStandaloneFunction(cx, &fun, options, srcBuf,
                                      parameterListEnd)) {
@@ -2103,20 +2093,18 @@ JSFunction* js::NewFunctionWithProto(
     flags.setIsExtended();
   }
 
+  // Disallow flags that require special union arms to be initialized.
+  MOZ_ASSERT(!flags.isInterpretedLazy());
+  MOZ_ASSERT(!flags.isWasmWithJitEntry());
+
   /* Initialize all function members. */
   fun->setArgCount(uint16_t(nargs));
   fun->setFlags(flags);
   if (fun->isInterpreted()) {
-    MOZ_ASSERT(!native);
-    if (fun->isInterpretedLazy()) {
-      fun->initLazyScript(nullptr);
-    } else {
-      fun->initScript(nullptr);
-    }
+    fun->initScript(nullptr);
     fun->initEnvironment(enclosingEnv);
   } else {
     MOZ_ASSERT(fun->isNative());
-    MOZ_ASSERT(native);
     fun->initNative(native, nullptr);
   }
   if (allocKind == gc::AllocKind::FUNCTION_EXTENDED) {
@@ -2525,7 +2513,7 @@ JSFunction* js::DefineFunction(
 }
 
 void js::ReportIncompatibleMethod(JSContext* cx, const CallArgs& args,
-                                  const Class* clasp) {
+                                  const JSClass* clasp) {
   RootedValue thisv(cx, args.thisv());
 
 #ifdef DEBUG

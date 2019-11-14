@@ -261,6 +261,12 @@ enum nsTopLevelWidgetZPlacement {  // for PlaceBehind()
  */
 #define NS_WIDGET_RESUME_PROCESS_OBSERVER_TOPIC "resume_process_notification"
 
+/**
+ * When an app(-shell) is activated by the OS, this topic is notified.
+ * Currently, this only happens on Mac OSX.
+ */
+#define NS_WIDGET_MAC_APP_ACTIVATE_OBSERVER_TOPIC "mac_app_activate"
+
 namespace mozilla {
 namespace widget {
 
@@ -835,6 +841,11 @@ class nsIWidget : public nsISupports {
    * Returns a value from nsSizeMode (see nsIWidgetListener.h)
    */
   virtual nsSizeMode SizeMode() = 0;
+
+  /**
+   * Ask whether the window is tiled.
+   */
+  virtual bool IsTiled() const = 0;
 
   /**
    * Ask wether the widget is fully occluded
@@ -1708,6 +1719,15 @@ class nsIWidget : public nsISupports {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
+  // Get rectangle of the screen where the window is placed.
+  // It's used to detect popup overflow under Wayland because
+  // Screenmanager does not work under it.
+#ifdef MOZ_WAYLAND
+  virtual nsresult GetScreenRect(LayoutDeviceIntRect* aRect) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+#endif
+
  private:
   class LongTapInfo {
    public:
@@ -1875,7 +1895,7 @@ class nsIWidget : public nsISupports {
     NativeKeyBindingsForMultiLineEditor,
     NativeKeyBindingsForRichTextEditor
   };
-  virtual void GetEditCommands(NativeKeyBindingsType aType,
+  virtual bool GetEditCommands(NativeKeyBindingsType aType,
                                const mozilla::WidgetKeyboardEvent& aEvent,
                                nsTArray<mozilla::CommandInt>& aCommands);
 
@@ -2066,6 +2086,10 @@ class nsIWidget : public nsISupports {
       const nsAString& aText,
       const nsTArray<mozilla::FontRange>& aFontRangeArray,
       const bool aIsVertical, const LayoutDeviceIntPoint& aPoint) {}
+
+  virtual void RequestFxrOutput() {
+    MOZ_ASSERT(false, "This function should only execute in Windows");
+  }
 
 #if defined(MOZ_WIDGET_ANDROID)
   /**

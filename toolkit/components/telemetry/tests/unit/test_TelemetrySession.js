@@ -266,12 +266,17 @@ function checkPayloadInfo(data, reason) {
     Date.parse(data.subsessionStartDate) >= Date.parse(data.sessionStartDate)
   );
   Assert.ok(data.profileSubsessionCounter >= data.subsessionCounter);
+
+  // According to https://en.wikipedia.org/wiki/List_of_UTC_time_offsets,
+  // UTC offsets range from -12 to +14 hours.
+  // Don't think the extremes of the range are affected by further
+  // daylight-savings adjustments, but it is possible.
   Assert.ok(
     data.timezoneOffset >= -12 * 60,
     "The timezone must be in a valid range."
   );
   Assert.ok(
-    data.timezoneOffset <= 12 * 60,
+    data.timezoneOffset <= 14 * 60,
     "The timezone must be in a valid range."
   );
 }
@@ -455,11 +460,6 @@ function checkPayload(payload, reason, successfulPings) {
 
   Assert.ok(
     "mainThread" in payload.slowSQL && "otherThreads" in payload.slowSQL
-  );
-
-  Assert.ok(
-    "IceCandidatesStats" in payload.webrtc &&
-      "webrtc" in payload.webrtc.IceCandidatesStats
   );
 
   // Check keyed histogram payload.
@@ -732,7 +732,7 @@ add_task(async function test_checkSubsessionScalars() {
   }
   // No scalar must be reported in classic pings (e.g. saved-session).
   Assert.ok(
-    Object.keys(classic.processes.parent.scalars).length == 0,
+    !Object.keys(classic.processes.parent.scalars).length,
     "Scalars must not be reported in a classic ping."
   );
 
@@ -2012,7 +2012,6 @@ add_task(async function test_pingExtendedStats() {
     "fileIOReports",
     "lateWrites",
     "addonDetails",
-    "webrtc",
   ];
 
   if (AppConstants.platform == "android") {

@@ -2,6 +2,7 @@ use super::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const APPLE_EVENT_TIMEOUT: OSStatus = -1712;
+pub const DRIFT_COMPENSATION: u32 = 1;
 
 #[derive(Debug)]
 pub struct AggregateDevice {
@@ -109,10 +110,14 @@ impl AggregateDevice {
         let mut cloned_condvar_pair = condvar_pair.clone();
         let data_ptr = &mut cloned_condvar_pair as *mut Arc<(Mutex<Vec<AudioObjectID>>, Condvar)>;
 
+        let address = get_property_address(
+            Property::HardwareDevices,
+            DeviceType::INPUT | DeviceType::OUTPUT,
+        );
         assert_eq!(
             audio_object_add_property_listener(
                 kAudioObjectSystemObject,
-                &DEVICES_PROPERTY_ADDRESS,
+                &address,
                 devices_changed_callback,
                 data_ptr as *mut c_void,
             ),
@@ -123,7 +128,7 @@ impl AggregateDevice {
             assert_eq!(
                 audio_object_remove_property_listener(
                     kAudioObjectSystemObject,
-                    &DEVICES_PROPERTY_ADDRESS,
+                    &address,
                     devices_changed_callback,
                     data_ptr as *mut c_void,
                 ),
@@ -349,17 +354,13 @@ impl AggregateDevice {
             // The order of the items in the array is significant and is used to determine the order of the streams
             // of the AudioAggregateDevice.
             for device in output_sub_devices {
-                let uid = get_device_name(device);
-                assert!(!uid.is_null());
-                CFArrayAppendValue(sub_devices, uid as *const c_void);
-                CFRelease(uid as *const c_void);
+                let uid = get_device_global_uid(device)?;
+                CFArrayAppendValue(sub_devices, uid.get_raw() as *const c_void);
             }
 
             for device in input_sub_devices {
-                let uid = get_device_name(device);
-                assert!(!uid.is_null());
-                CFArrayAppendValue(sub_devices, uid as *const c_void);
-                CFRelease(uid as *const c_void);
+                let uid = get_device_global_uid(device)?;
+                CFArrayAppendValue(sub_devices, uid.get_raw() as *const c_void);
             }
 
             let address = AudioObjectPropertyAddress {
@@ -432,14 +433,10 @@ impl AggregateDevice {
         assert_ne!(output_device_id, kAudioObjectUnknown);
         let output_sub_devices = Self::get_sub_devices(output_device_id)?;
         assert!(!output_sub_devices.is_empty());
-        let master_sub_device = get_device_name(output_sub_devices[0]);
+        let master_sub_device_uid = get_device_global_uid(output_sub_devices[0]).unwrap();
+        let master_sub_device = master_sub_device_uid.get_raw();
         let size = mem::size_of::<CFStringRef>();
         let status = audio_object_set_property_data(device_id, &address, size, &master_sub_device);
-        if !master_sub_device.is_null() {
-            unsafe {
-                CFRelease(master_sub_device as *const c_void);
-            }
-        }
         if status == NO_ERR {
             Ok(())
         } else {
@@ -499,12 +496,11 @@ impl AggregateDevice {
 
         // Start from the second device since the first is the master clock
         for device in &sub_devices[1..] {
-            let drift_compensation_value: u32 = 1;
             let status = audio_object_set_property_data(
                 *device,
                 &address,
                 mem::size_of::<u32>(),
-                &drift_compensation_value,
+                &DRIFT_COMPENSATION,
             );
             if status != NO_ERR {
                 cubeb_log!(
@@ -555,84 +551,44 @@ impl AggregateDevice {
         assert_ne!(output_id, kAudioObjectUnknown);
         assert_ne!(input_id, output_id);
 
-        let mut input_device_info = ffi::cubeb_device_info::default();
-        audiounit_create_device_from_hwdev(&mut input_device_info, input_id, DeviceType::INPUT);
+        let label = get_device_label(input_id, DeviceType::INPUT)?;
+        let input_label = label.into_string();
 
-        let mut output_device_info = ffi::cubeb_device_info::default();
-        audiounit_create_device_from_hwdev(&mut output_device_info, output_id, DeviceType::OUTPUT);
+        let label = get_device_label(output_id, DeviceType::OUTPUT)?;
+        let output_label = label.into_string();
 
-        let input_name_str = unsafe {
-            CString::from_raw(input_device_info.friendly_name as *mut c_char)
-                .into_string()
-                .expect("Fail to convert input name from CString into String")
-        };
-        input_device_info.friendly_name = ptr::null();
-
-        let output_name_str = unsafe {
-            CString::from_raw(output_device_info.friendly_name as *mut c_char)
-                .into_string()
-                .expect("Fail to convert output name from CString into String")
-        };
-        output_device_info.friendly_name = ptr::null();
-
-        let _teardown = finally(|| {
-            // Retrieve the rest lost memory.
-            // No need to retrieve the memory of {input,output}_device_info.friendly_name
-            // since they are already retrieved/retaken above.
-            assert!(input_device_info.friendly_name.is_null());
-            audiounit_device_destroy(&mut input_device_info);
-            assert!(output_device_info.friendly_name.is_null());
-            audiounit_device_destroy(&mut output_device_info);
-        });
-
-        if input_name_str.contains("AirPods") && output_name_str.contains("AirPods") {
-            let mut input_min_rate = 0;
-            let mut input_max_rate = 0;
-            let mut input_nominal_rate = 0;
-            audiounit_get_available_samplerate(
-                input_id,
-                kAudioObjectPropertyScopeGlobal,
-                &mut input_min_rate,
-                &mut input_max_rate,
-                &mut input_nominal_rate,
-            );
+        if input_label.contains("AirPods") && output_label.contains("AirPods") {
+            let input_rate =
+                get_device_sample_rate(input_id, DeviceType::INPUT | DeviceType::OUTPUT)?;
             cubeb_log!(
-                "Input device {}, name: {}, min: {}, max: {}, nominal rate: {}",
+                "The nominal rate of the input device {}: {}",
                 input_id,
-                input_name_str,
-                input_min_rate,
-                input_max_rate,
-                input_nominal_rate
+                input_rate
             );
 
-            let mut output_min_rate = 0;
-            let mut output_max_rate = 0;
-            let mut output_nominal_rate = 0;
-            audiounit_get_available_samplerate(
-                output_id,
-                kAudioObjectPropertyScopeGlobal,
-                &mut output_min_rate,
-                &mut output_max_rate,
-                &mut output_nominal_rate,
-            );
+            let output_rate =
+                match get_device_sample_rate(output_id, DeviceType::INPUT | DeviceType::OUTPUT) {
+                    Ok(rate) => format!("{}", rate),
+                    Err(e) => format!("Error {}", e),
+                };
             cubeb_log!(
-                "Output device {}, name: {}, min: {}, max: {}, nominal rate: {}",
+                "The nominal rate of the output device {}: {}",
                 output_id,
-                output_name_str,
-                output_min_rate,
-                output_max_rate,
-                output_nominal_rate
+                output_rate
             );
 
-            let rate = f64::from(input_nominal_rate);
             let addr = AudioObjectPropertyAddress {
                 mSelector: kAudioDevicePropertyNominalSampleRate,
                 mScope: kAudioObjectPropertyScopeGlobal,
                 mElement: kAudioObjectPropertyElementMaster,
             };
 
-            let status =
-                audio_object_set_property_data(device_id, &addr, mem::size_of::<f64>(), &rate);
+            let status = audio_object_set_property_data(
+                device_id,
+                &addr,
+                mem::size_of::<f64>(),
+                &input_rate,
+            );
             if status != NO_ERR {
                 return Err(status);
             }

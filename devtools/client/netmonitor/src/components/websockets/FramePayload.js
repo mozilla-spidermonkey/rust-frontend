@@ -11,6 +11,7 @@ const {
 const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const { div } = dom;
 const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const Services = require("Services");
 const { L10N } = require("devtools/client/netmonitor/src/utils/l10n.js");
 const {
   getFramePayload,
@@ -19,6 +20,14 @@ const {
 const {
   getFormattedSize,
 } = require("devtools/client/netmonitor/src/utils/format-utils.js");
+const MESSAGE_DATA_LIMIT = Services.prefs.getIntPref(
+  "devtools.netmonitor.ws.messageDataLimit"
+);
+const MESSAGE_DATA_TRUNCATED = L10N.getStr("messageDataTruncated");
+const SocketIODecoder = require("devtools/client/netmonitor/src/components/websockets/parsers/socket-io/index.js");
+const {
+  parseSockJS,
+} = require("devtools/client/netmonitor/src/components/websockets/parsers/sockjs/index.js");
 
 // Components
 const Accordion = createFactory(
@@ -50,54 +59,121 @@ class FramePayload extends Component {
       payload: "",
       isFormattedData: false,
       formattedData: {},
+      formattedDataTitle: "",
     };
   }
 
   componentDidMount() {
+    this.updateFramePayload();
+  }
+
+  componentDidUpdate(prevProps) {
+    if (this.props.selectedFrame !== prevProps.selectedFrame) {
+      this.updateFramePayload();
+    }
+  }
+
+  updateFramePayload() {
     const { selectedFrame, connector } = this.props;
     getFramePayload(selectedFrame.payload, connector.getLongString).then(
       payload => {
-        const { json } = isJSON(payload);
+        const { formattedData, formattedDataTitle } = this.parsePayload(
+          payload
+        );
         this.setState({
           payload,
-          isFormattedData: !!json,
-          formattedData: json,
+          isFormattedData: !!formattedData,
+          formattedData,
+          formattedDataTitle,
         });
       }
     );
   }
 
-  componentWillReceiveProps(nextProps) {
-    const { selectedFrame, connector } = nextProps;
-    getFramePayload(selectedFrame.payload, connector.getLongString).then(
-      payload => {
-        const { json } = isJSON(payload);
-        this.setState({
-          payload,
-          isFormattedData: !!json,
-          formattedData: json,
-        });
-      }
-    );
+  parsePayload(payload) {
+    // socket.io payload
+    const socketIOPayload = this.parseSocketIOPayload(payload);
+    if (socketIOPayload) {
+      return {
+        formattedData: socketIOPayload,
+        formattedDataTitle: "Socket.IO",
+      };
+    }
+    // sockjs payload
+    const sockJSPayload = parseSockJS(payload);
+    if (sockJSPayload) {
+      return {
+        formattedData: sockJSPayload,
+        formattedDataTitle: "SockJS",
+      };
+    }
+    // json payload
+    const { json } = isJSON(payload);
+    if (json) {
+      return {
+        formattedData: json,
+        formattedDataTitle: "JSON",
+      };
+    }
+    return {
+      formattedData: null,
+      formattedDataTitle: "",
+    };
+  }
+
+  parseSocketIOPayload(payload) {
+    let result;
+    // Try decoding socket.io frames
+    try {
+      const decoder = new SocketIODecoder();
+      decoder.on("decoded", decodedPacket => {
+        if (
+          decodedPacket &&
+          !decodedPacket.data.includes("parser error") &&
+          decodedPacket.type
+        ) {
+          result = decodedPacket;
+        }
+      });
+      decoder.add(payload);
+      return result;
+    } catch (err) {
+      // Ignore errors
+    }
+    return null;
   }
 
   render() {
+    let payload = this.state.payload;
+    let isTruncated = false;
+    if (this.state.payload.length >= MESSAGE_DATA_LIMIT) {
+      payload = payload.substring(0, MESSAGE_DATA_LIMIT);
+      isTruncated = true;
+    }
+
     const items = [
       {
         className: "rawData",
-        component: RawData({ payload: this.state.payload }),
+        component: RawData,
+        componentProps: { payload },
         header: L10N.getFormatStrWithNumbers(
           "netmonitor.ws.rawData.header",
           getFormattedSize(this.state.payload.length)
         ),
-        labelledby: "ws-frame-rawData-header",
+        id: "ws-frame-rawData",
         opened: true,
       },
     ];
-    if (this.state.isFormattedData) {
-      items.push({
+    if (!isTruncated && this.state.isFormattedData) {
+      /**
+       * Push the JSON section (formatted data) at the begging of the array
+       * before the raw data section. Note that the JSON section will be
+       * auto-expanded while the raw data auto-collapsed.
+       */
+      items.unshift({
         className: "formattedData",
-        component: JSONPreview({
+        component: JSONPreview,
+        componentProps: {
           object: this.state.formattedData,
           columns: [
             {
@@ -105,9 +181,11 @@ class FramePayload extends Component {
               width: "100%",
             },
           ],
-        }),
-        header: `JSON (${getFormattedSize(this.state.payload.length)})`,
-        labelledby: "ws-frame-formattedData-header",
+        },
+        header: `${this.state.formattedDataTitle} (${getFormattedSize(
+          this.state.payload.length
+        )})`,
+        id: "ws-frame-formattedData",
         opened: true,
       });
     }
@@ -116,6 +194,13 @@ class FramePayload extends Component {
       {
         className: "ws-frame-payload",
       },
+      isTruncated &&
+        div(
+          {
+            className: "truncated-data-message",
+          },
+          MESSAGE_DATA_TRUNCATED
+        ),
       Accordion({
         items,
       })

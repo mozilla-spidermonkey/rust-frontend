@@ -22,6 +22,7 @@
 #include "jit/shared/Assembler-shared.h"
 #include "js/HashTable.h"
 #include "threading/ExclusiveData.h"
+#include "util/Memory.h"
 #include "vm/MutexIDs.h"
 #include "wasm/WasmGC.h"
 #include "wasm/WasmTypes.h"
@@ -331,7 +332,7 @@ struct MetadataCacheablePod {
 
 typedef uint8_t ModuleHash[8];
 typedef Vector<ValTypeVector, 0, SystemAllocPolicy> FuncArgTypesVector;
-typedef Vector<ExprType, 0, SystemAllocPolicy> FuncReturnTypesVector;
+typedef Vector<ValTypeVector, 0, SystemAllocPolicy> FuncReturnTypesVector;
 
 struct Metadata : public ShareableBase<Metadata>, public MetadataCacheablePod {
   FuncTypeWithIdVector funcTypeIds;
@@ -339,6 +340,7 @@ struct Metadata : public ShareableBase<Metadata>, public MetadataCacheablePod {
   TableDescVector tables;
   CacheableChars filename;
   CacheableChars sourceMapURL;
+  bool omitsBoundsChecks;
 
   // namePayload points at the name section's CustomSection::payload so that
   // the Names (which are use payload-relative offsets) can be used

@@ -9,6 +9,7 @@
 #ifndef BaseProfilerDetail_h
 #define BaseProfilerDetail_h
 
+#include "mozilla/Maybe.h"
 #include "mozilla/PlatformMutex.h"
 
 #ifdef DEBUG
@@ -32,15 +33,26 @@ class BaseProfilerMutex : private ::mozilla::detail::MutexImpl {
   BaseProfilerMutex()
       : ::mozilla::detail::MutexImpl(
             ::mozilla::recordreplay::Behavior::DontPreserve) {}
+
+  BaseProfilerMutex(const BaseProfilerMutex&) = delete;
+  BaseProfilerMutex& operator=(const BaseProfilerMutex&) = delete;
+  BaseProfilerMutex(BaseProfilerMutex&&) = delete;
+  BaseProfilerMutex& operator=(BaseProfilerMutex&&) = delete;
+
+#ifdef MOZ_BASE_PROFILER_DEBUG
+  ~BaseProfilerMutex() { MOZ_ASSERT(mOwningThreadId == 0); }
+#endif  // MOZ_BASE_PROFILER_DEBUG
+
   void Lock() {
 #ifdef MOZ_BASE_PROFILER_DEBUG
     // This is only designed to catch recursive locking.
-    int tid = baseprofiler::profiler_current_thread_id();
+    const int tid = baseprofiler::profiler_current_thread_id();
+    MOZ_ASSERT(tid != 0);
     MOZ_ASSERT(mOwningThreadId != tid);
 #endif  // MOZ_BASE_PROFILER_DEBUG
     ::mozilla::detail::MutexImpl::lock();
 #ifdef MOZ_BASE_PROFILER_DEBUG
-    MOZ_ASSERT(mOwningThreadId != tid);
+    MOZ_ASSERT(mOwningThreadId == 0);
     mOwningThreadId = tid;
 #endif  // MOZ_BASE_PROFILER_DEBUG
   }
@@ -65,20 +77,92 @@ class BaseProfilerMutex : private ::mozilla::detail::MutexImpl {
 
 #ifdef MOZ_BASE_PROFILER_DEBUG
  private:
-  Atomic<int> mOwningThreadId{0};
+  Atomic<int, MemoryOrdering::SequentiallyConsistent,
+         recordreplay::Behavior::DontPreserve>
+      mOwningThreadId{0};
 #endif  // MOZ_BASE_PROFILER_DEBUG
 };
 
 // RAII class to lock a mutex.
-class MOZ_RAII BPAutoLock {
+class MOZ_RAII BaseProfilerAutoLock {
  public:
-  explicit BPAutoLock(BaseProfilerMutex& aMutex) : mMutex(aMutex) {
+  explicit BaseProfilerAutoLock(BaseProfilerMutex& aMutex) : mMutex(aMutex) {
     mMutex.Lock();
   }
-  ~BPAutoLock() { mMutex.Unlock(); }
+
+  BaseProfilerAutoLock(const BaseProfilerAutoLock&) = delete;
+  BaseProfilerAutoLock& operator=(const BaseProfilerAutoLock&) = delete;
+  BaseProfilerAutoLock(BaseProfilerAutoLock&&) = delete;
+  BaseProfilerAutoLock& operator=(BaseProfilerAutoLock&&) = delete;
+
+  ~BaseProfilerAutoLock() { mMutex.Unlock(); }
 
  private:
   BaseProfilerMutex& mMutex;
+};
+
+// Thin shell around mozglue PlatformMutex, for Base Profiler internal use.
+// Actual mutex may be disabled at construction time.
+// Does not preserve behavior in JS record/replay.
+class BaseProfilerMaybeMutex : private ::mozilla::detail::MutexImpl {
+ public:
+  explicit BaseProfilerMaybeMutex(bool aActivate) {
+    if (aActivate) {
+      mMaybeMutex.emplace();
+    }
+  }
+
+  BaseProfilerMaybeMutex(const BaseProfilerMaybeMutex&) = delete;
+  BaseProfilerMaybeMutex& operator=(const BaseProfilerMaybeMutex&) = delete;
+  BaseProfilerMaybeMutex(BaseProfilerMaybeMutex&&) = delete;
+  BaseProfilerMaybeMutex& operator=(BaseProfilerMaybeMutex&&) = delete;
+
+  ~BaseProfilerMaybeMutex() = default;
+
+  bool IsActivated() const { return mMaybeMutex.isSome(); }
+
+  void Lock() {
+    if (IsActivated()) {
+      mMaybeMutex->Lock();
+    }
+  }
+
+  void Unlock() {
+    if (IsActivated()) {
+      mMaybeMutex->Unlock();
+    }
+  }
+
+  void AssertCurrentThreadOwns() const {
+#ifdef MOZ_BASE_PROFILER_DEBUG
+    if (IsActivated()) {
+      mMaybeMutex->AssertCurrentThreadOwns();
+    }
+#endif  // MOZ_BASE_PROFILER_DEBUG
+  }
+
+ private:
+  Maybe<BaseProfilerMutex> mMaybeMutex;
+};
+
+// RAII class to lock a mutex.
+class MOZ_RAII BaseProfilerMaybeAutoLock {
+ public:
+  explicit BaseProfilerMaybeAutoLock(BaseProfilerMaybeMutex& aMaybeMutex)
+      : mMaybeMutex(aMaybeMutex) {
+    mMaybeMutex.Lock();
+  }
+
+  BaseProfilerMaybeAutoLock(const BaseProfilerMaybeAutoLock&) = delete;
+  BaseProfilerMaybeAutoLock& operator=(const BaseProfilerMaybeAutoLock&) =
+      delete;
+  BaseProfilerMaybeAutoLock(BaseProfilerMaybeAutoLock&&) = delete;
+  BaseProfilerMaybeAutoLock& operator=(BaseProfilerMaybeAutoLock&&) = delete;
+
+  ~BaseProfilerMaybeAutoLock() { mMaybeMutex.Unlock(); }
+
+ private:
+  BaseProfilerMaybeMutex& mMaybeMutex;
 };
 
 }  // namespace detail

@@ -543,14 +543,16 @@ function mainThreadFetch(
       ? channel.LOAD_FROM_CACHE
       : channel.LOAD_BYPASS_CACHE;
 
-    // When loading from cache, the cacheKey allows us to target a specific
-    // SHEntry and offer ways to restore POST requests from cache.
-    if (
-      aOptions.loadFromCache &&
-      aOptions.cacheKey != 0 &&
-      channel instanceof Ci.nsICacheInfoChannel
-    ) {
-      channel.cacheKey = aOptions.cacheKey;
+    if (aOptions.loadFromCache && channel instanceof Ci.nsICacheInfoChannel) {
+      // If DevTools intents to load the content from the cache,
+      // we make the LOAD_FROM_CACHE flag preferred over LOAD_BYPASS_CACHE.
+      channel.preferCacheLoadOverBypass = true;
+
+      // When loading from cache, the cacheKey allows us to target a specific
+      // SHEntry and offer ways to restore POST requests from cache.
+      if (aOptions.cacheKey != 0) {
+        channel.cacheKey = aOptions.cacheKey;
+      }
     }
 
     if (aOptions.window) {
@@ -560,6 +562,7 @@ function mainThreadFetch(
       ).loadGroup;
     }
 
+    // eslint-disable-next-line complexity
     const onResponse = (stream, status, request) => {
       if (!components.isSuccessCode(status)) {
         reject(new Error(`Failed to fetch ${url}. Code ${status}.`));
@@ -625,9 +628,21 @@ function mainThreadFetch(
         }
         const unicodeSource = NetworkHelper.convertToUnicode(source, charset);
 
+        // Look for any source map URL in the response.
+        let sourceMapURL;
+        try {
+          sourceMapURL = request.getResponseHeader("SourceMap");
+        } catch (e) {}
+        if (!sourceMapURL) {
+          try {
+            sourceMapURL = request.getResponseHeader("X-SourceMap");
+          } catch (e) {}
+        }
+
         resolve({
           content: unicodeSource,
           contentType: request.contentType,
+          sourceMapURL,
         });
       } catch (ex) {
         const uri = request.originalURI;
@@ -781,37 +796,61 @@ exports.openFileStream = function(filePath) {
 };
 
 /**
- * Open the file at the given path for writing.
+ * Save the given data to disk after asking the user where to do so.
  *
- * @param {String} filePath
+ * @param {Window} parentWindow
+ *        The parent window to use to display the filepicker.
+ * @param {UInt8Array} dataArray
+ *        The data to write to the file.
+ * @param {String} fileName
+ *        The suggested filename.
+ * @param {Array} filters
+ *        An array of object of the following shape:
+ *          - pattern: A pattern for accepted files (example: "*.js")
+ *          - label: The label that will be displayed in the save file dialog.
  */
-exports.saveFileStream = function(filePath, istream) {
-  return new Promise((resolve, reject) => {
-    const ostream = FileUtils.openSafeFileOutputStream(filePath);
-    NetUtil.asyncCopy(istream, ostream, status => {
-      if (!components.isSuccessCode(status)) {
-        reject(new Error(`Could not save "${filePath}"`));
-        return;
-      }
-      FileUtils.closeSafeFileOutputStream(ostream);
-      resolve();
-    });
+exports.saveAs = async function(
+  parentWindow,
+  dataArray,
+  fileName = "",
+  filters = []
+) {
+  let returnFile;
+  try {
+    returnFile = await exports.showSaveFileDialog(
+      parentWindow,
+      fileName,
+      filters
+    );
+  } catch (ex) {
+    return;
+  }
+
+  await OS.File.writeAtomic(returnFile.path, dataArray, {
+    tmpPath: returnFile.path + ".tmp",
   });
 };
 
 /**
  * Show file picker and return the file user selected.
  *
- * @param nsIWindow parentWindow
+ * @param {nsIWindow} parentWindow
  *        Optional parent window. If null the parent window of the file picker
  *        will be the window of the attached input element.
- * @param AString suggestedFilename
- *        The suggested filename when toSave is true.
- *
- * @return Promise
+ * @param {String} suggestedFilename
+ *        The suggested filename.
+ * @param {Array} filters
+ *        An array of object of the following shape:
+ *          - pattern: A pattern for accepted files (example: "*.js")
+ *          - label: The label that will be displayed in the save file dialog.
+ * @return {Promise}
  *         A promise that is resolved after the file is selected by the file picker
  */
-exports.showSaveFileDialog = function(parentWindow, suggestedFilename) {
+exports.showSaveFileDialog = function(
+  parentWindow,
+  suggestedFilename,
+  filters = []
+) {
   const fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
 
   if (suggestedFilename) {
@@ -819,7 +858,13 @@ exports.showSaveFileDialog = function(parentWindow, suggestedFilename) {
   }
 
   fp.init(parentWindow, null, fp.modeSave);
-  fp.appendFilters(fp.filterAll);
+  if (Array.isArray(filters) && filters.length > 0) {
+    for (const { pattern, label } of filters) {
+      fp.appendFilter(label, pattern);
+    }
+  } else {
+    fp.appendFilters(fp.filterAll);
+  }
 
   return new Promise((resolve, reject) => {
     fp.open(result => {
@@ -868,6 +913,12 @@ errorOnFlag(exports, "wantVerbose");
 // where unsafeDereference will return an opaque security wrapper to the
 // referent.
 function callPropertyOnObject(object, name, ...args) {
+  // When replaying, the result of the call may already be known, which avoids
+  // having to communicate with the replaying process.
+  if (isReplaying && args.length == 0 && object.replayHasCallResult(name)) {
+    return object.replayCallResult(name);
+  }
+
   // Find the property.
   let descriptor;
   let proto = object;

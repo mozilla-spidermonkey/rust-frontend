@@ -1171,6 +1171,7 @@ BrowserElementChild.prototype = {
           case Cr.NS_BINDING_ABORTED:
           // Ignoring NS_BINDING_ABORTED, which is set when loading page is
           // stopped.
+          // fall through
           case Cr.NS_ERROR_PARSED_DATA_CACHED:
             return;
 
@@ -1197,6 +1198,9 @@ BrowserElementChild.prototype = {
             return;
           case Cr.NS_ERROR_CSP_FRAME_ANCESTOR_VIOLATION:
             sendAsyncMsg("error", { type: "cspBlocked" });
+            return;
+          case Cr.NS_ERROR_XFO_VIOLATION:
+            sendAsyncMsg("error", { type: "xfoBlocked" });
             return;
           case Cr.NS_ERROR_PHISHING_URI:
             sendAsyncMsg("error", { type: "deceptiveBlocked" });

@@ -14,10 +14,6 @@ job-defaults:
         by-test-platform:
             linux64/debug: ['fission', 'serviceworker']
             default: ['fission']
-    virtualization:
-        by-test-platform:
-            windows10-64(?:-pgo|-shippable)?-qr/.*: virtual-with-gpu
-            default: virtual
     mozharness:
         script: web_platform_tests.py
         config:
@@ -50,8 +46,8 @@ web-platform-tests:
             linux.*/debug: 18
             macosx*/opt: 8
             macosx.*/debug: 16
-            windows10.*/debug: 18
-            windows10-aarch64/opt: 12
+            windows.*/debug: 18
+            windows10-aarch64/opt: 16
             default: 12
     max-run-time:
         by-test-platform:
@@ -61,7 +57,7 @@ web-platform-tests:
     e10s: true
     run-on-projects:
         by-test-platform:
-            windows10-aarch64/opt: ['try', 'mozilla-central']
+            windows10-aarch64/opt: ['try']
             .*-qr/.*: ['release', 'try']  # skip on integration branches due to high load
             default: built-projects
     tier:
@@ -81,6 +77,10 @@ web-platform-tests-reftests:
         name: web-platform-tests-reftests
     schedules-component: web-platform-tests-reftests
     treeherder-symbol: W(Wr)
+    virtualization:
+        by-test-platform:
+            windows10-64(?:-pgo|-shippable)?-qr/.*: virtual-with-gpu
+            default: virtual
     chunks:
         by-test-platform:
             .*-ccov/debug: 8
@@ -93,7 +93,7 @@ web-platform-tests-reftests:
     e10s: true
     run-on-projects:
         by-test-platform:
-            windows10-aarch64/opt: ['try', 'mozilla-central']
+            windows10-aarch64/opt: ['try']
             default: built-projects
     tier:
         by-test-platform:
@@ -119,7 +119,7 @@ web-platform-tests-wdspec:
             - --test-type=wdspec
     run-on-projects:
         by-test-platform:
-            windows10-aarch64/opt: ['try', 'mozilla-central']
+            windows10-aarch64/opt: ['try']
             .*-qr/.*: ['release', 'try']
             default: built-projects
     tier:

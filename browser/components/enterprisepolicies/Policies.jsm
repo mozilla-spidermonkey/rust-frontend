@@ -85,35 +85,61 @@ var Policies = {
 
   Authentication: {
     onBeforeAddons(manager, param) {
+      let locked = true;
+      if ("Locked" in param) {
+        locked = param.Locked;
+      }
+
       if ("SPNEGO" in param) {
-        setAndLockPref(
+        setDefaultPref(
           "network.negotiate-auth.trusted-uris",
-          param.SPNEGO.join(", ")
+          param.SPNEGO.join(", "),
+          locked
         );
       }
       if ("Delegated" in param) {
-        setAndLockPref(
+        setDefaultPref(
           "network.negotiate-auth.delegation-uris",
-          param.Delegated.join(", ")
+          param.Delegated.join(", "),
+          locked
         );
       }
       if ("NTLM" in param) {
-        setAndLockPref(
+        setDefaultPref(
           "network.automatic-ntlm-auth.trusted-uris",
-          param.NTLM.join(", ")
+          param.NTLM.join(", "),
+          locked
         );
       }
       if ("AllowNonFQDN" in param) {
-        if (param.AllowNonFQDN.NTLM) {
-          setAndLockPref(
+        if ("NTLM" in param.AllowNonFQDN) {
+          setDefaultPref(
             "network.automatic-ntlm-auth.allow-non-fqdn",
-            param.AllowNonFQDN.NTLM
+            param.AllowNonFQDN.NTLM,
+            locked
           );
         }
-        if (param.AllowNonFQDN.SPNEGO) {
-          setAndLockPref(
+        if ("SPNEGO" in param.AllowNonFQDN) {
+          setDefaultPref(
             "network.negotiate-auth.allow-non-fqdn",
-            param.AllowNonFQDN.SPNEGO
+            param.AllowNonFQDN.SPNEGO,
+            locked
+          );
+        }
+      }
+      if ("AllowProxies" in param) {
+        if ("NTLM" in param.AllowProxies) {
+          setDefaultPref(
+            "network.automatic-ntlm-auth.allow-proxies",
+            param.AllowProxies.NTLM,
+            locked
+          );
+        }
+        if ("SPNEGO" in param.AllowProxies) {
+          setDefaultPref(
+            "network.negotiate-auth.allow-proxies",
+            param.AllowProxies.SPNEGO,
+            locked
           );
         }
       }
@@ -387,6 +413,7 @@ var Policies = {
     onBeforeAddons(manager, param) {
       if (param) {
         setAndLockPref("identity.fxaccounts.enabled", false);
+        setAndLockPref("trailhead.firstrun.branches", "nofirstrun");
       }
     },
   },
@@ -435,6 +462,14 @@ var Policies = {
     onBeforeUIStartup(manager, param) {
       if (param) {
         manager.disallowFeature("createMasterPassword");
+      }
+    },
+  },
+
+  DisablePasswordReveal: {
+    onBeforeUIStartup(manager, param) {
+      if (param) {
+        manager.disallowFeature("passwordReveal");
       }
     },
   },
@@ -549,18 +584,53 @@ var Policies = {
 
   DisplayMenuBar: {
     onBeforeUIStartup(manager, param) {
-      let value = (!param).toString();
-      // This policy is meant to change the default behavior, not to force it.
-      // If this policy was alreay applied and the user chose to re-hide the
-      // menu bar, do not show it again.
-      runOncePerModification("displayMenuBar", value, () => {
+      let value;
+      if (
+        typeof param === "boolean" ||
+        param == "default-on" ||
+        param == "default-off"
+      ) {
+        switch (param) {
+          case "default-on":
+            value = "false";
+            break;
+          case "default-off":
+            value = "true";
+            break;
+          default:
+            value = (!param).toString();
+            break;
+        }
+        // This policy is meant to change the default behavior, not to force it.
+        // If this policy was already applied and the user chose to re-hide the
+        // menu bar, do not show it again.
+        runOncePerModification("displayMenuBar", value, () => {
+          gXulStore.setValue(
+            BROWSER_DOCUMENT_URL,
+            "toolbar-menubar",
+            "autohide",
+            value
+          );
+        });
+      } else {
+        switch (param) {
+          case "always":
+            value = "false";
+            break;
+          case "never":
+            // Make sure Alt key doesn't show the menubar
+            setAndLockPref("ui.key.menuAccessKeyFocuses", false);
+            value = "true";
+            break;
+        }
         gXulStore.setValue(
           BROWSER_DOCUMENT_URL,
           "toolbar-menubar",
           "autohide",
           value
         );
-      });
+        manager.disallowFeature("hideShowMenuBar");
+      }
     },
   },
 
@@ -610,6 +680,20 @@ var Policies = {
         setAndLockPref("privacy.trackingprotection.enabled", false);
         setAndLockPref("privacy.trackingprotection.pbmode.enabled", false);
       }
+      if ("Cryptomining" in param) {
+        setDefaultPref(
+          "privacy.trackingprotection.cryptomining.enabled",
+          param.Cryptomining,
+          param.Locked
+        );
+      }
+      if ("Fingerprinting" in param) {
+        setDefaultPref(
+          "privacy.trackingprotection.fingerprinting.enabled",
+          param.Fingerprinting,
+          param.Locked
+        );
+      }
     },
   },
 
@@ -649,18 +733,13 @@ var Policies = {
             for (let location of param.Install) {
               let uri;
               try {
-                uri = Services.io.newURI(location);
-              } catch (e) {
-                // If it's not a URL, it's probably a file path.
-                // Assume location is a file path
+                // We need to try as a file first because
+                // Windows paths are valid URIs.
                 // This is done for legacy support (old API)
-                try {
-                  let xpiFile = new FileUtils.File(location);
-                  uri = Services.io.newFileURI(xpiFile);
-                } catch (ex) {
-                  log.error(`Invalid extension path location - ${location}`);
-                  return;
-                }
+                let xpiFile = new FileUtils.File(location);
+                uri = Services.io.newFileURI(xpiFile);
+              } catch (e) {
+                uri = Services.io.newURI(location);
               }
               installAddonFromURL(uri.spec);
             }
@@ -859,7 +938,7 @@ var Policies = {
       // (and therefore what the pref |browser.startup.homepage|) accepts.
       if (param.URL) {
         let homepages = param.URL.href;
-        if (param.Additional && param.Additional.length > 0) {
+        if (param.Additional && param.Additional.length) {
           homepages += "|" + param.Additional.map(url => url.href).join("|");
         }
         setDefaultPref("browser.startup.homepage", homepages, param.Locked);
@@ -877,9 +956,8 @@ var Policies = {
             true
           );
         } else {
-          runOncePerModification("setHomepage", homepages, () => {
-            Services.prefs.clearUserPref("browser.startup.homepage");
-          });
+          // Clear out old run once modification that is no longer used.
+          clearRunOnceModification("setHomepage");
         }
       }
       if (param.StartPage) {
@@ -921,6 +999,10 @@ var Policies = {
         }
       }
     },
+  },
+
+  LegacyProfiles: {
+    // Handled in nsToolkitProfileService.cpp (Windows only)
   },
 
   LocalFileLinks: {
@@ -969,10 +1051,17 @@ var Policies = {
     },
   },
 
+  OfferToSaveLoginsDefault: {
+    onBeforeUIStartup(manager, param) {
+      setDefaultPref("signon.rememberSignons", param);
+    },
+  },
+
   OverrideFirstRunPage: {
     onProfileAfterChange(manager, param) {
       let url = param ? param.href : "";
       setAndLockPref("startup.homepage_welcome_url", url);
+      setAndLockPref("trailhead.firstrun.branches", "nofirstrun");
     },
   },
 
@@ -984,6 +1073,17 @@ var Policies = {
       // as a fallback when the update.xml file hasn't provided
       // a specific post-update URL.
       manager.disallowFeature("postUpdateCustomPage");
+    },
+  },
+
+  PasswordManagerEnabled: {
+    onBeforeUIStartup(manager, param) {
+      if (!param) {
+        blockAboutPage(manager, "about:logins", true);
+        gBlockedChromePages.push("passwordManager.xul");
+        setAndLockPref("pref.privacy.disable_button.view_passwords", true);
+      }
+      setAndLockPref("signon.rememberSignons", param);
     },
   },
 
@@ -1246,6 +1346,40 @@ var Policies = {
             }
           );
         }
+        if (param.DefaultPrivate) {
+          await runOncePerModification(
+            "setDefaultPrivateSearchEngine",
+            param.DefaultPrivate,
+            async () => {
+              let defaultPrivateEngine;
+              try {
+                defaultPrivateEngine = Services.search.getEngineByName(
+                  param.DefaultPrivate
+                );
+                if (!defaultPrivateEngine) {
+                  throw new Error("No engine by that name could be found");
+                }
+              } catch (ex) {
+                log.error(
+                  `Search engine lookup failed when attempting to set ` +
+                    `the default private engine. Requested engine was ` +
+                    `"${param.DefaultPrivate}".`,
+                  ex
+                );
+              }
+              if (defaultPrivateEngine) {
+                try {
+                  await Services.search.setDefaultPrivate(defaultPrivateEngine);
+                } catch (ex) {
+                  log.error(
+                    "Unable to set the default private search engine",
+                    ex
+                  );
+                }
+              }
+            }
+          );
+        }
       });
     },
   },
@@ -1436,7 +1570,7 @@ function setDefaultPermission(policyName, policyParam) {
 /**
  * addAllowDenyPermissions
  *
- * Helper function to call the permissions manager (Services.perms.add)
+ * Helper function to call the permissions manager (Services.perms.addFromPrincipal)
  * for two arrays of URLs.
  *
  * @param {string} permissionName
@@ -1452,8 +1586,8 @@ function addAllowDenyPermissions(permissionName, allowList, blockList) {
 
   for (let origin of allowList) {
     try {
-      Services.perms.add(
-        Services.io.newURI(origin.href),
+      Services.perms.addFromPrincipal(
+        Services.scriptSecurityManager.createContentPrincipalFromOrigin(origin),
         permissionName,
         Ci.nsIPermissionManager.ALLOW_ACTION,
         Ci.nsIPermissionManager.EXPIRE_POLICY
@@ -1465,8 +1599,8 @@ function addAllowDenyPermissions(permissionName, allowList, blockList) {
   }
 
   for (let origin of blockList) {
-    Services.perms.add(
-      Services.io.newURI(origin.href),
+    Services.perms.addFromPrincipal(
+      Services.scriptSecurityManager.createContentPrincipalFromOrigin(origin),
       permissionName,
       Ci.nsIPermissionManager.DENY_ACTION,
       Ci.nsIPermissionManager.EXPIRE_POLICY

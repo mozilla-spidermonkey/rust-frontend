@@ -7,7 +7,6 @@ export default class FxAccountsButton extends HTMLElement {
     if (this.shadowRoot) {
       return;
     }
-
     let template = document.querySelector("#fxaccounts-button-template");
     let shadowRoot = this.attachShadow({ mode: "open" });
     document.l10n.connectRoot(shadowRoot);
@@ -27,7 +26,7 @@ export default class FxAccountsButton extends HTMLElement {
   }
 
   handleEvent(event) {
-    if (event.target == this._avatarButton) {
+    if (event.currentTarget == this._avatarButton) {
       document.dispatchEvent(
         new CustomEvent("AboutLoginsSyncOptions", {
           bubbles: true,
@@ -65,6 +64,7 @@ export default class FxAccountsButton extends HTMLElement {
    *                              be empty if `loggedIn` is false.
    */
   updateState(state) {
+    this.hidden = !state.fxAccountsEnabled;
     this._loggedIn = state.loggedIn;
     this._email = state.email;
     this._avatarURL = state.avatarURL;

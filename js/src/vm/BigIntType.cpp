@@ -169,7 +169,7 @@ void BigInt::initializeDigitsToZero() {
   std::uninitialized_fill_n(digs.begin(), digs.Length(), 0);
 }
 
-void BigInt::finalize(js::FreeOp* fop) {
+void BigInt::finalize(JSFreeOp* fop) {
   if (hasHeapDigits()) {
     size_t size = digitLength() * sizeof(Digit);
     fop->free_(this, heapDigits_, size, js::MemoryUse::BigIntDigits);
@@ -1520,29 +1520,47 @@ BigInt* BigInt::parseLiteral(JSContext* cx, const Range<const CharT> chars,
                             haveParseError);
 }
 
-// BigInt proposal section 5.1.1
-static bool IsInteger(double d) {
-  // Step 1 is an assertion checked by the caller.
-  // Step 2.
-  if (!mozilla::IsFinite(d)) {
-    return false;
+template <typename CharT>
+bool BigInt::literalIsZeroNoRadix(const Range<const CharT> chars) {
+  MOZ_ASSERT(chars.length());
+
+  RangedPtr<const CharT> start = chars.begin();
+  RangedPtr<const CharT> end = chars.end();
+
+  // Skipping leading zeroes.
+  while (start[0] == '0') {
+    start++;
+    if (start == end) {
+      return true;
+    }
   }
 
-  // Step 3.
-  double i = JS::ToInteger(d);
-
-  // Step 4.
-  if (i != d) {
-    return false;
-  }
-
-  // Step 5.
-  return true;
+  return false;
 }
 
+// trim and remove radix selection prefix.
+template <typename CharT>
+bool BigInt::literalIsZero(const Range<const CharT> chars) {
+  RangedPtr<const CharT> start = chars.begin();
+  const RangedPtr<const CharT> end = chars.end();
+
+  MOZ_ASSERT(chars.length());
+
+  // Skip over radix selector.
+  if (end - start > 2 && start[0] == '0') {
+    if (start[1] == 'b' || start[1] == 'B' || start[1] == 'x' ||
+        start[1] == 'X' || start[1] == 'o' || start[1] == 'O') {
+      return literalIsZeroNoRadix(Range<const CharT>(start + 2, end));
+    }
+  }
+
+  return literalIsZeroNoRadix(Range<const CharT>(start, end));
+}
+
+template bool BigInt::literalIsZero(const Range<const char16_t> chars);
+
 BigInt* BigInt::createFromDouble(JSContext* cx, double d) {
-  MOZ_ASSERT(::IsInteger(d),
-             "Only integer-valued doubles can convert to BigInt");
+  MOZ_ASSERT(IsInteger(d), "Only integer-valued doubles can convert to BigInt");
 
   if (d == 0) {
     return zero(cx);
@@ -1662,7 +1680,7 @@ BigInt* BigInt::createFromInt64(JSContext* cx, int64_t n) {
 BigInt* js::NumberToBigInt(JSContext* cx, double d) {
   // Step 1 is an assertion checked by the caller.
   // Step 2.
-  if (!::IsInteger(d)) {
+  if (!IsInteger(d)) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_NUMBER_TO_BIGINT);
     return nullptr;
@@ -3155,6 +3173,16 @@ bool BigInt::equal(BigInt* lhs, double rhs) {
   return compare(lhs, rhs) == 0;
 }
 
+JS::Result<bool> BigInt::equal(JSContext* cx, Handle<BigInt*> lhs,
+                               HandleString rhs) {
+  BigInt* rhsBigInt;
+  MOZ_TRY_VAR(rhsBigInt, StringToBigInt(cx, rhs));
+  if (!rhsBigInt) {
+    return false;
+  }
+  return equal(lhs, rhsBigInt);
+}
+
 // BigInt proposal section 3.2.5
 JS::Result<bool> BigInt::looselyEqual(JSContext* cx, HandleBigInt lhs,
                                       HandleValue rhs) {
@@ -3167,13 +3195,8 @@ JS::Result<bool> BigInt::looselyEqual(JSContext* cx, HandleBigInt lhs,
 
   // Steps 6-7.
   if (rhs.isString()) {
-    RootedBigInt rhsBigInt(cx);
     RootedString rhsString(cx, rhs.toString());
-    MOZ_TRY_VAR(rhsBigInt, StringToBigInt(cx, rhsString));
-    if (!rhsBigInt) {
-      return false;
-    }
-    return equal(lhs, rhsBigInt);
+    return equal(cx, lhs, rhsString);
   }
 
   // Steps 8-9 (not applicable).
@@ -3379,6 +3402,12 @@ BigInt* js::ParseBigIntLiteral(JSContext* cx,
   }
   MOZ_RELEASE_ASSERT(!parseError);
   return res;
+}
+
+// Check a already validated numeric literal for a non-zero value. Used by
+// the parsers node folder in deferred mode.
+bool js::BigIntLiteralIsZero(const mozilla::Range<const char16_t>& chars) {
+  return BigInt::literalIsZero(chars);
 }
 
 template <js::AllowGC allowGC>

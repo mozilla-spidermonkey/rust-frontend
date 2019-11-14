@@ -137,6 +137,11 @@ class JitRuntime {
 
   MainThreadData<uint64_t> nextCompilationId_;
 
+  // Buffer for OSR from baseline to Ion. To avoid holding on to this for too
+  // long it's also freed in EnterBaseline and EnterJit (after returning from
+  // JIT code).
+  MainThreadData<js::UniquePtr<uint8_t>> ionOsrTempData_;
+
   // Shared exception-handler tail.
   WriteOnceData<uint32_t> exceptionTailOffset_;
 
@@ -299,7 +304,7 @@ class JitRuntime {
   static void Trace(JSTracer* trc, const js::AutoAccessAtomsZone& access);
   static void TraceJitcodeGlobalTableForMinorGC(JSTracer* trc);
   static MOZ_MUST_USE bool MarkJitcodeGlobalTableIteratively(GCMarker* marker);
-  static void SweepJitcodeGlobalTable(JSRuntime* rt);
+  static void TraceWeakJitcodeGlobalTable(JSRuntime* rt, JSTracer* trc);
 
   ExecutableAllocator& execAlloc() { return execAlloc_.ref(); }
 
@@ -310,6 +315,9 @@ class JitRuntime {
   IonCompilationId nextCompilationId() {
     return IonCompilationId(nextCompilationId_++);
   }
+
+  uint8_t* allocateIonOsrTempData(size_t size);
+  void freeIonOsrTempData();
 
   TrampolinePtr getVMWrapper(const VMFunction& f) const;
 
@@ -470,8 +478,8 @@ struct CacheIRStubKey : public DefaultHasher<CacheIRStubKey> {
 
 template <typename Key>
 struct IcStubCodeMapGCPolicy {
-  static bool needsSweep(Key*, WeakHeapPtrJitCode* value) {
-    return IsAboutToBeFinalized(value);
+  static bool traceWeak(JSTracer* trc, Key*, WeakHeapPtrJitCode* value) {
+    return TraceWeakEdge(trc, value, "traceWeak");
   }
 };
 
@@ -493,7 +501,7 @@ class JitZone {
   BaselineCacheIRStubCodeMap baselineCacheIRStubCodes_;
 
  public:
-  void sweep();
+  void traceWeak(JSTracer* trc);
 
   void addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
                               size_t* jitZone, size_t* baselineStubsOptimized,
@@ -610,7 +618,7 @@ class JitRealm {
     return stubs_[StringConcat];
   }
 
-  void sweep(JS::Realm* realm);
+  void traceWeak(JSTracer* trc, JS::Realm* realm);
 
   void discardStubs() {
     for (WeakHeapPtrJitCode& stubRef : stubs_) {
@@ -684,8 +692,8 @@ class JitRealm {
 };
 
 // Called from Zone::discardJitCode().
-void InvalidateAll(FreeOp* fop, JS::Zone* zone);
-void FinishInvalidation(FreeOp* fop, JSScript* script);
+void InvalidateAll(JSFreeOp* fop, JS::Zone* zone);
+void FinishInvalidation(JSFreeOp* fop, JSScript* script);
 
 // This class ensures JIT code is executable on its destruction. Creators
 // must call makeWritable(), and not attempt to write to the buffer if it fails.
@@ -716,7 +724,7 @@ class MOZ_RAII AutoWritableJitCodeFallible {
   }
 
   ~AutoWritableJitCodeFallible() {
-    if (!ExecutableAllocator::makeExecutable(addr_, size_)) {
+    if (!ExecutableAllocator::makeExecutableAndFlushICache(addr_, size_)) {
       MOZ_CRASH();
     }
     rt_->toggleAutoWritableJitCodeActive(false);
@@ -738,22 +746,6 @@ class MOZ_RAII AutoWritableJitCode : private AutoWritableJitCodeFallible {
   explicit AutoWritableJitCode(JitCode* code)
       : AutoWritableJitCode(code->runtimeFromMainThread(), code->raw(),
                             code->bufferSize()) {}
-};
-
-class MOZ_STACK_CLASS MaybeAutoWritableJitCode {
-  mozilla::Maybe<AutoWritableJitCode> awjc_;
-
- public:
-  MaybeAutoWritableJitCode(void* addr, size_t size, ReprotectCode reprotect) {
-    if (reprotect) {
-      awjc_.emplace(addr, size);
-    }
-  }
-  MaybeAutoWritableJitCode(JitCode* code, ReprotectCode reprotect) {
-    if (reprotect) {
-      awjc_.emplace(code);
-    }
-  }
 };
 
 }  // namespace jit

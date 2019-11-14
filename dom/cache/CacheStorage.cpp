@@ -31,6 +31,7 @@
 #include "mozilla/dom/Document.h"
 #include "nsIGlobalObject.h"
 #include "nsIScriptSecurityManager.h"
+#include "nsMixedContentBlocker.h"
 #include "nsURLParsers.h"
 
 namespace mozilla {
@@ -132,8 +133,7 @@ bool IsTrusted(const PrincipalInfo& aPrincipalInfo, bool aTestingPrefEnabled) {
 
   nsDependentCSubstring hostname(url + authPos + hostPos, hostLen);
 
-  return hostname.EqualsLiteral("localhost") ||
-         hostname.EqualsLiteral("127.0.0.1") || hostname.EqualsLiteral("::1");
+  return nsMixedContentBlocker::IsPotentiallyTrustworthyLoopbackHost(hostname);
 }
 
 }  // namespace
@@ -470,9 +470,8 @@ already_AddRefed<CacheStorage> CacheStorage::Constructor(
   static_assert(
       CHROME_ONLY_NAMESPACE == (uint32_t)CacheStorageNamespace::Chrome,
       "Chrome namespace should match webidl Chrome enum");
-  static_assert(
-      NUMBER_OF_NAMESPACES == (uint32_t)CacheStorageNamespace::EndGuard_,
-      "Number of namespace should match webidl endguard enum");
+  static_assert(NUMBER_OF_NAMESPACES == CacheStorageNamespaceValues::Count,
+                "Number of namespace should match webidl count");
 
   Namespace ns = static_cast<Namespace>(aNamespace);
   nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());

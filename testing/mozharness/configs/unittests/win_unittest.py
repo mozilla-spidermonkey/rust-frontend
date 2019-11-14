@@ -6,6 +6,10 @@ import sys
 ABS_WORK_DIR = os.path.join(os.getcwd(), "build")
 BINARY_PATH = os.path.join(ABS_WORK_DIR, "firefox", "firefox.exe")
 INSTALLER_PATH = os.path.join(ABS_WORK_DIR, "installer.zip")
+NODEJS_PATH = None
+if 'MOZ_FETCHES_DIR' in os.environ:
+    NODEJS_PATH = os.path.join(os.environ["MOZ_FETCHES_DIR"], "node/node.exe")
+
 XPCSHELL_NAME = 'xpcshell.exe'
 EXE_SUFFIX = '.exe'
 DISABLE_SCREEN_SAVER = False
@@ -98,7 +102,7 @@ config = {
         "mozmill": {
             "options": [
                 "--binary=%(binary_path)s",
-                "--testing-modules-dir=test/modules",
+                "--testing-modules-dir=tests/modules",
                 "--plugins-path=%(test_plugin_path)s",
                 "--symbols-path=%(symbols_path)s"
             ],
@@ -145,24 +149,19 @@ config = {
     # local mochi suites
     "all_mochitest_suites":
     {
-        "mochitest-plain": [],
+        "mochitest-plain": ["--chunk-by-dir=4"],
         "mochitest-plain-gpu": ["--subsuite=gpu"],
-        "mochitest-plain-chunked": ["--chunk-by-dir=4"],
         "mochitest-media": ["--subsuite=media"],
-        "mochitest-chrome": ["--flavor=chrome", "--disable-e10s"],
+        "mochitest-chrome": ["--flavor=chrome", "--chunk-by-dir=4", "--disable-e10s"],
         "mochitest-chrome-gpu": ["--flavor=chrome", "--subsuite=gpu", "--disable-e10s"],
-        "mochitest-chrome-chunked": ["--flavor=chrome", "--chunk-by-dir=4", "--disable-e10s"],
-        "mochitest-browser-chrome": ["--flavor=browser"],
-        "mochitest-browser-chrome-chunked": ["--flavor=browser", "--chunk-by-runtime"],
+        "mochitest-browser-chrome": ["--flavor=browser", "--chunk-by-runtime"],
         "mochitest-browser-chrome-screenshots": ["--flavor=browser", "--subsuite=screenshots"],
-        "mochitest-browser-chrome-instrumentation": ["--flavor=browser"],
         "mochitest-webgl1-core": ["--subsuite=webgl1-core"],
         "mochitest-webgl1-ext": ["--subsuite=webgl1-ext"],
         "mochitest-webgl2-core": ["--subsuite=webgl2-core"],
         "mochitest-webgl2-ext": ["--subsuite=webgl2-ext"],
         "mochitest-webgl2-deqp": ["--subsuite=webgl2-deqp"],
-        "mochitest-devtools-chrome": ["--flavor=browser", "--subsuite=devtools"],
-        "mochitest-devtools-chrome-chunked": ["--flavor=browser", "--subsuite=devtools", "--chunk-by-runtime"],
+        "mochitest-devtools-chrome": ["--flavor=browser", "--subsuite=devtools", "--chunk-by-runtime"],
         "mochitest-a11y": ["--flavor=a11y", "--disable-e10s"],
         "mochitest-remote": ["--flavor=browser", "--subsuite=remote"],
     },
@@ -236,7 +235,7 @@ config = {
             'name': 'disable windows security and maintenance notifications',
             'cmd': [
                 'powershell', '-command',
-                '"&{$p=\'HKCU:SOFTWARE\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.SecurityAndMaintenance\';if(!(Test-Path -Path $p)){&New-Item -Path $p -Force}&Set-ItemProperty -Path $p -Name Enabled -Value 0}"'
+                '"&{$p=\'HKCU:SOFTWARE\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.SecurityAndMaintenance\';if(!(Test-Path -Path $p)){&New-Item -Path $p -Force}&Set-ItemProperty -Path $p -Name Enabled -Value 0}"'  # noqa
             ],
             'architectures': ['32bit', '64bit'],
             'halt_on_failure': True,
@@ -283,7 +282,5 @@ config = {
                              },
     "minidump_stackwalk_path": "win32-minidump_stackwalk.exe",
     "minidump_tooltool_manifest_path": "config/tooltool-manifests/win32/releng.manifest",
-    "download_nodejs": True,
-    "nodejs_path": "node-win32.exe",
-    "nodejs_tooltool_manifest_path": "config/tooltool-manifests/win32/nodejs.manifest",
+    "nodejs_path": NODEJS_PATH,
 }

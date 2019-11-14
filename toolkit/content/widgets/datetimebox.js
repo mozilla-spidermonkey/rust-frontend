@@ -437,7 +437,8 @@ this.DateTimeInputBaseImplWidget = class {
       child.tabIndex = this.mInputElement.tabIndex;
     }
 
-    this.mResetButton.disabled = this.mInputElement.disabled;
+    this.mResetButton.disabled =
+      this.mInputElement.disabled || this.mInputElement.readOnly;
     this.updateResetButtonVisibility();
   }
 
@@ -512,6 +513,10 @@ this.DateTimeInputBaseImplWidget = class {
 
   isReadonly() {
     return this.mInputElement.hasAttribute("readonly");
+  }
+
+  isEditable() {
+    return !this.isDisabled() && !this.isReadonly();
   }
 
   isRequired() {
@@ -627,10 +632,14 @@ this.DateTimeInputBaseImplWidget = class {
         break;
       }
       case "Backspace": {
-        let targetField = aEvent.originalTarget;
-        this.clearFieldValue(targetField);
-        this.setInputValueFromFields();
-        aEvent.preventDefault();
+        // TODO(emilio, bug 1571533): These functions should look at
+        // defaultPrevented.
+        if (this.isEditable()) {
+          let targetField = aEvent.originalTarget;
+          this.clearFieldValue(targetField);
+          this.setInputValueFromFields();
+          aEvent.preventDefault();
+        }
         break;
       }
       case "ArrowRight":
@@ -671,7 +680,7 @@ this.DateTimeInputBaseImplWidget = class {
         aEvent.target
     );
 
-    if (aEvent.defaultPrevented || this.isDisabled() || this.isReadonly()) {
+    if (aEvent.defaultPrevented || !this.isEditable()) {
       return;
     }
 
@@ -784,7 +793,7 @@ this.DateInputImplWidget = class extends DateTimeInputBaseImplWidget {
   clearInputFields(aFromInputElement) {
     this.log("clearInputFields");
 
-    if (this.isDisabled() || this.isReadonly()) {
+    if (!this.isEditable()) {
       return;
     }
 
@@ -895,7 +904,7 @@ this.DateInputImplWidget = class extends DateTimeInputBaseImplWidget {
   }
 
   handleKeypress(aEvent) {
-    if (this.isDisabled() || this.isReadonly()) {
+    if (!this.isEditable()) {
       return;
     }
 
@@ -916,7 +925,9 @@ this.DateInputImplWidget = class extends DateTimeInputBaseImplWidget {
         this.advanceToNextField();
       }
       targetField.setAttribute("typeBuffer", buffer);
-      this.setInputValueFromFields();
+      if (!this.isAnyFieldEmpty()) {
+        this.setInputValueFromFields();
+      }
     }
   }
 
@@ -953,7 +964,7 @@ this.DateInputImplWidget = class extends DateTimeInputBaseImplWidget {
   }
 
   handleKeyboardNav(aEvent) {
-    if (this.isDisabled() || this.isReadonly()) {
+    if (!this.isEditable()) {
       return;
     }
 
@@ -1090,6 +1101,7 @@ this.TimeInputImplWidget = class extends DateTimeInputBaseImplWidget {
     this.mMinSecPageUpDownInterval = 10;
 
     this.buildEditFields();
+    this.updateEditAttributes();
 
     if (this.mInputElement.value) {
       this.setFieldsFromInputValue();
@@ -1461,7 +1473,7 @@ this.TimeInputImplWidget = class extends DateTimeInputBaseImplWidget {
   clearInputFields(aFromInputElement) {
     this.log("clearInputFields");
 
-    if (this.isDisabled() || this.isReadonly()) {
+    if (!this.isEditable()) {
       return;
     }
 
@@ -1560,7 +1572,7 @@ this.TimeInputImplWidget = class extends DateTimeInputBaseImplWidget {
   }
 
   handleKeyboardNav(aEvent) {
-    if (this.isDisabled() || this.isReadonly()) {
+    if (!this.isEditable()) {
       return;
     }
 
@@ -1612,7 +1624,7 @@ this.TimeInputImplWidget = class extends DateTimeInputBaseImplWidget {
   }
 
   handleKeypress(aEvent) {
-    if (this.isDisabled() || this.isReadonly()) {
+    if (!this.isEditable()) {
       return;
     }
 
@@ -1625,7 +1637,9 @@ this.TimeInputImplWidget = class extends DateTimeInputBaseImplWidget {
       } else if (key == "p" || key == "P") {
         this.setDayPeriodValue(this.mPMIndicator);
       }
-      this.setInputValueFromFields();
+      if (!this.isAnyFieldEmpty()) {
+        this.setInputValueFromFields();
+      }
       return;
     }
 
@@ -1643,7 +1657,9 @@ this.TimeInputImplWidget = class extends DateTimeInputBaseImplWidget {
         this.advanceToNextField();
       }
       targetField.setAttribute("typeBuffer", buffer);
-      this.setInputValueFromFields();
+      if (!this.isAnyFieldEmpty()) {
+        this.setInputValueFromFields();
+      }
     }
   }
 

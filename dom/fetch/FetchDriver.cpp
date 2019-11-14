@@ -33,9 +33,9 @@
 #include "mozilla/dom/BlobURLProtocolHandler.h"
 #include "mozilla/dom/File.h"
 #include "mozilla/dom/PerformanceStorage.h"
+#include "mozilla/dom/UserActivation.h"
 #include "mozilla/dom/WorkerCommon.h"
 #include "mozilla/net/NeckoChannelParams.h"
-#include "mozilla/EventStateManager.h"
 #include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_network.h"
@@ -261,7 +261,7 @@ AlternativeDataStreamListener::OnDataAvailable(nsIRequest* aRequest,
                                                uint32_t aCount) {
   if (mStatus == AlternativeDataStreamListener::LOADING) {
     MOZ_ASSERT(mPipeAlternativeOutputStream);
-    uint32_t read;
+    uint32_t read = 0;
     return aInputStream->ReadSegments(
         NS_CopySegmentToStream, mPipeAlternativeOutputStream, aCount, &read);
   }
@@ -369,9 +369,6 @@ nsresult FetchDriver::Fetch(AbortSignalImpl* aSignalImpl,
 
   mObserver = aObserver;
 
-  Telemetry::Accumulate(Telemetry::SERVICE_WORKER_REQUEST_PASSTHROUGH,
-                        mRequest->WasCreatedByFetchEvent());
-
   // FIXME(nsm): Deal with HSTS.
 
   MOZ_RELEASE_ASSERT(!mRequest->IsSynchronous(),
@@ -426,24 +423,6 @@ nsresult FetchDriver::HttpFetch(
   nsCOMPtr<nsIURI> uri;
   rv = NS_NewURI(getter_AddRefs(uri), url);
   NS_ENSURE_SUCCESS(rv, rv);
-
-  if (StaticPrefs::browser_tabs_remote_useCrossOriginPolicy()) {
-    // Cross-Origin policy - bug 1525036
-    nsILoadInfo::CrossOriginPolicy corsCredentials =
-        nsILoadInfo::CROSS_ORIGIN_POLICY_NULL;
-    if (mDocument && mDocument->GetBrowsingContext()) {
-      corsCredentials = mDocument->GetBrowsingContext()->GetCrossOriginPolicy();
-    }  // TODO Bug 1532287: else use mClientInfo
-
-    if (mRequest->Mode() == RequestMode::No_cors &&
-        corsCredentials != nsILoadInfo::CROSS_ORIGIN_POLICY_NULL) {
-      mRequest->SetMode(RequestMode::Cors);
-      mRequest->SetCredentialsMode(RequestCredentials::Same_origin);
-      if (corsCredentials == nsILoadInfo::CROSS_ORIGIN_POLICY_USE_CREDENTIALS) {
-        mRequest->SetCredentialsMode(RequestCredentials::Include);
-      }
-    }
-  }
 
   // Unsafe requests aren't allowed with when using no-core mode.
   if (mRequest->Mode() == RequestMode::No_cors && mRequest->UnsafeRequest() &&
@@ -572,7 +551,7 @@ nsresult FetchDriver::HttpFetch(
   nsCOMPtr<nsIClassOfService> cos(do_QueryInterface(chan));
   // Mark channel as urgent-start if the Fetch is triggered by user input
   // events.
-  if (cos && EventStateManager::IsHandlingUserInput()) {
+  if (cos && UserActivation::IsHandlingUserInput()) {
     cos->AddClassFlags(nsIClassOfService::UrgentStart);
   }
 
@@ -597,10 +576,9 @@ nsresult FetchDriver::HttpFetch(
     // associated referrer policy.
     // Basically, "client" is not in our implementation, we use
     // EnvironmentReferrerPolicy of the worker or document context
-    net::ReferrerPolicy net_referrerPolicy =
-        mRequest->GetEnvironmentReferrerPolicy();
+    ReferrerPolicy referrerPolicy = mRequest->GetEnvironmentReferrerPolicy();
     if (mRequest->ReferrerPolicy_() == ReferrerPolicy::_empty) {
-      mRequest->SetReferrerPolicy(net_referrerPolicy);
+      mRequest->SetReferrerPolicy(referrerPolicy);
     }
     // Step 6 of https://fetch.spec.whatwg.org/#main-fetch
     // If request’s referrer policy is the empty string,
@@ -608,8 +586,8 @@ nsresult FetchDriver::HttpFetch(
     if (mRequest->ReferrerPolicy_() == ReferrerPolicy::_empty) {
       nsCOMPtr<nsILoadInfo> loadInfo = httpChan->LoadInfo();
       bool isPrivate = loadInfo->GetOriginAttributes().mPrivateBrowsingId > 0;
-      net::ReferrerPolicy referrerPolicy = static_cast<net::ReferrerPolicy>(
-          ReferrerInfo::GetDefaultReferrerPolicy(httpChan, uri, isPrivate));
+      referrerPolicy =
+          ReferrerInfo::GetDefaultReferrerPolicy(httpChan, uri, isPrivate);
       mRequest->SetReferrerPolicy(referrerPolicy);
     }
 
@@ -828,7 +806,12 @@ FetchDriver::OnStartRequest(nsIRequest* aRequest) {
 
   // We should only get to the following code once.
   MOZ_ASSERT(!mPipeOutputStream);
-  MOZ_ASSERT(mObserver);
+
+  if (!mObserver) {
+    MOZ_ASSERT(false, "We should have mObserver here.");
+    FailWithNetworkError(NS_ERROR_UNEXPECTED);
+    return NS_ERROR_UNEXPECTED;
+  }
 
   mNeedToObserveOnDataAvailable = mObserver->NeedOnDataAvailable();
 
@@ -1361,25 +1344,17 @@ FetchDriver::AsyncOnChannelRedirect(nsIChannel* aOldChannel,
   // In redirect, httpChannel already took referrer-policy into account, so
   // updates request’s associated referrer policy from channel.
   if (httpChannel) {
-    nsCOMPtr<nsIURI> computedReferrer;
+    nsAutoString computedReferrerSpec;
     nsCOMPtr<nsIReferrerInfo> referrerInfo = httpChannel->GetReferrerInfo();
     if (referrerInfo) {
-      mRequest->SetReferrerPolicy(
-          static_cast<net::ReferrerPolicy>(referrerInfo->GetReferrerPolicy()));
-      computedReferrer = referrerInfo->GetComputedReferrer();
+      mRequest->SetReferrerPolicy(referrerInfo->ReferrerPolicy());
+      Unused << referrerInfo->GetComputedReferrerSpec(computedReferrerSpec);
     }
 
     // Step 8 https://fetch.spec.whatwg.org/#main-fetch
     // If request’s referrer is not "no-referrer" (empty), set request’s
     // referrer to the result of invoking determine request’s referrer.
-    if (computedReferrer) {
-      nsAutoCString spec;
-      rv = computedReferrer->GetSpec(spec);
-      NS_ENSURE_SUCCESS(rv, rv);
-      mRequest->SetReferrer(NS_ConvertUTF8toUTF16(spec));
-    } else {
-      mRequest->SetReferrer(EmptyString());
-    }
+    mRequest->SetReferrer(computedReferrerSpec);
   }
 
   aCallback->OnRedirectVerifyCallback(NS_OK);
@@ -1475,6 +1450,8 @@ void FetchDriver::SetRequestHeaders(nsIHttpChannel* aChannel) const {
 }
 
 void FetchDriver::Abort() {
+  MOZ_DIAGNOSTIC_ASSERT(NS_IsMainThread());
+
   if (mObserver) {
 #ifdef DEBUG
     mResponseAvailableCalled = true;

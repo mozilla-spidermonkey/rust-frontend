@@ -44,7 +44,9 @@ struct ComputedGridTrackInfo {
       uint32_t aStartFragmentTrack, uint32_t aEndFragmentTrack,
       nsTArray<nscoord>&& aPositions, nsTArray<nscoord>&& aSizes,
       nsTArray<uint32_t>&& aStates, nsTArray<bool>&& aRemovedRepeatTracks,
-      uint32_t aRepeatFirstTrack)
+      uint32_t aRepeatFirstTrack,
+      nsTArray<nsTArray<StyleCustomIdent>>&& aResolvedLineNames,
+      bool aIsSubgrid)
       : mNumLeadingImplicitTracks(aNumLeadingImplicitTracks),
         mNumExplicitTracks(aNumExplicitTracks),
         mStartFragmentTrack(aStartFragmentTrack),
@@ -53,7 +55,9 @@ struct ComputedGridTrackInfo {
         mSizes(aSizes),
         mStates(aStates),
         mRemovedRepeatTracks(aRemovedRepeatTracks),
-        mRepeatFirstTrack(aRepeatFirstTrack) {}
+        mResolvedLineNames(std::move(aResolvedLineNames)),
+        mRepeatFirstTrack(aRepeatFirstTrack),
+        mIsSubgrid(aIsSubgrid) {}
   uint32_t mNumLeadingImplicitTracks;
   uint32_t mNumExplicitTracks;
   uint32_t mStartFragmentTrack;
@@ -62,7 +66,9 @@ struct ComputedGridTrackInfo {
   nsTArray<nscoord> mSizes;
   nsTArray<uint32_t> mStates;
   nsTArray<bool> mRemovedRepeatTracks;
+  nsTArray<nsTArray<StyleCustomIdent>> mResolvedLineNames;
   uint32_t mRepeatFirstTrack;
+  bool mIsSubgrid;
 };
 
 struct ComputedGridLineInfo {
@@ -326,8 +332,10 @@ class nsGridContainerFrame final : public nsContainerFrame {
    * property when needed, as a ImplicitNamedAreas* value.
    */
   void InitImplicitNamedAreas(const nsStylePosition* aStyle);
-  void AddImplicitNamedAreas(
-      const nsTArray<nsTArray<RefPtr<nsAtom>>>& aLineNameLists);
+
+  using LineNameList =
+      const mozilla::StyleOwnedSlice<mozilla::StyleCustomIdent>;
+  void AddImplicitNamedAreas(mozilla::Span<LineNameList>);
 
   void NormalizeChildLists();
 

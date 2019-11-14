@@ -17,7 +17,7 @@
 #include "builtin/MapObject.h"
 #include "builtin/Promise.h"
 #include "builtin/TestingFunctions.h"
-#include "gc/GCInternals.h"
+#include "gc/GC.h"
 #include "gc/PublicIterators.h"
 #include "gc/WeakMap.h"
 #include "js/CharacterEncoding.h"
@@ -25,10 +25,13 @@
 #include "js/Proxy.h"
 #include "js/Wrapper.h"
 #include "proxy/DeadObjectProxy.h"
+#include "util/Poison.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/DateObject.h"
+#include "vm/FrameIter.h"  // js::FrameIter
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
+#include "vm/Printer.h"
 #include "vm/Realm.h"
 #include "vm/Time.h"
 #include "vm/WrapperObject.h"
@@ -121,8 +124,8 @@ JS_FRIEND_API JSObject* JS_NewObjectWithUniqueType(JSContext* cx,
    * ObjectGroup attached to our proto with information about our object, since
    * we're not going to be using that ObjectGroup anyway.
    */
-  RootedObject obj(cx, NewObjectWithGivenProto(cx, Valueify(clasp), nullptr,
-                                               SingletonObject));
+  RootedObject obj(
+      cx, NewObjectWithGivenProto(cx, clasp, nullptr, SingletonObject));
   if (!obj) {
     return nullptr;
   }
@@ -536,12 +539,12 @@ JS_FRIEND_API void js::VisitGrayWrapperTargets(Zone* zone,
                                                GCThingCallback callback,
                                                void* closure) {
   for (CompartmentsInZoneIter comp(zone); !comp.done(); comp.next()) {
-    for (Compartment::WrapperEnum e(comp); !e.empty(); e.popFront()) {
-      e.front().mutableKey().applyToWrapped([callback, closure](auto tp) {
-        if ((*tp)->isMarkedGray()) {
-          callback(closure, JS::GCCellPtr(*tp));
-        }
-      });
+    for (Compartment::ObjectWrapperEnum e(comp); !e.empty(); e.popFront()) {
+      JSObject* target = e.front().key();
+      if (target->isMarkedGray()) {
+        JS::AutoSuppressGCAnalysis nogc;
+        callback(closure, JS::GCCellPtr(target));
+      }
     }
   }
 }
@@ -559,6 +562,17 @@ JS_FRIEND_API void JS_SetAccumulateTelemetryCallback(
 JS_FRIEND_API void JS_SetSetUseCounterCallback(
     JSContext* cx, JSSetUseCounterCallback callback) {
   cx->runtime()->setUseCounterCallback(cx->runtime(), callback);
+}
+
+JS_FRIEND_API void JS_ReportFirstCompileTime(JS::HandleScript script,
+                                             mozilla::TimeDuration& parse,
+                                             mozilla::TimeDuration& emit) {
+  auto ss = script->scriptSource();
+  if (!ss) {
+    return;
+  }
+  parse = ss->parseTime();
+  emit = ss->emitTime();
 }
 
 JS_FRIEND_API JSObject* JS_CloneObject(JSContext* cx, HandleObject obj,
@@ -699,7 +713,7 @@ static const char* FormatValue(JSContext* cx, HandleValue v,
     }
   }
 
-  bytes = StringToNewUTF8CharsZ(cx, *str);
+  bytes = QuoteString(cx, str, '"');
   return bytes.get();
 }
 
@@ -733,7 +747,7 @@ static bool FormatFrame(JSContext* cx, const FrameIter& iter, Sprinter& sp,
 
   // print the frame number and function name
   if (funname) {
-    UniqueChars funbytes = StringToNewUTF8CharsZ(cx, *funname);
+    UniqueChars funbytes = QuoteString(cx, funname);
     if (!funbytes) {
       return false;
     }
@@ -835,7 +849,7 @@ static bool FormatFrame(JSContext* cx, const FrameIter& iter, Sprinter& sp,
         cx->clearPendingException();
       }
       if (thisValStr) {
-        UniqueChars thisValBytes = StringToNewUTF8CharsZ(cx, *thisValStr);
+        UniqueChars thisValBytes = QuoteString(cx, thisValStr);
         if (!thisValBytes) {
           return false;
         }
@@ -1062,23 +1076,23 @@ static void DumpHeapVisitArena(JSRuntime* rt, void* data, gc::Arena* arena,
           unsigned(arena->getAllocKind()), unsigned(thingSize));
 }
 
-static void DumpHeapVisitCell(JSRuntime* rt, void* data, void* thing,
-                              JS::TraceKind traceKind, size_t thingSize) {
+static void DumpHeapVisitCell(JSRuntime* rt, void* data, JS::GCCellPtr cellptr,
+                              size_t thingSize) {
   DumpHeapTracer* dtrc = static_cast<DumpHeapTracer*>(data);
   char cellDesc[1024 * 32];
-  JS_GetTraceThingInfo(cellDesc, sizeof(cellDesc), dtrc, thing, traceKind,
-                       true);
+  JS_GetTraceThingInfo(cellDesc, sizeof(cellDesc), dtrc, cellptr.asCell(),
+                       cellptr.kind(), true);
 
-  fprintf(dtrc->output, "%p %c %s", thing, MarkDescriptor(thing), cellDesc);
+  fprintf(dtrc->output, "%p %c %s", cellptr.asCell(),
+          MarkDescriptor(cellptr.asCell()), cellDesc);
   if (dtrc->mallocSizeOf) {
-    auto size =
-        JS::ubi::Node(JS::GCCellPtr(thing, traceKind)).size(dtrc->mallocSizeOf);
+    auto size = JS::ubi::Node(cellptr).size(dtrc->mallocSizeOf);
     fprintf(dtrc->output, " SIZE:: %" PRIu64 "\n", size);
   } else {
     fprintf(dtrc->output, "\n");
   }
 
-  js::TraceChildren(dtrc, thing, traceKind);
+  js::TraceChildren(dtrc, cellptr.asCell(), cellptr.kind());
 }
 
 bool DumpHeapTracer::onChild(const JS::GCCellPtr& thing) {
@@ -1103,12 +1117,7 @@ void js::DumpHeap(JSContext* cx, FILE* fp,
   DumpHeapTracer dtrc(fp, cx, mallocSizeOf);
 
   fprintf(dtrc.output, "# Roots.\n");
-  {
-    JSRuntime* rt = cx->runtime();
-    js::gc::AutoTraceSession session(rt);
-    gcstats::AutoPhase ap(rt->gc.stats(), gcstats::PhaseKind::TRACE_HEAP);
-    rt->gc.traceRuntime(&dtrc, session);
-  }
+  TraceRuntimeWithoutEviction(&dtrc);
 
   fprintf(dtrc.output, "# Weak maps.\n");
   WeakMapBase::traceAllMappings(&dtrc);
@@ -1199,6 +1208,11 @@ DOMProxyShadowsCheck js::GetDOMProxyShadowsCheck() {
 
 const void* js::GetDOMRemoteProxyHandlerFamily() {
   return gDOMRemoteProxyHandlerFamily;
+}
+
+JS_FRIEND_API bool js::IsDOMRemoteProxyObject(JSObject* object) {
+  return js::IsProxy(object) && js::GetProxyHandler(object)->family() ==
+                                    js::GetDOMRemoteProxyHandlerFamily();
 }
 
 static XrayJitInfo* gXrayJitInfo = nullptr;
@@ -1298,7 +1312,7 @@ JS_FRIEND_API JSAtom* js::GetPropertyNameFromPC(JSScript* script,
 }
 
 JS_FRIEND_API void js::SetWindowProxyClass(JSContext* cx,
-                                           const js::Class* clasp) {
+                                           const JSClass* clasp) {
   MOZ_ASSERT(!cx->runtime()->maybeWindowProxyClass());
   cx->runtime()->setWindowProxyClass(clasp);
 }
@@ -1396,5 +1410,13 @@ JS_FRIEND_API JS::Value js::MaybeGetScriptPrivate(JSObject* object) {
 }
 
 JS_FRIEND_API uint64_t js::GetGCHeapUsageForObjectZone(JSObject* obj) {
-  return obj->zone()->zoneSize.gcBytes();
+  return obj->zone()->gcHeapSize.bytes();
 }
+
+#ifdef DEBUG
+JS_FRIEND_API bool js::RuntimeIsBeingDestroyed() {
+  JSRuntime* runtime = TlsContext.get()->runtime();
+  MOZ_ASSERT(js::CurrentThreadCanAccessRuntime(runtime));
+  return runtime->isBeingDestroyed();
+}
+#endif

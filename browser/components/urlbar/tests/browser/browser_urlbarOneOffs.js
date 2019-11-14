@@ -222,8 +222,9 @@ add_task(async function hiddenOneOffs() {
   await promiseAutocompleteResultPopup(typedValue, window, true);
   await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
   assertState(0, -1);
-  Assert.ok(
-    oneOffSearchButtons.container.hidden,
+  Assert.equal(
+    getComputedStyle(oneOffSearchButtons.container).display,
+    "none",
     "The one-off buttons should be hidden"
   );
   EventUtils.synthesizeKey("KEY_ArrowUp");
@@ -257,7 +258,7 @@ add_task(async function hiddenWhenUsingSearchAlias() {
 
 function assertState(result, oneOff, textValue = undefined) {
   Assert.equal(
-    UrlbarTestUtils.getSelectedIndex(window),
+    UrlbarTestUtils.getSelectedRowIndex(window),
     result,
     "Expected result should be selected"
   );
@@ -267,7 +268,7 @@ function assertState(result, oneOff, textValue = undefined) {
     "Expected one-off should be selected"
   );
   if (textValue !== undefined) {
-    Assert.equal(gURLBar.textValue, textValue, "Expected textValue");
+    Assert.equal(gURLBar.value, textValue, "Expected value");
   }
 }
 

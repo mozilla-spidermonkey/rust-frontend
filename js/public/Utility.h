@@ -18,11 +18,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef JS_OOM_DO_BACKTRACES
-#  include <execinfo.h>
-#  include <stdio.h>
-#endif
-
 #include "jstypes.h"
 
 #include "mozmemory.h"
@@ -95,7 +90,7 @@ namespace oom {
  * off-thread script parsing without causing an OOM in the active thread first.
  *
  * Getter/Setter functions to encapsulate mozilla::ThreadLocal, implementation
- * is in jsutil.cpp.
+ * is in util/Utility.cpp.
  */
 #  if defined(DEBUG) || defined(JS_OOM_BREAKPOINT)
 
@@ -488,9 +483,9 @@ static inline void js_free(void* p) {
  * - Ordinarily, use js_free/js_delete.
  *
  * - For deallocations during GC finalization, use one of the following
- *   operations on the FreeOp provided to the finalizer:
+ *   operations on the JSFreeOp provided to the finalizer:
  *
- *     FreeOp::{free_,delete_}
+ *     JSFreeOp::{free_,delete_}
  */
 
 /*

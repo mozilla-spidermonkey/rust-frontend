@@ -25,6 +25,7 @@
 #include "nsIPipe.h"
 #include "nsCRT.h"
 #include "mozilla/Tokenizer.h"
+#include "mozilla/Move.h"
 #include "TCPFastOpenLayer.h"
 
 #include "nsISeekableStream.h"
@@ -114,6 +115,7 @@ nsHttpTransaction::nsHttpTransaction()
       mContentDecodingCheck(false),
       mDeferredSendProgress(false),
       mWaitingOnPipeOut(false),
+      mDoNotRemoveAltSvc(false),
       mReportedStart(false),
       mReportedResponseHeader(false),
       mResponseHeadTaken(false),
@@ -194,8 +196,8 @@ void nsHttpTransaction::SetClassOfService(uint32_t cos) {
 
 class ReleaseH2WSTrans final : public Runnable {
  public:
-  explicit ReleaseH2WSTrans(SpdyConnectTransaction* trans)
-      : Runnable("ReleaseH2WSTrans"), mTrans(trans) {}
+  explicit ReleaseH2WSTrans(already_AddRefed<SpdyConnectTransaction>&& trans)
+      : Runnable("ReleaseH2WSTrans"), mTrans(std::move(trans)) {}
 
   NS_IMETHOD Run() override {
     mTrans = nullptr;
@@ -236,7 +238,8 @@ nsHttpTransaction::~nsHttpTransaction() {
   ReleaseBlockingTransaction();
 
   if (mH2WSTransaction) {
-    RefPtr<ReleaseH2WSTrans> r = new ReleaseH2WSTrans(mH2WSTransaction);
+    RefPtr<ReleaseH2WSTrans> r =
+        new ReleaseH2WSTrans(mH2WSTransaction.forget());
     r->Dispatch();
   }
 }
@@ -445,6 +448,14 @@ nsAHttpConnection* nsHttpTransaction::Connection() {
 }
 
 void nsHttpTransaction::SetH2WSConnRefTaken() {
+  if (!OnSocketThread()) {
+    nsCOMPtr<nsIRunnable> event =
+        NewRunnableMethod("nsHttpTransaction::SetH2WSConnRefTaken", this,
+                          &nsHttpTransaction::SetH2WSConnRefTaken);
+    gSocketTransportService->Dispatch(event, NS_DISPATCH_NORMAL);
+    return;
+  }
+
   if (mH2WSTransaction) {
     // Need to let the websocket transaction/connection know we've reached
     // this point so it can stop forwarding information through us and
@@ -1026,8 +1037,10 @@ void nsHttpTransaction::Close(nsresult reason) {
   // we must no longer reference the connection!  find out if the
   // connection was being reused before letting it go.
   bool connReused = false;
+  bool isHttp2 = false;
   if (mConnection) {
     connReused = mConnection->IsReused();
+    isHttp2 = mConnection->Version() >= HttpVersion::v2_0;
   }
   mConnected = false;
   mTunnelProvider = nullptr;
@@ -1101,6 +1114,12 @@ void nsHttpTransaction::Close(nsresult reason) {
 
       if (NS_SUCCEEDED(Restart())) return;
     }
+  }
+
+  if (!mResponseIsComplete && NS_SUCCEEDED(reason) && isHttp2) {
+    // Responses without content-length header field are still complete if
+    // they are transfered over http2 and the stream is properly closed.
+    mResponseIsComplete = true;
   }
 
   if ((mChunkedDecoder || (mContentLength >= int64_t(0))) &&
@@ -1275,7 +1294,7 @@ nsresult nsHttpTransaction::Restart() {
   // to the next
   mReuseOnRestart = false;
 
-  if (!mConnInfo->GetRoutedHost().IsEmpty()) {
+  if (!mDoNotRemoveAltSvc && !mConnInfo->GetRoutedHost().IsEmpty()) {
     MutexAutoLock lock(*nsHttp::GetLock());
     RefPtr<nsHttpConnectionInfo> ci;
     mConnInfo->CloneAsDirectRoute(getter_AddRefs(ci));
@@ -1286,6 +1305,9 @@ nsresult nsHttpTransaction::Restart() {
       MOZ_ASSERT(NS_SUCCEEDED(rv));
     }
   }
+
+  // Reset mDoNotRemoveAltSvc for the next try.
+  mDoNotRemoveAltSvc = false;
 
   return gHttpHandler->InitiateTransaction(this, mPriority);
 }
@@ -1298,6 +1320,8 @@ char* nsHttpTransaction::LocateHttpStart(char* buf, uint32_t len,
   static const uint32_t HTTPHeaderLen = sizeof(HTTPHeader) - 1;
   static const char HTTP2Header[] = "HTTP/2.0";
   static const uint32_t HTTP2HeaderLen = sizeof(HTTP2Header) - 1;
+  static const char HTTP3Header[] = "HTTP/3.0";
+  static const uint32_t HTTP3HeaderLen = sizeof(HTTP3Header) - 1;
   // ShoutCast ICY is treated as HTTP/1.0
   static const char ICYHeader[] = "ICY ";
   static const uint32_t ICYHeaderLen = sizeof(ICYHeader) - 1;
@@ -1347,6 +1371,16 @@ char* nsHttpTransaction::LocateHttpStart(char* buf, uint32_t len,
     if (firstByte && !mInvalidResponseBytesRead && len >= HTTP2HeaderLen &&
         (PL_strncasecmp(buf, HTTP2Header, HTTP2HeaderLen) == 0)) {
       LOG(("nsHttpTransaction:: Identified HTTP/2.0 treating as 1.x\n"));
+      return buf;
+    }
+
+    // HTTP/3.0 responses to our HTTP/1 requests. Treat the minimal case of
+    // it as HTTP/1.1 to be compatible with old versions of ourselves and
+    // other browsers
+
+    if (firstByte && !mInvalidResponseBytesRead && len >= HTTP3HeaderLen &&
+        (PL_strncasecmp(buf, HTTP3Header, HTTP3HeaderLen) == 0)) {
+      LOG(("nsHttpTransaction:: Identified HTTP/3.0 treating as 1.x\n"));
       return buf;
     }
 
@@ -1636,7 +1670,7 @@ nsresult nsHttpTransaction::HandleContentStart() {
         if ((mEarlyDataDisposition == EARLY_425) && !mDoNotTryEarlyData) {
           mDoNotTryEarlyData = true;
           mForceRestart = true;  // force restart has built in loop protection
-          if (mConnection->Version() == HttpVersion::v2_0) {
+          if (mConnection->Version() >= HttpVersion::v2_0) {
             mReuseOnRestart = true;
           }
           return NS_ERROR_NET_RESET;
@@ -2351,8 +2385,17 @@ void nsHttpTransaction::Refused0RTT() {
 void nsHttpTransaction::SetHttpTrailers(nsCString& aTrailers) {
   LOG(("nsHttpTransaction::SetHttpTrailers %p", this));
   LOG(("[\n    %s\n]", aTrailers.BeginReading()));
-  if (!mForTakeResponseTrailers) {
-    mForTakeResponseTrailers = new nsHttpHeaderArray();
+
+  // Introduce a local variable to minimize the critical section.
+  nsAutoPtr<nsHttpHeaderArray> httpTrailers(new nsHttpHeaderArray());
+  // Given it's usually null, use double-check locking for performance.
+  if (mForTakeResponseTrailers) {
+    MutexAutoLock lock(*nsHttp::GetLock());
+    if (mForTakeResponseTrailers) {
+      // Copy the trailer. |TakeResponseTrailers| gets the original trailer
+      // until the final swap.
+      *httpTrailers = *mForTakeResponseTrailers;
+    }
   }
 
   int32_t cur = 0;
@@ -2369,21 +2412,24 @@ void nsHttpTransaction::SetHttpTrailers(nsCString& aTrailers) {
     nsHttpAtom hdr = {nullptr};
     nsAutoCString hdrNameOriginal;
     nsAutoCString val;
-    if (NS_SUCCEEDED(mForTakeResponseTrailers->ParseHeaderLine(
-            line, &hdr, &hdrNameOriginal, &val))) {
+    if (NS_SUCCEEDED(httpTrailers->ParseHeaderLine(line, &hdr, &hdrNameOriginal,
+                                                   &val))) {
       if (hdr == nsHttp::Server_Timing) {
-        Unused << mForTakeResponseTrailers->SetHeaderFromNet(
-            hdr, hdrNameOriginal, val, true);
+        Unused << httpTrailers->SetHeaderFromNet(hdr, hdrNameOriginal, val,
+                                                 true);
       }
     }
 
     cur = newline + 1;
   }
 
-  if (mForTakeResponseTrailers->Count() == 0) {
+  if (httpTrailers->Count() == 0) {
     // Didn't find a Server-Timing header, so get rid of this.
-    mForTakeResponseTrailers = nullptr;
+    httpTrailers = nullptr;
   }
+
+  MutexAutoLock lock(*nsHttp::GetLock());
+  Swap(mForTakeResponseTrailers, httpTrailers);
 }
 
 bool nsHttpTransaction::IsWebsocketUpgrade() {
@@ -2399,6 +2445,8 @@ bool nsHttpTransaction::IsWebsocketUpgrade() {
 
 void nsHttpTransaction::SetH2WSTransaction(
     SpdyConnectTransaction* aH2WSTransaction) {
+  MOZ_ASSERT(OnSocketThread());
+
   mH2WSTransaction = aH2WSTransaction;
 }
 

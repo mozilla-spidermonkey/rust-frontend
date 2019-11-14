@@ -865,12 +865,8 @@ nsUrlClassifierDBServiceWorker::ResetDatabase() {
 
 NS_IMETHODIMP
 nsUrlClassifierDBServiceWorker::ReloadDatabase() {
-  nsTArray<nsCString> tables;
-  nsresult rv = mClassifier->ActiveTables(tables);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   // This will null out mClassifier
-  rv = CloseDb();
+  nsresult rv = CloseDb();
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Create new mClassifier and load prefixset and completions from disk.
@@ -2035,17 +2031,16 @@ nsUrlClassifierDBService::SendThreatHitReport(nsIChannel* aChannel,
 
 NS_IMETHODIMP
 nsUrlClassifierDBService::Lookup(nsIPrincipal* aPrincipal,
-                                 const nsACString& tables,
-                                 nsIUrlClassifierCallback* c) {
+                                 const nsACString& aTables,
+                                 nsIUrlClassifierCallback* aCallback) {
+  // We don't expect someone with SystemPrincipal calls this API(See Bug
+  // 813897).
+  MOZ_ASSERT(!nsContentUtils::IsSystemPrincipal(aPrincipal));
+
   NS_ENSURE_TRUE(gDbBackgroundThread, NS_ERROR_NOT_INITIALIZED);
 
-  if (nsContentUtils::IsSystemPrincipal(aPrincipal)) {
-    // FIXME: we don't call 'c' here!
-    return NS_OK;
-  }
-
   nsTArray<nsCString> tableArray;
-  Classifier::SplitTables(tables, tableArray);
+  Classifier::SplitTables(aTables, tableArray);
 
   nsCOMPtr<nsIUrlClassifierFeature> feature;
   nsresult rv =
@@ -2081,7 +2076,7 @@ nsUrlClassifierDBService::Lookup(nsIPrincipal* aPrincipal,
   rv = utilsService->GetKeyForURI(uri, key);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  return LookupURI(key, holder, c);
+  return LookupURI(key, holder, aCallback);
 }
 
 nsresult nsUrlClassifierDBService::LookupURI(

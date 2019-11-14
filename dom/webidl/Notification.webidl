@@ -11,10 +11,12 @@
  * related or neighboring rights to this work.
  */
 
-[Constructor(DOMString title, optional NotificationOptions options = {}),
- Exposed=(Window,Worker),
+[Exposed=(Window,Worker),
  Func="mozilla::dom::Notification::PrefEnabled"]
 interface Notification : EventTarget {
+  [Throws]
+  constructor(DOMString title, optional NotificationOptions options = {});
+
   [GetterThrows]
   static readonly attribute NotificationPermission permission;
 
@@ -74,6 +76,7 @@ dictionary GetNotificationOptions {
   DOMString tag = "";
 };
 
+[GenerateToJSON]
 dictionary NotificationBehavior {
   boolean noscreen = false;
   boolean noclear = false;

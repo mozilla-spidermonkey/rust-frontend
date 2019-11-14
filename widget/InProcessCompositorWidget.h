@@ -19,8 +19,7 @@ class InProcessCompositorWidget : public CompositorWidget {
 
   virtual bool PreRender(WidgetRenderingContext* aManager) override;
   virtual void PostRender(WidgetRenderingContext* aManager) override;
-  virtual void DrawWindowUnderlay(WidgetRenderingContext* aContext,
-                                  LayoutDeviceIntRect aRect) override;
+  virtual RefPtr<layers::NativeLayerRoot> GetNativeLayerRoot() override;
   virtual void DrawWindowOverlay(WidgetRenderingContext* aContext,
                                  LayoutDeviceIntRect aRect) override;
   virtual already_AddRefed<gfx::DrawTarget> StartRemoteDrawing() override;
@@ -30,7 +29,7 @@ class InProcessCompositorWidget : public CompositorWidget {
   virtual void EndRemoteDrawing() override;
   virtual void EndRemoteDrawingInRegion(
       gfx::DrawTarget* aDrawTarget,
-      LayoutDeviceIntRegion& aInvalidRegion) override;
+      const LayoutDeviceIntRegion& aInvalidRegion) override;
   virtual void CleanupRemoteDrawing() override;
   virtual void CleanupWindowEffects() override;
   virtual bool InitCompositor(layers::Compositor* aCompositor) override;

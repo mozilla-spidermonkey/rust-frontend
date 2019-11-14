@@ -11,7 +11,6 @@
 
 #include "mozilla/Atomics.h"
 #include "mozilla/CycleCollectedJSContext.h"
-#include "mozilla/EventStateManager.h"
 #include "mozilla/OwningNonNull.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ResultExtensions.h"
@@ -23,6 +22,7 @@
 #include "mozilla/dom/MediaStreamError.h"
 #include "mozilla/dom/PromiseBinding.h"
 #include "mozilla/dom/ScriptSettings.h"
+#include "mozilla/dom/UserActivation.h"
 #include "mozilla/dom/WorkerPrivate.h"
 #include "mozilla/dom/WorkerRunnable.h"
 #include "mozilla/dom/WorkerRef.h"
@@ -45,11 +45,6 @@
 
 namespace mozilla {
 namespace dom {
-
-namespace {
-// Generator used by Promise::GetID.
-Atomic<uintptr_t> gIDGenerator(0);
-}  // namespace
 
 // Promise
 
@@ -94,7 +89,7 @@ already_AddRefed<Promise> Promise::Create(
     return nullptr;
   }
   RefPtr<Promise> p = new Promise(aGlobal);
-  p->CreateWrapper(nullptr, aRv, aPropagateUserInteraction);
+  p->CreateWrapper(aRv, aPropagateUserInteraction);
   if (aRv.Failed()) {
     return nullptr;
   }
@@ -103,7 +98,7 @@ already_AddRefed<Promise> Promise::Create(
 
 bool Promise::MaybePropagateUserInputEventHandling() {
   JS::PromiseUserInputEventHandlingState state =
-      EventStateManager::IsHandlingUserInput()
+      UserActivation::IsHandlingUserInput()
           ? JS::PromiseUserInputEventHandlingState::HadUserInteractionAtCreation
           : JS::PromiseUserInputEventHandlingState::
                 DidntHaveUserInteractionAtCreation;
@@ -273,15 +268,14 @@ Result<RefPtr<Promise>, nsresult> Promise::ThenWithoutCycleCollection(
 }
 
 void Promise::CreateWrapper(
-    JS::Handle<JSObject*> aDesiredProto, ErrorResult& aRv,
-    PropagateUserInteraction aPropagateUserInteraction) {
+    ErrorResult& aRv, PropagateUserInteraction aPropagateUserInteraction) {
   AutoJSAPI jsapi;
   if (!jsapi.Init(mGlobal)) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
     return;
   }
   JSContext* cx = jsapi.cx();
-  mPromiseObj = JS::NewPromiseObject(cx, nullptr, aDesiredProto);
+  mPromiseObj = JS::NewPromiseObject(cx, nullptr);
   if (!mPromiseObj) {
     JS_ClearPendingException(cx);
     aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
@@ -523,6 +517,17 @@ void Promise::ReportRejectedPromise(JSContext* aCx, JS::HandleObject aPromise) {
                                : IsCurrentThreadRunningChromeWorker();
   nsGlobalWindowInner* win =
       isMainThread ? xpc::WindowGlobalOrNull(aPromise) : nullptr;
+
+  // We're inspecting the rejection value only to report it to the console, and
+  // we do so without side-effects, so we can safely unwrap it without regard to
+  // the privileges of the Promise object that holds it. If we don't unwrap
+  // before trying to create the error report, we wind up reporting any
+  // cross-origin objects as "uncaught exception: Object".
+  Maybe<JSAutoRealm> ar;
+  if (result.isObject()) {
+    result.setObject(*js::UncheckedUnwrap(&result.toObject()));
+    ar.emplace(aCx, &result.toObject());
+  }
 
   js::ErrorReport report(aCx);
   RefPtr<Exception> exn;

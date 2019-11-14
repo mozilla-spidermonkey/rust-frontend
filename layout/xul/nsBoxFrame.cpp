@@ -790,8 +790,8 @@ nscoord nsBoxFrame::GetXULFlex() {
  */
 NS_IMETHODIMP
 nsBoxFrame::DoXULLayout(nsBoxLayoutState& aState) {
-  uint32_t oldFlags = aState.LayoutFlags();
-  aState.SetLayoutFlags(0);
+  ReflowChildFlags oldFlags = aState.LayoutFlags();
+  aState.SetLayoutFlags(ReflowChildFlags::Default);
 
   nsresult rv = NS_OK;
   if (mLayoutManager) {
@@ -950,8 +950,7 @@ nsresult nsBoxFrame::AttributeChanged(int32_t aNameSpaceID, nsAtom* aAttribute,
 
   // Ignore 'width', 'height', 'screenX', 'screenY' and 'sizemode' on a
   // <window>.
-  if (mContent->IsAnyOfXULElements(nsGkAtoms::window, nsGkAtoms::page,
-                                   nsGkAtoms::dialog, nsGkAtoms::wizard) &&
+  if (mContent->IsAnyOfXULElements(nsGkAtoms::window, nsGkAtoms::dialog) &&
       (nsGkAtoms::width == aAttribute || nsGkAtoms::height == aAttribute ||
        nsGkAtoms::screenX == aAttribute || nsGkAtoms::screenY == aAttribute ||
        nsGkAtoms::sizemode == aAttribute)) {
@@ -1110,7 +1109,7 @@ void nsBoxFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
       aLists.Content()->AppendNewToTop<nsDisplayOwnLayer>(
           aBuilder, this, &masterList, ownLayerASR,
           nsDisplayOwnLayerFlags::None, mozilla::layers::ScrollbarData{}, true,
-          true);
+          true, nsDisplayOwnLayer::OwnLayerForBoxFrame);
     } else {
       MOZ_ASSERT(!XRE_IsContentProcess());
       aLists.Content()->AppendNewToTop<nsDisplayRenderRoot>(
@@ -1145,8 +1144,8 @@ void nsBoxFrame::RegUnregAccessKey(bool aDoReg) {
 
   // only support accesskeys for the following elements
   if (!mContent->IsAnyOfXULElements(nsGkAtoms::button, nsGkAtoms::toolbarbutton,
-                                    nsGkAtoms::checkbox, nsGkAtoms::textbox,
-                                    nsGkAtoms::tab, nsGkAtoms::radio)) {
+                                    nsGkAtoms::checkbox, nsGkAtoms::tab,
+                                    nsGkAtoms::radio)) {
     return;
   }
 
@@ -1205,7 +1204,7 @@ nsresult nsBoxFrame::LayoutChildAt(nsBoxLayoutState& aState, nsIFrame* aBox,
 }
 
 nsresult nsBoxFrame::XULRelayoutChildAtOrdinal(nsIFrame* aChild) {
-  uint32_t ord = aChild->GetXULOrdinal();
+  int32_t ord = aChild->GetXULOrdinal();
 
   nsIFrame* child = mFrames.FirstChild();
   nsIFrame* newPrevSib = nullptr;

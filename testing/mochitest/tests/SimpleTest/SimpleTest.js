@@ -22,7 +22,7 @@ var parentRunner = null;
 // In normal test runs, the window that has a TestRunner in its parent is
 // the primary window.  In single test runs, if there is no parent and there
 // is no opener then it is the primary window.
-var isSingleTestRun = (parent == window && !opener)
+var isSingleTestRun = (parent == window && !(opener || window.arguments && window.arguments[0].SimpleTest));
 try {
   var isPrimaryTestWindow = !!parent.TestRunner || isSingleTestRun;
 } catch(e) {
@@ -39,7 +39,7 @@ try {
 // includes SimpleTest.js.
 (function() {
     function ancestor(w) {
-        return w.parent != w ? w.parent : w.opener;
+        return w.parent != w ? w.parent : w.opener || w.arguments && w.arguments[0];
     }
 
     var w = ancestor(window);
@@ -228,6 +228,8 @@ SimpleTest._inChaosMode = false;
 SimpleTest.expected = 'pass';
 SimpleTest.num_failed = 0;
 
+SpecialPowers.setAsDefaultAssertHandler();
+
 function usesFailurePatterns() {
   return Array.isArray(SimpleTest.expected);
 }
@@ -283,8 +285,8 @@ SimpleTest.record = function (condition, name, diag, stack) {
         SimpleTest.num_failed++;
         test.result = !test.result;
       }
-      var successInfo = {status:"FAIL", expected:"FAIL", message:"TEST-KNOWN-FAIL"};
-      var failureInfo = {status:"PASS", expected:"FAIL", message:"TEST-UNEXPECTED-PASS"};
+      var successInfo = {status:"PASS", expected:"PASS", message:"TEST-PASS"};
+      var failureInfo = {status:"FAIL", expected:"FAIL", message:"TEST-KNOWN-FAIL"};
     } else if (!test.result && usesFailurePatterns()) {
       if (recordIfMatchesFailurePattern(name, diag)) {
         test.result = true;
@@ -1093,9 +1095,9 @@ SimpleTest.testInChaosMode = function() {
     SimpleTest._inChaosMode = true;
 };
 
-SimpleTest.timeout = function() {
-    for (let func of SimpleTest._timeoutFunctions) {
-        func();
+SimpleTest.timeout = async function() {
+    for (const func of SimpleTest._timeoutFunctions) {
+        await func();
     }
     SimpleTest._timeoutFunctions = [];
 }
@@ -1247,6 +1249,8 @@ SimpleTest.finish = function() {
     };
 
     executeCleanupFunction();
+
+    SpecialPowers.notifyObservers(null, "test-complete");
 };
 
 /**

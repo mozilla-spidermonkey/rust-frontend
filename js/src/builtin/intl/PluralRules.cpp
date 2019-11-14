@@ -11,13 +11,18 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/Casting.h"
 
+#include "builtin/Array.h"
 #include "builtin/intl/CommonFunctions.h"
-#include "builtin/intl/ICUStubs.h"
 #include "builtin/intl/NumberFormat.h"
 #include "builtin/intl/ScopedICUObject.h"
 #include "gc/FreeOp.h"
 #include "js/CharacterEncoding.h"
 #include "js/PropertySpec.h"
+#include "unicode/uenum.h"
+#include "unicode/uloc.h"
+#include "unicode/unumberformatter.h"
+#include "unicode/upluralrules.h"
+#include "unicode/utypes.h"
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
 #include "vm/StringType.h"
@@ -30,22 +35,24 @@ using namespace js;
 using mozilla::AssertedCast;
 
 using js::intl::CallICU;
-using js::intl::GetAvailableLocales;
 using js::intl::IcuLocale;
 
-const ClassOps PluralRulesObject::classOps_ = {nullptr, /* addProperty */
-                                               nullptr, /* delProperty */
-                                               nullptr, /* enumerate */
-                                               nullptr, /* newEnumerate */
-                                               nullptr, /* resolve */
-                                               nullptr, /* mayResolve */
-                                               PluralRulesObject::finalize};
+const JSClassOps PluralRulesObject::classOps_ = {nullptr, /* addProperty */
+                                                 nullptr, /* delProperty */
+                                                 nullptr, /* enumerate */
+                                                 nullptr, /* newEnumerate */
+                                                 nullptr, /* resolve */
+                                                 nullptr, /* mayResolve */
+                                                 PluralRulesObject::finalize};
 
-const Class PluralRulesObject::class_ = {
+const JSClass PluralRulesObject::class_ = {
     js_Object_str,
     JSCLASS_HAS_RESERVED_SLOTS(PluralRulesObject::SLOT_COUNT) |
+        JSCLASS_HAS_CACHED_PROTO(JSProto_PluralRules) |
         JSCLASS_FOREGROUND_FINALIZE,
-    &PluralRulesObject::classOps_};
+    &PluralRulesObject::classOps_, &PluralRulesObject::classSpec_};
+
+const JSClass& PluralRulesObject::protoClass_ = PlainObject::class_;
 
 static bool pluralRules_toSource(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -64,6 +71,18 @@ static const JSFunctionSpec pluralRules_methods[] = {
     JS_SELF_HOSTED_FN("select", "Intl_PluralRules_select", 1, 0),
     JS_FN(js_toSource_str, pluralRules_toSource, 0, 0), JS_FS_END};
 
+static bool PluralRules(JSContext* cx, unsigned argc, Value* vp);
+
+const ClassSpec PluralRulesObject::classSpec_ = {
+    GenericCreateConstructor<PluralRules, 0, gc::AllocKind::FUNCTION>,
+    GenericCreatePrototype<PluralRulesObject>,
+    pluralRules_static_methods,
+    nullptr,
+    pluralRules_methods,
+    nullptr,
+    nullptr,
+    ClassSpec::DontDefineConstructor};
+
 /**
  * PluralRules constructor.
  * Spec: ECMAScript 402 API, PluralRules, 13.2.1
@@ -78,27 +97,16 @@ static bool PluralRules(JSContext* cx, unsigned argc, Value* vp) {
 
   // Step 2 (Inlined 9.1.14, OrdinaryCreateFromConstructor).
   RootedObject proto(cx);
-  if (!GetPrototypeFromBuiltinConstructor(cx, args, JSProto_Null, &proto)) {
+  if (!GetPrototypeFromBuiltinConstructor(cx, args, JSProto_PluralRules,
+                                          &proto)) {
     return false;
-  }
-
-  if (!proto) {
-    proto = GlobalObject::getOrCreatePluralRulesPrototype(cx, cx->global());
-    if (!proto) {
-      return false;
-    }
   }
 
   Rooted<PluralRulesObject*> pluralRules(cx);
-  pluralRules = NewObjectWithGivenProto<PluralRulesObject>(cx, proto);
+  pluralRules = NewObjectWithClassProto<PluralRulesObject>(cx, proto);
   if (!pluralRules) {
     return false;
   }
-
-  pluralRules->setFixedSlot(PluralRulesObject::INTERNALS_SLOT, NullValue());
-  pluralRules->setPluralRules(nullptr);
-  pluralRules->setNumberFormatter(nullptr);
-  pluralRules->setFormattedNumber(nullptr);
 
   HandleValue locales = args.get(0);
   HandleValue options = args.get(1);
@@ -114,13 +122,24 @@ static bool PluralRules(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-void js::PluralRulesObject::finalize(FreeOp* fop, JSObject* obj) {
+void js::PluralRulesObject::finalize(JSFreeOp* fop, JSObject* obj) {
   MOZ_ASSERT(fop->onMainThread());
 
   auto* pluralRules = &obj->as<PluralRulesObject>();
   UPluralRules* pr = pluralRules->getPluralRules();
   UNumberFormatter* nf = pluralRules->getNumberFormatter();
   UFormattedNumber* formatted = pluralRules->getFormattedNumber();
+
+  if (pr) {
+    intl::RemoveICUCellMemory(
+        fop, obj, PluralRulesObject::UPluralRulesEstimatedMemoryUse);
+  }
+  if (nf) {
+    intl::RemoveICUCellMemory(
+        fop, obj, PluralRulesObject::UNumberFormatterEstimatedMemoryUse);
+
+    // UFormattedNumber memory tracked as part of UNumberFormatter.
+  }
 
   if (pr) {
     uplrules_close(pr);
@@ -131,52 +150,6 @@ void js::PluralRulesObject::finalize(FreeOp* fop, JSObject* obj) {
   if (formatted) {
     unumf_closeResult(formatted);
   }
-}
-
-JSObject* js::CreatePluralRulesPrototype(JSContext* cx, HandleObject Intl,
-                                         Handle<GlobalObject*> global) {
-  RootedFunction ctor(cx);
-  ctor =
-      global->createConstructor(cx, &PluralRules, cx->names().PluralRules, 0);
-  if (!ctor) {
-    return nullptr;
-  }
-
-  RootedObject proto(
-      cx, GlobalObject::createBlankPrototype<PlainObject>(cx, global));
-  if (!proto) {
-    return nullptr;
-  }
-
-  if (!LinkConstructorAndPrototype(cx, ctor, proto)) {
-    return nullptr;
-  }
-
-  if (!JS_DefineFunctions(cx, ctor, pluralRules_static_methods)) {
-    return nullptr;
-  }
-
-  if (!JS_DefineFunctions(cx, proto, pluralRules_methods)) {
-    return nullptr;
-  }
-
-  RootedValue ctorValue(cx, ObjectValue(*ctor));
-  if (!DefineDataProperty(cx, Intl, cx->names().PluralRules, ctorValue, 0)) {
-    return nullptr;
-  }
-
-  return proto;
-}
-
-bool js::intl_PluralRules_availableLocales(JSContext* cx, unsigned argc,
-                                           Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 0);
-
-  // We're going to use ULocale availableLocales as per ICU recommendation:
-  // https://ssl.icu-project.org/trac/ticket/12756
-  return GetAvailableLocales(cx, uloc_countAvailable, uloc_getAvailable,
-                             args.rval());
 }
 
 /**
@@ -306,10 +279,10 @@ static UPluralRules* NewUPluralRules(JSContext* cx,
       return nullptr;
     }
 
-    if (StringEqualsAscii(type, "cardinal")) {
+    if (StringEqualsLiteral(type, "cardinal")) {
       category = UPLURAL_TYPE_CARDINAL;
     } else {
-      MOZ_ASSERT(StringEqualsAscii(type, "ordinal"));
+      MOZ_ASSERT(StringEqualsLiteral(type, "ordinal"));
       category = UPLURAL_TYPE_ORDINAL;
     }
   }
@@ -341,6 +314,9 @@ bool js::intl_SelectPluralRule(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
     pluralRules->setPluralRules(pr);
+
+    intl::AddICUCellMemory(pluralRules,
+                           PluralRulesObject::UPluralRulesEstimatedMemoryUse);
   }
 
   // Obtain a cached UNumberFormat object.
@@ -351,6 +327,9 @@ bool js::intl_SelectPluralRule(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
     pluralRules->setNumberFormatter(nf);
+
+    intl::AddICUCellMemory(
+        pluralRules, PluralRulesObject::UNumberFormatterEstimatedMemoryUse);
   }
 
   // Obtain a cached UFormattedNumber object.
@@ -361,6 +340,8 @@ bool js::intl_SelectPluralRule(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
     pluralRules->setFormattedNumber(formatted);
+
+    // UFormattedNumber memory tracked as part of UNumberFormatter.
   }
 
   UErrorCode status = U_ZERO_ERROR;
@@ -397,6 +378,9 @@ bool js::intl_GetPluralCategories(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
     pluralRules->setPluralRules(pr);
+
+    intl::AddICUCellMemory(pluralRules,
+                           PluralRulesObject::UPluralRulesEstimatedMemoryUse);
   }
 
   UErrorCode status = U_ZERO_ERROR;
@@ -411,9 +395,6 @@ bool js::intl_GetPluralCategories(JSContext* cx, unsigned argc, Value* vp) {
   if (!res) {
     return false;
   }
-
-  RootedValue element(cx);
-  uint32_t i = 0;
 
   do {
     int32_t catSize;
@@ -433,8 +414,7 @@ bool js::intl_GetPluralCategories(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
 
-    element.setString(str);
-    if (!DefineDataElement(cx, res, i++, element)) {
+    if (!NewbornArrayPush(cx, res, StringValue(str))) {
       return false;
     }
   } while (true);

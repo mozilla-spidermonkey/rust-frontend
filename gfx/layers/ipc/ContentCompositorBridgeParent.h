@@ -42,6 +42,9 @@ class ContentCompositorBridgeParent final : public CompositorBridgeParentBase {
   }
   mozilla::ipc::IPCResult RecvWillClose() override { return IPC_OK(); }
   mozilla::ipc::IPCResult RecvPause() override { return IPC_OK(); }
+  mozilla::ipc::IPCResult RecvRequestFxrOutput() override {
+    return IPC_FAIL_NO_REASON(this);
+  }
   mozilla::ipc::IPCResult RecvResume() override { return IPC_OK(); }
   mozilla::ipc::IPCResult RecvResumeAsync() override { return IPC_OK(); }
   mozilla::ipc::IPCResult RecvNotifyChildCreated(
@@ -93,8 +96,15 @@ class ContentCompositorBridgeParent final : public CompositorBridgeParentBase {
     return IPC_OK();
   }
 
-  mozilla::ipc::IPCResult RecvEndRecording(bool* aOutSuccess) override {
-    *aOutSuccess = false;
+  mozilla::ipc::IPCResult RecvEndRecordingToDisk(
+      EndRecordingToDiskResolver&& aResolve) override {
+    aResolve(false);
+    return IPC_OK();
+  }
+
+  mozilla::ipc::IPCResult RecvEndRecordingToMemory(
+      EndRecordingToMemoryResolver&& aResolve) override {
+    aResolve(Nothing());
     return IPC_OK();
   }
 
@@ -163,6 +173,8 @@ class ContentCompositorBridgeParent final : public CompositorBridgeParentBase {
 
   mozilla::ipc::IPCResult RecvInitPCanvasParent(
       Endpoint<PCanvasParent>&& aEndpoint) final;
+
+  mozilla::ipc::IPCResult RecvReleasePCanvasParent() final;
 
   bool IsSameProcess() const override;
 

@@ -32,6 +32,7 @@
 #include "mozilla/MouseEvents.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/TextEvents.h"
 #include <algorithm>
 
@@ -120,7 +121,7 @@ nsListControlFrame::~nsListControlFrame() { mComboboxFrame = nullptr; }
 
 static bool ShouldFireDropDownEvent() {
   return (XRE_IsContentProcess() &&
-          Preferences::GetBool("browser.tabs.remote.desktopbehavior", false)) ||
+          StaticPrefs::browser_tabs_remote_desktopbehavior()) ||
          Preferences::GetBool("dom.select_popup_in_parent.enabled", false);
 }
 
@@ -555,7 +556,11 @@ void nsListControlFrame::ReflowAsDropdown(nsPresContext* aPresContext,
     // Looks like we have no options.  Just size us to a single row
     // block size.
     state.SetComputedBSize(blockSizeOfARow);
-    mNumDisplayRows = 1;
+    // mNumDisplayRows is used as the number of options to move for the page
+    // up/down keys. If we're in a content process, we can't calculate
+    // mNumDisplayRows properly, but the maximum number of rows is a lot more
+    // uesful for page up/down than 1.
+    mNumDisplayRows = XRE_IsContentProcess() ? kMaxDropDownRows : 1;
   } else {
     nsComboboxControlFrame* combobox =
         static_cast<nsComboboxControlFrame*>(mComboboxFrame);
@@ -1963,11 +1968,9 @@ nsresult nsListControlFrame::KeyDown(dom::Event* aKeyEvent) {
 
   AutoIncrementalSearchResetter incrementalSearchResetter;
 
-  // Don't check defaultPrevented value because other browsers don't prevent
-  // the key navigation of list control even if preventDefault() is called.
-  // XXXmats 2015-04-16: the above is not true anymore, Chrome prevents all
-  // XXXmats keyboard events, even tabbing, when preventDefault() is called
-  // XXXmats in onkeydown. That seems sub-optimal though.
+  if (aKeyEvent->DefaultPrevented()) {
+    return NS_OK;
+  }
 
   const WidgetKeyboardEvent* keyEvent =
       aKeyEvent->WidgetEventPtr()->AsKeyboardEvent();

@@ -39,7 +39,8 @@ enum class InlinableNative : uint16_t;
 // Records information about a baseline frame for compilation that is stable
 // when later used off thread.
 BaselineFrameInspector* NewBaselineFrameInspector(TempAllocator* temp,
-                                                  BaselineFrame* frame);
+                                                  BaselineFrame* frame,
+                                                  uint32_t frameSize);
 
 using CallTargets = Vector<JSFunction*, 6, JitAllocPolicy>;
 
@@ -369,6 +370,13 @@ class IonBuilder : public MIRGenerator,
       bool* emitted, JSOp op, MDefinition* left, MDefinition* right);
   AbortReasonOr<Ok> arithTryBinaryStub(bool* emitted, JSOp op,
                                        MDefinition* left, MDefinition* right);
+
+  // jsop_bitop helpers.
+  AbortReasonOr<MBinaryBitwiseInstruction*> binaryBitOpEmit(
+      JSOp op, MIRType specialization, MDefinition* left, MDefinition* right);
+  AbortReasonOr<Ok> binaryBitOpTrySpecialized(bool* emitted, JSOp op,
+                                              MDefinition* left,
+                                              MDefinition* right);
 
   // jsop_bitnot helpers.
   AbortReasonOr<Ok> bitnotTrySpecialized(bool* emitted, MDefinition* input);
@@ -778,6 +786,7 @@ class IonBuilder : public MIRGenerator,
   InliningResult inlineRegExpSearcher(CallInfo& callInfo);
   InliningResult inlineRegExpTester(CallInfo& callInfo);
   InliningResult inlineIsRegExpObject(CallInfo& callInfo);
+  InliningResult inlineIsPossiblyWrappedRegExpObject(CallInfo& callInfo);
   InliningResult inlineRegExpPrototypeOptimizable(CallInfo& callInfo);
   InliningResult inlineRegExpInstanceOptimizable(CallInfo& callInfo);
   InliningResult inlineGetFirstDollarIndex(CallInfo& callInfo);
@@ -835,14 +844,14 @@ class IonBuilder : public MIRGenerator,
   InliningResult inlineIsObject(CallInfo& callInfo);
   InliningResult inlineToObject(CallInfo& callInfo);
   InliningResult inlineIsCrossRealmArrayConstructor(CallInfo& callInfo);
-  InliningResult inlineToInteger(CallInfo& callInfo);
+  InliningResult inlineToIntegerPositiveZero(CallInfo& callInfo);
   InliningResult inlineToString(CallInfo& callInfo);
   InliningResult inlineDump(CallInfo& callInfo);
-  InliningResult inlineHasClass(CallInfo& callInfo, const Class* clasp,
-                                const Class* clasp2 = nullptr,
-                                const Class* clasp3 = nullptr,
-                                const Class* clasp4 = nullptr);
-  InliningResult inlineGuardToClass(CallInfo& callInfo, const Class* clasp);
+  InliningResult inlineHasClass(CallInfo& callInfo, const JSClass* clasp,
+                                const JSClass* clasp2 = nullptr,
+                                const JSClass* clasp3 = nullptr,
+                                const JSClass* clasp4 = nullptr);
+  InliningResult inlineGuardToClass(CallInfo& callInfo, const JSClass* clasp);
   InliningResult inlineIsConstructing(CallInfo& callInfo);
   InliningResult inlineSubstringKernel(CallInfo& callInfo);
   InliningResult inlineObjectHasPrototype(CallInfo& callInfo);

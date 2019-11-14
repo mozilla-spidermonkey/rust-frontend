@@ -20,23 +20,20 @@ class WebConsoleConnectionProxy {
    * @constructor
    * @param {WebConsoleUI} webConsoleUI
    *        A WebConsoleUI instance that owns this connection proxy.
-   * @param RemoteTarget target
+   * @param {RemoteTarget} target
    *        The target that the console will connect to.
+   * @param {Boolean} needContentProcessMessagesListener
+   *        Set to true to specifically add a ContentProcessMessages listener. This is
+   *        needed for non-fission Browser Console for example.
    */
-  constructor(webConsoleUI, target, isBrowserConsole, fissionSupport) {
+  constructor(
+    webConsoleUI,
+    target,
+    needContentProcessMessagesListener = false
+  ) {
     this.webConsoleUI = webConsoleUI;
     this.target = target;
-    this.webConsoleClient = target.activeConsole;
-    this.isBrowserConsole = isBrowserConsole;
-    this.fissionSupport = fissionSupport;
-
-    /**
-     * The DebuggerClient object.
-     *
-     * @see DebuggerClient
-     * @type object
-     */
-    this.client = target.client;
+    this.needContentProcessMessagesListener = needContentProcessMessagesListener;
 
     this._connecter = null;
 
@@ -69,7 +66,9 @@ class WebConsoleConnectionProxy {
     this.target.on("navigate", this._onTabNavigated);
 
     const connection = (async () => {
-      this._addWebConsoleClientEventListeners();
+      this.client = this.target.client;
+      this.webConsoleFront = await this.target.getFront("console");
+
       await this._attachConsole();
 
       // There is no way to view response bodies from the Browser Console, so do
@@ -87,7 +86,9 @@ class WebConsoleConnectionProxy {
       messages.sort((a, b) => a.timeStamp - b.timeStamp);
       this.dispatchMessagesAdd(messages);
 
-      if (!this.webConsoleClient.hasNativeConsoleAPI) {
+      this._addWebConsoleFrontEventListeners();
+
+      if (!this.webConsoleFront.hasNativeConsoleAPI) {
         await this.webConsoleUI.logWarningAboutReplacedAPI();
       }
     })();
@@ -121,11 +122,13 @@ class WebConsoleConnectionProxy {
   _attachConsole() {
     const listeners = ["PageError", "ConsoleAPI", "NetworkActivity"];
     // Enable the forwarding of console messages to the parent process
-    // when we open the Browser Console or Toolbox.
-    if (this.target.chrome && !this.target.isAddon) {
+    // when we open the Browser Console or Toolbox without fission support. If Fission
+    // is enabled, we don't use the ContentProcessMessages listener, but attach to the
+    // content processes directly.
+    if (this.needContentProcessMessagesListener) {
       listeners.push("ContentProcessMessages");
     }
-    return this.webConsoleClient.startListeners(listeners);
+    return this.webConsoleFront.startListeners(listeners);
   }
 
   /**
@@ -133,17 +136,17 @@ class WebConsoleConnectionProxy {
    *
    * @private
    */
-  _addWebConsoleClientEventListeners() {
-    this.webConsoleClient.on("networkEvent", this._onNetworkEvent);
-    this.webConsoleClient.on("networkEventUpdate", this._onNetworkEventUpdate);
-    this.webConsoleClient.on("logMessage", this._onLogMessage);
-    this.webConsoleClient.on("pageError", this._onPageError);
-    this.webConsoleClient.on("consoleAPICall", this._onConsoleAPICall);
-    this.webConsoleClient.on(
+  _addWebConsoleFrontEventListeners() {
+    this.webConsoleFront.on("networkEvent", this._onNetworkEvent);
+    this.webConsoleFront.on("networkEventUpdate", this._onNetworkEventUpdate);
+    this.webConsoleFront.on("logMessage", this._onLogMessage);
+    this.webConsoleFront.on("pageError", this._onPageError);
+    this.webConsoleFront.on("consoleAPICall", this._onConsoleAPICall);
+    this.webConsoleFront.on(
       "lastPrivateContextExited",
       this._onLastPrivateContextExited
     );
-    this.webConsoleClient.on(
+    this.webConsoleFront.on(
       "clearLogpointMessages",
       this._clearLogpointMessages
     );
@@ -154,17 +157,17 @@ class WebConsoleConnectionProxy {
    *
    * @private
    */
-  _removeWebConsoleClientEventListeners() {
-    this.webConsoleClient.off("networkEvent", this._onNetworkEvent);
-    this.webConsoleClient.off("networkEventUpdate", this._onNetworkEventUpdate);
-    this.webConsoleClient.off("logMessage", this._onLogMessage);
-    this.webConsoleClient.off("pageError", this._onPageError);
-    this.webConsoleClient.off("consoleAPICall", this._onConsoleAPICall);
-    this.webConsoleClient.off(
+  _removeWebConsoleFrontEventListeners() {
+    this.webConsoleFront.off("networkEvent", this._onNetworkEvent);
+    this.webConsoleFront.off("networkEventUpdate", this._onNetworkEventUpdate);
+    this.webConsoleFront.off("logMessage", this._onLogMessage);
+    this.webConsoleFront.off("pageError", this._onPageError);
+    this.webConsoleFront.off("consoleAPICall", this._onConsoleAPICall);
+    this.webConsoleFront.off(
       "lastPrivateContextExited",
       this._onLastPrivateContextExited
     );
-    this.webConsoleClient.off(
+    this.webConsoleFront.off(
       "clearLogpointMessages",
       this._clearLogpointMessages
     );
@@ -178,7 +181,7 @@ class WebConsoleConnectionProxy {
    *          went wront.
    */
   async _getCachedMessages() {
-    const response = await this.webConsoleClient.getCachedMessages([
+    const response = await this.webConsoleFront.getCachedMessages([
       "PageError",
       "ConsoleAPI",
     ]);
@@ -201,7 +204,7 @@ class WebConsoleConnectionProxy {
    * @returns An array of network messages.
    */
   _getNetworkMessages() {
-    return Array.from(this.webConsoleClient.getNetworkEvents());
+    return Array.from(this.webConsoleFront.getNetworkEvents());
   }
 
   /**
@@ -353,15 +356,6 @@ class WebConsoleConnectionProxy {
     this.webConsoleUI.wrapper.dispatchMessageUpdate(networkInfo, response);
   }
 
-  dispatchRequestUpdate(id, data) {
-    // Some request might try to update while we are closing the toolbox.
-    if (!this.webConsoleUI) {
-      return Promise.resolve();
-    }
-
-    return this.webConsoleUI.wrapper.dispatchRequestUpdate(id, data);
-  }
-
   /**
    * Release an object actor.
    *
@@ -370,6 +364,12 @@ class WebConsoleConnectionProxy {
    */
   releaseActor(actor) {
     if (this.client) {
+      const objFront = this.client.getFrontByID(actor);
+      if (objFront) {
+        objFront.release().catch(() => {});
+        return;
+      }
+      // In case there's no object front, use the client's release method.
       this.client.release(actor).catch(() => {});
     }
   }
@@ -385,14 +385,12 @@ class WebConsoleConnectionProxy {
       return;
     }
 
-    this._removeWebConsoleClientEventListeners();
+    this._removeWebConsoleFrontEventListeners();
     this.target.off("will-navigate", this._onTabWillNavigate);
     this.target.off("navigate", this._onTabNavigated);
 
     this.client = null;
-    this.webConsoleClient = null;
-    this.target = null;
-    this.webConsoleUI = null;
+    this.webConsoleFront = null;
   }
 }
 

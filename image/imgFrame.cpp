@@ -87,7 +87,7 @@ static bool ShouldUseHeap(const IntSize& aSize, int32_t aStride,
 
   // Lets us avoid too many small images consuming all of the handles. The
   // actual allocation checks for overflow.
-  int32_t bufferSize = (aStride * aSize.width) / 1024;
+  int32_t bufferSize = (aStride * aSize.height) / 1024;
   if (bufferSize < StaticPrefs::image_mem_volatile_min_threshold_kb()) {
     return true;
   }
@@ -158,11 +158,11 @@ static bool ClearSurface(DataSourceSurface* aSurface, const IntSize& aSize,
   uint8_t* data = aSurface->GetData();
   MOZ_ASSERT(data);
 
-  if (aFormat == SurfaceFormat::B8G8R8X8) {
+  if (aFormat == SurfaceFormat::OS_RGBX) {
     // Skia doesn't support RGBX surfaces, so ensure the alpha value is set
     // to opaque white. While it would be nice to only do this for Skia,
     // imgFrame can run off main thread and past shutdown where
-    // we might not have gfxPlatform, so just memset everytime instead.
+    // we might not have gfxPlatform, so just memset every time instead.
     memset(data, 0xFF, stride * aSize.height);
   } else if (aSurface->OnHeap()) {
     // We only need to memset it if the buffer was allocated on the heap.
@@ -230,7 +230,7 @@ nsresult imgFrame::InitForDecoder(const nsIntSize& aImageSize,
     // surface because if we use BGRX, the next frame composited into the
     // surface could be BGRA and cause rendering problems.
     MOZ_ASSERT(aAnimParams);
-    mFormat = SurfaceFormat::B8G8R8A8;
+    mFormat = SurfaceFormat::OS_RGBA;
   } else {
     mFormat = aFormat;
   }
@@ -355,10 +355,12 @@ nsresult imgFrame::InitForDecoderRecycle(const AnimationParams& aAnimParams) {
   return NS_OK;
 }
 
-nsresult imgFrame::InitWithDrawable(
-    gfxDrawable* aDrawable, const nsIntSize& aSize, const SurfaceFormat aFormat,
-    SamplingFilter aSamplingFilter, uint32_t aImageFlags,
-    gfx::BackendType aBackend, DrawTarget* aTargetDT) {
+nsresult imgFrame::InitWithDrawable(gfxDrawable* aDrawable,
+                                    const nsIntSize& aSize,
+                                    const SurfaceFormat aFormat,
+                                    SamplingFilter aSamplingFilter,
+                                    uint32_t aImageFlags,
+                                    gfx::BackendType aBackend) {
   // Assert for properties that should be verified by decoders,
   // warn for properties related to bad content.
   if (!SurfaceCache::IsLegalSize(aSize)) {
@@ -407,16 +409,12 @@ nsresult imgFrame::InitWithDrawable(
     // the documentation for this method.
     MOZ_ASSERT(!mOptSurface, "Called imgFrame::InitWithDrawable() twice?");
 
-    if (aTargetDT && !gfxVars::UseWebRender()) {
-      target = aTargetDT->CreateSimilarDrawTarget(mImageSize, mFormat);
+    if (gfxPlatform::GetPlatform()->SupportsAzureContentForType(aBackend)) {
+      target = gfxPlatform::GetPlatform()->CreateDrawTargetForBackend(
+          aBackend, mImageSize, mFormat);
     } else {
-      if (gfxPlatform::GetPlatform()->SupportsAzureContentForType(aBackend)) {
-        target = gfxPlatform::GetPlatform()->CreateDrawTargetForBackend(
-            aBackend, mImageSize, mFormat);
-      } else {
-        target = gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(
-            mImageSize, mFormat);
-      }
+      target = gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(
+          mImageSize, mFormat);
     }
   }
 
@@ -556,7 +554,7 @@ imgFrame::SurfaceWithFormat imgFrame::SurfaceForDrawing(
     // transparent pixels in the padding or undecoded area
     RefPtr<DrawTarget> target =
         gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(
-            mImageSize, SurfaceFormat::B8G8R8A8);
+            mImageSize, SurfaceFormat::OS_RGBA);
     if (!target) {
       return SurfaceWithFormat();
     }

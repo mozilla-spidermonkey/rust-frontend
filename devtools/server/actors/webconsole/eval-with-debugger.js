@@ -4,8 +4,6 @@
 
 "use strict";
 
-/* global XPCNativeWrapper */
-
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
 
 loader.lazyRequireGetter(
@@ -30,6 +28,13 @@ loader.lazyRequireGetter(
   this,
   "WebConsoleCommands",
   "devtools/server/actors/webconsole/utils",
+  true
+);
+
+loader.lazyRequireGetter(
+  this,
+  "LongStringActor",
+  "devtools/server/actors/string",
   true
 );
 
@@ -165,6 +170,12 @@ function getEvalResult(string, evalOptions, bindings, frame, dbgWindow) {
 }
 
 function parseErrorOutput(dbgWindow, string) {
+  // Reflect is not usable in workers, so return early to avoid logging an error
+  // to the console when loading it.
+  if (isWorker) {
+    return;
+  }
+
   let ast;
   // Parse errors will raise an exception. We can/should ignore the error
   // since it's already being handled elsewhere and we are only interested
@@ -315,14 +326,13 @@ function getDbgWindow(options, dbg, webConsole) {
     return { bindSelf: null, dbgWindow };
   }
 
-  const objActor = webConsole.getActorByID(options.selectedObjectActor);
+  const actor = webConsole.getActorByID(options.selectedObjectActor);
 
-  if (!objActor) {
+  if (!actor) {
     return { bindSelf: null, dbgWindow };
   }
 
-  const jsVal = objActor.rawValue();
-
+  const jsVal = actor instanceof LongStringActor ? actor.str : actor.rawValue();
   if (!isObject(jsVal)) {
     return { bindSelf: jsVal, dbgWindow };
   }

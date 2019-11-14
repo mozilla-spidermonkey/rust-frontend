@@ -23,7 +23,6 @@
 #include "nsIChannel.h"
 #include "nsIThreadRetargetableStreamListener.h"
 #include "imgIRequest.h"
-#include "mozilla/net/ReferrerPolicy.h"
 
 class imgLoader;
 class imgRequestProxy;
@@ -359,10 +358,10 @@ class imgLoader final : public imgILoader,
       imgRequest* request, nsIURI* aURI, nsIURI* aInitialDocumentURI,
       nsIReferrerInfo* aReferrerInfo, nsILoadGroup* aLoadGroup,
       imgINotificationObserver* aObserver, nsISupports* aCX,
-      mozilla::dom::Document* aLoadingDocument, nsLoadFlags aLoadFlags,
-      nsContentPolicyType aContentPolicyType, imgRequestProxy** aProxyRequest,
-      nsIPrincipal* aLoadingPrincipal, int32_t aCORSMode,
-      bool* aNewChannelCreated);
+      mozilla::dom::Document* aLoadingDocument, uint64_t aInnerWindowId,
+      nsLoadFlags aLoadFlags, nsContentPolicyType aContentPolicyType,
+      imgRequestProxy** aProxyRequest, nsIPrincipal* aLoadingPrincipal,
+      int32_t aCORSMode, bool* aNewChannelCreated);
 
   nsresult CreateNewProxyForRequest(imgRequest* aRequest,
                                     nsILoadGroup* aLoadGroup,
@@ -478,6 +477,7 @@ class imgCacheValidator : public nsIStreamListener,
  public:
   imgCacheValidator(nsProgressNotificationProxy* progress, imgLoader* loader,
                     imgRequest* aRequest, nsISupports* aContext,
+                    uint64_t aInnerWindowId,
                     bool forcePrincipalCheckForCacheEntry);
 
   void AddProxy(imgRequestProxy* aProxy);
@@ -507,6 +507,7 @@ class imgCacheValidator : public nsIStreamListener,
   RefPtr<imgCacheEntry> mNewEntry;
 
   nsCOMPtr<nsISupports> mContext;
+  uint64_t mInnerWindowId;
 
   imgLoader* mImgLoader;
 

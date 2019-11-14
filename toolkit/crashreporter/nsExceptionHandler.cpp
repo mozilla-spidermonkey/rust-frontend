@@ -26,7 +26,6 @@
 #include "mozilla/ipc/CrashReporterClient.h"
 
 #include "nsThreadUtils.h"
-#include "nsXULAppAPI.h"
 #include "jsfriendapi.h"
 #include "ThreadAnnotation.h"
 #include "private/pprio.h"
@@ -47,6 +46,7 @@
 #  include "nsDirectoryServiceUtils.h"
 
 #  include "nsWindowsDllInterceptor.h"
+#  include "mozilla/WindowsDllBlocklist.h"
 #  include "mozilla/WindowsVersion.h"
 #  include "psapi.h"  // For PERFORMANCE_INFORAMTION
 #elif defined(XP_MACOSX)
@@ -97,7 +97,6 @@ using mozilla::InjectCrashRunnable;
 
 #include "mozilla/IOInterposer.h"
 #include "mozilla/mozalloc_oom.h"
-#include "mozilla/WindowsDllBlocklist.h"
 #include "mozilla/recordreplay/ParentIPC.h"
 
 #if defined(XP_MACOSX)
@@ -3343,6 +3342,25 @@ bool TakeMinidumpForChild(uint32_t childPid, nsIFile** dump,
   pidToMinidump->RemoveEntry(pd);
 
   return !!*dump;
+}
+
+bool FinalizeOrphanedMinidump(uint32_t aChildPid, GeckoProcessType aType) {
+  AnnotationTable annotations;
+  nsCOMPtr<nsIFile> minidump;
+
+  if (!TakeMinidumpForChild(aChildPid, getter_AddRefs(minidump), annotations)) {
+    return false;
+  }
+
+  nsAutoString id;
+  if (!GetIDFromMinidump(minidump, id)) {
+    return false;
+  }
+
+  annotations[Annotation::ProcessType] =
+      XRE_ChildProcessTypeToAnnotation(aType);
+
+  return WriteExtraFile(id, annotations);
 }
 
 //-----------------------------------------------------------------------------

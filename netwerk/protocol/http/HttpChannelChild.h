@@ -112,7 +112,8 @@ class HttpChannelChild final : public PHttpChannelChild,
   // nsIResumableChannel
   NS_IMETHOD ResumeAt(uint64_t startPos, const nsACString& entityID) override;
 
-  nsresult SetReferrerHeader(const nsACString& aReferrer) override;
+  nsresult SetReferrerHeader(const nsACString& aReferrer,
+                             bool aRespectBeforeConnect) override;
 
   MOZ_MUST_USE bool IsSuspended();
 
@@ -178,6 +179,9 @@ class HttpChannelChild final : public PHttpChannelChild,
   mozilla::ipc::IPCResult RecvAltDataCacheInputStreamAvailable(
       const Maybe<IPCStream>& aStream) override;
 
+  mozilla::ipc::IPCResult RecvOverrideReferrerInfoDuringBeginConnect(
+      nsIReferrerInfo* aReferrerInfo) override;
+
   virtual void ActorDestroy(ActorDestroyReason aWhy) override;
 
   virtual void DoNotifyListenerCleanup() override;
@@ -208,6 +212,11 @@ class HttpChannelChild final : public PHttpChannelChild,
   NS_IMETHOD LogMimeTypeMismatch(const nsACString& aMessageName, bool aWarning,
                                  const nsAString& aURL,
                                  const nsAString& aContentType) override;
+
+  mozilla::ipc::IPCResult RecvOnProgress(const int64_t& aProgress,
+                                         const int64_t& aProgressMax) override;
+
+  mozilla::ipc::IPCResult RecvOnStatus(const nsresult& aStatus) override;
 
  private:
   // We want to handle failure result of AsyncOpen, hence AsyncOpen calls the
@@ -259,8 +268,6 @@ class HttpChannelChild final : public PHttpChannelChild,
   void ProcessOnStopRequest(const nsresult& aStatusCode,
                             const ResourceTimingStruct& aTiming,
                             const nsHttpHeaderArray& aResponseTrailers);
-  void ProcessOnProgress(const int64_t& aProgress, const int64_t& aProgressMax);
-  void ProcessOnStatus(const nsresult& aStatus);
   void ProcessFlushedForDiversion();
   void ProcessDivertMessages();
   void ProcessNotifyChannelClassifierProtectionDisabled(
@@ -483,8 +490,6 @@ class HttpChannelChild final : public PHttpChannelChild,
                      const ResourceTimingStruct& timing,
                      const nsHttpHeaderArray& aResponseTrailers);
   void MaybeDivertOnStop(const nsresult& aChannelStatus);
-  void OnProgress(const int64_t& progress, const int64_t& progressMax);
-  void OnStatus(const nsresult& status);
   void FailedAsyncOpen(const nsresult& status);
   void HandleAsyncAbort();
   void Redirect1Begin(const uint32_t& registrarId, const URIParams& newUri,

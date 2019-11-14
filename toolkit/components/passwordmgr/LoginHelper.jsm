@@ -13,7 +13,6 @@
 "use strict";
 
 const EXPORTED_SYMBOLS = ["LoginHelper"];
-const REMOTE_SETTINGS_BREACHES_COLLECTION = "fxmonitor-breaches";
 
 // Globals
 
@@ -22,24 +21,13 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "RemoteSettings",
-  "resource://services-settings/remote-settings.js"
-);
-
-ChromeUtils.defineModuleGetter(
-  this,
-  "RemoteSettingsClient",
-  "resource://services-settings/RemoteSettingsClient.jsm"
-);
-
 /**
  * Contains functions shared by different Login Manager components.
  */
 this.LoginHelper = {
   debug: null,
   enabled: null,
+  storageEnabled: null,
   formlessCaptureEnabled: null,
   generationAvailable: null,
   generationEnabled: null,
@@ -63,6 +51,7 @@ this.LoginHelper = {
     );
     this.debug = Services.prefs.getBoolPref("signon.debug");
     this.enabled = Services.prefs.getBoolPref("signon.rememberSignons");
+    this.storageEnabled = Services.prefs.getBoolPref("signon.storeSignons");
     this.formlessCaptureEnabled = Services.prefs.getBoolPref(
       "signon.formlessCapture.enabled"
     );
@@ -456,7 +445,7 @@ this.LoginHelper = {
 
       for (let prop of aNewLoginData.enumerator) {
         switch (prop.name) {
-          // nsILoginInfo
+          // nsILoginInfo (fall through)
           case "origin":
           case "httpRealm":
           case "formActionOrigin":
@@ -464,7 +453,7 @@ this.LoginHelper = {
           case "password":
           case "usernameField":
           case "passwordField":
-          // nsILoginMetaInfo
+          // nsILoginMetaInfo (fall through)
           case "guid":
           case "timeCreated":
           case "timeLastUsed":
@@ -488,7 +477,7 @@ this.LoginHelper = {
     }
 
     // Sanity check the login
-    if (newLogin.origin == null || newLogin.origin.length == 0) {
+    if (newLogin.origin == null || !newLogin.origin.length) {
       throw new Error("Can't add a login with a null or empty origin.");
     }
 
@@ -497,7 +486,7 @@ this.LoginHelper = {
       throw new Error("Can't add a login with a null username.");
     }
 
-    if (newLogin.password == null || newLogin.password.length == 0) {
+    if (newLogin.password == null || !newLogin.password.length) {
       throw new Error("Can't add a login with a null or empty password.");
     }
 
@@ -658,7 +647,7 @@ this.LoginHelper = {
      * over the existingLogin.
      */
     function isLoginPreferred(existingLogin, login) {
-      if (!resolveBy || resolveBy.length == 0) {
+      if (!resolveBy || !resolveBy.length) {
         // If there is no preference, prefer the existing login.
         return false;
       }
@@ -735,6 +724,14 @@ this.LoginHelper = {
             ) {
               return true;
             }
+            // if the existing login host *is* a match and the new one isn't
+            // we explicitly want to keep the existing one
+            if (
+              existingLoginURI.host == preferredOriginURI.host &&
+              newLoginURI.host != preferredOriginURI.host
+            ) {
+              return false;
+            }
             break;
           }
           case "timeLastUsed":
@@ -794,15 +791,19 @@ this.LoginHelper = {
    *                 The name of the entry point, used for telemetry
    */
   openPasswordManager(window, { filterString = "", entryPoint = "" } = {}) {
-    Services.telemetry.recordEvent("pwmgr", "open_management", entryPoint);
     if (this.managementURI && window.openTrustedLinkIn) {
       let managementURL = this.managementURI.replace(
         "%DOMAIN%",
         window.encodeURIComponent(filterString)
       );
-      window.openTrustedLinkIn(managementURL, "tab");
+      // We assume that managementURL has a '?' already
+      window.openTrustedLinkIn(
+        managementURL + `&entryPoint=${entryPoint}`,
+        "tab"
+      );
       return;
     }
+    Services.telemetry.recordEvent("pwmgr", "open_management", entryPoint);
     let win = Services.wm.getMostRecentWindow("Toolkit:PasswordManager");
     if (win) {
       win.setFilter(filterString);
@@ -1113,52 +1114,16 @@ this.LoginHelper = {
     }
   },
 
-  async getBreachesForLogins(logins, breaches = null) {
-    const breachesByLoginGUID = new Map();
-    if (!breaches) {
-      try {
-        breaches = await RemoteSettings(
-          REMOTE_SETTINGS_BREACHES_COLLECTION
-        ).get();
-      } catch (ex) {
-        if (ex instanceof RemoteSettingsClient.UnknownCollectionError) {
-          log.warn(
-            "Could not get Remote Settings collection.",
-            REMOTE_SETTINGS_BREACHES_COLLECTION,
-            ex
-          );
-          return breachesByLoginGUID;
-        }
-        throw ex;
-      }
-    }
-    const BREACH_ALERT_URL = Services.prefs.getStringPref(
-      "signon.management.page.breachAlertUrl"
-    );
-    const baseBreachAlertURL = new URL(BREACH_ALERT_URL);
-
-    // Determine potentially breached logins by checking their origin and the last time
-    // they were changed. It's important to note here that we are NOT considering the
-    // username and password of that login.
-    for (const login of logins) {
-      const loginURI = Services.io.newURI(login.origin);
-      for (const breach of breaches) {
-        if (!breach.Domain) {
-          continue;
-        }
-        if (
-          Services.eTLD.hasRootDomain(loginURI.host, breach.Domain) &&
-          breach.hasOwnProperty("DataClasses") &&
-          breach.DataClasses.includes("Passwords") &&
-          login.timePasswordChanged < new Date(breach.BreachDate).getTime()
-        ) {
-          let breachAlertURL = new URL(breach.Name, baseBreachAlertURL);
-          breach.breachAlertURL = breachAlertURL.href;
-          breachesByLoginGUID.set(login.guid, breach);
-        }
-      }
-    }
-    return breachesByLoginGUID;
+  createLoginAlreadyExistsError(guid) {
+    // The GUID is stored in an nsISupportsString here because we cannot pass
+    // raw JS objects within Components.Exception due to bug 743121.
+    let guidSupportsString = Cc[
+      "@mozilla.org/supports-string;1"
+    ].createInstance(Ci.nsISupportsString);
+    guidSupportsString.data = guid;
+    return Components.Exception("This login already exists.", {
+      data: guidSupportsString,
+    });
   },
 };
 
@@ -1171,6 +1136,5 @@ XPCOMUtils.defineLazyPreferenceGetter(
 );
 
 XPCOMUtils.defineLazyGetter(this, "log", () => {
-  let logger = LoginHelper.createLogger("LoginHelper");
-  return logger;
+  return LoginHelper.createLogger("LoginHelper");
 });

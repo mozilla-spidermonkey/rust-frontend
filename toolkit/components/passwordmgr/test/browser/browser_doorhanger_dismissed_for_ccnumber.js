@@ -3,22 +3,6 @@
 const TEST_HOSTNAME = "https://example.com";
 const BASIC_FORM_PAGE_PATH = DIRECTORY_PATH + "form_basic.html";
 
-function getSubmitMessage() {
-  info("getSubmitMessage");
-  return new Promise((resolve, reject) => {
-    Services.mm.addMessageListener(
-      "PasswordManager:onFormSubmit",
-      function onFormSubmit() {
-        Services.mm.removeMessageListener(
-          "PasswordManager:onFormSubmit",
-          onFormSubmit
-        );
-        resolve();
-      }
-    );
-  });
-}
-
 add_task(async function test_doorhanger_dismissal_un() {
   let url = TEST_HOSTNAME + BASIC_FORM_PAGE_PATH;
   await BrowserTestUtils.withNewTab(
@@ -31,8 +15,8 @@ add_task(async function test_doorhanger_dismissal_un() {
       // the password field is a three digit numberic value,
       // we automatically dismiss the save logins prompt on submission.
 
-      let processedPromise = getSubmitMessage();
-      ContentTask.spawn(browser, null, async () => {
+      let processedPromise = listenForTestNotification("FormSubmit");
+      await ContentTask.spawn(browser, null, async () => {
         content.document
           .getElementById("form-basic-username")
           .setUserInput("4111111111111111");
@@ -47,6 +31,7 @@ add_task(async function test_doorhanger_dismissal_un() {
       let notif = getCaptureDoorhanger("password-save");
       ok(notif, "got notification popup");
       ok(notif.dismissed, "notification popup was automatically dismissed");
+      await cleanupDoorhanger(notif);
     }
   );
 });
@@ -63,8 +48,8 @@ add_task(async function test_doorhanger_dismissal_pw() {
       // the password field is also tagged autocomplete="cc-number",
       // we automatically dismiss the save logins prompt on submission.
 
-      let processedPromise = getSubmitMessage();
-      ContentTask.spawn(browser, null, async () => {
+      let processedPromise = listenForTestNotification("FormSubmit");
+      await ContentTask.spawn(browser, null, async () => {
         content.document
           .getElementById("form-basic-username")
           .setUserInput("aaa");
@@ -82,6 +67,7 @@ add_task(async function test_doorhanger_dismissal_pw() {
       let notif = getCaptureDoorhanger("password-save");
       ok(notif, "got notification popup");
       ok(notif.dismissed, "notification popup was automatically dismissed");
+      await cleanupDoorhanger(notif);
     }
   );
 });
@@ -97,8 +83,8 @@ add_task(async function test_doorhanger_shown_on_un_with_invalid_ccnumber() {
       // If the username field has a CC number that is invalid,
       // we show the doorhanger to save logins like we usually do.
 
-      let processedPromise = getSubmitMessage();
-      ContentTask.spawn(browser, null, async () => {
+      let processedPromise = listenForTestNotification("FormSubmit");
+      await ContentTask.spawn(browser, null, async () => {
         content.document.getElementById("form-basic-username").value =
           "1234123412341234";
         content.document.getElementById("form-basic-password").value = "411";
@@ -107,12 +93,13 @@ add_task(async function test_doorhanger_shown_on_un_with_invalid_ccnumber() {
       });
       await processedPromise;
 
-      let notif = getCaptureDoorhanger("password-save");
+      let notif = await getCaptureDoorhangerThatMayOpen("password-save");
       ok(notif, "got notification popup");
       ok(
         !notif.dismissed,
         "notification popup was not automatically dismissed"
       );
+      await cleanupDoorhanger(notif);
     }
   );
 });
@@ -141,8 +128,8 @@ add_task(async function test_doorhanger_dismissal_on_change() {
       );
       Services.logins.addLogin(login);
 
-      let processedPromise = getSubmitMessage();
-      ContentTask.spawn(browser, null, async () => {
+      let processedPromise = listenForTestNotification("FormSubmit");
+      await ContentTask.spawn(browser, null, async () => {
         content.document
           .getElementById("form-basic-password")
           .setUserInput("111");
@@ -153,6 +140,7 @@ add_task(async function test_doorhanger_dismissal_on_change() {
       let notif = getCaptureDoorhanger("password-save");
       ok(notif, "got notification popup");
       ok(notif.dismissed, "notification popup was automatically dismissed");
+      await cleanupDoorhanger(notif);
     }
   );
 });

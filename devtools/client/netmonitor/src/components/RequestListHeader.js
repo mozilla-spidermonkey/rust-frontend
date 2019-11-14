@@ -26,7 +26,7 @@ const {
   MIN_COLUMN_WIDTH,
   DEFAULT_COLUMN_WIDTH,
 } = require("../constants");
-const { getWaterfallScale } = require("../selectors/index");
+const { getColumns, getWaterfallScale } = require("../selectors/index");
 const { getFormattedTime } = require("../utils/format-utils");
 const { L10N } = require("../utils/l10n");
 const RequestListHeaderContextMenu = require("../widgets/RequestListHeaderContextMenu");
@@ -261,7 +261,9 @@ class RequestListHeader extends Component {
 
     // Calculate new width (according to the mouse x-position) and set to style.
     // Do not allow to set it below minWidth.
-    const newWidth = Math.max(x - headerRefRect.left, minWidth);
+    let newWidth =
+      document.dir == "ltr" ? x - headerRefRect.left : headerRefRect.right - x;
+    newWidth = Math.max(newWidth, minWidth);
     headerRef.style.width = `${this.px2percent(newWidth, parentWidth)}%`;
     const adjustment = oldWidth - newWidth;
 
@@ -333,7 +335,10 @@ class RequestListHeader extends Component {
     // Compute and set style.width for waterfall.
     const waterfallRefRect = waterfallRef.getBoundingClientRect();
     const oldWidth = waterfallRefRect.width;
-    const adjustment = waterfallRefRect.left - x;
+    const adjustment =
+      document.dir == "ltr"
+        ? waterfallRefRect.left - x
+        : x - waterfallRefRect.right;
     if (this.allColumnsAtMinWidth() && adjustment > 0) {
       // When we want to make waterfall wider but all
       // other columns are already at minWidth => return.
@@ -601,9 +606,9 @@ class RequestListHeader extends Component {
 
 module.exports = connect(
   state => ({
-    columns: state.ui.columns,
+    columns: getColumns(state),
     columnsData: state.ui.columnsData,
-    firstRequestStartedMillis: state.requests.firstStartedMillis,
+    firstRequestStartedMs: state.requests.firstStartedMs,
     scale: getWaterfallScale(state),
     sort: state.sort,
     timingMarkers: state.timingMarkers,

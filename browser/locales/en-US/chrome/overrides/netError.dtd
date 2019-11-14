@@ -189,6 +189,9 @@ was trying to connect. -->
 <!ENTITY cspBlocked.title "Blocked by Content Security Policy">
 <!ENTITY cspBlocked.longDesc "<p>&brandShortName; prevented this page from loading in this way because the page has a content security policy that disallows it.</p>">
 
+<!ENTITY xfoBlocked.title "Blocked by X-Frame-Options Policy">
+<!ENTITY xfoBlocked.longDesc "<p>&brandShortName; prevented this page from loading in this context because the page has an X-Frame-Options policy that disallows it.</p>">
+
 <!ENTITY corruptedContentErrorv2.title "Corrupted Content Error">
 <!ENTITY corruptedContentErrorv2.longDesc "<p>The page you are trying to view cannot be shown because an error in the data transmission was detected.</p><ul><li>Please contact the website owners to inform them of this problem.</li></ul>">
 
@@ -229,6 +232,10 @@ was trying to connect. -->
 
 <!ENTITY prefReset.longDesc "It looks like your network security settings might be causing this. Do you want the default settings to be restored?">
 <!ENTITY prefReset.label "Restore default settings">
+
+<!ENTITY enableTls10.longDesc "This website might not support the TLS 1.2 protocol, which is the minimum version supported by &brandShortName;. Enabling TLS 1.0 and TLS 1.1 might allow this connection to succeed.">
+<!ENTITY enableTls10.note "TLS 1.0 and TLS 1.1 will be permanently disabled in a future release.">
+<!ENTITY enableTls10.label "Enable TLS 1.0 and 1.1">
 
 <!ENTITY networkProtocolError.title "Network Protocol Error">
 <!ENTITY networkProtocolError.longDesc "<p>The page you are trying to view cannot be shown because an error in the network protocol was detected.</p><ul><li>Please contact the website owners to inform them of this problem.</li></ul>">

@@ -14,6 +14,16 @@
 #include "builtin/BigInt.h"
 #include "builtin/DataViewObject.h"
 #include "builtin/Eval.h"
+#ifdef ENABLE_INTL_API
+#  include "builtin/intl/Collator.h"
+#  include "builtin/intl/DateTimeFormat.h"
+#  include "builtin/intl/ListFormat.h"
+#  include "builtin/intl/Locale.h"
+#  include "builtin/intl/NumberFormat.h"
+#  include "builtin/intl/PluralRules.h"
+#  include "builtin/intl/RelativeTimeFormat.h"
+#endif
+#include "builtin/FinalizationGroupObject.h"
 #include "builtin/MapObject.h"
 #include "builtin/ModuleObject.h"
 #include "builtin/Object.h"
@@ -21,6 +31,13 @@
 #include "builtin/RegExp.h"
 #include "builtin/SelfHostingDefines.h"
 #include "builtin/Stream.h"
+#include "builtin/streams/QueueingStrategies.h"  // js::{ByteLength,Count}QueueingStrategy
+#include "builtin/streams/ReadableStream.h"  // js::ReadableStream
+#include "builtin/streams/ReadableStreamController.h"  // js::Readable{StreamDefault,ByteStream}Controller
+#include "builtin/streams/ReadableStreamReader.h"  // js::ReadableStreamDefaultReader
+#include "builtin/streams/WritableStream.h"        // js::WritableStream
+#include "builtin/streams/WritableStreamDefaultController.h"  // js::WritableStreamDefaultController
+#include "builtin/streams/WritableStreamDefaultWriter.h"  // js::WritableStreamDefaultWriter
 #include "builtin/Symbol.h"
 #include "builtin/TypedObject.h"
 #include "builtin/WeakMapObject.h"
@@ -28,8 +45,11 @@
 #include "debugger/DebugAPI.h"
 #include "gc/FreeOp.h"
 #include "js/ProtoKey.h"
+#include "vm/AsyncFunction.h"
+#include "vm/AsyncIteration.h"
 #include "vm/DateObject.h"
 #include "vm/EnvironmentObject.h"
+#include "vm/GeneratorObject.h"
 #include "vm/HelperThreads.h"
 #include "vm/JSContext.h"
 #include "vm/PIC.h"
@@ -45,16 +65,16 @@
 using namespace js;
 
 struct ProtoTableEntry {
-  const Class* clasp;
+  const JSClass* clasp;
   ClassInitializerOp init;
 };
 
 namespace js {
 
-extern const Class IntlClass;
-extern const Class JSONClass;
-extern const Class MathClass;
-extern const Class WebAssemblyClass;
+extern const JSClass IntlClass;
+extern const JSClass JSONClass;
+extern const JSClass MathClass;
+extern const JSClass WebAssemblyClass;
 
 #define DECLARE_PROTOTYPE_CLASS_INIT(name, init, clasp) \
   extern JSObject* init(JSContext* cx, Handle<GlobalObject*> global);
@@ -75,7 +95,7 @@ static const ProtoTableEntry protoTable[JSProto_LIMIT] = {
 #undef INIT_FUNC
 };
 
-JS_FRIEND_API const js::Class* js::ProtoKeyToClass(JSProtoKey key) {
+JS_FRIEND_API const JSClass* js::ProtoKeyToClass(JSProtoKey key) {
   MOZ_ASSERT(key < JSProto_LIMIT);
   return protoTable[key].clasp;
 }
@@ -104,15 +124,22 @@ bool GlobalObject::skipDeselectedConstructor(JSContext* cx, JSProtoKey key) {
     case JSProto_CountQueuingStrategy:
       return !cx->realm()->creationOptions().getStreamsEnabled();
 
-    case JSProto_BigInt64Array:
-    case JSProto_BigUint64Array:
-    case JSProto_BigInt:
-      return !cx->realm()->creationOptions().getBigIntEnabled();
+    case JSProto_WritableStream:
+    case JSProto_WritableStreamDefaultController:
+    case JSProto_WritableStreamDefaultWriter: {
+      const auto& realmOptions = cx->realm()->creationOptions();
+      return !realmOptions.getStreamsEnabled() ||
+             !realmOptions.getWritableStreamsEnabled();
+    }
 
     // Return true if the given constructor has been disabled at run-time.
     case JSProto_Atomics:
     case JSProto_SharedArrayBuffer:
       return !cx->realm()->creationOptions().getSharedMemoryAndAtomicsEnabled();
+
+    case JSProto_FinalizationGroup:
+      return !cx->realm()->creationOptions().getWeakRefsEnabled();
+
     default:
       return false;
   }
@@ -158,7 +185,7 @@ bool GlobalObject::resolveConstructor(JSContext* cx,
 
   // Some classes can be disabled at compile time, others at run time;
   // if a feature is compile-time disabled, init and clasp are both null.
-  const Class* clasp = ProtoKeyToClass(key);
+  const JSClass* clasp = ProtoKeyToClass(key);
   if ((!init && !clasp) || skipDeselectedConstructor(cx, key)) {
     if (mode == IfClassIsDisabled::Throw) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
@@ -354,7 +381,7 @@ JSObject* GlobalObject::createObject(JSContext* cx,
   return &global->getSlot(slot).toObject();
 }
 
-const Class GlobalObject::OffThreadPlaceholderObject::class_ = {
+const JSClass GlobalObject::OffThreadPlaceholderObject::class_ = {
     "off-thread-prototype-placeholder", JSCLASS_HAS_RESERVED_SLOTS(1)};
 
 /* static */ GlobalObject::OffThreadPlaceholderObject*
@@ -385,7 +412,9 @@ bool GlobalObject::resolveOffThreadConstructor(JSContext* cx,
 
   MOZ_ASSERT(global->zone()->createdForHelperThread());
   MOZ_ASSERT(key == JSProto_Object || key == JSProto_Function ||
-             key == JSProto_Array || key == JSProto_RegExp);
+             key == JSProto_Array || key == JSProto_RegExp ||
+             key == JSProto_AsyncFunction || key == JSProto_GeneratorFunction ||
+             key == JSProto_AsyncGeneratorFunction);
 
   Rooted<OffThreadPlaceholderObject*> placeholder(cx);
   placeholder = OffThreadPlaceholderObject::New(cx, prototypeSlot(key));
@@ -422,10 +451,8 @@ JSObject* GlobalObject::createOffThreadObject(JSContext* cx,
   // compartment.
 
   MOZ_ASSERT(global->zone()->createdForHelperThread());
-  MOZ_ASSERT(slot == GENERATOR_FUNCTION_PROTO || slot == ASYNC_FUNCTION_PROTO ||
-             slot == ASYNC_GENERATOR || slot == MODULE_PROTO ||
-             slot == IMPORT_ENTRY_PROTO || slot == EXPORT_ENTRY_PROTO ||
-             slot == REQUESTED_MODULE_PROTO);
+  MOZ_ASSERT(slot == MODULE_PROTO || slot == IMPORT_ENTRY_PROTO ||
+             slot == EXPORT_ENTRY_PROTO || slot == REQUESTED_MODULE_PROTO);
 
   auto placeholder = OffThreadPlaceholderObject::New(cx, slot);
   if (!placeholder) {
@@ -505,10 +532,8 @@ JSObject* GlobalObject::getOrCreateThrowTypeError(
   }
   MOZ_ASSERT(lengthResult);
 
-  // Non-standard: Also change "name" to non-configurable. ECMAScript defines
-  // %ThrowTypeError% as an anonymous function, i.e. it shouldn't actually
-  // get an own "name" property. To be consistent with other built-in,
-  // anonymous functions, we don't delete %ThrowTypeError%'s "name" property.
+  // The "name" property of %ThrowTypeError% is non-configurable, adjust
+  // the default property attributes accordingly.
   RootedId nameId(cx, NameToId(cx->names().name));
   ObjectOpResult nameResult;
   if (!NativeDefineProperty(cx, throwTypeError, nameId, nonConfigurableDesc,
@@ -521,7 +546,8 @@ JSObject* GlobalObject::getOrCreateThrowTypeError(
   return throwTypeError;
 }
 
-GlobalObject* GlobalObject::createInternal(JSContext* cx, const Class* clasp) {
+GlobalObject* GlobalObject::createInternal(JSContext* cx,
+                                           const JSClass* clasp) {
   MOZ_ASSERT(clasp->flags & JSCLASS_IS_GLOBAL);
   MOZ_ASSERT(clasp->isTrace(JS_GlobalObjectTraceHook));
 
@@ -566,7 +592,7 @@ GlobalObject* GlobalObject::createInternal(JSContext* cx, const Class* clasp) {
 }
 
 /* static */
-GlobalObject* GlobalObject::new_(JSContext* cx, const Class* clasp,
+GlobalObject* GlobalObject::new_(JSContext* cx, const JSClass* clasp,
                                  JSPrincipals* principals,
                                  JS::OnNewGlobalHookOption hookOption,
                                  const JS::RealmOptions& options) {
@@ -670,7 +696,7 @@ bool GlobalObject::initStandardClasses(JSContext* cx,
 static bool InitBareBuiltinCtor(JSContext* cx, Handle<GlobalObject*> global,
                                 JSProtoKey protoKey) {
   MOZ_ASSERT(cx->runtime()->isSelfHostingGlobal(global));
-  const Class* clasp = ProtoKeyToClass(protoKey);
+  const JSClass* clasp = ProtoKeyToClass(protoKey);
   RootedObject proto(cx);
   proto = clasp->specCreatePrototypeHook()(cx, protoKey);
   if (!proto) {
@@ -776,7 +802,7 @@ JSFunction* GlobalObject::createConstructor(JSContext* cx, Native ctor,
   return fun;
 }
 
-static NativeObject* CreateBlankProto(JSContext* cx, const Class* clasp,
+static NativeObject* CreateBlankProto(JSContext* cx, const JSClass* clasp,
                                       HandleObject proto) {
   MOZ_ASSERT(clasp != &JSFunction::class_);
 
@@ -792,7 +818,7 @@ static NativeObject* CreateBlankProto(JSContext* cx, const Class* clasp,
 /* static */
 NativeObject* GlobalObject::createBlankPrototype(JSContext* cx,
                                                  Handle<GlobalObject*> global,
-                                                 const Class* clasp) {
+                                                 const JSClass* clasp) {
   RootedObject objectProto(cx, getOrCreateObjectPrototype(cx, global));
   if (!objectProto) {
     return nullptr;
@@ -803,7 +829,7 @@ NativeObject* GlobalObject::createBlankPrototype(JSContext* cx,
 
 /* static */
 NativeObject* GlobalObject::createBlankPrototypeInheriting(JSContext* cx,
-                                                           const Class* clasp,
+                                                           const JSClass* clasp,
                                                            HandleObject proto) {
   return CreateBlankProto(cx, clasp, proto);
 }
@@ -839,31 +865,6 @@ bool js::DefineToStringTag(JSContext* cx, HandleObject obj, JSAtom* tag) {
                          SYMBOL_TO_JSID(cx->wellKnownSymbols().toStringTag));
   RootedValue tagString(cx, StringValue(tag));
   return DefineDataProperty(cx, obj, toStringTagId, tagString, JSPROP_READONLY);
-}
-
-GlobalObject::DebuggerVector* GlobalObject::getDebuggers() const {
-  Value debuggers = getReservedSlot(DEBUGGERS);
-  if (debuggers.isUndefined()) {
-    return nullptr;
-  }
-  return DebugAPI::getGlobalDebuggers(&debuggers.toObject());
-}
-
-/* static */ GlobalObject::DebuggerVector* GlobalObject::getOrCreateDebuggers(
-    JSContext* cx, Handle<GlobalObject*> global) {
-  cx->check(global);
-  DebuggerVector* debuggers = global->getDebuggers();
-  if (debuggers) {
-    return debuggers;
-  }
-
-  JSObject* obj = DebugAPI::newGlobalDebuggersHolder(cx);
-  if (!obj) {
-    return nullptr;
-  }
-
-  global->setReservedSlot(DEBUGGERS, ObjectValue(*obj));
-  return global->getDebuggers();
 }
 
 /* static */

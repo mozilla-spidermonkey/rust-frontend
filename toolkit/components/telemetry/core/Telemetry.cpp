@@ -28,6 +28,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/BackgroundHangMonitor.h"
 #include "mozilla/Components.h"
+#include "mozilla/DataMutex.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/FStream.h"
 #include "mozilla/IOInterposer.h"
@@ -86,7 +87,6 @@
 #include "nsXULAppAPI.h"
 #include "other/CombinedStacks.h"
 #include "other/TelemetryIOInterposeObserver.h"
-#include "other/WebrtcTelemetry.h"
 #include "plstr.h"
 #if defined(MOZ_GECKO_PROFILER)
 #  include "shared-libraries.h"
@@ -186,7 +186,7 @@ class TelemetryImpl final : public nsITelemetry, public nsIMemoryReporter {
 
   void ReadLateWritesStacks(nsIFile* aProfileDir);
 
-  static TelemetryImpl* sTelemetry;
+  static StaticDataMutex<TelemetryImpl*> sTelemetry;
   AutoHashtable<SlowSQLEntryType> mPrivateSQL;
   AutoHashtable<SlowSQLEntryType> mSanitizedSQL;
   Mutex mHashMutex;
@@ -207,11 +207,9 @@ class TelemetryImpl final : public nsITelemetry, public nsIMemoryReporter {
   uint32_t mFailedLockCount;
   nsCOMArray<nsIFetchTelemetryDataCallback> mCallbacks;
   friend class nsFetchTelemetryData;
-
-  WebrtcTelemetry mWebrtcTelemetry;
 };
 
-TelemetryImpl* TelemetryImpl::sTelemetry = nullptr;
+StaticDataMutex<TelemetryImpl*> TelemetryImpl::sTelemetry(nullptr, nullptr);
 
 MOZ_DEFINE_MALLOC_SIZE_OF(TelemetryMallocSizeOf)
 
@@ -230,10 +228,6 @@ TelemetryImpl::CollectReports(nsIHandleReportCallback* aHandleReport,
       "explicit/telemetry/scalar/shallow",
       TelemetryScalar::GetMapShallowSizesOfExcludingThis(aMallocSizeOf),
       "Memory used by the Telemetry Scalar implemenation");
-
-  COLLECT_REPORT("explicit/telemetry/WebRTC",
-                 mWebrtcTelemetry.SizeOfExcludingThis(aMallocSizeOf),
-                 "Memory used by WebRTC Telemetry");
 
   {  // Scope for mHashMutex lock
     MutexAutoLock lock(mHashMutex);
@@ -343,32 +337,39 @@ class nsFetchTelemetryData : public Runnable {
       : mozilla::Runnable("nsFetchTelemetryData"),
         mShutdownTimeFilename(aShutdownTimeFilename),
         mFailedProfileLockFile(aFailedProfileLockFile),
-        mTelemetry(TelemetryImpl::sTelemetry),
         mProfileDir(aProfileDir) {}
 
  private:
   PathCharPtr mShutdownTimeFilename;
   nsCOMPtr<nsIFile> mFailedProfileLockFile;
-  RefPtr<TelemetryImpl> mTelemetry;
   nsCOMPtr<nsIFile> mProfileDir;
 
  public:
   void MainThread() {
-    mTelemetry->mCachedTelemetryData = true;
-    for (unsigned int i = 0, n = mTelemetry->mCallbacks.Count(); i < n; ++i) {
-      mTelemetry->mCallbacks[i]->Complete();
+    auto lock = TelemetryImpl::sTelemetry.Lock();
+    auto telemetry = lock.ref();
+    telemetry->mCachedTelemetryData = true;
+    for (unsigned int i = 0, n = telemetry->mCallbacks.Count(); i < n; ++i) {
+      telemetry->mCallbacks[i]->Complete();
     }
-    mTelemetry->mCallbacks.Clear();
+    telemetry->mCallbacks.Clear();
   }
 
   NS_IMETHOD Run() override {
-    LoadFailedLockCount(mTelemetry->mFailedLockCount);
-    mTelemetry->mLastShutdownTime =
-        ReadLastShutdownDuration(mShutdownTimeFilename);
-    mTelemetry->ReadLateWritesStacks(mProfileDir);
+    uint32_t failedLockCount = 0;
+    uint32_t lastShutdownDuration = 0;
+    LoadFailedLockCount(failedLockCount);
+    lastShutdownDuration = ReadLastShutdownDuration(mShutdownTimeFilename);
+    {
+      auto lock = TelemetryImpl::sTelemetry.Lock();
+      auto telemetry = lock.ref();
+      telemetry->mFailedLockCount = failedLockCount;
+      telemetry->mLastShutdownTime = lastShutdownDuration;
+      telemetry->ReadLateWritesStacks(mProfileDir);
+    }
 
     TelemetryScalar::Set(Telemetry::ScalarID::BROWSER_TIMINGS_LAST_SHUTDOWN,
-                         mTelemetry->mLastShutdownTime);
+                         lastShutdownDuration);
 
     nsCOMPtr<nsIRunnable> e =
         NewRunnableMethod("nsFetchTelemetryData::MainThread", this,
@@ -561,13 +562,13 @@ bool TelemetryImpl::ReflectSQL(const SlowSQLEntryType* entry, const Stat* stat,
 
 bool TelemetryImpl::ReflectMainThreadSQL(SlowSQLEntryType* entry, JSContext* cx,
                                          JS::Handle<JSObject*> obj) {
-  return ReflectSQL(entry, &entry->mData.mainThread, cx, obj);
+  return ReflectSQL(entry, &entry->GetModifiableData()->mainThread, cx, obj);
 }
 
 bool TelemetryImpl::ReflectOtherThreadsSQL(SlowSQLEntryType* entry,
                                            JSContext* cx,
                                            JS::Handle<JSObject*> obj) {
-  return ReflectSQL(entry, &entry->mData.otherThreads, cx, obj);
+  return ReflectSQL(entry, &entry->GetModifiableData()->otherThreads, cx, obj);
 }
 
 bool TelemetryImpl::AddSQLInfo(JSContext* cx, JS::Handle<JSObject*> rootObj,
@@ -677,12 +678,6 @@ TelemetryImpl::GetDebugSlowSQL(JSContext* cx,
   bool revealPrivateSql =
       Preferences::GetBool("toolkit.telemetry.debugSlowSql", false);
   if (GetSQLStats(cx, ret, revealPrivateSql)) return NS_OK;
-  return NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP
-TelemetryImpl::GetWebrtcStats(JSContext* cx, JS::MutableHandle<JS::Value> ret) {
-  if (mWebrtcTelemetry.GetWebrtcStats(cx, ret)) return NS_OK;
   return NS_ERROR_FAILURE;
 }
 
@@ -1175,9 +1170,12 @@ TelemetryImpl::GetIsOfficialTelemetry(bool* ret) {
 }
 
 already_AddRefed<nsITelemetry> TelemetryImpl::CreateTelemetryInstance() {
-  MOZ_ASSERT(
-      sTelemetry == nullptr,
-      "CreateTelemetryInstance may only be called once, via GetService()");
+  {
+    auto lock = sTelemetry.Lock();
+    MOZ_ASSERT(
+        *lock == nullptr,
+        "CreateTelemetryInstance may only be called once, via GetService()");
+  }
 
   bool useTelemetry = false;
 #ifndef FUZZING
@@ -1202,17 +1200,21 @@ already_AddRefed<nsITelemetry> TelemetryImpl::CreateTelemetryInstance() {
   TelemetryOrigin::InitializeGlobalState();
 
   // Now, create and initialize the Telemetry global state.
-  sTelemetry = new TelemetryImpl();
+  TelemetryImpl* telemetry = new TelemetryImpl();
+  {
+    auto lock = sTelemetry.Lock();
+    *lock = telemetry;
+  }
 
   // AddRef for the local reference
-  NS_ADDREF(sTelemetry);
+  NS_ADDREF(telemetry);
   // AddRef for the caller
-  nsCOMPtr<nsITelemetry> ret = sTelemetry;
+  nsCOMPtr<nsITelemetry> ret = telemetry;
 
-  sTelemetry->mCanRecordBase = useTelemetry;
-  sTelemetry->mCanRecordExtended = useTelemetry;
+  telemetry->mCanRecordBase = useTelemetry;
+  telemetry->mCanRecordExtended = useTelemetry;
 
-  sTelemetry->InitMemoryReporter();
+  telemetry->InitMemoryReporter();
   InitHistogramRecordingEnabled();  // requires sTelemetry to exist
 
 #if defined(MOZ_TELEMETRY_GECKOVIEW)
@@ -1230,7 +1232,10 @@ already_AddRefed<nsITelemetry> TelemetryImpl::CreateTelemetryInstance() {
 void TelemetryImpl::ShutdownTelemetry() {
   // No point in collecting IO beyond this point
   ClearIOReporting();
-  NS_IF_RELEASE(sTelemetry);
+  {
+    auto lock = sTelemetry.Lock();
+    NS_IF_RELEASE(lock.ref());
+  }
 
   // Lastly, de-initialise the TelemetryHistogram and TelemetryScalar global
   // states, so as to release any heap storage that would otherwise be kept
@@ -1250,30 +1255,32 @@ void TelemetryImpl::ShutdownTelemetry() {
 
 void TelemetryImpl::StoreSlowSQL(const nsACString& sql, uint32_t delay,
                                  SanitizedState state) {
+  auto lock = sTelemetry.Lock();
+  auto telemetry = lock.ref();
   AutoHashtable<SlowSQLEntryType>* slowSQLMap = nullptr;
   if (state == Sanitized)
-    slowSQLMap = &(sTelemetry->mSanitizedSQL);
+    slowSQLMap = &(telemetry->mSanitizedSQL);
   else
-    slowSQLMap = &(sTelemetry->mPrivateSQL);
+    slowSQLMap = &(telemetry->mPrivateSQL);
 
-  MutexAutoLock hashMutex(sTelemetry->mHashMutex);
+  MutexAutoLock hashMutex(telemetry->mHashMutex);
 
   SlowSQLEntryType* entry = slowSQLMap->GetEntry(sql);
   if (!entry) {
     entry = slowSQLMap->PutEntry(sql);
     if (MOZ_UNLIKELY(!entry)) return;
-    entry->mData.mainThread.hitCount = 0;
-    entry->mData.mainThread.totalTime = 0;
-    entry->mData.otherThreads.hitCount = 0;
-    entry->mData.otherThreads.totalTime = 0;
+    entry->GetModifiableData()->mainThread.hitCount = 0;
+    entry->GetModifiableData()->mainThread.totalTime = 0;
+    entry->GetModifiableData()->otherThreads.hitCount = 0;
+    entry->GetModifiableData()->otherThreads.totalTime = 0;
   }
 
   if (NS_IsMainThread()) {
-    entry->mData.mainThread.hitCount++;
-    entry->mData.mainThread.totalTime += delay;
+    entry->GetModifiableData()->mainThread.hitCount++;
+    entry->GetModifiableData()->mainThread.totalTime += delay;
   } else {
-    entry->mData.otherThreads.hitCount++;
-    entry->mData.otherThreads.totalTime += delay;
+    entry->GetModifiableData()->otherThreads.hitCount++;
+    entry->GetModifiableData()->otherThreads.totalTime += delay;
   }
 }
 
@@ -1398,7 +1405,7 @@ nsCString TelemetryImpl::SanitizeSQL(const nsACString& sql) {
   return output;
 }
 
-// A whitelist mechanism to prevent Telemetry reporting on Addon & Thunderbird
+// An allowlist mechanism to prevent Telemetry reporting on Addon & Thunderbird
 // DBs.
 struct TrackedDBEntry {
   const char* mName;
@@ -1415,7 +1422,7 @@ struct TrackedDBEntry {
 #define TRACKEDDB_ENTRY(_name) \
   { _name, (sizeof(_name) - 1) }
 
-// A whitelist of database names. If the database name exactly matches one of
+// An allowlist of database names. If the database name exactly matches one of
 // these then its SQL statements will always be recorded.
 static constexpr TrackedDBEntry kTrackedDBs[] = {
     // IndexedDB for about:home, see aboutHome.js
@@ -1436,7 +1443,7 @@ static constexpr TrackedDBEntry kTrackedDBs[] = {
     TRACKEDDB_ENTRY("urlclassifier3.sqlite"),
     TRACKEDDB_ENTRY("webappsstore.sqlite")};
 
-// A whitelist of database name prefixes. If the database name begins with
+// An allowlist of database name prefixes. If the database name begins with
 // one of these prefixes then its SQL statements will always be recorded.
 static const TrackedDBEntry kTrackedDBPrefixes[] = {
     TRACKEDDB_ENTRY("indexedDB-")};
@@ -1455,7 +1462,12 @@ void TelemetryImpl::RecordSlowStatement(const nsACString& sql,
   MOZ_ASSERT(!sql.IsEmpty());
   MOZ_ASSERT(!dbName.IsEmpty());
 
-  if (!sTelemetry || !TelemetryHistogram::CanRecordExtended()) return;
+  {
+    auto lock = sTelemetry.Lock();
+    if (!lock.ref() || !TelemetryHistogram::CanRecordExtended()) {
+      return;
+    }
+  }
 
   bool recordStatement = false;
 
@@ -1502,19 +1514,13 @@ void TelemetryImpl::RecordSlowStatement(const nsACString& sql,
   StoreSlowSQL(fullSQL, delay, Unsanitized);
 }
 
-void TelemetryImpl::RecordIceCandidates(const uint32_t iceCandidateBitmask,
-                                        const bool success) {
-  if (!sTelemetry || !TelemetryHistogram::CanRecordExtended()) return;
-
-  sTelemetry->mWebrtcTelemetry.RecordIceCandidateMask(iceCandidateBitmask,
-                                                      success);
-}
-
 #if defined(MOZ_GECKO_PROFILER)
 
 void TelemetryImpl::DoStackCapture(const nsACString& aKey) {
   if (Telemetry::CanRecordExtended() && XRE_IsParentProcess()) {
-    sTelemetry->mStackCapturer.Capture(aKey);
+    auto lock = sTelemetry.Lock();
+    auto telemetry = lock.ref();
+    telemetry->mStackCapturer.Capture(aKey);
   }
 }
 #endif
@@ -1527,20 +1533,24 @@ nsresult TelemetryImpl::CaptureStack(const nsACString& aKey) {
 }
 
 bool TelemetryImpl::CanRecordBase() {
-  if (!sTelemetry) {
+  auto lock = sTelemetry.Lock();
+  auto telemetry = lock.ref();
+  if (!telemetry) {
     return false;
   }
   bool canRecordBase;
-  nsresult rv = sTelemetry->GetCanRecordBase(&canRecordBase);
+  nsresult rv = telemetry->GetCanRecordBase(&canRecordBase);
   return NS_SUCCEEDED(rv) && canRecordBase;
 }
 
 bool TelemetryImpl::CanRecordExtended() {
-  if (!sTelemetry) {
+  auto lock = sTelemetry.Lock();
+  auto telemetry = lock.ref();
+  if (!telemetry) {
     return false;
   }
   bool canRecordExtended;
-  nsresult rv = sTelemetry->GetCanRecordExtended(&canRecordExtended);
+  nsresult rv = telemetry->GetCanRecordExtended(&canRecordExtended);
   return NS_SUCCEEDED(rv) && canRecordExtended;
 }
 
@@ -1901,7 +1911,7 @@ void RecordShutdownEndTimeStamp() {
   // On a normal release build this should be called just before
   // calling _exit, but on a debug build or when the user forces a full
   // shutdown this is called as late as possible, so we have to
-  // white list this write as write poisoning will be enabled.
+  // allow this write as write poisoning will be enabled.
   MozillaRegisterDebugFILE(f);
 
   TimeStamp now = TimeStamp::Now();
@@ -2005,11 +2015,6 @@ bool CanRecordPrereleaseData() {
 void RecordSlowSQLStatement(const nsACString& statement,
                             const nsACString& dbName, uint32_t delay) {
   TelemetryImpl::RecordSlowStatement(statement, dbName, delay);
-}
-
-void RecordWebrtcIceCandidates(const uint32_t iceCandidateBitmask,
-                               const bool success) {
-  TelemetryImpl::RecordIceCandidates(iceCandidateBitmask, success);
 }
 
 void Init() {

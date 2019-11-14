@@ -3,7 +3,7 @@
 
 "use strict";
 
-/* global toggleFilter */
+/* global toggleMenuItem, TREE_FILTERS_MENU_ID */
 
 const TEST_URI = `<html>
   <head>
@@ -26,70 +26,79 @@ const tests = [
   {
     desc: "Check initial state.",
     expected: {
-      toolbar: [false, false, false],
+      activeToolbarFilters: [true, false, false, false, false],
     },
   },
   {
     desc: "Toggle first filter (all) to activate.",
-    setup: async ({ doc }) => {
-      await toggleFilter(doc, 0);
+    setup: async ({ doc, toolbox }) => {
+      await toggleMenuItem(doc, toolbox.doc, TREE_FILTERS_MENU_ID, 1);
     },
     expected: {
-      toolbar: [true, true, true],
+      activeToolbarFilters: [false, true, true, true, true],
     },
   },
   {
     desc: "Click on the filter again.",
-    setup: async ({ doc }) => {
-      await toggleFilter(doc, 0);
+    setup: async ({ doc, toolbox }) => {
+      await toggleMenuItem(doc, toolbox.doc, TREE_FILTERS_MENU_ID, 1);
     },
     expected: {
-      toolbar: [false, false, false],
+      activeToolbarFilters: [true, false, false, false, false],
     },
   },
   {
-    desc: "Toggle second filter (contrast) to activate.",
-    setup: async ({ doc }) => {
-      await toggleFilter(doc, 1);
+    desc: "Toggle first custom filter to activate.",
+    setup: async ({ doc, toolbox }) => {
+      await toggleMenuItem(doc, toolbox.doc, TREE_FILTERS_MENU_ID, 2);
     },
     expected: {
-      toolbar: [false, true, false],
+      activeToolbarFilters: [false, false, true, false, false],
     },
   },
   {
     desc: "Click on the filter again.",
-    setup: async ({ doc }) => {
-      await toggleFilter(doc, 1);
+    setup: async ({ doc, toolbox }) => {
+      await toggleMenuItem(doc, toolbox.doc, TREE_FILTERS_MENU_ID, 2);
     },
     expected: {
-      toolbar: [false, false, false],
+      activeToolbarFilters: [true, false, false, false, false],
     },
   },
   {
-    desc: "Toggle second filter (contrast) to activate.",
-    setup: async ({ doc }) => {
-      await toggleFilter(doc, 1);
+    desc: "Toggle first custom filter to activate.",
+    setup: async ({ doc, toolbox }) => {
+      await toggleMenuItem(doc, toolbox.doc, TREE_FILTERS_MENU_ID, 2);
     },
     expected: {
-      toolbar: [false, true, false],
+      activeToolbarFilters: [false, false, true, false, false],
     },
   },
   {
-    desc: "Toggle third filter (all) (text label) to activate.",
-    setup: async ({ doc }) => {
-      await toggleFilter(doc, 2);
+    desc: "Toggle second custom filter to activate.",
+    setup: async ({ doc, toolbox }) => {
+      await toggleMenuItem(doc, toolbox.doc, TREE_FILTERS_MENU_ID, 3);
     },
     expected: {
-      toolbar: [true, true, true],
+      activeToolbarFilters: [false, false, true, true, false],
     },
   },
   {
-    desc: "Click on the first filter to de-activate all.",
-    setup: async ({ doc }) => {
-      await toggleFilter(doc, 0);
+    desc: "Toggle third custom filter to activate.",
+    setup: async ({ doc, toolbox }) => {
+      await toggleMenuItem(doc, toolbox.doc, TREE_FILTERS_MENU_ID, 4);
     },
     expected: {
-      toolbar: [false, false, false],
+      activeToolbarFilters: [false, true, true, true, true],
+    },
+  },
+  {
+    desc: "Click on the none filter to de-activate all.",
+    setup: async ({ doc, toolbox }) => {
+      await toggleMenuItem(doc, toolbox.doc, TREE_FILTERS_MENU_ID, 0);
+    },
+    expected: {
+      activeToolbarFilters: [true, false, false, false, false],
     },
   },
 ];

@@ -3,9 +3,6 @@
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 const { LocalizationHelper } = require("devtools/shared/l10n");
-const {
-  gDevToolsBrowser,
-} = require("devtools/client/framework/devtools-browser");
 loader.lazyRequireGetter(
   this,
   "openContentLink",
@@ -20,6 +17,16 @@ function DebuggerPanel(iframeWindow, toolbox) {
   this.panelWin = iframeWindow;
   this.panelWin.L10N = L10N;
   this.toolbox = toolbox;
+}
+
+async function getNodeFront(gripOrFront, toolbox) {
+  // Given a NodeFront
+  if ("actorID" in gripOrFront) {
+    return new Promise(resolve => resolve(gripOrFront));
+  }
+
+  const inspectorFront = await toolbox.target.getFront("inspector");
+  return inspectorFront.getNodeFrontFromNodeGrip(gripOrFront);
 }
 
 DebuggerPanel.prototype = {
@@ -71,12 +78,12 @@ DebuggerPanel.prototype = {
     return this._store.getState();
   },
 
-  openLink: function(url) {
-    openContentLink(url);
+  getToolboxStore: function() {
+    return this.toolbox.store;
   },
 
-  openWorkerToolbox: function(workerTargetFront) {
-    return gDevToolsBrowser.openWorkerToolbox(workerTargetFront, "jsdebugger");
+  openLink: function(url) {
+    openContentLink(url);
   },
 
   openConsoleAndEvaluate: async function(input) {
@@ -84,10 +91,14 @@ DebuggerPanel.prototype = {
     hud.ui.wrapper.dispatchEvaluateExpression(input);
   },
 
-  openElementInInspector: async function(grip) {
-    await this.toolbox.initInspector();
+  openInspector: async function() {
+    this.toolbox.selectTool("inspector");
+  },
+
+  openElementInInspector: async function(gripOrFront) {
     const onSelectInspector = this.toolbox.selectTool("inspector");
-    const onGripNodeToFront = this.toolbox.walker.gripToNodeFront(grip);
+    const onGripNodeToFront = getNodeFront(gripOrFront, this.toolbox);
+
     const [front, inspector] = await Promise.all([
       onGripNodeToFront,
       onSelectInspector,
@@ -101,19 +112,23 @@ DebuggerPanel.prototype = {
     return Promise.all([onNodeFrontSet, onInspectorUpdated]);
   },
 
-  highlightDomElement: async function(grip) {
-    await this.toolbox.initInspector();
-    if (!this.toolbox.highlighter) {
-      return null;
+  highlightDomElement: async function(gripOrFront) {
+    if (!this._highlight) {
+      const { highlight, unhighlight } = this.toolbox.getHighlighter();
+      this._highlight = highlight;
+      this._unhighlight = unhighlight;
     }
-    const nodeFront = await this.toolbox.walker.gripToNodeFront(grip);
-    return this.toolbox.highlighter.highlight(nodeFront);
+
+    return this._highlight(gripOrFront);
   },
 
   unHighlightDomElement: function() {
-    return this.toolbox.highlighter
-      ? this.toolbox.highlighter.unhighlight(false)
-      : null;
+    if (!this._unhighlight) {
+      return;
+    }
+
+    const forceUnHighlightInTest = true;
+    return this._unhighlight(forceUnHighlightInTest);
   },
 
   getFrames: function() {
@@ -156,9 +171,22 @@ DebuggerPanel.prototype = {
     return this._actions.selectSourceURL(cx, url, { line, column });
   },
 
-  selectSource(sourceId, line, column) {
+  previewPausedLocation(location) {
+    return this._actions.previewPausedLocation(location);
+  },
+
+  clearPreviewPausedLocation() {
+    return this._actions.clearPreviewPausedLocation();
+  },
+
+  async selectSource(sourceId, line, column) {
     const cx = this._selectors.getContext(this._getState());
-    return this._actions.selectSource(cx, sourceId, { line, column });
+    const location = { sourceId, line, column };
+
+    await this._actions.selectSource(cx, sourceId, location);
+    if (this._selectors.hasLogpoint(this._getState(), location)) {
+      this._actions.openConditionalPanel(location, true);
+    }
   },
 
   canLoadSource(sourceId) {

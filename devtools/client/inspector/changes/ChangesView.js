@@ -1,5 +1,3 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -84,19 +82,19 @@ class ChangesView {
       changesApp
     );
 
-    this.inspector.target.on("will-navigate", this.onClearChanges);
+    this.inspector.currentTarget.on("will-navigate", this.onClearChanges);
   }
 
   _getChangesFront() {
     if (this.changesFrontPromise) {
       return this.changesFrontPromise;
     }
-    this.changesFrontPromise = new Promise(async resolve => {
-      const target = this.inspector.target;
+    this.changesFrontPromise = (async () => {
+      const target = this.inspector.currentTarget;
       const front = await target.getFront("changes");
       this.onChangesFront(front);
-      resolve(front);
-    });
+      return front;
+    })();
     return this.changesFrontPromise;
   }
 
@@ -189,9 +187,17 @@ class ChangesView {
    *        (Default) False if invoked from the button.
    */
   async copyRule(ruleId, usingContextMenu = false) {
-    const rule = await this.inspector.pageStyle.getRule(ruleId);
-    const text = await rule.getRuleText();
-    clipboardHelper.copyString(text);
+    const inspectorFronts = await this.inspector.inspectorFront.getAllInspectorFronts();
+
+    for (const inspectorFront of inspectorFronts) {
+      const rule = await inspectorFront.pageStyle.getRule(ruleId);
+
+      if (rule) {
+        const text = await rule.getRuleText();
+        clipboardHelper.copyString(text);
+        break;
+      }
+    }
 
     if (usingContextMenu) {
       this.telemetry.scalarAdd(TELEMETRY_SCALAR_CONTEXTMENU_COPY_RULE, 1);
