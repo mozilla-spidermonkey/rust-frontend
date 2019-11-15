@@ -125,7 +125,7 @@ bool Create(JSContext* cx, const uint8_t* bytes, size_t length) {
   }
 
   RootedScript script(cx,
-                      JSScript::Create(cx, options, sso, 0, length, 0, length));
+                      JSScript::Create(cx, cx->global(), options, sso, 0, length, 0, length));
 
   if (!InitScript(cx, script, jsparagus)) {
     return false;
