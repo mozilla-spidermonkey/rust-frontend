@@ -1,6 +1,7 @@
 extern crate parser;
 
-use ast::Program;
+use ast::types::Program;
+use bumpalo;
 use emitter::{emit, EmitResult};
 use parser::parse_script;
 use std::{mem, slice, str};
@@ -60,8 +61,9 @@ pub unsafe extern "C" fn free_jsparagus(result: JsparagusResult) {
 }
 
 fn jsparagus(text: &str) -> EmitResult {
-    let parse_result = parse_script(text).expect("Failed to parse");
-    emit(&mut Program::Script(*parse_result))
+    let allocator = bumpalo::Bump::new();
+    let parse_result = parse_script(&allocator, text).expect("Failed to parse");
+    emit(&mut Program::Script(parse_result.unbox()))
 }
 
 #[cfg(test)]
