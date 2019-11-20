@@ -1434,12 +1434,20 @@ static MOZ_MUST_USE bool ReadEvalPrintLoop(JSContext* cx, FILE* in,
       break;
     }
 
+    bool unimplemented = false;
     if (rustFrontend) {
       AutoReportException are(cx);
-      if (!Create(cx, (const uint8_t*)buffer.begin(), buffer.length())) {
+      if (!Create(cx, (const uint8_t*)buffer.begin(), buffer.length(),
+                  &unimplemented)) {
         return false;
       }
-    } else {
+
+      if (unimplemented) {
+        fprintf(stderr, "Falling back!\n");
+      }
+    }
+
+    if (!rustFrontend || unimplemented) {
       // Report exceptions but keep going.
       AutoReportException are(cx);
       mozilla::Unused << EvalUtf8AndPrint(cx, buffer.begin(), buffer.length(),

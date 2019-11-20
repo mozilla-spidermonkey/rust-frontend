@@ -13,6 +13,7 @@ struct CVec {
 struct JsparagusResult {
   CVec<uint8_t> bytecode;
   CVec<CVec<uint8_t>> strings;
+  bool unimplemented;
 };
 
 extern "C" {

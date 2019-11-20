@@ -2,7 +2,7 @@ extern crate parser;
 
 use ast::types::Program;
 use bumpalo;
-use emitter::{emit, EmitResult};
+use emitter::{emit, EmitResult, EmitError};
 use parser::parse_script;
 use std::{mem, slice, str};
 
@@ -14,6 +14,14 @@ pub struct CVec<T> {
 }
 
 impl<T> CVec<T> {
+    fn empty() -> CVec<T> {
+        Self {
+            data: std::ptr::null_mut(),
+            len: 0,
+            capacity: 0,
+        }
+    }
+
     fn from(mut v: Vec<T>) -> CVec<T> {
         let result = Self {
             data: v.as_mut_ptr(),
@@ -33,21 +41,33 @@ impl<T> CVec<T> {
 pub struct JsparagusResult {
     bytecode: CVec<u8>,
     strings: CVec<CVec<u8>>,
+    unimplemented: bool,
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize) -> JsparagusResult {
     let text = str::from_utf8(slice::from_raw_parts(text, text_len)).expect("Invalid UTF8");
-    let mut result = jsparagus(text);
-    JsparagusResult {
-        bytecode: CVec::from(result.bytecode),
-        strings: CVec::from(
-            result
-                .strings
-                .drain(..)
-                .map(|s| CVec::from(s.into_bytes()))
-                .collect(),
-        ),
+    match jsparagus(text) {
+        Ok(mut result) =>
+            JsparagusResult {
+                bytecode: CVec::from(result.bytecode),
+                strings: CVec::from(
+                    result
+                        .strings
+                        .drain(..)
+                        .map(|s| CVec::from(s.into_bytes()))
+                        .collect(),
+                ),
+                unimplemented: false,
+            },
+        Err(EmitError::Unimplemented(message)) => {
+            println!("Unimplemented: {}", message);
+            JsparagusResult {
+                bytecode: CVec::empty(),
+                strings: CVec::empty(),
+                unimplemented: true,
+            }
+        },
     }
 }
 
@@ -60,7 +80,7 @@ pub unsafe extern "C" fn free_jsparagus(result: JsparagusResult) {
     //Vec::from_raw_parts(bytecode.data, bytecode.len, bytecode.capacity);
 }
 
-fn jsparagus(text: &str) -> EmitResult {
+fn jsparagus(text: &str) -> Result<EmitResult, EmitError> {
     let allocator = bumpalo::Bump::new();
     let parse_result = parse_script(&allocator, text).expect("Failed to parse");
     emit(&mut Program::Script(parse_result.unbox()))

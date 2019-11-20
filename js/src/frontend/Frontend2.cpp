@@ -90,8 +90,17 @@ static bool Execute(JSContext* cx, HandleScript script) {
   return true;
 }
 
-bool Create(JSContext* cx, const uint8_t* bytes, size_t length) {
+bool Create(JSContext* cx, const uint8_t* bytes, size_t length,
+            bool* unimplemented) {
   JsparagusResult jsparagus = run_jsparagus(bytes, length);
+  if (jsparagus.unimplemented) {
+    free_jsparagus(jsparagus);
+
+    *unimplemented = true;
+    return true;
+  }
+
+  *unimplemented = false;
 
   JS::CompileOptions options(cx);
   options.setIntroductionType("js shell interactive")
@@ -124,8 +133,8 @@ bool Create(JSContext* cx, const uint8_t* bytes, size_t length) {
     return false;
   }
 
-  RootedScript script(cx,
-                      JSScript::Create(cx, cx->global(), options, sso, 0, length, 0, length));
+  RootedScript script(cx, JSScript::Create(cx, cx->global(), options, sso, 0,
+                                           length, 0, length));
 
   if (!InitScript(cx, script, jsparagus)) {
     return false;
