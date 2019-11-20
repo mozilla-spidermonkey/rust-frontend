@@ -1468,6 +1468,12 @@ void WorkerPrivate::EnableDebugger() {
 void WorkerPrivate::DisableDebugger() {
   AssertIsOnParentThread();
 
+  // RegisterDebuggerMainThreadRunnable might be dispatched but not executed.
+  // Wait for its execution before unregistraion.
+  if (!NS_IsMainThread()) {
+    WaitForIsDebuggerRegistered(true);
+  }
+
   if (NS_FAILED(UnregisterWorkerDebugger(this))) {
     NS_WARNING("Failed to unregister worker debugger!");
   }
@@ -3950,7 +3956,7 @@ void WorkerPrivate::PostMessageToParent(
   }
 
   JS::CloneDataPolicy clonePolicy;
-  if (IsCrossOriginIsolated()) {
+  if (IsSharedMemoryAllowed()) {
     clonePolicy.allowSharedMemory();
   }
   runnable->Write(aCx, aMessage, transferable, clonePolicy, aRv);
@@ -4974,13 +4980,19 @@ const nsAString& WorkerPrivate::Id() {
   return mId;
 }
 
-bool WorkerPrivate::IsCrossOriginIsolated() const {
+bool WorkerPrivate::IsSharedMemoryAllowed() const {
   AssertIsOnWorkerThread();
 
   if (StaticPrefs::
           dom_postMessage_sharedArrayBuffer_bypassCOOP_COEP_insecure_enabled()) {
     return true;
   }
+
+  return CrossOriginIsolated();
+}
+
+bool WorkerPrivate::CrossOriginIsolated() const {
+  AssertIsOnWorkerThread();
 
   if (!StaticPrefs::dom_postMessage_sharedArrayBuffer_withCOOP_COEP()) {
     return false;

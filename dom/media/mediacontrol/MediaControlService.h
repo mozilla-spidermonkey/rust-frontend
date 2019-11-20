@@ -10,6 +10,7 @@
 #include "AudioFocusManager.h"
 #include "MediaController.h"
 #include "MediaControlKeysManager.h"
+#include "MediaEventSource.h"
 #include "nsDataHashtable.h"
 #include "nsIObserver.h"
 #include "nsTArray.h"
@@ -38,7 +39,7 @@ class MediaControlService final : public nsIObserver {
   RefPtr<MediaController> GetOrCreateControllerById(const uint64_t aId) const;
   RefPtr<MediaController> GetControllerById(const uint64_t aId) const;
   AudioFocusManager& GetAudioFocusManager() { return mAudioFocusManager; }
-  MediaControlKeysManager& GetMediaControlKeysManager() {
+  MediaControlKeysEventSource* GetMediaControlKeysEventSource() {
     return mMediaControlKeysManager;
   }
 
@@ -48,10 +49,17 @@ class MediaControlService final : public nsIObserver {
 
   already_AddRefed<MediaController> GetLastAddedController();
 
+  // This event is used to generate a media event indicating media controller
+  // amount changed.
+  MediaEventSource<uint64_t>& MediaControllerAmountChangedEvent() {
+    return mMediaControllerAmountChangedEvent;
+  }
+
  private:
   MediaControlService();
   ~MediaControlService();
 
+  void Init();
   void Shutdown();
 
   void PlayAllControllers() const;
@@ -62,8 +70,9 @@ class MediaControlService final : public nsIObserver {
   nsDataHashtable<nsUint64HashKey, RefPtr<MediaController>> mControllers;
   nsTArray<uint64_t> mControllerHistory;
   AudioFocusManager mAudioFocusManager;
-  MediaControlKeysManager mMediaControlKeysManager;
+  RefPtr<MediaControlKeysManager> mMediaControlKeysManager;
   RefPtr<MediaControlKeysEventListener> mMediaKeysHandlder;
+  MediaEventProducer<uint64_t> mMediaControllerAmountChangedEvent;
 };
 
 }  // namespace dom

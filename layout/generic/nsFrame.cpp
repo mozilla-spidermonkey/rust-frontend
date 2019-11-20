@@ -25,6 +25,7 @@
 #include "mozilla/PresShellInlines.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/StaticPrefs_layout.h"
+#include "mozilla/ToString.h"
 
 #include "nsCOMPtr.h"
 #include "nsFlexContainerFrame.h"
@@ -1618,33 +1619,33 @@ nsIFrame::Sides nsIFrame::GetSkipSides(const ReflowInput* aReflowInput) const {
 
   if (logicalSkip.BStart()) {
     if (writingMode.IsVertical()) {
-      skip |= writingMode.IsVerticalLR() ? eSideBitsLeft : eSideBitsRight;
+      skip |= writingMode.IsVerticalLR() ? SideBits::eLeft : SideBits::eRight;
     } else {
-      skip |= eSideBitsTop;
+      skip |= SideBits::eTop;
     }
   }
 
   if (logicalSkip.BEnd()) {
     if (writingMode.IsVertical()) {
-      skip |= writingMode.IsVerticalLR() ? eSideBitsRight : eSideBitsLeft;
+      skip |= writingMode.IsVerticalLR() ? SideBits::eRight : SideBits::eLeft;
     } else {
-      skip |= eSideBitsBottom;
+      skip |= SideBits::eBottom;
     }
   }
 
   if (logicalSkip.IStart()) {
     if (writingMode.IsVertical()) {
-      skip |= eSideBitsTop;
+      skip |= SideBits::eTop;
     } else {
-      skip |= writingMode.IsBidiLTR() ? eSideBitsLeft : eSideBitsRight;
+      skip |= writingMode.IsBidiLTR() ? SideBits::eLeft : SideBits::eRight;
     }
   }
 
   if (logicalSkip.IEnd()) {
     if (writingMode.IsVertical()) {
-      skip |= eSideBitsBottom;
+      skip |= SideBits::eBottom;
     } else {
-      skip |= writingMode.IsBidiLTR() ? eSideBitsRight : eSideBitsLeft;
+      skip |= writingMode.IsBidiLTR() ? SideBits::eRight : SideBits::eLeft;
     }
   }
   return skip;
@@ -2356,7 +2357,7 @@ bool nsDisplaySelectionOverlay::CreateWebRenderCommands(
 static Element* FindElementAncestorForMozSelection(nsIContent* aContent) {
   NS_ENSURE_TRUE(aContent, nullptr);
   while (aContent && aContent->IsInNativeAnonymousSubtree()) {
-    aContent = aContent->GetBindingParent();
+    aContent = aContent->GetClosestNativeAnonymousSubtreeRootParent();
   }
   NS_ASSERTION(aContent, "aContent isn't in non-anonymous tree?");
   while (aContent && !aContent->IsElement()) {
@@ -7841,13 +7842,12 @@ void nsIFrame::ListGeneric(nsACString& aTo, const char* aPrefix,
   if (IBprevsibling) {
     aTo += nsPrintfCString(" IBSplitPrevSibling=%p", IBprevsibling);
   }
-  aTo += nsPrintfCString(" {%d,%d,%d,%d}", mRect.x, mRect.y, mRect.width,
-                         mRect.height);
+  aTo += nsPrintfCString(" %s", ToString(mRect).c_str());
 
   mozilla::WritingMode wm = GetWritingMode();
   if (wm.IsVertical() || wm.IsBidiRTL()) {
-    aTo += nsPrintfCString(" wm=%s logical-size={%d,%d}", wm.DebugString(),
-                           ISize(), BSize());
+    aTo += nsPrintfCString(" wm=%s logical-size=(%s)", ToString(wm).c_str(),
+                           ToString(GetLogicalSize()).c_str());
   }
 
   nsIFrame* parent = GetParent();
@@ -7857,29 +7857,26 @@ void nsIFrame::ListGeneric(nsACString& aTo, const char* aPrefix,
       nsSize containerSize = parent->mRect.Size();
       LogicalRect lr(pWM, mRect, containerSize);
       aTo += nsPrintfCString(
-          " parent-wm=%s cs={%d,%d} logicalRect={%d,%d,%d,%d}",
-          pWM.DebugString(), containerSize.width, containerSize.height,
-          lr.IStart(pWM), lr.BStart(pWM), lr.ISize(pWM), lr.BSize(pWM));
+          " parent-wm=%s cs=(%s) logical-rect=%s", ToString(pWM).c_str(),
+          ToString(containerSize).c_str(), ToString(lr).c_str());
     }
   }
   nsIFrame* f = const_cast<nsIFrame*>(this);
   if (f->HasOverflowAreas()) {
     nsRect vo = f->GetVisualOverflowRect();
     if (!vo.IsEqualEdges(mRect)) {
-      aTo += nsPrintfCString(" vis-overflow={%d,%d,%d,%d}", vo.x, vo.y,
-                             vo.width, vo.height);
+      aTo += nsPrintfCString(" vis-overflow=%s", ToString(vo).c_str());
     }
     nsRect so = f->GetScrollableOverflowRect();
     if (!so.IsEqualEdges(mRect)) {
-      aTo += nsPrintfCString(" scr-overflow={%d,%d,%d,%d}", so.x, so.y,
-                             so.width, so.height);
+      aTo += nsPrintfCString(" scr-overflow=%s", ToString(so).c_str());
     }
   }
   bool hasNormalPosition;
   nsPoint normalPosition = GetNormalPosition(&hasNormalPosition);
   if (hasNormalPosition) {
-    aTo += nsPrintfCString(" normal-position={%d,%d}", normalPosition.x,
-                           normalPosition.y);
+    aTo += nsPrintfCString(" normal-position=%s",
+                           ToString(normalPosition).c_str());
   }
   if (0 != mState) {
     aTo += nsPrintfCString(" [state=%016llx]", (unsigned long long)mState);

@@ -110,7 +110,7 @@
 #include "nsISimpleEnumerator.h"
 #include "nsIStringBundle.h"
 #include "nsIWorkerDebuggerManager.h"
-#include "nsGeolocation.h"
+#include "Geolocation.h"
 #include "audio_thread_priority.h"
 #include "nsIConsoleService.h"
 #include "audio_thread_priority.h"
@@ -3560,9 +3560,11 @@ nsresult ContentChild::AsyncOpenAnonymousTemporaryFile(
 
 mozilla::ipc::IPCResult ContentChild::RecvSetPermissionsWithKey(
     const nsCString& aPermissionKey, nsTArray<IPC::Permission>&& aPerms) {
-  nsCOMPtr<nsIPermissionManager> permissionManager =
-      services::GetPermissionManager();
-  permissionManager->SetPermissionsWithKey(aPermissionKey, aPerms);
+  RefPtr<nsPermissionManager> permManager = nsPermissionManager::GetInstance();
+  if (permManager) {
+    permManager->SetPermissionsWithKey(aPermissionKey, aPerms);
+  }
+
   return IPC_OK();
 }
 
@@ -3662,21 +3664,18 @@ mozilla::ipc::IPCResult ContentChild::RecvSaveRecording(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvCrossProcessRedirect(
-    const uint32_t& aRegistrarId, nsIURI* aURI,
-    const Maybe<ReplacementChannelConfigInit>& aConfig,
-    const Maybe<LoadInfoArgs>& aLoadInfo, const uint64_t& aChannelId,
-    nsIURI* aOriginalURI, const uint64_t& aIdentifier,
-    const uint32_t& aRedirectMode, CrossProcessRedirectResolver&& aResolve) {
+    const RedirectToRealChannelArgs&& aArgs,
+    CrossProcessRedirectResolver&& aResolve) {
   nsCOMPtr<nsILoadInfo> loadInfo;
-  nsresult rv =
-      mozilla::ipc::LoadInfoArgsToLoadInfo(aLoadInfo, getter_AddRefs(loadInfo));
+  nsresult rv = mozilla::ipc::LoadInfoArgsToLoadInfo(aArgs.loadInfo(),
+                                                     getter_AddRefs(loadInfo));
   if (NS_FAILED(rv)) {
     MOZ_DIAGNOSTIC_ASSERT(false, "LoadInfoArgsToLoadInfo failed");
     return IPC_OK();
   }
 
   nsCOMPtr<nsIChannel> newChannel;
-  rv = NS_NewChannelInternal(getter_AddRefs(newChannel), aURI, loadInfo);
+  rv = NS_NewChannelInternal(getter_AddRefs(newChannel), aArgs.uri(), loadInfo);
 
   RefPtr<nsIChildChannel> childChannel = do_QueryObject(newChannel);
   if (NS_FAILED(rv) || !childChannel) {
@@ -3701,31 +3700,32 @@ mozilla::ipc::IPCResult ContentChild::RecvCrossProcessRedirect(
   });
 
   if (httpChild) {
-    rv = httpChild->SetChannelId(aChannelId);
+    rv = httpChild->SetChannelId(aArgs.channelId());
     if (NS_FAILED(rv)) {
       return IPC_OK();
     }
 
-    rv = httpChild->SetOriginalURI(aOriginalURI);
+    rv = httpChild->SetOriginalURI(aArgs.originalURI());
     if (NS_FAILED(rv)) {
       return IPC_OK();
     }
 
-    rv = httpChild->SetRedirectMode(aRedirectMode);
+    rv = httpChild->SetRedirectMode(aArgs.redirectMode());
     if (NS_FAILED(rv)) {
       return IPC_OK();
     }
   }
 
-  if (aConfig) {
-    HttpBaseChannel::ReplacementChannelConfig config(*aConfig);
+  if (aArgs.init()) {
+    HttpBaseChannel::ReplacementChannelConfig config(*aArgs.init());
     HttpBaseChannel::ConfigureReplacementChannel(
         newChannel, config,
         HttpBaseChannel::ConfigureReason::DocumentChannelReplacement);
   }
 
   // connect parent.
-  rv = childChannel->ConnectParent(aRegistrarId);  // creates parent channel
+  rv = childChannel->ConnectParent(
+      aArgs.registrarId());  // creates parent channel
   if (NS_FAILED(rv)) {
     return IPC_OK();
   }
@@ -3733,7 +3733,8 @@ mozilla::ipc::IPCResult ContentChild::RecvCrossProcessRedirect(
   nsCOMPtr<nsIChildProcessChannelListener> processListener =
       do_GetService("@mozilla.org/network/childProcessChannelListener;1");
   // The listener will call completeRedirectSetup on the channel.
-  rv = processListener->OnChannelReady(childChannel, aIdentifier);
+  rv =
+      processListener->OnChannelReady(childChannel, aArgs.redirectIdentifier());
   if (NS_FAILED(rv)) {
     return IPC_OK();
   }

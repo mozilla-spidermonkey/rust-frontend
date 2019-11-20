@@ -1353,7 +1353,6 @@ Document::Document(const char* aContentType)
       mPendingInitialTranslation(false),
       mGeneration(0),
       mCachedTabSizeGeneration(0),
-      mInRDMPane(false),
       mNextFormNumber(0),
       mNextControlNumber(0) {
   MOZ_LOG(gDocumentLeakPRLog, LogLevel::Debug, ("DOCUMENT %p created", this));
@@ -7802,16 +7801,6 @@ already_AddRefed<nsINode> Document::ImportNode(nsINode& aNode, bool aDeep,
   return nullptr;
 }
 
-Element* Document::GetBindingParent(nsINode& aNode) {
-  nsCOMPtr<nsIContent> content(do_QueryInterface(&aNode));
-  if (!content) return nullptr;
-
-  nsIContent* bindingParent = content->GetBindingParent();
-  return bindingParent ? bindingParent->AsElement() : nullptr;
-}
-
-nsINodeList* Document::GetAnonymousNodes(Element& aElement) { return nullptr; }
-
 already_AddRefed<nsRange> Document::CreateRange(ErrorResult& rv) {
   RefPtr<nsRange> range = new nsRange(this);
   nsresult res = range->CollapseTo(this, 0);
@@ -13614,6 +13603,12 @@ bool Document::SetOrientationPendingPromise(Promise* aPromise) {
   return true;
 }
 
+void Document::SetRDMPaneOrientation(OrientationType aType, uint16_t aAngle) {
+  if (GetBrowsingContext()->InRDMPane()) {
+    SetCurrentOrientation(aType, aAngle);
+  }
+}
+
 static void DispatchPointerLockChange(Document* aTarget) {
   if (!aTarget) {
     return;
@@ -15122,12 +15117,19 @@ FlashClassification Document::DocumentFlashClassification() {
   return mFlashClassification;
 }
 
-void Document::AddResizeObserver(ResizeObserver* aResizeObserver) {
+void Document::AddResizeObserver(ResizeObserver& aObserver) {
   if (!mResizeObserverController) {
     mResizeObserverController = MakeUnique<ResizeObserverController>(this);
   }
+  mResizeObserverController->AddResizeObserver(aObserver);
+}
 
-  mResizeObserverController->AddResizeObserver(aResizeObserver);
+void Document::RemoveResizeObserver(ResizeObserver& aObserver) {
+  MOZ_DIAGNOSTIC_ASSERT(mResizeObserverController, "No controller?");
+  if (MOZ_UNLIKELY(!mResizeObserverController)) {
+    return;
+  }
+  mResizeObserverController->RemoveResizeObserver(aObserver);
 }
 
 PermissionDelegateHandler* Document::GetPermissionDelegateHandler() {
@@ -15923,8 +15925,9 @@ void Document::RemoveToplevelLoadingDocument(Document* aDoc) {
 
 // static
 bool Document::UseOverlayScrollbars(const Document* aDocument) {
+  BrowsingContext* bc = aDocument ? aDocument->GetBrowsingContext() : nullptr;
   return LookAndFeel::GetInt(LookAndFeel::eIntID_UseOverlayScrollbars) ||
-         (aDocument && aDocument->InRDMPane());
+         (bc && bc->InRDMPane());
 }
 
 bool Document::HasRecentlyStartedForegroundLoads() {

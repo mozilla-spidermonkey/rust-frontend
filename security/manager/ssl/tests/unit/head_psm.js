@@ -206,7 +206,7 @@ function constructCertFromFile(filename) {
     Ci.nsIX509CertDB
   );
   try {
-    return certdb.constructX509(certBytes);
+    return certdb.constructX509(stringToArray(certBytes));
   } catch (e) {}
   // It might be PEM instead of DER.
   return certdb.constructX509FromBase64(pemToBase64(certBytes));
@@ -1117,7 +1117,7 @@ function checkPKCS11ModuleNotPresent(moduleName, libraryName) {
     notEqual(
       module.name,
       moduleName,
-      "Non-test module name shouldn't equal 'PKCS11 Test Module'"
+      `Non-test module name shouldn't equal '${moduleName}'`
     );
     ok(
       !(module.libName && module.libName.includes(libraryName)),

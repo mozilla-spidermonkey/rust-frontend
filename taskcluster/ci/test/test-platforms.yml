@@ -118,8 +118,8 @@ linux64-asan-qr/opt:
     test-sets:
         - linux-qr-smoketests
 
-linux64-ccov/debug:
-    build-platform: linux64-ccov/debug
+linux64-ccov/opt:
+    build-platform: linux64-ccov/opt
     test-sets:
         - common-tests
         - web-platform-tests

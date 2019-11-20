@@ -65,6 +65,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPrefs_browser.h"
+#include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/StaticPrefs_security.h"
@@ -839,7 +840,7 @@ nsresult nsHttpChannel::ContinueConnect() {
   return DoConnect();
 }
 
-nsresult nsHttpChannel::DoConnect(nsHttpTransaction* aTransWithStickyConn) {
+nsresult nsHttpChannel::DoConnect(HttpTransactionShell* aTransWithStickyConn) {
   LOG(("nsHttpChannel::DoConnect [this=%p, aTransWithStickyConn=%p]\n", this,
        aTransWithStickyConn));
 
@@ -2592,6 +2593,15 @@ void nsHttpChannel::AssertNotDocumentChannel() {
   if (!mLoadInfo || !IsDocument()) {
     return;
   }
+
+#ifndef DEBUG
+  if (!StaticPrefs::fission_autostart()) {
+    // This assertion is firing in the wild (Bug 1593545) and its not clear
+    // why. Disable the assertion in non-fission non-debug configurations to
+    // avoid crashing user's browsers until we're done dogfooding fission.
+    return;
+  }
+#endif
 
   nsCOMPtr<nsIParentChannel> parentChannel;
   NS_QueryNotificationCallbacks(this, parentChannel);
@@ -6110,7 +6120,7 @@ NS_IMETHODIMP nsHttpChannel::CloseStickyConnection() {
   }
 
   if (!(mCaps & NS_HTTP_STICKY_CONNECTION ||
-        mTransaction->Caps() & NS_HTTP_STICKY_CONNECTION)) {
+        mTransaction->HasStickyConnection())) {
     LOG(("  not sticky"));
     return NS_OK;
   }
@@ -7335,28 +7345,6 @@ nsHttpChannel::GetCrossOriginOpenerPolicy(
   return NS_OK;
 }
 
-nsresult nsHttpChannel::StartCrossProcessRedirect() {
-  nsresult rv;
-
-  LOG(("nsHttpChannel::StartCrossProcessRedirect [this=%p]", this));
-
-  rv = CheckRedirectLimit(nsIChannelEventSink::REDIRECT_INTERNAL);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIParentChannel> parentChannel;
-  NS_QueryNotificationCallbacks(this, parentChannel);
-  RefPtr<HttpChannelParent> httpParent = do_QueryObject(parentChannel);
-  MOZ_ASSERT(httpParent);
-  NS_ENSURE_TRUE(httpParent, NS_ERROR_UNEXPECTED);
-
-  httpParent->TriggerCrossProcessSwitch(this, mCrossProcessRedirectIdentifier);
-
-  // This will suspend the channel
-  rv = WaitForRedirectCallback();
-
-  return rv;
-}
-
 // See https://gist.github.com/annevk/6f2dd8c79c77123f39797f6bdac43f3e
 // This method runs steps 1-4 of the algorithm to compare
 // cross-origin-opener policies
@@ -7951,9 +7939,9 @@ nsHttpChannel::OnStopRequest(nsIRequest* request, nsresult status) {
     // when it has a sticky connection.
     // In the case we need to retry an authentication request, we need to
     // reuse the connection of |transactionWithStickyConn|.
-    RefPtr<nsHttpTransaction> transactionWithStickyConn;
+    RefPtr<HttpTransactionShell> transactionWithStickyConn;
     if (mCaps & NS_HTTP_STICKY_CONNECTION ||
-        mTransaction->Caps() & NS_HTTP_STICKY_CONNECTION) {
+        mTransaction->HasStickyConnection()) {
       transactionWithStickyConn = mTransaction;
       LOG(("  transaction %p has sticky connection",
            transactionWithStickyConn.get()));
@@ -8050,7 +8038,7 @@ nsHttpChannel::OnStopRequest(nsIRequest* request, nsresult status) {
 
 nsresult nsHttpChannel::ContinueOnStopRequestAfterAuthRetry(
     nsresult aStatus, bool aAuthRetry, bool aIsFromNet, bool aContentComplete,
-    nsHttpTransaction* aTransWithStickyConn) {
+    HttpTransactionShell* aTransWithStickyConn) {
   LOG(
       ("nsHttpChannel::ContinueOnStopRequestAfterAuthRetry "
        "[this=%p, aStatus=%" PRIx32
@@ -9022,7 +9010,7 @@ nsHttpChannel::ResumeAt(uint64_t aStartPos, const nsACString& aEntityID) {
 }
 
 nsresult nsHttpChannel::DoAuthRetry(
-    nsHttpTransaction* aTransWithStickyConn,
+    HttpTransactionShell* aTransWithStickyConn,
     const std::function<nsresult(nsHttpChannel*, nsresult)>&
         aContinueOnStopRequestFunc) {
   LOG(("nsHttpChannel::DoAuthRetry [this=%p, aTransWithStickyConn=%p]\n", this,
@@ -9049,7 +9037,7 @@ nsresult nsHttpChannel::DoAuthRetry(
   // notify "http-on-modify-request" observers
   CallOnModifyRequestObservers();
 
-  RefPtr<nsHttpTransaction> trans(aTransWithStickyConn);
+  RefPtr<HttpTransactionShell> trans(aTransWithStickyConn);
   return CallOrWaitForResume(
       [trans{std::move(trans)}, aContinueOnStopRequestFunc](auto* self) {
         return self->ContinueDoAuthRetry(trans, aContinueOnStopRequestFunc);
@@ -9057,7 +9045,7 @@ nsresult nsHttpChannel::DoAuthRetry(
 }
 
 nsresult nsHttpChannel::ContinueDoAuthRetry(
-    nsHttpTransaction* aTransWithStickyConn,
+    HttpTransactionShell* aTransWithStickyConn,
     const std::function<nsresult(nsHttpChannel*, nsresult)>&
         aContinueOnStopRequestFunc) {
   LOG(("nsHttpChannel::ContinueDoAuthRetry [this=%p]\n", this));
@@ -9090,7 +9078,7 @@ nsresult nsHttpChannel::ContinueDoAuthRetry(
   // notify "http-on-before-connect" observers
   gHttpHandler->OnBeforeConnect(this);
 
-  RefPtr<nsHttpTransaction> trans(aTransWithStickyConn);
+  RefPtr<HttpTransactionShell> trans(aTransWithStickyConn);
   return CallOrWaitForResume(
       [trans{std::move(trans)}, aContinueOnStopRequestFunc](auto* self) {
         nsresult rv = self->DoConnect(trans);

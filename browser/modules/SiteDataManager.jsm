@@ -178,7 +178,7 @@ var SiteDataManager = {
   },
 
   _getAllCookies() {
-    for (let cookie of Services.cookies.enumerator) {
+    for (let cookie of Services.cookies.cookies) {
       let site = this._getOrInsertSite(cookie.rawHost);
       site.cookies.push(cookie);
       if (site.lastAccessed < cookie.lastAccessed) {
@@ -513,7 +513,7 @@ var SiteDataManager = {
       };
       let features = "centerscreen,chrome,modal,resizable=no";
       win.docShell.rootTreeItem.domWindow.openDialog(
-        "chrome://browser/content/preferences/siteDataRemoveSelected.xul",
+        "chrome://browser/content/preferences/siteDataRemoveSelected.xhtml",
         "",
         features,
         args

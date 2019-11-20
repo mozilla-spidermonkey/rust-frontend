@@ -193,7 +193,11 @@ TrackingDBService.prototype = {
     let result = null;
     let isTracker = false;
     for (let [state, blocked] of events) {
-      if (state & Ci.nsIWebProgressListener.STATE_LOADED_TRACKING_CONTENT) {
+      if (
+        state &
+          Ci.nsIWebProgressListener.STATE_LOADED_LEVEL_1_TRACKING_CONTENT ||
+        state & Ci.nsIWebProgressListener.STATE_LOADED_LEVEL_2_TRACKING_CONTENT
+      ) {
         isTracker = true;
       }
       if (blocked) {
@@ -309,8 +313,6 @@ TrackingDBService.prototype = {
       if (totalSaved >= milestone) {
         reachedMilestone = milestone;
         nextMilestone = milestones[index + 1];
-      } else {
-        break;
       }
     }
 
@@ -321,10 +323,6 @@ TrackingDBService.prototype = {
       (!nextMilestone || nextMilestone - totalSaved > 3000) &&
       (!oldMilestone || oldMilestone < reachedMilestone)
     ) {
-      Services.prefs.setIntPref(
-        "browser.contentblocking.cfr-milestone.milestone-achieved",
-        reachedMilestone
-      );
       Services.obs.notifyObservers(
         {
           wrappedJSObject: {

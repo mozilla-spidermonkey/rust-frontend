@@ -57,6 +57,7 @@
 #include "mozilla/dom/UserActivation.h"
 #include "nsAnimationManager.h"
 #include "nsNameSpaceManager.h"  // for Pref-related rule management (bugs 22963,20760,31816)
+#include "nsFlexContainerFrame.h"
 #include "nsFrame.h"
 #include "FrameLayerBuilder.h"
 #include "nsViewManager.h"
@@ -2007,18 +2008,10 @@ void PresShell::FireResizeEvent() {
 }
 
 static nsIContent* GetNativeAnonymousSubtreeRoot(nsIContent* aContent) {
-  if (!aContent || !aContent->IsInNativeAnonymousSubtree()) {
+  if (!aContent) {
     return nullptr;
   }
-  auto* current = aContent;
-  // FIXME(emilio): This should not need to worry about current being null, but
-  // editor removes nodes in native anonymous subtrees, and we don't clean nodes
-  // from the current event content stack from ContentRemoved, so it can
-  // actually happen, see bug 1510208.
-  while (current && !current->IsRootOfNativeAnonymousSubtree()) {
-    current = current->GetFlattenedTreeParent();
-  }
-  return current;
+  return aContent->GetClosestNativeAnonymousSubtreeRoot();
 }
 
 void PresShell::NativeAnonymousContentRemoved(nsIContent* aAnonContent) {
@@ -3955,8 +3948,9 @@ void PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush) {
     "Display"
   };
   // clang-format on
-  AUTO_PROFILER_LABEL_DYNAMIC_CSTR("PresShell::DoFlushPendingNotifications",
-                                   LAYOUT, flushTypeNames[flushType]);
+  AUTO_PROFILER_LABEL_DYNAMIC_CSTR_NONSENSITIVE(
+      "PresShell::DoFlushPendingNotifications", LAYOUT,
+      flushTypeNames[flushType]);
 #endif
 
 #ifdef ACCESSIBILITY
@@ -9243,6 +9237,9 @@ bool PresShell::DoReflow(nsIFrame* target, bool aInterruptible,
       for (nsIFrame* f = p->GetKey(); f && !NS_SUBTREE_DIRTY(f);
            f = f->GetParent()) {
         f->AddStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
+        if (f->IsFlexItem()) {
+          nsFlexContainerFrame::MarkCachedFlexMeasurementsDirty(f);
+        }
 
         if (f == target) {
           break;

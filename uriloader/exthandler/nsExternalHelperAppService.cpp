@@ -487,7 +487,7 @@ static const nsExtraMimeTypeEntry extraMimeEntries[] = {
     {APPLICATION_PDF, "pdf", "Portable Document Format"},
     {APPLICATION_POSTSCRIPT, "ps,eps,ai", "Postscript File"},
     {APPLICATION_XJAVASCRIPT, "js", "Javascript Source File"},
-    {APPLICATION_XJAVASCRIPT, "jsm", "Javascript Module Source File"},
+    {APPLICATION_XJAVASCRIPT, "jsm,mjs", "Javascript Module Source File"},
 #ifdef MOZ_WIDGET_ANDROID
     {"application/vnd.android.package-archive", "apk", "Android Package"},
 #endif
@@ -809,8 +809,19 @@ NS_IMETHODIMP nsExternalHelperAppService::DoContent(
     nsIInterfaceRequestor* aContentContext, bool aForceSave,
     nsIInterfaceRequestor* aWindowContext,
     nsIStreamListener** aStreamListener) {
-  nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(aContentContext);
-  RefPtr<BrowsingContext> bc = window ? window->GetBrowsingContext() : nullptr;
+  // Scripted interface requestors cannot return an instance of the
+  // (non-scriptable) nsPIDOMWindowOuter or nsPIDOMWindowInner interfaces, so
+  // get to the window via `nsIDOMWindow`.  Unfortunately, at that point we
+  // don't know whether the thing we got is an inner or outer window, so have to
+  // work with either one.
+  RefPtr<BrowsingContext> bc;
+  nsCOMPtr<nsIDOMWindow> domWindow = do_GetInterface(aContentContext);
+  if (nsCOMPtr<nsPIDOMWindowOuter> outerWindow = do_QueryInterface(domWindow)) {
+    bc = outerWindow->GetBrowsingContext();
+  } else if (nsCOMPtr<nsPIDOMWindowInner> innerWindow =
+                 do_QueryInterface(domWindow)) {
+    bc = innerWindow->GetBrowsingContext();
+  }
 
   if (XRE_IsContentProcess()) {
     return DoContentContentProcessHelper(aMimeContentType, aRequest, bc,
@@ -1969,7 +1980,7 @@ nsExternalAppHandler::OnSaveComplete(nsIBackgroundFileSaver* aSaver,
   if (!mCanceled) {
     // Save the hash and signature information
     (void)mSaver->GetSha256Hash(mHash);
-    (void)mSaver->GetSignatureInfo(getter_AddRefs(mSignatureInfo));
+    (void)mSaver->GetSignatureInfo(mSignatureInfo);
 
     // Free the reference that the saver keeps on us, even if we couldn't get
     // the hash.

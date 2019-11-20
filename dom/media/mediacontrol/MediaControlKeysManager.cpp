@@ -5,6 +5,7 @@
 #include "MediaControlKeysManager.h"
 
 #include "MediaControlUtils.h"
+#include "mozilla/AbstractThread.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Logging.h"
 
@@ -22,12 +23,20 @@ extern mozilla::LazyLogModule gMediaControlLog;
 namespace mozilla {
 namespace dom {
 
-MediaControlKeysManager::MediaControlKeysManager() {
-  StartMonitoringControlKeys();
+NS_IMPL_ISUPPORTS_INHERITED0(MediaControlKeysManager,
+                             MediaControlKeysEventSource)
+
+void MediaControlKeysManager::Init() {
+  mControllerAmountChangedListener =
+      MediaControlService::GetService()
+          ->MediaControllerAmountChangedEvent()
+          .Connect(AbstractThread::MainThread(), this,
+                   &MediaControlKeysManager::ControllerAmountChanged);
 }
 
 MediaControlKeysManager::~MediaControlKeysManager() {
   StopMonitoringControlKeys();
+  mControllerAmountChangedListener.DisconnectIfExists();
 }
 
 void MediaControlKeysManager::StartMonitoringControlKeys() {
@@ -42,6 +51,9 @@ void MediaControlKeysManager::CreateEventSource() {
 #ifdef MOZ_APPLEMEDIA
   mEventSource = new MediaHardwareKeysEventSourceMac();
 #endif
+  if (mEventSource) {
+    mEventSource->AddListener(this);
+  }
 }
 
 void MediaControlKeysManager::StopMonitoringControlKeys() {
@@ -52,24 +64,20 @@ void MediaControlKeysManager::StopMonitoringControlKeys() {
   }
 }
 
-bool MediaControlKeysManager::AddListener(
-    MediaControlKeysEventListener* aListener) {
-  if (!mEventSource) {
-    LOG("No event source for adding a listener");
-    return false;
+void MediaControlKeysManager::ControllerAmountChanged(
+    uint64_t aControllerAmount) {
+  LOG("Controller amount changed=%" PRId64, aControllerAmount);
+  if (aControllerAmount > 0 && !mEventSource) {
+    StartMonitoringControlKeys();
+  } else if (aControllerAmount == 0 && mEventSource) {
+    StopMonitoringControlKeys();
   }
-  mEventSource->AddListener(aListener);
-  return true;
 }
 
-bool MediaControlKeysManager::RemoveListener(
-    MediaControlKeysEventListener* aListener) {
-  if (!mEventSource) {
-    LOG("No event source for removing a listener");
-    return false;
+void MediaControlKeysManager::OnKeyPressed(MediaControlKeysEvent aKeyEvent) {
+  for (auto listener : mListeners) {
+    listener->OnKeyPressed(aKeyEvent);
   }
-  mEventSource->RemoveListener(aListener);
-  return true;
 }
 
 }  // namespace dom

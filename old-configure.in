@@ -308,15 +308,6 @@ if test -n "$COMPILE_ENVIRONMENT"; then
 fi
 
 dnl ========================================================
-dnl Add optional and non-optional hardening flags
-dnl ========================================================
-
-CFLAGS="$CFLAGS $MOZ_HARDENING_CFLAGS"
-CPPFLAGS="$CPPFLAGS $MOZ_HARDENING_CFLAGS"
-CXXFLAGS="$CXXFLAGS $MOZ_HARDENING_CFLAGS"
-LDFLAGS="$LDFLAGS $MOZ_HARDENING_LDFLAGS"
-
-dnl ========================================================
 dnl GNU specific defaults
 dnl ========================================================
 if test "$GNU_CC"; then
@@ -771,6 +762,10 @@ case "$target" in
             # declare |delete| differently.  Therefore, suppress this
             # warning.
             CXXFLAGS="$CXXFLAGS -Wno-implicit-exception-spec-mismatch"
+            # Macros like STDMETHOD() and IFACEMETHOD() can declare
+            # __attribute__((nothrow)) on their respective method declarations,
+            # while the definitions are left without the matching attribute.
+            CXXFLAGS="$CXXFLAGS -Wno-microsoft-exception-spec"
             # At least one MSVC header and several headers in-tree have
             # unused typedefs, so turn this on.
             CXXFLAGS="$CXXFLAGS -Wno-unused-local-typedef"
@@ -1665,6 +1660,12 @@ elif test "$EARLY_BETA_OR_EARLIER"; then
   AC_DEFINE(EARLY_BETA_OR_EARLIER)
 fi
 AC_SUBST(EARLY_BETA_OR_EARLIER)
+
+if test "$EARLY_BETA_OR_EARLIER"; then
+    MOZ_NEW_CERT_STORAGE=1
+    AC_DEFINE(MOZ_NEW_CERT_STORAGE)
+fi
+AC_SUBST(MOZ_NEW_CERT_STORAGE)
 
 # Allow someone to change MOZ_APP_NAME and MOZ_APP_BASENAME in mozconfig
 MOZ_ARG_WITH_STRING(app-name,

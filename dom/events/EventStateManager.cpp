@@ -19,6 +19,7 @@
 #include "mozilla/TextEditor.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
+#include "mozilla/Telemetry.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/DragEvent.h"
 #include "mozilla/dom/Event.h"
@@ -1016,11 +1017,11 @@ bool EventStateManager::LookForAccessKeyAndExecute(
     nsTArray<uint32_t>& aAccessCharCodes, bool aIsTrustedEvent, bool aIsRepeat,
     bool aExecute) {
   int32_t count, start = -1;
-  nsIContent* focusedContent = GetFocusedContent();
-  if (focusedContent) {
+  if (nsIContent* focusedContent = GetFocusedContent()) {
     start = mAccessKeys.IndexOf(focusedContent);
-    if (start == -1 && focusedContent->GetBindingParent())
-      start = mAccessKeys.IndexOf(focusedContent->GetBindingParent());
+    if (start == -1 && focusedContent->IsInNativeAnonymousSubtree()) {
+      start = mAccessKeys.IndexOf(focusedContent->GetClosestNativeAnonymousSubtreeRootParent());
+    }
   }
   RefPtr<Element> element;
   nsIFrame* frame;
@@ -4999,6 +5000,11 @@ nsresult EventStateManager::InitAndDispatchClickEvent(
   nsEventStatus status = nsEventStatus_eIgnore;
   nsresult rv = aPresShell->HandleEventWithTarget(
       &event, targetFrame, MOZ_KnownLive(target), &status);
+
+  if (event.mFlags.mHadNonPrivilegedClickListeners && !aNoContentDispatch) {
+    Telemetry::AccumulateCategorical(
+        Telemetry::LABELS_TYPES_OF_USER_CLICKS::Has_JS_Listener);
+  }
   // Copy mMultipleActionsPrevented flag from a click event to the mouseup
   // event only when it's set to true.  It may be set to true if an editor has
   // already handled it.  This is important to avoid two or more default
@@ -5123,6 +5129,14 @@ nsresult EventStateManager::DispatchClickEvents(
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
+  }
+
+  // notDispatchToContents is used here because we don't want to
+  // count auxclicks.
+  if (XRE_IsParentProcess() && !IsRemoteTarget(aClickTarget) &&
+      !notDispatchToContents) {
+    Telemetry::AccumulateCategorical(
+        Telemetry::LABELS_TYPES_OF_USER_CLICKS::Browser_Chrome);
   }
 
   return rv;
@@ -5515,14 +5529,9 @@ void EventStateManager::RemoveNodeFromChainIfNeeded(EventStates aState,
   // These two NS_ASSERTIONS below can fail for Shadow DOM sometimes, and it's
   // not clear how to best handle it, see
   // https://github.com/whatwg/html/issues/4795 and bug 1551621.
-  //
-  // The NODE_IS_ANONYMOUS_ROOT is there because XBL used to remove content
-  // without notifying, but it shouldn't apply to NAC since
-  // NAC notifies (see NativeAnonymousContentRemoved).
-  NS_ASSERTION(nsContentUtils::ContentIsFlattenedTreeDescendantOf(
-                   leaf, aContentRemoved) ||
-               leaf->SubtreeRoot()->HasFlag(NODE_IS_ANONYMOUS_ROOT),
-               "Flat tree and active / hover chain got out of sync");
+  NS_ASSERTION(
+      nsContentUtils::ContentIsFlattenedTreeDescendantOf(leaf, aContentRemoved),
+      "Flat tree and active / hover chain got out of sync");
 
   nsIContent* newLeaf = aContentRemoved->GetFlattenedTreeParent();
   MOZ_ASSERT(!newLeaf || newLeaf->IsElement());

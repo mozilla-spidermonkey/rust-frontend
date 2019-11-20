@@ -16,6 +16,7 @@ ChromeUtils.defineModuleGetter(
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const FIREFOX_VERSION = parseInt(Services.appinfo.version.match(/\d+/), 10);
 const ONE_MINUTE = 60 * 1000;
+const FX_MONITOR_CLIENT_ID = "802d56ef2a9af9fa";
 
 const L10N = new Localization([
   "branding/brand.ftl",
@@ -268,7 +269,8 @@ const ONBOARDING_MESSAGES = () => [
         },
       },
     },
-    targeting: "trailheadTriplet == 'supercharge'",
+    targeting:
+      "trailheadTriplet == 'supercharge' || (trailheadTriplet == 'dynamic' && usesFirefoxSync == false)",
     trigger: { id: "showOnboarding" },
   },
   {
@@ -288,14 +290,16 @@ const ONBOARDING_MESSAGES = () => [
         },
       },
     },
-    targeting: "trailheadTriplet in ['payoff', 'supercharge']",
+    // Use service oauth client_id to identify 'Firefox Monitor' service attached to Firefox Account
+    // https://docs.telemetry.mozilla.org/datasets/fxa_metrics/attribution.html#service-attribution
+    targeting: `trailheadTriplet == 'supercharge' || (trailheadTriplet == 'dynamic' && !("${FX_MONITOR_CLIENT_ID}" in attachedFxAOAuthClients|mapToProperty('id')))`,
     trigger: { id: "showOnboarding" },
   },
   {
     id: "TRAILHEAD_CARD_4",
     template: "onboarding",
     bundled: 3,
-    order: 1,
+    order: 3,
     content: {
       title: { string_id: "onboarding-browse-privately-title" },
       text: { string_id: "onboarding-browse-privately-text" },
@@ -305,7 +309,7 @@ const ONBOARDING_MESSAGES = () => [
         action: { type: "OPEN_PRIVATE_BROWSER_WINDOW" },
       },
     },
-    targeting: "trailheadTriplet == 'privacy'",
+    targeting: "trailheadTriplet == 'dynamic'",
     trigger: { id: "showOnboarding" },
   },
   {
@@ -332,7 +336,7 @@ const ONBOARDING_MESSAGES = () => [
     id: "TRAILHEAD_CARD_6",
     template: "onboarding",
     bundled: 3,
-    order: 3,
+    order: 6,
     content: {
       title: { string_id: "onboarding-mobile-phone-title" },
       text: { string_id: "onboarding-mobile-phone-text" },
@@ -348,14 +352,15 @@ const ONBOARDING_MESSAGES = () => [
         },
       },
     },
-    targeting: "trailheadTriplet in ['supercharge', 'multidevice']",
+    targeting:
+      "trailheadTriplet == 'supercharge' || (trailheadTriplet == 'dynamic' && sync.mobileDevices < 1)",
     trigger: { id: "showOnboarding" },
   },
   {
     id: "TRAILHEAD_CARD_7",
     template: "onboarding",
     bundled: 3,
-    order: 3,
+    order: 4,
     content: {
       title: { string_id: "onboarding-send-tabs-title" },
       text: { string_id: "onboarding-send-tabs-text" },
@@ -372,7 +377,7 @@ const ONBOARDING_MESSAGES = () => [
         },
       },
     },
-    targeting: "trailheadTriplet == 'multidevice'",
+    targeting: "trailheadTriplet == 'dynamic'",
     trigger: { id: "showOnboarding" },
   },
   {
@@ -402,7 +407,7 @@ const ONBOARDING_MESSAGES = () => [
     id: "TRAILHEAD_CARD_9",
     template: "onboarding",
     bundled: 3,
-    order: 3,
+    order: 7,
     content: {
       title: { string_id: "onboarding-lockwise-passwords-title" },
       text: { string_id: "onboarding-lockwise-passwords-text2" },
@@ -415,7 +420,7 @@ const ONBOARDING_MESSAGES = () => [
         },
       },
     },
-    targeting: "trailheadTriplet == 'privacy'",
+    targeting: "trailheadTriplet == 'dynamic'",
     trigger: { id: "showOnboarding" },
   },
   {

@@ -831,23 +831,27 @@ nsSHistory::EvictAllContentViewers() {
 }
 
 static nsresult LoadURI(nsSHistory::LoadEntryResult& aLoadResult) {
-  nsCOMPtr<nsIDocShell> docShell = aLoadResult.mBrowsingContext->GetDocShell();
-  NS_ENSURE_TRUE(docShell, NS_ERROR_FAILURE);
-
-  return docShell->LoadURI(aLoadResult.mLoadState, false);
+  return aLoadResult.mBrowsingContext->LoadURI(nullptr, aLoadResult.mLoadState,
+                                               false);
 }
 
 NS_IMETHODIMP
 nsSHistory::Reload(uint32_t aReloadFlags) {
-  LoadEntryResult loadResult;
+  Maybe<LoadEntryResult> loadResult;
   nsresult rv = Reload(aReloadFlags, loadResult);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  return LoadURI(loadResult);
+  if (!loadResult) {
+    return NS_OK;
+  }
+
+  return LoadURI(loadResult.ref());
 }
 
 nsresult nsSHistory::Reload(uint32_t aReloadFlags,
-                            LoadEntryResult& aLoadResult) {
+                            Maybe<LoadEntryResult>& aLoadResult) {
+  MOZ_ASSERT(!aLoadResult.isSome());
+
   uint32_t loadType;
   if (aReloadFlags & nsIWebNavigation::LOAD_FLAGS_BYPASS_PROXY &&
       aReloadFlags & nsIWebNavigation::LOAD_FLAGS_BYPASS_CACHE) {
@@ -874,7 +878,14 @@ nsresult nsSHistory::Reload(uint32_t aReloadFlags,
     return NS_OK;
   }
 
-  return LoadEntry(mIndex, loadType, HIST_CMD_RELOAD, aLoadResult);
+  aLoadResult.emplace();
+  nsresult rv = LoadEntry(mIndex, loadType, HIST_CMD_RELOAD, aLoadResult.ref());
+  if (NS_FAILED(rv)) {
+    aLoadResult.reset();
+    return rv;
+  }
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -1381,8 +1392,7 @@ nsSHistory::GotoIndex(int32_t aIndex) {
 NS_IMETHODIMP_(void)
 nsSHistory::EnsureCorrectEntryAtCurrIndex(nsISHEntry* aEntry) {
   int index = mRequestedIndex == -1 ? mIndex : mRequestedIndex;
-  MOZ_ASSERT(mIndex > -1);
-  if (mEntries[index] != aEntry) {
+  if (index > -1 && (mEntries[index] != aEntry)) {
     ReplaceEntry(index, aEntry);
   }
 }

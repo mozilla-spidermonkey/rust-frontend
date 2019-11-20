@@ -368,6 +368,7 @@ BrowserChild::BrowserChild(ContentChild* aManager, const TabId& aTabId,
       mIgnoreKeyPressEvent(false),
       mHasValidInnerSize(false),
       mDestroyed(false),
+      mDynamicToolbarMaxHeight(0),
       mUniqueId(aTabId),
       mIsTopLevel(aIsTopLevel),
       mHasSiblings(false),
@@ -1230,6 +1231,27 @@ mozilla::ipc::IPCResult BrowserChild::RecvInitRendering(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult BrowserChild::RecvCompositorOptionsChanged(
+    const CompositorOptions& aNewOptions) {
+  MOZ_ASSERT(mCompositorOptions);
+
+  // The only compositor option we currently support changing is APZ
+  // enablement. Even that is only partially supported for now:
+  //   * Going from APZ to non-APZ is fine - we just flip the stored flag.
+  //     Note that we keep the actors (mApzcTreeManager, and the APZChild
+  //     created in InitAPZState()) around (read on for why).
+  //   * Going from non-APZ to APZ is only supported if we were using
+  //     APZ initially (at InitRendering() time) and we are transitioning
+  //     back. In this case, we just reuse the actors which we kept around.
+  //     Fully supporting a non-APZ to APZ transition (i.e. even in cases
+  //     where we initialized as non-APZ) would require setting up the actors
+  //     here. (In that case, we would also have the options of destroying
+  //     the actors in the APZ --> non-APZ case, and always re-creating them
+  //     during a non-APZ --> APZ transition).
+  mCompositorOptions->SetUseAPZ(aNewOptions.UseAPZ());
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult BrowserChild::RecvUpdateDimensions(
     const DimensionInfo& aDimensionInfo) {
   // When recording/replaying we need to make sure the dimensions are up to
@@ -1268,7 +1290,8 @@ mozilla::ipc::IPCResult BrowserChild::RecvUpdateDimensions(
   // This is used by RDM to respond correctly to changes to full zoom,
   // which also change the window size.
   RefPtr<Document> doc = GetTopLevelDocument();
-  if (doc && doc->InRDMPane()) {
+  BrowsingContext* bc = doc ? doc->GetBrowsingContext() : nullptr;
+  if (bc && bc->InRDMPane()) {
     RefPtr<AsyncEventDispatcher> dispatcher = new AsyncEventDispatcher(
         doc, NS_LITERAL_STRING("mozupdatedremoteframedimensions"),
         CanBubble::eYes, ChromeOnlyDispatch::eYes);
@@ -1306,6 +1329,23 @@ mozilla::ipc::IPCResult BrowserChild::RecvSetIsUnderHiddenEmbedderElement(
   if (RefPtr<PresShell> presShell = GetTopLevelPresShell()) {
     presShell->SetIsUnderHiddenEmbedderElement(aIsUnderHiddenEmbedderElement);
   }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult BrowserChild::RecvDynamicToolbarMaxHeightChanged(
+    const ScreenIntCoord& aHeight) {
+#if defined(MOZ_WIDGET_ANDROID)
+  mDynamicToolbarMaxHeight = aHeight;
+
+  RefPtr<Document> document = GetTopLevelDocument();
+  if (!document) {
+    return IPC_OK();
+  }
+
+  if (RefPtr<nsPresContext> presContext = document->GetPresContext()) {
+    presContext->SetDynamicToolbarMaxHeight(aHeight);
+  }
+#endif
   return IPC_OK();
 }
 

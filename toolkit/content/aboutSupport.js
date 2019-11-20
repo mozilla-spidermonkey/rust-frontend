@@ -865,6 +865,12 @@ var snapshotFormatters = {
     }
 
     function insertEnumerateDatabase() {
+      if (
+        !Services.prefs.getBoolPref("media.mediacapabilities.from-database")
+      ) {
+        $("media-capabilities-tbody").style.display = "none";
+        return;
+      }
       let button = $("enumerate-database-button");
       if (button) {
         button.addEventListener("click", function(event) {
@@ -925,6 +931,14 @@ var snapshotFormatters = {
 
   javaScript(data) {
     $("javascript-incremental-gc").textContent = data.incrementalGCEnabled;
+  },
+
+  remoteAgent(data) {
+    if (!AppConstants.ENABLE_REMOTE_AGENT) {
+      return;
+    }
+    $("remote-debugging-accepting-connections").textContent = data.listening;
+    $("remote-debugging-url").textContent = data.url;
   },
 
   accessibility(data) {
@@ -1490,7 +1504,7 @@ function setupEventListeners() {
     if (button) {
       button.addEventListener("click", function(event) {
         window.docShell.rootTreeItem.domWindow.openDialog(
-          "chrome://mozapps/content/update/history.xul",
+          "chrome://mozapps/content/update/history.xhtml",
           "Update:History",
           "centerscreen,resizable=no,titlebar,modal"
         );

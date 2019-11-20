@@ -1341,20 +1341,40 @@ class Document : public nsINode,
   }
 
   /**
-   * Get tracking content loaded flag for this document.
+   * Get level 1 tracking content loaded flag for this document.
    */
-  bool GetHasTrackingContentLoaded() {
+  bool GetHasLevel1TrackingContentLoaded() {
     return mContentBlockingLog.HasBlockedAnyOfType(
-        nsIWebProgressListener::STATE_LOADED_TRACKING_CONTENT);
+        nsIWebProgressListener::STATE_LOADED_LEVEL_1_TRACKING_CONTENT);
   }
 
   /**
-   * Set the tracking content loaded flag for this document.
+   * Set the level 1 tracking content loaded flag for this document.
    */
-  void SetHasTrackingContentLoaded(bool aHasTrackingContentLoaded,
-                                   const nsACString& aOriginBlocked) {
+  void SetHasLevel1TrackingContentLoaded(bool aHasTrackingContentLoaded,
+                                         const nsACString& aOriginBlocked) {
     RecordContentBlockingLog(
-        aOriginBlocked, nsIWebProgressListener::STATE_LOADED_TRACKING_CONTENT,
+        aOriginBlocked,
+        nsIWebProgressListener::STATE_LOADED_LEVEL_1_TRACKING_CONTENT,
+        aHasTrackingContentLoaded);
+  }
+
+  /**
+   * Get level 2 tracking content loaded flag for this document.
+   */
+  bool GetHasLevel2TrackingContentLoaded() {
+    return mContentBlockingLog.HasBlockedAnyOfType(
+        nsIWebProgressListener::STATE_LOADED_LEVEL_2_TRACKING_CONTENT);
+  }
+
+  /**
+   * Set the level 2 tracking content loaded flag for this document.
+   */
+  void SetHasLevel2TrackingContentLoaded(bool aHasTrackingContentLoaded,
+                                         const nsACString& aOriginBlocked) {
+    RecordContentBlockingLog(
+        aOriginBlocked,
+        nsIWebProgressListener::STATE_LOADED_LEVEL_2_TRACKING_CONTENT,
         aHasTrackingContentLoaded);
   }
 
@@ -2284,11 +2304,7 @@ class Document : public nsINode,
     return mOrientationPendingPromise;
   }
 
-  void SetRDMPaneOrientation(OrientationType aType, uint16_t aAngle) {
-    if (mInRDMPane) {
-      SetCurrentOrientation(aType, aAngle);
-    }
-  }
+  void SetRDMPaneOrientation(OrientationType aType, uint16_t aAngle);
 
   //----------------------------------------------------------------------
 
@@ -3708,8 +3724,6 @@ class Document : public nsINode,
   bool IsScrollingElement(Element* aElement);
 
   // QuerySelector and QuerySelectorAll already defined on nsINode
-  nsINodeList* GetAnonymousNodes(Element& aElement);
-  Element* GetBindingParent(nsINode& aNode);
 
   XPathExpression* CreateExpression(const nsAString& aExpression,
                                     XPathNSResolver* aResolver,
@@ -3951,7 +3965,8 @@ class Document : public nsINode,
   FlashClassification DocumentFlashClassification();
 
   // ResizeObserver usage.
-  void AddResizeObserver(ResizeObserver* aResizeObserver);
+  void AddResizeObserver(ResizeObserver&);
+  void RemoveResizeObserver(ResizeObserver&);
   void ScheduleResizeObserversNotification() const;
 
   // Getter for PermissionDelegateHandler. Performs lazy initialization.
@@ -4180,9 +4195,6 @@ class Document : public nsINode,
   }
 
   void SetPrototypeDocument(nsXULPrototypeDocument* aPrototype);
-
-  bool InRDMPane() const { return mInRDMPane; }
-  void SetInRDMPane(bool aInRDMPane) { mInRDMPane = aInRDMPane; }
 
   // Returns true if we use overlay scrollbars on the system wide or on the
   // given document.
@@ -5345,8 +5357,6 @@ class Document : public nsINode,
   // Cached TabSizes values for the document.
   int32_t mCachedTabSizeGeneration;
   nsTabSizes mCachedTabSizes;
-
-  bool mInRDMPane;
 
   // The principal to use for the storage area of this document.
   nsCOMPtr<nsIPrincipal> mIntrinsicStoragePrincipal;

@@ -65,6 +65,7 @@
 #include "mozilla/layers/WebRenderBridgeParent.h"
 #include "mozilla/layers/AsyncImagePipelineManager.h"
 #include "mozilla/webrender/WebRenderAPI.h"
+#include "mozilla/webgpu/WebGPUParent.h"
 #include "mozilla/media/MediaSystemResourceService.h"  // for MediaSystemResourceService
 #include "mozilla/mozalloc.h"                          // for operator new, etc
 #include "mozilla/PerfStats.h"
@@ -1734,11 +1735,32 @@ mozilla::ipc::IPCResult CompositorBridgeParent::RecvMapAndNotifyChildCreated(
   return IPC_OK();
 }
 
+enum class CompositorOptionsChangeKind {
+  eSupported,
+  eBestEffort,
+  eUnsupported
+};
+
+static CompositorOptionsChangeKind ClassifyCompositorOptionsChange(
+    const CompositorOptions& aOld, const CompositorOptions& aNew) {
+  if (aOld == aNew) {
+    return CompositorOptionsChangeKind::eSupported;
+  }
+  if (aOld.UseAdvancedLayers() == aNew.UseAdvancedLayers() &&
+      aOld.UseWebRender() == aNew.UseWebRender() &&
+      aOld.InitiallyPaused() == aNew.InitiallyPaused()) {
+    // Only APZ enablement changed.
+    return CompositorOptionsChangeKind::eBestEffort;
+  }
+  return CompositorOptionsChangeKind::eUnsupported;
+}
+
 mozilla::ipc::IPCResult CompositorBridgeParent::RecvAdoptChild(
     const LayersId& child) {
   RefPtr<APZUpdater> oldApzUpdater;
   APZCTreeManagerParent* parent;
   bool scheduleComposition = false;
+  bool apzEnablementChanged = false;
   RefPtr<ContentCompositorBridgeParent> cpcp;
   RefPtr<WebRenderBridgeParent> childWrBridge;
 
@@ -1759,9 +1781,28 @@ mozilla::ipc::IPCResult CompositorBridgeParent::RecvAdoptChild(
     }
 
     if (sIndirectLayerTrees[child].mParent) {
-      // We currently don't support adopting children from one compositor to
-      // another if the two compositors don't have the same options.
-      MOZ_ASSERT(sIndirectLayerTrees[child].mParent->mOptions == mOptions);
+      switch (ClassifyCompositorOptionsChange(
+          sIndirectLayerTrees[child].mParent->mOptions, mOptions)) {
+        case CompositorOptionsChangeKind::eUnsupported: {
+          MOZ_ASSERT(false,
+                     "Moving tab between windows whose compositor options"
+                     "differ in unsupported ways. Things may break in "
+                     "unexpected ways");
+          break;
+        }
+        case CompositorOptionsChangeKind::eBestEffort: {
+          NS_WARNING(
+              "Moving tab between windows with different APZ enablement. "
+              "This is supported on a best-effort basis, but some things may "
+              "break.");
+          apzEnablementChanged = true;
+          break;
+        }
+        case CompositorOptionsChangeKind::eSupported: {
+          // The common case, no action required.
+          break;
+        }
+      }
       oldApzUpdater = sIndirectLayerTrees[child].mParent->mApzUpdater;
     }
     NotifyChildCreated(child);
@@ -1800,18 +1841,11 @@ mozilla::ipc::IPCResult CompositorBridgeParent::RecvAdoptChild(
   }
 
   if (oldApzUpdater) {
-    // We don't fully support moving a child from an APZ-enabled compositor to a
-    // APZ-disabled compositor. The mOptions assertion above should already
-    // ensure this, since APZ-ness is one of the things in mOptions. Note
-    // however it is possible for mApzUpdater to be non-null here with
-    // oldApzUpdater null, because the child may not have been previously
-    // composited.
-    MOZ_ASSERT(mApzUpdater);
-
-    // As this nonetheless can happen (if e.g. a WebExtension moves a tab
-    // into a popup window), try to handle it gracefully by clearing the
-    // old layer transforms associated with the child. (Since the new compositor
-    // is APZ-disabled, there will be nothing to update the transforms going
+    // If we are moving a child from an APZ-enabled window to an APZ-disabled
+    // window (which can happen if e.g. a WebExtension moves a tab into a
+    // popup window), try to handle it gracefully by clearing the old layer
+    // transforms associated with the child. (Since the new compositor is
+    // APZ-disabled, there will be nothing to update the transforms going
     // forward.)
     if (!mApzUpdater && oldRootController) {
       // Tell the old APZCTreeManager not to send any more layer transforms
@@ -1831,6 +1865,9 @@ mozilla::ipc::IPCResult CompositorBridgeParent::RecvAdoptChild(
     }
     mApzUpdater->NotifyLayerTreeAdopted(
         WRRootId(child, gfxUtils::GetContentRenderRoot()), oldApzUpdater);
+  }
+  if (apzEnablementChanged) {
+    Unused << SendCompositorOptionsChanged(child, mOptions);
   }
   return IPC_OK();
 }
@@ -1920,6 +1957,22 @@ bool CompositorBridgeParent::DeallocPWebRenderBridgeParent(
     }
   }
   parent->Release();  // IPDL reference
+  return true;
+}
+
+webgpu::PWebGPUParent* CompositorBridgeParent::AllocPWebGPUParent() {
+  MOZ_ASSERT(!mWebGPUBridge);
+  mWebGPUBridge = new webgpu::WebGPUParent();
+  mWebGPUBridge.get()->AddRef();  // IPDL reference
+  return mWebGPUBridge;
+}
+
+bool CompositorBridgeParent::DeallocPWebGPUParent(
+    webgpu::PWebGPUParent* aActor) {
+  webgpu::WebGPUParent* parent = static_cast<webgpu::WebGPUParent*>(aActor);
+  MOZ_ASSERT(mWebGPUBridge == parent);
+  parent->Release();  // IPDL reference
+  mWebGPUBridge = nullptr;
   return true;
 }
 

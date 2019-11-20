@@ -9,6 +9,7 @@
 #include "GLContext.h"
 #include "GLContextProvider.h"
 #include "mozilla/StaticPrefs_gfx.h"
+#include "mozilla/webrender/RenderThread.h"
 #include "mozilla/widget/CompositorWidget.h"
 
 namespace mozilla {
@@ -17,9 +18,11 @@ namespace wr {
 /* static */
 UniquePtr<RenderCompositor> RenderCompositorOGL::Create(
     RefPtr<widget::CompositorWidget>&& aWidget) {
-  RefPtr<gl::GLContext> gl;
-  gl = gl::GLContextProvider::CreateForCompositorWidget(
-      aWidget, /* aWebRender */ true, /* aForceAccelerated */ true);
+  RefPtr<gl::GLContext> gl = RenderThread::Get()->SharedGL();
+  if (!gl) {
+    gl = gl::GLContextProvider::CreateForCompositorWidget(
+        aWidget, /* aWebRender */ true, /* aForceAccelerated */ true);
+  }
   if (!gl || !gl->MakeCurrent()) {
     gfxCriticalNote << "Failed GL context creation for WebRender: "
                     << gfx::hexa(gl.get());
@@ -36,13 +39,6 @@ RenderCompositorOGL::RenderCompositorOGL(
       mPreviousFrameDoneSync(nullptr),
       mThisFrameDoneSync(nullptr) {
   MOZ_ASSERT(mGL);
-
-  if (mNativeLayerRoot && !ShouldUseNativeCompositor()) {
-    mNativeLayerForEntireWindow = mNativeLayerRoot->CreateLayer();
-    mNativeLayerForEntireWindow->SetSurfaceIsFlipped(true);
-    mNativeLayerForEntireWindow->SetGLContext(mGL);
-    mNativeLayerRoot->AppendLayer(mNativeLayerForEntireWindow);
-  }
 }
 
 RenderCompositorOGL::~RenderCompositorOGL() {
@@ -75,11 +71,25 @@ bool RenderCompositorOGL::BeginFrame() {
     return false;
   }
 
+  gfx::IntSize bufferSize = GetBufferSize().ToUnknownSize();
+  if (mNativeLayerRoot && !ShouldUseNativeCompositor()) {
+    if (mNativeLayerForEntireWindow &&
+        mNativeLayerForEntireWindow->GetSize() != bufferSize) {
+      mNativeLayerRoot->RemoveLayer(mNativeLayerForEntireWindow);
+      mNativeLayerForEntireWindow = nullptr;
+    }
+    if (!mNativeLayerForEntireWindow) {
+      mNativeLayerForEntireWindow =
+          mNativeLayerRoot->CreateLayer(bufferSize, false);
+      mNativeLayerForEntireWindow->SetSurfaceIsFlipped(true);
+      mNativeLayerForEntireWindow->SetGLContext(mGL);
+      mNativeLayerRoot->AppendLayer(mNativeLayerForEntireWindow);
+    }
+  }
   if (mNativeLayerForEntireWindow) {
-    gfx::IntRect bounds({}, GetBufferSize().ToUnknownSize());
-    mNativeLayerForEntireWindow->SetRect(bounds);
+    gfx::IntRect bounds({}, bufferSize);
     Maybe<GLuint> fbo =
-        mNativeLayerForEntireWindow->NextSurfaceAsFramebuffer(true);
+        mNativeLayerForEntireWindow->NextSurfaceAsFramebuffer(bounds, true);
     if (!fbo) {
       return false;
     }
@@ -108,13 +118,10 @@ void RenderCompositorOGL::InsertFrameDoneSync() {
 #ifdef XP_MACOSX
   // Only do this on macOS.
   // On other platforms, SwapBuffers automatically applies back-pressure.
-  if (StaticPrefs::gfx_core_animation_enabled_AtStartup()) {
-    if (mThisFrameDoneSync) {
-      mGL->fDeleteSync(mThisFrameDoneSync);
-    }
-    mThisFrameDoneSync =
-        mGL->fFenceSync(LOCAL_GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+  if (mThisFrameDoneSync) {
+    mGL->fDeleteSync(mThisFrameDoneSync);
   }
+  mThisFrameDoneSync = mGL->fFenceSync(LOCAL_GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 #endif
 }
 
@@ -142,6 +149,14 @@ LayoutDeviceIntSize RenderCompositorOGL::GetBufferSize() {
 
 bool RenderCompositorOGL::ShouldUseNativeCompositor() {
   return mNativeLayerRoot && StaticPrefs::gfx_webrender_compositor_AtStartup();
+}
+
+uint32_t RenderCompositorOGL::GetMaxUpdateRects() {
+  if (ShouldUseNativeCompositor() &&
+      StaticPrefs::gfx_webrender_compositor_max_update_rects_AtStartup() > 0) {
+    return 1;
+  }
+  return 0;
 }
 
 void RenderCompositorOGL::CompositorBeginFrame() {
@@ -174,22 +189,18 @@ void RenderCompositorOGL::Bind(wr::NativeSurfaceId aId,
   auto layerCursor = mNativeLayers.find(wr::AsUint64(aId));
   MOZ_RELEASE_ASSERT(layerCursor != mNativeLayers.end());
   RefPtr<layers::NativeLayer> layer = layerCursor->second;
-  gfx::IntRect layerRect = layer->GetRect();
+
   gfx::IntRect dirtyRect(aDirtyRect.origin.x, aDirtyRect.origin.y,
                          aDirtyRect.size.width, aDirtyRect.size.height);
-  MOZ_RELEASE_ASSERT(
-      dirtyRect.IsEqualInterior(layerRect - layerRect.TopLeft()),
-      "We currently do not support partial updates (max_update_rects is set to "
-      "0), so we expect the dirty rect to always cover the entire layer.");
 
-  Maybe<GLuint> fbo = layer->NextSurfaceAsFramebuffer(true);
+  Maybe<GLuint> fbo = layer->NextSurfaceAsFramebuffer(dirtyRect, true);
   MOZ_RELEASE_ASSERT(fbo);  // TODO: make fallible
   mCurrentlyBoundNativeLayer = layer;
 
   *aFboId = *fbo;
   *aOffset = wr::DeviceIntPoint{0, 0};
 
-  mDrawnPixelCount += layerRect.Area();
+  mDrawnPixelCount += dirtyRect.Area();
 }
 
 void RenderCompositorOGL::Unbind() {
@@ -203,10 +214,9 @@ void RenderCompositorOGL::Unbind() {
 void RenderCompositorOGL::CreateSurface(wr::NativeSurfaceId aId,
                                         wr::DeviceIntSize aSize,
                                         bool aIsOpaque) {
-  RefPtr<layers::NativeLayer> layer = mNativeLayerRoot->CreateLayer();
-  layer->SetRect(gfx::IntRect(0, 0, aSize.width, aSize.height));
+  RefPtr<layers::NativeLayer> layer = mNativeLayerRoot->CreateLayer(
+      IntSize(aSize.width, aSize.height), aIsOpaque);
   layer->SetGLContext(mGL);
-  layer->SetIsOpaque(aIsOpaque);
   mNativeLayers.insert({wr::AsUint64(aId), layer});
 }
 
@@ -232,12 +242,12 @@ void RenderCompositorOGL::AddSurface(wr::NativeSurfaceId aId,
   MOZ_RELEASE_ASSERT(layerCursor != mNativeLayers.end());
   RefPtr<layers::NativeLayer> layer = layerCursor->second;
 
-  gfx::IntSize layerSize = layer->GetRect().Size();
+  gfx::IntSize layerSize = layer->GetSize();
   gfx::IntRect layerRect(aPosition.x, aPosition.y, layerSize.width,
                          layerSize.height);
   gfx::IntRect clipRect(aClipRect.origin.x, aClipRect.origin.y,
                         aClipRect.size.width, aClipRect.size.height);
-  layer->SetRect(layerRect);
+  layer->SetPosition(layerRect.TopLeft());
   layer->SetClipRect(Some(clipRect));
   mAddedLayers.AppendElement(layer);
 

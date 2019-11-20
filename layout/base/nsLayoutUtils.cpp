@@ -699,8 +699,9 @@ bool nsLayoutUtils::AllowZoomingForDocument(
   // True if we allow zooming for all documents on this platform, or if we are
   // in RDM and handling meta viewports, which force zoom under some
   // circumstances.
+  BrowsingContext* bc = aDocument ? aDocument->GetBrowsingContext() : nullptr;
   return StaticPrefs::apz_allow_zooming() ||
-         (aDocument && aDocument->InRDMPane() &&
+         (bc && bc->InRDMPane() &&
           nsLayoutUtils::ShouldHandleMetaViewport(aDocument));
 }
 
@@ -1067,6 +1068,11 @@ static bool GetDisplayPortImpl(
     return false;
   }
 
+  nsIFrame* frame = aContent->GetPrimaryFrame();
+  if (frame && !frame->PresShell()->AsyncPanZoomEnabled()) {
+    return false;
+  }
+
   if (!aResult) {
     // We have displayport data, but the caller doesn't want the actual
     // rect, so we don't need to actually compute it.
@@ -1075,7 +1081,6 @@ static bool GetDisplayPortImpl(
 
   bool isDisplayportSuppressed = false;
 
-  nsIFrame* frame = aContent->GetPrimaryFrame();
   if (frame) {
     nsPresContext* presContext = frame->PresContext();
     MOZ_ASSERT(presContext);
@@ -1893,30 +1898,30 @@ void nsLayoutUtils::SetFixedPositionLayerData(
   // defaulting to top-left.
   LayerPoint anchor(anchorRect.x, anchorRect.y);
 
-  SideBits sides = eSideBitsNone;
+  SideBits sides = SideBits::eNone;
   if (aFixedPosFrame != aViewportFrame) {
     const nsStylePosition* position = aFixedPosFrame->StylePosition();
     if (!position->mOffset.Get(eSideRight).IsAuto()) {
-      sides |= eSideBitsRight;
+      sides |= SideBits::eRight;
       if (!position->mOffset.Get(eSideLeft).IsAuto()) {
-        sides |= eSideBitsLeft;
+        sides |= SideBits::eLeft;
         anchor.x = anchorRect.x + anchorRect.width / 2.f;
       } else {
         anchor.x = anchorRect.XMost();
       }
     } else if (!position->mOffset.Get(eSideLeft).IsAuto()) {
-      sides |= eSideBitsLeft;
+      sides |= SideBits::eLeft;
     }
     if (!position->mOffset.Get(eSideBottom).IsAuto()) {
-      sides |= eSideBitsBottom;
+      sides |= SideBits::eBottom;
       if (!position->mOffset.Get(eSideTop).IsAuto()) {
-        sides |= eSideBitsTop;
+        sides |= SideBits::eTop;
         anchor.y = anchorRect.y + anchorRect.height / 2.f;
       } else {
         anchor.y = anchorRect.YMost();
       }
     } else if (!position->mOffset.Get(eSideTop).IsAuto()) {
-      sides |= eSideBitsTop;
+      sides |= SideBits::eTop;
     }
   }
 
@@ -8424,6 +8429,19 @@ bool nsLayoutUtils::GetContentViewerSize(nsPresContext* aPresContext,
 
   nsIntRect bounds;
   cv->GetBounds(bounds);
+
+  if (aPresContext->HasDynamicToolbar() && !bounds.IsEmpty()) {
+    MOZ_ASSERT(aPresContext->IsRootContentDocumentCrossProcess());
+    MOZ_ASSERT(bounds.height > aPresContext->GetDynamicToolbarMaxHeight());
+    bounds.height -= aPresContext->GetDynamicToolbarMaxHeight();
+    // Collapse the size in the case the dynamic toolbar max height is greater
+    // than the content bound height so that hopefully embedders of GeckoView
+    // may notice they set wrong dynamic toolbar max height.
+    if (bounds.height < 0) {
+      bounds.height = 0;
+    }
+  }
+
   aOutSize = LayoutDeviceIntRect::FromUnknownRect(bounds).Size();
   return true;
 }
@@ -8509,7 +8527,7 @@ nsSize nsLayoutUtils::CalculateCompositionSizeForFrame(
   PresShell* presShell = presContext->PresShell();
 
   bool isRootContentDocRootScrollFrame =
-      presContext->IsRootContentDocument() &&
+      presContext->IsRootContentDocumentCrossProcess() &&
       aFrame == presShell->GetRootScrollFrame();
   if (isRootContentDocRootScrollFrame) {
     ParentLayerRect compBounds;
@@ -8989,6 +9007,18 @@ ScrollMetadata nsLayoutUtils::ComputeScrollMetadata(
         metrics.SetVisualScrollUpdateType(visualUpdate->mUpdateType);
         presShell->AcknowledgePendingVisualScrollUpdate();
       }
+      // Expand the layout viewport to the size including the area covered by
+      // the dynamic toolbar in the case where the dynamic toolbar is being
+      // used, otherwise when the dynamic toolbar transitions on the compositor,
+      // the layout viewport will be smaller than the visual viewport on the
+      // compositor, thus the layout viewport offset will be forced to be moved
+      // in FrameMetrics::KeepLayoutViewportEnclosingVisualViewport.
+      if (presContext->HasDynamicToolbar()) {
+        CSSRect viewport = metrics.GetLayoutViewport();
+        viewport.SizeTo(nsLayoutUtils::ExpandHeightForViewportUnits(
+            presContext, viewport.Size()));
+        metrics.SetLayoutViewport(viewport);
+      }
     }
 
     CSSRect viewport = metrics.GetLayoutViewport();
@@ -9176,7 +9206,7 @@ ScrollMetadata nsLayoutUtils::ComputeScrollMetadata(
   // correspond to what would be visible because they don't get modified by
   // setCSSViewport.
   bool isRootContentDocRootScrollFrame =
-      isRootScrollFrame && presContext->IsRootContentDocument();
+      isRootScrollFrame && presContext->IsRootContentDocumentCrossProcess();
   if (isRootContentDocRootScrollFrame) {
     UpdateCompositionBoundsForRCDRSF(frameBounds, presContext, true);
   }

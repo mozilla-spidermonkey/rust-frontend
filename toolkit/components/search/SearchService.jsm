@@ -71,10 +71,6 @@ const QUIT_APPLICATION_TOPIC = "quit-application";
 // Delay for batching invalidation of the JSON cache (ms)
 const CACHE_INVALIDATION_DELAY = 1000;
 
-// Current cache version. This should be incremented if the format of the cache
-// file is modified.
-const CACHE_VERSION = 1;
-
 const CACHE_FILENAME = "search.json.mozlz4";
 
 // The default engine update interval, in days. This is only used if an engine
@@ -103,9 +99,6 @@ const MULTI_LOCALE_ENGINES = [
   "yandex",
   "multilocale",
 ];
-
-// A tag to denote when we are using the "default_locale" of an engine
-const DEFAULT_TAG = "default";
 
 // A method that tries to determine if this user is in a US geography.
 function isUSTimezone() {
@@ -572,6 +565,12 @@ function SearchService() {
 SearchService.prototype = {
   classID: Components.ID("{7319788a-fe93-4db3-9f39-818cf08f4256}"),
 
+  // Current cache version. This should be incremented if the format of the cache
+  // file is modified.
+  get CACHE_VERSION() {
+    return gModernConfig ? 2 : 1;
+  },
+
   // The current status of initialization. Note that it does not determine if
   // initialization is complete, only if an error has been encountered so far.
   _initRV: Cr.NS_OK,
@@ -616,6 +615,7 @@ SearchService.prototype = {
    * in the configuration, then the configuration has changed. The engines
    * are loaded using both the new set, and the user's current set (if they
    * still exist).
+   * @deprecated Unused in the modern configuration.
    */
   _visibleDefaultEngines: [],
 
@@ -1069,7 +1069,7 @@ SearchService.prototype = {
     let appVersion = Services.appinfo.version;
 
     // Allows us to force a cache refresh should the cache format change.
-    cache.version = CACHE_VERSION;
+    cache.version = this.CACHE_VERSION;
     // We don't want to incur the costs of stat()ing each plugin on every
     // startup when the only (supported) time they will change is during
     // app updates (where the buildID is obviously going to change).
@@ -1080,7 +1080,11 @@ SearchService.prototype = {
     cache.appVersion = appVersion;
     cache.locale = locale;
 
-    cache.visibleDefaultEngines = this._visibleDefaultEngines;
+    if (gModernConfig) {
+      cache.builtInEngineList = this._searchOrder;
+    } else {
+      cache.visibleDefaultEngines = this._visibleDefaultEngines;
+    }
     cache.metaData = this._metaData;
     cache.engines = [...this._engines.values()];
 
@@ -1161,29 +1165,59 @@ SearchService.prototype = {
       }
     }
 
-    function notInCacheVisibleEngines(engineName) {
-      return !cache.visibleDefaultEngines.includes(engineName);
-    }
-
     let buildID = Services.appinfo.platformBuildID;
     let rebuildCache =
       gEnvironment.get("RELOAD_ENGINES") ||
       !cache.engines ||
-      cache.version != CACHE_VERSION ||
+      cache.version != this.CACHE_VERSION ||
       cache.locale != Services.locale.requestedLocale ||
-      cache.buildID != buildID ||
-      cache.visibleDefaultEngines.length !=
-        this._visibleDefaultEngines.length ||
-      this._visibleDefaultEngines.some(notInCacheVisibleEngines);
+      cache.buildID != buildID;
 
     let enginesCorrupted = false;
-    if (
-      !rebuildCache &&
-      cache.engines.filter(e => e._isBuiltin).length !=
-        cache.visibleDefaultEngines.length
-    ) {
-      rebuildCache = true;
-      enginesCorrupted = true;
+    if (!rebuildCache) {
+      if (gModernConfig) {
+        const notInCacheEngines = engine => {
+          return !cache.builtInEngineList.find(details => {
+            return (
+              engine.webExtension.id == details.id &&
+              engine.webExtension.locales[0] == details.locale
+            );
+          });
+        };
+
+        rebuildCache =
+          !cache.builtInEngineList ||
+          cache.builtInEngineList.length != engines.length ||
+          engines.some(notInCacheEngines);
+
+        if (
+          !rebuildCache &&
+          cache.engines.filter(e => e._isBuiltin).length !=
+            cache.builtInEngineList.length
+        ) {
+          rebuildCache = true;
+          enginesCorrupted = true;
+        }
+      } else {
+        function notInCacheVisibleEngines(engineName) {
+          return !cache.visibleDefaultEngines.includes(engineName);
+        }
+
+        // Legacy config.
+        rebuildCache =
+          cache.visibleDefaultEngines.length !=
+            this._visibleDefaultEngines.length ||
+          this._visibleDefaultEngines.some(notInCacheVisibleEngines);
+
+        if (
+          !rebuildCache &&
+          cache.engines.filter(e => e._isBuiltin).length !=
+            cache.visibleDefaultEngines.length
+        ) {
+          rebuildCache = true;
+          enginesCorrupted = true;
+        }
+      }
     }
 
     Services.telemetry.scalarSet(
@@ -1229,7 +1263,11 @@ SearchService.prototype = {
           " engines reported by AddonManager startup"
       );
       for (let extension of this._startupExtensions) {
-        await this._installExtensionEngine(extension, [DEFAULT_TAG], true);
+        await this._installExtensionEngine(
+          extension,
+          [SearchUtils.DEFAULT_TAG],
+          true
+        );
       }
     }
 
@@ -1266,7 +1304,11 @@ SearchService.prototype = {
    * @param {boolean} [isReload]
    *   is being called from maybeReloadEngines.
    */
-  async ensureBuiltinExtension(id, locales = [DEFAULT_TAG], isReload = false) {
+  async ensureBuiltinExtension(
+    id,
+    locales = [SearchUtils.DEFAULT_TAG],
+    isReload = false
+  ) {
     SearchUtils.log("ensureBuiltinExtension: " + id);
     try {
       let policy = WebExtensionPolicy.getByID(id);
@@ -1327,11 +1369,11 @@ SearchService.prototype = {
     let [name, locale] = engineName.split(/-(.+)/);
 
     if (!MULTI_LOCALE_ENGINES.includes(name)) {
-      return [engineName, DEFAULT_TAG];
+      return [engineName, SearchUtils.DEFAULT_TAG];
     }
 
     if (!locale) {
-      locale = DEFAULT_TAG;
+      locale = SearchUtils.DEFAULT_TAG;
     }
     return [name, locale];
   },
@@ -1791,7 +1833,7 @@ SearchService.prototype = {
       return "webExtension" in engineInfo &&
         "locales" in engineInfo.webExtension
         ? engineInfo.webExtension.locales[0]
-        : DEFAULT_TAG;
+        : SearchUtils.DEFAULT_TAG;
     }
     this._searchDefault = {
       id: defaultEngine.webExtension.id,
@@ -2504,7 +2546,7 @@ SearchService.prototype = {
       this._startupExtensions.add(extension);
       return [];
     }
-    return this._installExtensionEngine(extension, [DEFAULT_TAG]);
+    return this._installExtensionEngine(extension, [SearchUtils.DEFAULT_TAG]);
   },
 
   /**
@@ -2561,7 +2603,7 @@ SearchService.prototype = {
     let locales =
       "locales" in config.webExtension
         ? config.webExtension.locales
-        : [DEFAULT_TAG];
+        : [SearchUtils.DEFAULT_TAG];
 
     let engines = [];
     for (let locale of locales) {
@@ -2600,7 +2642,7 @@ SearchService.prototype = {
 
     let installLocale = async locale => {
       let manifest =
-        locale === DEFAULT_TAG
+        locale == SearchUtils.DEFAULT_TAG
           ? extension.manifest
           : await extension.getLocalizedManifest(locale);
       return this._addEngineForManifest(
@@ -2628,7 +2670,7 @@ SearchService.prototype = {
   async _addEngineForManifest(
     extension,
     manifest,
-    locale = DEFAULT_TAG,
+    locale = SearchUtils.DEFAULT_TAG,
     initEngine = false,
     isReload
   ) {
@@ -2668,7 +2710,7 @@ SearchService.prototype = {
     }
 
     let shortName = extension.id.split("@")[0];
-    if (locale != DEFAULT_TAG) {
+    if (locale != SearchUtils.DEFAULT_TAG) {
       shortName += "-" + locale;
     }
     if ("telemetryId" in engineParams) {

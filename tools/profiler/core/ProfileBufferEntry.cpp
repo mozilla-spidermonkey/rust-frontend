@@ -343,7 +343,8 @@ JITFrameInfo::JITFrameInfo(const JITFrameInfo& aOther)
 bool UniqueStacks::FrameKey::NormalFrameData::operator==(
     const NormalFrameData& aOther) const {
   return mLocation == aOther.mLocation &&
-         mRelevantForJS == aOther.mRelevantForJS && mLine == aOther.mLine &&
+         mRelevantForJS == aOther.mRelevantForJS &&
+         mInnerWindowID == aOther.mInnerWindowID && mLine == aOther.mLine &&
          mColumn == aOther.mColumn && mCategoryPair == aOther.mCategoryPair;
 }
 
@@ -462,12 +463,13 @@ void UniqueStacks::StreamNonJITFrame(const FrameKey& aFrame) {
   enum Schema : uint32_t {
     LOCATION = 0,
     RELEVANT_FOR_JS = 1,
-    IMPLEMENTATION = 2,
-    OPTIMIZATIONS = 3,
-    LINE = 4,
-    COLUMN = 5,
-    CATEGORY = 6,
-    SUBCATEGORY = 7
+    INNER_WINDOW_ID = 2,
+    IMPLEMENTATION = 3,
+    OPTIMIZATIONS = 4,
+    LINE = 5,
+    COLUMN = 6,
+    CATEGORY = 7,
+    SUBCATEGORY = 8
   };
 
   AutoArraySchemaWriter writer(mFrameTableWriter, *mUniqueStrings);
@@ -475,6 +477,11 @@ void UniqueStacks::StreamNonJITFrame(const FrameKey& aFrame) {
   const NormalFrameData& data = aFrame.mData.as<NormalFrameData>();
   writer.StringElement(LOCATION, data.mLocation.get());
   writer.BoolElement(RELEVANT_FOR_JS, data.mRelevantForJS);
+
+  // It's okay to convert uint64_t to double here because DOM always creates IDs
+  // that are convertible to double.
+  writer.DoubleElement(INNER_WINDOW_ID, data.mInnerWindowID);
+
   if (data.mLine.isSome()) {
     writer.IntElement(LINE, *data.mLine);
   }
@@ -583,18 +590,24 @@ static void StreamJITFrame(JSContext* aContext, SpliceableJSONWriter& aWriter,
   enum Schema : uint32_t {
     LOCATION = 0,
     RELEVANT_FOR_JS = 1,
-    IMPLEMENTATION = 2,
-    OPTIMIZATIONS = 3,
-    LINE = 4,
-    COLUMN = 5,
-    CATEGORY = 6,
-    SUBCATEGORY = 7
+    INNER_WINDOW_ID = 2,
+    IMPLEMENTATION = 3,
+    OPTIMIZATIONS = 4,
+    LINE = 5,
+    COLUMN = 6,
+    CATEGORY = 7,
+    SUBCATEGORY = 8
   };
 
   AutoArraySchemaWriter writer(aWriter, aUniqueStrings);
 
   writer.StringElement(LOCATION, aJITFrame.label());
   writer.BoolElement(RELEVANT_FOR_JS, false);
+
+  // It's okay to convert uint64_t to double here because DOM always creates IDs
+  // that are convertible to double.
+  // Realm ID is the name of innerWindowID inside JS code.
+  writer.DoubleElement(INNER_WINDOW_ID, aJITFrame.realmID());
 
   JS::ProfilingFrameIterator::FrameKind frameKind = aJITFrame.frameKind();
   MOZ_ASSERT(frameKind == JS::ProfilingFrameIterator::Frame_Ion ||
@@ -694,7 +707,7 @@ static void WriteSample(SpliceableJSONWriter& aWriter,
   enum Schema : uint32_t {
     STACK = 0,
     TIME = 1,
-    RESPONSIVENESS = 2,
+    EVENT_DELAY = 2,
   };
 
   AutoArraySchemaWriter writer(aWriter, aUniqueStrings);
@@ -704,7 +717,7 @@ static void WriteSample(SpliceableJSONWriter& aWriter,
   writer.DoubleElement(TIME, aSample.mTime);
 
   if (aSample.mResponsiveness.isSome()) {
-    writer.DoubleElement(RESPONSIVENESS, *aSample.mResponsiveness);
+    writer.DoubleElement(EVENT_DELAY, *aSample.mResponsiveness);
   }
 }
 
@@ -1064,6 +1077,12 @@ void ProfileBuffer::StreamSamplesToJSON(SpliceableJSONWriter& aWriter,
               frameLabel.Append(label);
             }
 
+            uint64_t innerWindowID = 0;
+            if (e.Has() && e.Get().IsInnerWindowID()) {
+              innerWindowID = uint64_t(e.Get().GetUint64());
+              e.Next();
+            }
+
             Maybe<unsigned> line;
             if (e.Has() && e.Get().IsLineNumber()) {
               line = Some(unsigned(e.Get().GetInt()));
@@ -1084,9 +1103,9 @@ void ProfileBuffer::StreamSamplesToJSON(SpliceableJSONWriter& aWriter,
             }
 
             stack = aUniqueStacks.AppendFrame(
-                stack,
-                UniqueStacks::FrameKey(std::move(frameLabel), relevantForJS,
-                                       line, column, categoryPair));
+                stack, UniqueStacks::FrameKey(std::move(frameLabel),
+                                              relevantForJS, innerWindowID,
+                                              line, column, categoryPair));
 
           } else if (e.Get().IsJitReturnAddr()) {
             numFrames++;

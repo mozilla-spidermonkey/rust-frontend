@@ -35,11 +35,13 @@
 //! calling `DrawTarget::to_framebuffer_rect`
 
 use api::{ApiMsg, BlobImageHandler, ColorF, ColorU, MixBlendMode};
-use api::{DocumentId, Epoch, ExternalImageId};
-use api::{ExternalImageType, FontRenderMode, FrameMsg, ImageFormat, PipelineId};
-use api::{ImageRendering, Checkpoint, NotificationRequest};
+use api::{DocumentId, Epoch, ExternalImageHandler, ExternalImageId};
+use api::{ExternalImageSource, ExternalImageType, FontRenderMode, FrameMsg, ImageFormat};
+use api::{PipelineId, ImageRendering, Checkpoint, NotificationRequest, OutputImageHandler};
 use api::{DebugCommand, MemoryReport, VoidPtrToSizeFn};
 use api::{RenderApiSender, RenderNotifier, TextureTarget};
+#[cfg(feature = "replay")]
+use api::ExternalImage;
 use api::channel;
 use api::units::*;
 pub use api::DebugFlags;
@@ -1533,7 +1535,7 @@ impl GpuCacheTexture {
                         DeviceIntSize::new(MAX_VERTEX_TEXTURE_WIDTH as i32, 1),
                     );
 
-                    uploader.upload(rect, 0, None, None, &*row.cpu_blocks);
+                    uploader.upload(rect, 0, None, None, row.cpu_blocks.as_ptr(), row.cpu_blocks.len());
 
                     row.is_dirty = false;
                 }
@@ -1593,25 +1595,29 @@ impl<T> VertexDataTexture<T> {
         debug_assert!(mem::size_of::<T>() % 16 == 0);
         let texels_per_item = mem::size_of::<T>() / 16;
         let items_per_row = MAX_VERTEX_TEXTURE_WIDTH / texels_per_item;
+        debug_assert_ne!(items_per_row, 0);
 
         // Ensure we always end up with a texture when leaving this method.
-        if data.is_empty() {
+        let mut len = data.len();
+        if len == 0 {
             if self.texture.is_some() {
                 return;
             }
-            data.push(unsafe { mem::uninitialized() });
-        }
-
-        // Extend the data array to be a multiple of the row size.
-        // This ensures memory safety when the array is passed to
-        // OpenGL to upload to the GPU.
-        if items_per_row != 0 {
-            while data.len() % items_per_row != 0 {
-                data.push(unsafe { mem::uninitialized() });
+            data.reserve(items_per_row);
+            len = items_per_row;
+        } else {
+            // Extend the data array to have enough capacity to upload at least
+            // a multiple of the row size.  This ensures memory safety when the
+            // array is passed to OpenGL to upload to the GPU.
+            let extra = len % items_per_row;
+            if extra != 0 {
+                let padding = items_per_row - extra;
+                data.reserve(padding);
+                len += padding;
             }
         }
 
-        let needed_height = (data.len() / items_per_row) as i32;
+        let needed_height = (len / items_per_row) as i32;
         let existing_height = self.texture.as_ref().map_or(0, |t| t.get_dimensions().height);
 
         // Create a new texture if needed.
@@ -1655,9 +1661,11 @@ impl<T> VertexDataTexture<T> {
             DeviceIntPoint::zero(),
             DeviceIntSize::new(logical_width, needed_height),
         );
+
+        debug_assert!(len <= data.capacity(), "CPU copy will read out of bounds");
         device
             .upload_texture(self.texture(), &self.pbo, 0)
-            .upload(rect, 0, None, None, data);
+            .upload(rect, 0, None, None, data.as_ptr(), len);
     }
 
     fn deinit(mut self, device: &mut Device) {
@@ -2488,7 +2496,16 @@ impl Renderer {
                                 let device_size = self.device_size;
                                 self.render_impl(device_size).ok();
                             }
-                            self.active_documents[pos].1 = doc;
+
+                            let mut old_doc = mem::replace(
+                                &mut self.active_documents[pos].1,
+                                doc,
+                            );
+
+                            // If the document we are overwriting has any pending
+                            // native surface updates, ensure they are flushed
+                            // before replacing with the new document.
+                            self.update_native_surfaces(&mut old_doc.frame.composite_state);
                         }
                         None => self.active_documents.push((document_id, doc)),
                     }
@@ -3444,12 +3461,14 @@ impl Renderer {
                                 &self.texture_cache_upload_pbo,
                                 0,
                             );
+                            let data = &data[offset as usize ..];
                             uploader.upload(
                                 rect,
                                 layer_index,
                                 stride,
                                 format_override,
-                                &data[offset as usize ..],
+                                data.as_ptr(),
+                                data.len(),
                             )
                         }
                         TextureUpdateSource::External { id, channel_index } => {
@@ -3486,7 +3505,8 @@ impl Renderer {
                                 layer_index,
                                 stride,
                                 format_override,
-                                data,
+                                data.as_ptr(),
+                                data.len()
                             );
                             handler.unlock(id, channel_index);
                             size
@@ -5006,11 +5026,11 @@ impl Renderer {
 
     fn update_native_surfaces(
         &mut self,
-        composite_state: &CompositeState,
+        composite_state: &mut CompositeState,
     ) {
         match self.compositor_config {
             CompositorConfig::Native { ref mut compositor, .. } => {
-                for op in &composite_state.native_surface_updates {
+                for op in composite_state.native_surface_updates.drain(..) {
                     match op.details {
                         NativeSurfaceOperationDetails::CreateSurface { size, is_opaque } => {
                             let _inserted = self.allocated_native_surfaces.insert(op.id);
@@ -5063,7 +5083,7 @@ impl Renderer {
         self.device.disable_stencil();
 
         self.bind_frame_data(frame);
-        self.update_native_surfaces(&frame.composite_state);
+        self.update_native_surfaces(&mut frame.composite_state);
 
         for (_pass_index, pass) in frame.passes.iter_mut().enumerate() {
             #[cfg(not(target_os = "android"))]
@@ -5992,52 +6012,6 @@ impl Renderer {
     }
 }
 
-pub enum ExternalImageSource<'a> {
-    RawData(&'a [u8]),  // raw buffers.
-    NativeTexture(u32), // It's a gl::GLuint texture handle
-    Invalid,
-}
-
-/// The data that an external client should provide about
-/// an external image. The timestamp is used to test if
-/// the renderer should upload new texture data this
-/// frame. For instance, if providing video frames, the
-/// application could call wr.render() whenever a new
-/// video frame is ready. If the callback increments
-/// the returned timestamp for a given image, the renderer
-/// will know to re-upload the image data to the GPU.
-/// Note that the UV coords are supplied in texel-space!
-pub struct ExternalImage<'a> {
-    pub uv: TexelRect,
-    pub source: ExternalImageSource<'a>,
-}
-
-/// The interfaces that an application can implement to support providing
-/// external image buffers.
-/// When the application passes an external image to WR, it should keep that
-/// external image life time. People could check the epoch id in RenderNotifier
-/// at the client side to make sure that the external image is not used by WR.
-/// Then, do the clean up for that external image.
-pub trait ExternalImageHandler {
-    /// Lock the external image. Then, WR could start to read the image content.
-    /// The WR client should not change the image content until the unlock()
-    /// call. Provide ImageRendering for NativeTexture external images.
-    fn lock(&mut self, key: ExternalImageId, channel_index: u8, rendering: ImageRendering) -> ExternalImage;
-    /// Unlock the external image. The WR should not read the image content
-    /// after this call.
-    fn unlock(&mut self, key: ExternalImageId, channel_index: u8);
-}
-
-/// Allows callers to receive a texture with the contents of a specific
-/// pipeline copied to it. Lock should return the native texture handle
-/// and the size of the texture. Unlock will only be called if the lock()
-/// call succeeds, when WR has issued the GL commands to copy the output
-/// to the texture handle.
-pub trait OutputImageHandler {
-    fn lock(&mut self, pipeline_id: PipelineId) -> Option<(u32, FramebufferIntSize)>;
-    fn unlock(&mut self, pipeline_id: PipelineId);
-}
-
 pub trait ThreadListener {
     fn thread_started(&self, thread_name: &str);
     fn thread_stopped(&self, thread_name: &str);
@@ -6347,7 +6321,10 @@ impl ExternalImageHandler for DummyExternalImageHandler {
 }
 
 #[cfg(feature = "replay")]
-impl OutputImageHandler for () {
+struct VoidHandler;
+
+#[cfg(feature = "replay")]
+impl OutputImageHandler for VoidHandler {
     fn lock(&mut self, _: PipelineId) -> Option<(u32, FramebufferIntSize)> {
         None
     }
@@ -6710,7 +6687,7 @@ impl Renderer {
             self.device.end_frame();
         }
 
-        self.output_image_handler = Some(Box::new(()) as Box<_>);
+        self.output_image_handler = Some(Box::new(VoidHandler) as Box<_>);
         self.external_image_handler = Some(Box::new(image_handler) as Box<_>);
         info!("done.");
     }
@@ -6762,7 +6739,7 @@ impl CompositeState {
         // For each tile, update the properties with the native OS compositor,
         // such as position and clip rect. z-order of the tiles are implicit based
         // on the order they are added in this loop.
-        for tile in self.opaque_tiles.iter().chain(self.alpha_tiles.iter()) {
+        for tile in &self.native_tiles {
             // Extract the native surface id. We should only ever encounter native surfaces here!
             let id = match tile.surface {
                 CompositeTileSurface::Texture { surface: ResolvedSurfaceTexture::NativeSurface { id, .. }, .. } => id,

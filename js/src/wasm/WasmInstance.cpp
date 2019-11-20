@@ -135,10 +135,11 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
         args[i].set(JS::CanonicalizedDoubleValue(*(double*)&argv[i]));
         break;
       case ValType::FuncRef:
-      case ValType::AnyRef: {
+        args[i].set(UnboxFuncRef(FuncRef::fromCompiledCode(*(void**)&argv[i])));
+        break;
+      case ValType::AnyRef:
         args[i].set(UnboxAnyRef(AnyRef::fromCompiledCode(*(void**)&argv[i])));
         break;
-      }
       case ValType::Ref:
         MOZ_CRASH("temporarily unsupported Ref type in callImport");
       case ValType::I64:
@@ -194,8 +195,9 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
     return true;
   }
 
-  // Functions with anyref in signature don't have a jit exit at the moment.
-  if (fi.funcType().temporarilyUnsupportedAnyRef()) {
+  // Functions with unsupported reference types in signature don't have a jit
+  // exit at the moment.
+  if (fi.funcType().temporarilyUnsupportedReftypeForExit()) {
     return true;
   }
 
@@ -203,30 +205,43 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
 
   size_t numKnownArgs = std::min(importArgs.length(), importFun->nargs());
   for (uint32_t i = 0; i < numKnownArgs; i++) {
-    TypeSet::Type type = TypeSet::UnknownType();
+    StackTypeSet* argTypes = jitScript->argTypes(sweep, script, i);
     switch (importArgs[i].code()) {
       case ValType::I32:
-        type = TypeSet::Int32Type();
+        if (!argTypes->hasType(TypeSet::Int32Type())) {
+          return true;
+        }
         break;
       case ValType::F32:
-        type = TypeSet::DoubleType();
+        if (!argTypes->hasType(TypeSet::DoubleType())) {
+          return true;
+        }
         break;
       case ValType::F64:
-        type = TypeSet::DoubleType();
+        if (!argTypes->hasType(TypeSet::DoubleType())) {
+          return true;
+        }
+        break;
+      case ValType::AnyRef:
+        // We don't know what type the value will be, so we can't really check
+        // whether the callee will accept it.  It doesn't make much sense to see
+        // if the callee accepts all of the types an AnyRef might represent
+        // because most callees will not have been exposed to all those types
+        // and so we'll never pass the test.  Instead, we must use the callee's
+        // arg-type-checking entry point, and not check anything here.  See
+        // FuncType::jitExitRequiresArgCheck().
+        break;
+      case ValType::FuncRef:
+        // We handle FuncRef as we do AnyRef: by checking the type dynamically
+        // in the callee.  Code in the stubs layer must box up the FuncRef as a
+        // Value.
         break;
       case ValType::Ref:
-      case ValType::FuncRef:
-      case ValType::AnyRef:
         MOZ_CRASH("case guarded above");
       case ValType::I64:
         MOZ_CRASH("NYI");
       case ValType::NullRef:
         MOZ_CRASH("NullRef not expressible");
-    }
-
-    StackTypeSet* argTypes = jitScript->argTypes(sweep, script, i);
-    if (!argTypes->hasType(type)) {
-      return true;
     }
   }
 
@@ -571,6 +586,12 @@ inline int32_t WasmMemoryFill(T memBase, uint32_t memLen, uint32_t byteOffset,
   MOZ_RELEASE_ASSERT(size_t(segIndex) < instance->passiveDataSegments_.length(),
                      "ensured by validation");
 
+  // Zero length inits that are out-of-bounds do not trap, even if the segment
+  // has been dropped.
+  if (len == 0) {
+    return 0;
+  }
+
   if (!instance->passiveDataSegments_[segIndex]) {
     JS_ReportErrorNumberASCII(TlsContext.get(), GetErrorMessage, nullptr,
                               JSMSG_WASM_DROPPED_DATA_SEG);
@@ -596,11 +617,6 @@ inline int32_t WasmMemoryFill(T memBase, uint32_t memLen, uint32_t byteOffset,
   uint64_t srcOffsetLimit = uint64_t(srcOffset) + uint64_t(len);
 
   if (dstOffsetLimit > memLen || srcOffsetLimit > segLen) {
-    // Zero length inits that are out-of-bounds do not trap.
-    if (len == 0) {
-      return 0;
-    }
-
     JS_ReportErrorNumberASCII(TlsContext.get(), GetErrorMessage, nullptr,
                               JSMSG_WASM_OUT_OF_BOUNDS);
     return -1;
@@ -760,6 +776,12 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
   MOZ_RELEASE_ASSERT(size_t(segIndex) < instance->passiveElemSegments_.length(),
                      "ensured by validation");
 
+  // Zero length inits that are out-of-bounds do not trap, even if the segment
+  // has been dropped.
+  if (len == 0) {
+    return 0;
+  }
+
   if (!instance->passiveElemSegments_[segIndex]) {
     JS_ReportErrorNumberASCII(TlsContext.get(), GetErrorMessage, nullptr,
                               JSMSG_WASM_DROPPED_ELEM_SEG);
@@ -784,11 +806,6 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
   uint64_t srcOffsetLimit = uint64_t(srcOffset) + uint64_t(len);
 
   if (dstOffsetLimit > tableLen || srcOffsetLimit > segLen) {
-    // Zero length inits that are out-of-bounds do not trap.
-    if (len == 0) {
-      return 0;
-    }
-
     JS_ReportErrorNumberASCII(TlsContext.get(), GetErrorMessage, nullptr,
                               JSMSG_WASM_OUT_OF_BOUNDS);
     return -1;
@@ -823,14 +840,12 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
     return -1;
   }
 
-  AnyRef ref = AnyRef::fromCompiledCode(value);
-
   switch (table.kind()) {
     case TableKind::AnyRef:
-      table.fillAnyRef(start, len, ref);
+      table.fillAnyRef(start, len, AnyRef::fromCompiledCode(value));
       break;
     case TableKind::FuncRef:
-      table.fillFuncRef(start, len, ref, cx);
+      table.fillFuncRef(start, len, FuncRef::fromCompiledCode(value), cx);
       break;
     case TableKind::AsmJS:
       MOZ_CRASH("not asm.js");
@@ -862,7 +877,7 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
     return AnyRef::invalid().forCompiledCode();
   }
 
-  return AnyRef::fromJSObject(fun).forCompiledCode();
+  return FuncRef::fromJSFunction(fun).forCompiledCode();
 }
 
 /* static */ uint32_t Instance::tableGrow(Instance* instance, void* initValue,
@@ -880,7 +895,8 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
         table.fillAnyRef(oldSize, delta, ref);
         break;
       case TableKind::FuncRef:
-        table.fillFuncRef(oldSize, delta, ref, TlsContext.get());
+        table.fillFuncRef(oldSize, delta, FuncRef::fromAnyRefUnchecked(ref),
+                          TlsContext.get());
         break;
       case TableKind::AsmJS:
         MOZ_CRASH("not asm.js");
@@ -901,14 +917,13 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
     return -1;
   }
 
-  AnyRef ref = AnyRef::fromCompiledCode(value);
-
   switch (table.kind()) {
     case TableKind::AnyRef:
-      table.fillAnyRef(index, 1, ref);
+      table.fillAnyRef(index, 1, AnyRef::fromCompiledCode(value));
       break;
     case TableKind::FuncRef:
-      table.fillFuncRef(index, 1, ref, TlsContext.get());
+      table.fillFuncRef(index, 1, FuncRef::fromCompiledCode(value),
+                        TlsContext.get());
       break;
     case TableKind::AsmJS:
       MOZ_CRASH("not asm.js");
@@ -932,13 +947,18 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
   const MetadataTier& metadataTier = instance->metadata(tier);
   const FuncImportVector& funcImports = metadataTier.funcImports;
 
-  // If this is an import, we need to recover the original wrapper function to
-  // maintain referential equality between a re-exported function and
-  // 'ref.func'. The imported function object is stable across tiers, which is
+  // If this is an import, we need to recover the original function to maintain
+  // reference equality between a re-exported function and 'ref.func'. The
+  // identity of the imported function object is stable across tiers, which is
   // what we want.
+  //
+  // Use the imported function only if it is an exported function, otherwise
+  // fall through to get a (possibly new) exported function.
   if (funcIndex < funcImports.length()) {
     FuncImportTls& import = instance->funcImportTls(funcImports[funcIndex]);
-    return AnyRef::fromJSObject(import.fun).forCompiledCode();
+    if (IsWasmExportedFunction(import.fun)) {
+      return FuncRef::fromJSFunction(import.fun).forCompiledCode();
+    }
   }
 
   RootedFunction fun(cx);
@@ -951,7 +971,7 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
     return AnyRef::invalid().forCompiledCode();
   }
 
-  return AnyRef::fromJSObject(fun).forCompiledCode();
+  return FuncRef::fromJSFunction(fun).forCompiledCode();
 }
 
 /* static */ void Instance::postBarrier(Instance* instance,
@@ -1153,6 +1173,7 @@ Instance::Instance(JSContext* cx, Handle<WasmInstanceObject*> object,
   tlsData()->instance = this;
   tlsData()->realm = realm_;
   tlsData()->cx = cx;
+  tlsData()->valueBoxClass = &WasmValueBox::class_;
   tlsData()->resetInterrupt(cx);
   tlsData()->jumpTable = code_->tieringJumpTable();
   tlsData()->addressOfNeedsIncrementalBarrier =
@@ -1760,7 +1781,7 @@ bool Instance::callExport(JSContext* cx, uint32_t funcIndex, CallArgs args) {
     return true;
   }
 
-  // Note that we're not rooting the return value; we depend on UnboxAnyRef()
+  // Note that we're not rooting the return value; we depend on Unbox*Ref()
   // not allocating for this to be safe.  The constraint has been noted in
   // that function.
   void* retAddr = &exportArgs[0];
@@ -1791,6 +1812,10 @@ bool Instance::callExport(JSContext* cx, uint32_t funcIndex, CallArgs args) {
       case ValType::Ref:
         MOZ_CRASH("temporarily unsupported Ref type in callExport");
       case ValType::FuncRef:
+        args.rval().set(
+            UnboxFuncRef(FuncRef::fromCompiledCode(*(void**)retAddr)));
+        DebugCodegen(DebugChannel::Function, "funcptr(%p)", *(void**)retAddr);
+        break;
       case ValType::AnyRef:
         args.rval().set(
             UnboxAnyRef(AnyRef::fromCompiledCode(*(void**)retAddr)));

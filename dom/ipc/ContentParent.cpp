@@ -151,7 +151,7 @@
 #include "nsICycleCollectorListener.h"
 #include "nsIDocShellTreeOwner.h"
 #include "mozilla/dom/Document.h"
-#include "nsGeolocation.h"
+#include "Geolocation.h"
 #include "nsIDragService.h"
 #include "mozilla/dom/WakeLock.h"
 #include "nsIExternalProtocolService.h"
@@ -234,6 +234,7 @@
 #include "nsStreamUtils.h"
 #include "nsIAsyncInputStream.h"
 #include "xpcpublic.h"
+#include "nsHyphenationManager.h"
 
 #include "mozilla/Sprintf.h"
 
@@ -2723,7 +2724,7 @@ bool ContentParent::InitInternal(ProcessPriority aInitialPriority) {
   // Start up nsPluginHost and run FindPlugins to cache the plugin list.
   // If this isn't our first content process, just send over cached list.
   RefPtr<nsPluginHost> pluginHost = nsPluginHost::GetInst();
-  pluginHost->SendPluginsToContent();
+  pluginHost->SendPluginsToContent(this);
   MaybeEnableRemoteInputEventQueue();
 
   return true;
@@ -5119,6 +5120,18 @@ mozilla::ipc::IPCResult ContentParent::RecvSetupFamilyCharMap(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult ContentParent::RecvGetHyphDict(
+    const mozilla::ipc::URIParams& aURI,
+    mozilla::ipc::SharedMemoryBasic::Handle* aOutHandle, uint32_t* aOutSize) {
+  nsCOMPtr<nsIURI> uri = DeserializeURI(aURI);
+  if (!uri) {
+    return IPC_FAIL_NO_REASON(this);
+  }
+  nsHyphenationManager::Instance()->ShareHyphDictToProcess(
+      uri, Pid(), aOutHandle, aOutSize);
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult ContentParent::RecvGraphicsError(
     const nsCString& aError) {
   gfx::LogForwarder* lf = gfx::Factory::GetLogForwarder();
@@ -5487,7 +5500,10 @@ void ContentParent::EnsurePermissionsByKey(const nsCString& aKey) {
   // by this call to GetPermissionManager, and we've added the key to
   // mActivePermissionKeys, then the permission manager will send down a
   // SendAddPermission before receiving the SendSetPermissionsWithKey message.
-  nsCOMPtr<nsIPermissionManager> permManager = services::GetPermissionManager();
+  RefPtr<nsPermissionManager> permManager = nsPermissionManager::GetInstance();
+  if (!permManager) {
+    return;
+  }
 
   if (mActivePermissionKeys.Contains(aKey)) {
     return;
@@ -5495,12 +5511,9 @@ void ContentParent::EnsurePermissionsByKey(const nsCString& aKey) {
   mActivePermissionKeys.PutEntry(aKey);
 
   nsTArray<IPC::Permission> perms;
-  nsresult rv = permManager->GetPermissionsWithKey(aKey, perms);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return;
+  if (permManager->GetPermissionsWithKey(aKey, perms)) {
+    Unused << SendSetPermissionsWithKey(aKey, perms);
   }
-
-  Unused << SendSetPermissionsWithKey(aKey, perms);
 }
 
 bool ContentParent::NeedsPermissionsUpdate(

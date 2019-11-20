@@ -117,9 +117,6 @@ static inline nsINode* GetFlattenedTreeParentNode(const nsINode* aNode) {
     }
   }
 
-  MOZ_ASSERT(!parentAsContent->IsActiveChildrenElement(),
-             "<xbl:children> isn't in the flattened tree");
-
   // Common case.
   return parent;
 }
@@ -165,45 +162,6 @@ inline bool nsINode::IsEditable() const {
   // Check if the node is in a document and the document is in designMode.
   Document* doc = GetUncomposedDoc();
   return doc && doc->HasFlag(NODE_IS_EDITABLE);
-}
-
-inline bool nsIContent::IsActiveChildrenElement() const {
-  if (!mNodeInfo->Equals(nsGkAtoms::children, kNameSpaceID_XBL)) {
-    return false;
-  }
-
-  nsIContent* bindingParent = GetBindingParent();
-  if (!bindingParent) {
-    return false;
-  }
-
-  // We reuse the binding parent machinery for Shadow DOM too, so prevent that
-  // from getting us confused in this case.
-  return !bindingParent->GetShadowRoot();
-}
-
-inline bool nsIContent::IsInAnonymousSubtree() const {
-  NS_ASSERTION(
-      !IsInNativeAnonymousSubtree() || GetBindingParent() ||
-          (!IsInUncomposedDoc() && static_cast<nsIContent*>(SubtreeRoot())
-                                       ->IsInNativeAnonymousSubtree()),
-      "Must have binding parent when in native anonymous subtree which is in "
-      "document.\n"
-      "Native anonymous subtree which is not in document must have native "
-      "anonymous root.");
-
-  if (IsInNativeAnonymousSubtree()) {
-    return true;
-  }
-
-  nsIContent* bindingParent = GetBindingParent();
-  if (!bindingParent) {
-    return false;
-  }
-
-  // We reuse the binding parent machinery for Shadow DOM too, so prevent that
-  // from getting us confused in this case.
-  return !bindingParent->GetShadowRoot();
 }
 
 inline void nsIContent::HandleInsertionToOrRemovalFromSlot() {

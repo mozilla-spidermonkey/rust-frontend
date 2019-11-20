@@ -23,7 +23,8 @@ class PerftestResultsHandler(object):
     __metaclass__ = ABCMeta
 
     def __init__(self, gecko_profile=False, power_test=False,
-                 cpu_test=False, memory_test=False, app=None, **kwargs):
+                 cpu_test=False, memory_test=False, app=None, with_conditioned_profile=False,
+                 **kwargs):
         self.gecko_profile = gecko_profile
         self.power_test = power_test
         self.cpu_test = cpu_test
@@ -33,10 +34,18 @@ class PerftestResultsHandler(object):
         self.page_timeout_list = []
         self.images = []
         self.supporting_data = None
+        self.browser_version = None
+        self.browser_name = None
+        self.with_conditioned_profile = with_conditioned_profile
 
     @abstractmethod
     def add(self, new_result_json):
         raise NotImplementedError()
+
+    def add_browser_meta(self, browser_name, browser_version):
+        # sets the browser metadata for the perfherder data
+        self.browser_name = browser_name
+        self.browser_version = browser_version
 
     def add_image(self, screenshot, test_name, page_cycle):
         # add to results
@@ -166,12 +175,15 @@ class RaptorResultsHandler(PerftestResultsHandler):
         # add to results
         LOG.info("received results in RaptorResultsHandler.add")
         new_result = RaptorTestResult(new_result_json)
+        if self.with_conditioned_profile:
+            new_result.extra_options.append('condprof')
         self.results.append(new_result)
 
     def summarize_and_output(self, test_config, tests, test_names):
         # summarize the result data, write to file and output PERFHERDER_DATA
         LOG.info("summarizing raptor test results")
         output = RaptorOutput(self.results, self.supporting_data, test_config['subtest_alert_on'])
+        output.set_browser_meta(self.browser_name, self.browser_version)
         output.summarize(test_names)
         # that has each browser cycle separate; need to check if there were multiple browser
         # cycles, and if so need to combine results from all cycles into one overall result
@@ -563,7 +575,7 @@ class BrowsertimeResultsHandler(PerftestResultsHandler):
         output = BrowsertimeOutput(self.results,
                                    self.supporting_data,
                                    test_config['subtest_alert_on'])
-
+        output.set_browser_meta(self.browser_name, self.browser_version)
         output.summarize(test_names)
         success, out_perfdata = output.output(test_names)
 

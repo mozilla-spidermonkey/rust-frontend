@@ -215,6 +215,18 @@ static uint32_t AvailableFeatures() {
 #if !defined(MOZ_TASK_TRACER)
   ProfilerFeature::ClearTaskTracer(features);
 #endif
+#if defined(MOZ_REPLACE_MALLOC) && defined(MOZ_PROFILER_MEMORY)
+  if (getenv("XPCOM_MEM_BLOAT_LOG")) {
+    // The memory hooks are available, but the bloat log is enabled, which is
+    // not compatible with the native allocations tracking. See the comment in
+    // enable_native_allocations() (tools/profiler/core/memory_hooks.cpp) for
+    // more information.
+    ProfilerFeature::ClearNativeAllocations(features);
+  }
+#else
+  // The memory hooks are not available.
+  ProfilerFeature::ClearNativeAllocations(features);
+#endif
   if (!JS::TraceLoggerSupported()) {
     ProfilerFeature::ClearJSTracer(features);
   }
@@ -1491,7 +1503,7 @@ static void MergeStacks(uint32_t aFeatures, bool aIsSynchronous,
         JSScript* script = jsFrame.interpreterScript;
         jsbytecode* pc = jsFrame.interpreterPC();
         js::ProfilingStackFrame stackFrame;
-        stackFrame.initJsFrame("", jsFrame.label, script, pc);
+        stackFrame.initJsFrame("", jsFrame.label, script, pc, jsFrame.realmID);
         aCollector.CollectProfilingStackFrame(stackFrame);
       } else {
         MOZ_ASSERT(jsFrame.kind == JS::ProfilingFrameIterator::Frame_Ion ||
@@ -2047,7 +2059,7 @@ static void StreamMetaJSCustomObject(PSLockRef aLock,
                                      bool aIsShuttingDown) {
   MOZ_RELEASE_ASSERT(CorePS::Exists() && ActivePS::Exists(aLock));
 
-  aWriter.IntProperty("version", 18);
+  aWriter.IntProperty("version", 19);
 
   // The "startTime" field holds the number of milliseconds since midnight
   // January 1, 1970 GMT. This grotty code computes (Now - (Now -
@@ -2253,7 +2265,7 @@ static UniquePtr<ProfileBuffer> CollectJavaThreadProfileData(
         parentFrameWasIdleFrame = false;
       }
 
-      buffer->CollectCodeLocation("", frameNameString.get(), 0, Nothing(),
+      buffer->CollectCodeLocation("", frameNameString.get(), 0, 0, Nothing(),
                                   Nothing(), categoryPair);
     }
     sampleId++;
@@ -2877,7 +2889,7 @@ void SamplerThread::Run() {
                   DoPeriodicSample(lock, *registeredThread, *profiledThreadData,
                                    now, aRegs, samplePos, localProfileBuffer);
 
-                  // For "responsiveness", we want the input delay - but if
+                  // For "eventDelay", we want the input delay - but if
                   // there are no events in the input queue (or even if there
                   // are), we're interested in how long the delay *would* be for
                   // an input event now, which would be the time to finish the
@@ -3054,8 +3066,8 @@ void SamplerThread::Run() {
                   registeredThread->GetRunningEventDelay(
                       aNow, currentEventDelay, currentEventRunning);
 
-                  // Note: a different definition of responsiveness than the
-                  // 16ms event injection.
+                  // Note: eventDelay is a different definition of
+                  // responsiveness than the 16ms event injection.
 
                   // Don't suppress 0's for now; that can be a future
                   // optimization.  We probably want one zero to be stored
@@ -3066,7 +3078,7 @@ void SamplerThread::Run() {
                            currentEventRunning.ToMilliseconds());
                 });
 
-            // If we got responsiveness data, store it before the CompactStack.
+            // If we got eventDelay data, store it before the CompactStack.
             // Note: It is not stored inside the CompactStack so that it doesn't
             // get incorrectly duplicated when the thread is sleeping.
             if (unresponsiveDuration_ms.isSome()) {
@@ -3980,6 +3992,7 @@ static void locked_profiler_start(PSLockRef aLock, PowerOfTwo32 aCapacity,
 #endif
 
   // Set up profiling for each registered thread, if appropriate.
+  Maybe<int> mainThreadId;
   int tid = profiler_current_thread_id();
   const Vector<UniquePtr<RegisteredThread>>& registeredThreads =
       CorePS::RegisteredThreads(aLock);
@@ -4004,6 +4017,9 @@ static void locked_profiler_start(PSLockRef aLock, PowerOfTwo32 aCapacity,
           // order to start profiling JS.
           TriggerPollJSSamplingOnMainThread();
         }
+      }
+      if (info->IsMainThread()) {
+        mainThreadId = Some(info->ThreadId());
       }
       registeredThread->RacyRegisteredThread().ReinitializeOnResume();
       if (registeredThread->GetJSContext()) {
@@ -4034,7 +4050,14 @@ static void locked_profiler_start(PSLockRef aLock, PowerOfTwo32 aCapacity,
 
 #if defined(MOZ_REPLACE_MALLOC) && defined(MOZ_PROFILER_MEMORY)
   if (ActivePS::FeatureNativeAllocations(aLock)) {
-    mozilla::profiler::enable_native_allocations();
+    if (mainThreadId.isSome()) {
+      mozilla::profiler::enable_native_allocations(mainThreadId.value());
+    } else {
+      NS_WARNING(
+          "The nativeallocations feature is turned on, but the main thread is "
+          "not being profiled. The allocations are only stored on the main "
+          "thread.");
+    }
   }
 #endif
 
@@ -4643,14 +4666,18 @@ bool profiler_is_locked_on_current_thread() {
   return gPSMutex.IsLockedOnCurrentThread();
 }
 
-void profiler_add_native_allocation_marker(const int64_t aSize) {
+bool profiler_add_native_allocation_marker(int aMainThreadId, int64_t aSize,
+                                           uintptr_t aMemoryAddress) {
   if (!profiler_can_accept_markers()) {
-    return;
+    return false;
   }
   AUTO_PROFILER_STATS(add_marker_with_NativeAllocationMarkerPayload);
-  profiler_add_marker("Native allocation", JS::ProfilingCategoryPair::OTHER,
-                      NativeAllocationMarkerPayload(TimeStamp::Now(), aSize,
-                                                    profiler_get_backtrace()));
+  profiler_add_marker_for_thread(
+      aMainThreadId, JS::ProfilingCategoryPair::OTHER, "Native allocation",
+      MakeUnique<NativeAllocationMarkerPayload>(
+          TimeStamp::Now(), aSize, aMemoryAddress, profiler_current_thread_id(),
+          profiler_get_backtrace()));
+  return true;
 }
 
 void profiler_add_network_marker(

@@ -934,10 +934,10 @@ void nsRange::DoSetRange(const RangeBoundaryBase<SPT, SRT>& aStartBoundary,
       !aRootNode || (!aStartBoundary.IsSet() && !aEndBoundary.IsSet()) ||
           (aStartBoundary.Container()->IsContent() &&
            aEndBoundary.Container()->IsContent() &&
-           aRootNode == static_cast<nsIContent*>(aStartBoundary.Container())
-                            ->GetBindingParent() &&
-           aRootNode == static_cast<nsIContent*>(aEndBoundary.Container())
-                            ->GetBindingParent()) ||
+           aRootNode ==
+               RangeUtils::ComputeRootNode(aStartBoundary.Container()) &&
+           aRootNode ==
+               RangeUtils::ComputeRootNode(aEndBoundary.Container())) ||
           (!aRootNode->GetParentNode() &&
            (aRootNode->IsDocument() || aRootNode->IsAttr() ||
             aRootNode->IsDocumentFragment() ||
@@ -1273,16 +1273,15 @@ void nsRange::SelectNode(nsINode& aNode, ErrorResult& aRv) {
   // We need to compute the index here unfortunately, because, while we have
   // support for XBL, |container| may be the node's binding parent without
   // actually containing it.
-  if (NS_WARN_IF(index < 0) ||
-      !RangeUtils::IsValidOffset(static_cast<uint32_t>(index)) ||
-      !RangeUtils::IsValidOffset(static_cast<uint32_t>(index) + 1)) {
+  if (NS_WARN_IF(index < 0)) {
     aRv.Throw(NS_ERROR_DOM_INVALID_NODE_TYPE_ERR);
     return;
   }
 
   AutoInvalidateSelection atEndOfBlock(this);
-  DoSetRange(RawRangeBoundary(container, index),
-             RawRangeBoundary(container, index + 1), newRoot);
+  DoSetRange(RawRangeBoundary{container, static_cast<uint32_t>(index)},
+             RawRangeBoundary{container, static_cast<uint32_t>(index + 1)},
+             newRoot);
 }
 
 void nsRange::SelectNodeContentsJS(nsINode& aNode, ErrorResult& aErr) {

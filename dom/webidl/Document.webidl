@@ -377,12 +377,6 @@ partial interface Document {
 
 //  Mozilla extensions of various sorts
 partial interface Document {
-  // XBL support.  Wish we could make these [ChromeOnly], but
-  // that would likely break bindings running with the page principal.
-  [Func="IsChromeOrXBL"]
-  NodeList? getAnonymousNodes(Element elt);
-  [Func="IsChromeOrXBL"]
-  Element? getBindingParent(Node node);
   // Creates a new XUL element regardless of the document's default type.
   [CEReactions, NewObject, Throws, Func="IsChromeOrXBL"]
   Element createXULElement(DOMString localName, optional (ElementCreationOptions or DOMString) options = {});
@@ -632,10 +626,6 @@ partial interface Document {
  * Document extensions to support devtools.
  */
 partial interface Document {
-  // Is the Document embedded in a Responsive Design Mode pane. This property
-  // is not propegated to descendant Documents upon settting.
-  [ChromeOnly]
-  attribute boolean inRDMPane;
   // Extension to give chrome JS the ability to set the window screen
   // orientation while in RDM.
   [ChromeOnly]

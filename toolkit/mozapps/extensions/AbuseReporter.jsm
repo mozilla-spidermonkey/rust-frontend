@@ -23,6 +23,9 @@ const MAX_STRING_LENGTH = 255;
 // Minimum time between report submissions (in ms).
 const MIN_MS_BETWEEN_SUBMITS = 30000;
 
+// The addon types currently supported by the integrated abuse report panel.
+const SUPPORTED_ADDON_TYPES = ["extension", "theme"];
+
 XPCOMUtils.defineLazyModuleGetters(this, {
   AddonManager: "resource://gre/modules/AddonManager.jsm",
   AMTelemetry: "resource://gre/modules/AddonManager.jsm",
@@ -253,12 +256,17 @@ const AbuseReporter = {
     const getAuthorField = fieldName =>
       details.authors && details.authors[0] && details.authors[0][fieldName];
 
+    // Normalize type "statictheme" (which is the type used on the AMO API side)
+    // into "theme" (because it is the type we use and expect on the Firefox side
+    // for this addon type).
+    const addonType = details.type === "statictheme" ? "theme" : details.type;
+
     return {
       id: addonId,
       name: getTranslatedValue(details.name),
       version: details.current_version.version,
       description: getTranslatedValue(details.summary),
-      type: details.type,
+      type: addonType,
       iconURL: details.icon_url,
       homepageURL: getTranslatedValue(details.homepage),
       supportURL: getTranslatedValue(details.support_url),
@@ -417,6 +425,15 @@ const AbuseReporter = {
     const report = await AbuseReporter.createAbuseReport(addonId, {
       reportEntryPoint,
     });
+
+    if (!SUPPORTED_ADDON_TYPES.includes(report.addon.type)) {
+      throw new Error(
+        `Addon type "${
+          report.addon.type
+        }" is not currently supported by the integrated abuse reporting feature`
+      );
+    }
+
     const params = Cc["@mozilla.org/array;1"].createInstance(
       Ci.nsIMutableArray
     );
@@ -471,7 +488,7 @@ const AbuseReporter = {
       // Set the dialog window options (including a reasonable initial
       // window height size, eventually adjusted by the panel once it
       // has been rendered its content).
-      "dialog,centerscreen,alwaysOnTop,height=700",
+      "dialog,centerscreen,height=700",
       params
     );
 

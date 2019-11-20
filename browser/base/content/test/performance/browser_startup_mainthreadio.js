@@ -232,11 +232,6 @@ const startupPhases = {
       stat: 1,
     },
     {
-      path: "XCurProcD:blocklist.xml",
-      condition: WIN,
-      stat: 1,
-    },
-    {
       // bug 1534745
       path: "ProfD:cookies.sqlite-journal",
       condition: !LINUX,
@@ -433,14 +428,14 @@ const startupPhases = {
       path: "ProfD:cert9.db-journal",
       condition: WIN,
       canonicalize: true,
-      stat: 2,
+      stat: 3,
     },
     {
       // bug 1370516 - NSS should be initialized off main thread.
       path: "ProfD:cert9.db-wal",
       condition: WIN,
       canonicalize: true,
-      stat: 2,
+      stat: 3,
     },
     {
       // bug 1370516 - NSS should be initialized off main thread.

@@ -431,7 +431,7 @@ nsWindow::nsWindow() {
 #endif /* MOZ_X11 */
 
 #ifdef MOZ_WAYLAND
-  mNeedsUpdatingEGLSurface = false;
+  mNeedsCompositorResume = false;
   mCompositorInitiallyPaused = false;
 #endif
 
@@ -2176,10 +2176,10 @@ static bool ExtractExposeRegion(LayoutDeviceIntRegion& aRegion, cairo_t* cr) {
 }
 
 #ifdef MOZ_WAYLAND
-void nsWindow::WaylandEGLSurfaceForceRedraw() {
+void nsWindow::MaybeResumeCompositor() {
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
 
-  if (mIsDestroyed || !mNeedsUpdatingEGLSurface) {
+  if (mIsDestroyed || !mNeedsCompositorResume) {
     return;
   }
 
@@ -2187,8 +2187,7 @@ void nsWindow::WaylandEGLSurfaceForceRedraw() {
     MOZ_ASSERT(mCompositorWidgetDelegate);
     if (mCompositorWidgetDelegate) {
       mCompositorInitiallyPaused = false;
-      mNeedsUpdatingEGLSurface = false;
-      mCompositorWidgetDelegate->RequestsUpdatingEGLSurface();
+      mNeedsCompositorResume = false;
       remoteRenderer->SendResumeAsync();
     }
     remoteRenderer->SendForcePresent();
@@ -3788,9 +3787,10 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
         }
       }
 
-      // We have a toplevel window with transparency. Mark it as transparent
-      // now as nsWindow::SetTransparencyMode() can't be called after
-      // nsWindow is created (Bug 1344839).
+      // We have a toplevel window with transparency.
+      // Calls to UpdateTitlebarTransparencyBitmap() from OnExposeEvent()
+      // occur before SetTransparencyMode() receives eTransparencyTransparent
+      // from layout, so set mIsTransparent here.
       if (mWindowType == eWindowType_toplevel &&
           (mHasAlphaVisual || mTransparencyBitmapForTitlebar)) {
         mIsTransparent = true;
@@ -3907,8 +3907,8 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
         mCompositorInitiallyPaused = true;
         RefPtr<nsWindow> self(this);
         moz_container_set_initial_draw_callback(mContainer, [self]() -> void {
-          self->mNeedsUpdatingEGLSurface = true;
-          self->WaylandEGLSurfaceForceRedraw();
+          self->mNeedsCompositorResume = true;
+          self->MaybeResumeCompositor();
         });
       }
 #endif
@@ -4559,8 +4559,17 @@ void nsWindow::SetTransparencyMode(nsTransparencyMode aMode) {
 
   if (mIsTransparent == isTransparent) {
     return;
-  } else if (mWindowType != eWindowType_popup) {
-    NS_WARNING("Cannot set transparency mode on non-popup windows.");
+  }
+  LOG(("nsWindow::SetTransparencyMode [%p] mode %d\n", this, (int)aMode));
+
+  if (mWindowType != eWindowType_popup) {
+    // https://bugzilla.mozilla.org/show_bug.cgi?id=1344839 reported
+    // problems cleaning the layer manager for toplevel windows.
+    // Ignore the request so as to workaround that.
+    // mIsTransparent is set in Create() if transparency may be required.
+    if (isTransparent) {
+      NS_WARNING("Transparent mode not supported on non-popup windows.");
+    }
     return;
   }
 
@@ -4571,9 +4580,12 @@ void nsWindow::SetTransparencyMode(nsTransparencyMode aMode) {
 
   mIsTransparent = isTransparent;
 
-  // Need to clean our LayerManager up while still alive because
-  // we don't want to use layers acceleration on shaped windows
-  CleanLayerManagerRecursive();
+  if (!mHasAlphaVisual) {
+    // The choice of layer manager depends on
+    // GtkCompositorWidgetInitData::Shaped(), which will need to change, so
+    // clean out the old layer manager.
+    CleanLayerManagerRecursive();
+  }
 }
 
 nsTransparencyMode nsWindow::GetTransparencyMode() {
@@ -6598,7 +6610,7 @@ void nsWindow::SetCompositorWidgetDelegate(CompositorWidgetDelegate* delegate) {
                "nsWindow::SetCompositorWidgetDelegate called with a "
                "non-PlatformCompositorWidgetDelegate");
 #ifdef MOZ_WAYLAND
-    WaylandEGLSurfaceForceRedraw();
+    MaybeResumeCompositor();
 #endif
   } else {
     mCompositorWidgetDelegate = nullptr;

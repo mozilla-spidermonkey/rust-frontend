@@ -26,7 +26,7 @@ use gleam::gl;
 
 use webrender::{
     api::*, api::units::*, ApiRecordingReceiver, AsyncPropertySampler, AsyncScreenshotHandle,
-    BinaryRecorder, Compositor, DebugFlags, Device, ExternalImage, ExternalImageHandler, ExternalImageSource,
+    BinaryRecorder, Compositor, DebugFlags, Device,
     NativeSurfaceId, PipelineInfo, ProfilerHooks, RecordedFrameHandle, Renderer, RendererOptions, RendererStats,
     SceneBuilderHooks, ShaderPrecacheFlags, Shaders, ThreadListener, UploadMethod, VertexUsageHint,
     WrShaders, set_profiler_hooks, CompositorConfig, NativeSurfaceInfo
@@ -2006,6 +2006,13 @@ pub extern "C" fn wr_api_capture(
             path = PathBuf::from(storage_path).join(path);
         }
     }
+
+	#[cfg(target_os = "windows")]
+	{
+		if let Some(storage_path) = dirs::data_local_dir() {
+			path = PathBuf::from(storage_path).join(path);
+		}
+	}
 
     // Increment the extension until we find a fresh path
     while path.is_dir() {

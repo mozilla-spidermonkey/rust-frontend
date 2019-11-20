@@ -35,6 +35,7 @@ RefPtr<MediaControlService> MediaControlService::GetService() {
   }
   if (!gMediaControlService) {
     gMediaControlService = new MediaControlService();
+    gMediaControlService->Init();
   }
   RefPtr<MediaControlService> service = gMediaControlService.get();
   return service;
@@ -54,8 +55,13 @@ MediaControlService::MediaControlService() : mAudioFocusManager(this) {
   if (obs) {
     obs->AddObserver(this, "xpcom-shutdown", false);
   }
+}
+
+void MediaControlService::Init() {
   mMediaKeysHandlder = new MediaControlKeysHandler();
-  GetMediaControlKeysManager().AddListener(mMediaKeysHandlder.get());
+  mMediaControlKeysManager = new MediaControlKeysManager();
+  mMediaControlKeysManager->Init();
+  mMediaControlKeysManager->AddListener(mMediaKeysHandlder.get());
 }
 
 MediaControlService::~MediaControlService() {
@@ -84,7 +90,7 @@ void MediaControlService::Shutdown() {
   ShutdownAllControllers();
   mControllers.Clear();
   mAudioFocusManager.Shutdown();
-  GetMediaControlKeysManager().RemoveListener(mMediaKeysHandlder.get());
+  mMediaControlKeysManager->RemoveListener(mMediaKeysHandlder.get());
 }
 
 RefPtr<MediaController> MediaControlService::GetOrCreateControllerById(
@@ -111,6 +117,7 @@ void MediaControlService::AddMediaController(
   mControllerHistory.AppendElement(cId);
   LOG("Add media controller %" PRId64 ", currentNum=%" PRId64, cId,
       GetControllersNum());
+  mMediaControllerAmountChangedEvent.Notify(GetControllersNum());
 }
 
 void MediaControlService::RemoveMediaController(
@@ -123,6 +130,7 @@ void MediaControlService::RemoveMediaController(
   mControllerHistory.RemoveElement(cId);
   LOG("Remove media controller %" PRId64 ", currentNum=%" PRId64, cId,
       GetControllersNum());
+  mMediaControllerAmountChangedEvent.Notify(GetControllersNum());
 }
 
 void MediaControlService::PlayAllControllers() const {

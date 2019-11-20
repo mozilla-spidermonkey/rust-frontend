@@ -133,12 +133,6 @@ var gSyncPane = {
       }
     }
 
-    FxAccounts.config
-      .promiseSignUpURI(this._getEntryPoint())
-      .then(signUpURI => {
-        document.getElementById("noFxaSignUp").setAttribute("href", signUpURI);
-      });
-
     this.updateWeavePrefs();
 
     // Notify observers that the UI is now ready
@@ -300,7 +294,7 @@ var gSyncPane = {
       params.disconnectFun = () => this.disconnectSync();
     }
     gSubDialog.open(
-      "chrome://browser/content/preferences/in-content/syncChooseWhatToSync.xul",
+      "chrome://browser/content/preferences/in-content/syncChooseWhatToSync.xhtml",
       "" /* aFeatures */,
       params /* aParams */,
       event => {
@@ -456,7 +450,9 @@ var gSyncPane = {
   },
 
   async signIn() {
-    const url = await FxAccounts.config.promiseSignInURI(this._getEntryPoint());
+    const url = await FxAccounts.config.promiseConnectAccountURI(
+      this._getEntryPoint()
+    );
     this.replaceTabWithUrl(url);
   },
 
@@ -468,7 +464,7 @@ var gSyncPane = {
     let entryPoint = this._getEntryPoint();
     const url =
       (await FxAccounts.config.promiseForceSigninURI(entryPoint)) ||
-      (await FxAccounts.config.promiseSignInURI(entryPoint));
+      (await FxAccounts.config.promiseConnectAccountURI(entryPoint));
     this.replaceTabWithUrl(url);
   },
 
@@ -562,7 +558,7 @@ var gSyncPane = {
 
   pairAnotherDevice() {
     gSubDialog.open(
-      "chrome://browser/content/preferences/in-content/fxaPairDevice.xul",
+      "chrome://browser/content/preferences/in-content/fxaPairDevice.xhtml",
       "resizable=no" /* aFeatures */,
       null /* aParams */,
       null /* aClosingCallback */

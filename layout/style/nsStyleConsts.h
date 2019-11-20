@@ -674,9 +674,6 @@ enum class StyleWhiteSpace : uint8_t {
 #define NS_STYLE_TEXT_COMBINE_UPRIGHT_ALL 1
 
 // See nsStyleText
-#define NS_STYLE_LINE_HEIGHT_BLOCK_HEIGHT 0
-
-// See nsStyleText
 #define NS_STYLE_UNICODE_BIDI_NORMAL 0x0
 #define NS_STYLE_UNICODE_BIDI_EMBED 0x1
 #define NS_STYLE_UNICODE_BIDI_ISOLATE 0x2
@@ -766,10 +763,12 @@ enum class StyleWhiteSpace : uint8_t {
 #define NS_STYLE_MASK_TYPE_ALPHA 1
 
 // shape-rendering
-#define NS_STYLE_SHAPE_RENDERING_AUTO 0
-#define NS_STYLE_SHAPE_RENDERING_OPTIMIZESPEED 1
-#define NS_STYLE_SHAPE_RENDERING_CRISPEDGES 2
-#define NS_STYLE_SHAPE_RENDERING_GEOMETRICPRECISION 3
+enum class StyleShapeRendering : uint8_t {
+  Auto,
+  Optimizespeed,
+  Crispedges,
+  Geometricprecision,
+};
 
 // stroke-linecap
 #define NS_STYLE_STROKE_LINECAP_BUTT 0
@@ -780,9 +779,6 @@ enum class StyleWhiteSpace : uint8_t {
 #define NS_STYLE_STROKE_LINEJOIN_MITER 0
 #define NS_STYLE_STROKE_LINEJOIN_ROUND 1
 #define NS_STYLE_STROKE_LINEJOIN_BEVEL 2
-
-// stroke-dasharray, stroke-dashoffset, stroke-width
-#define NS_STYLE_STROKE_PROP_CONTEXT_VALUE 0
 
 // text-anchor
 #define NS_STYLE_TEXT_ANCHOR_START 0
@@ -829,10 +825,6 @@ enum class StyleColorAdjust : uint8_t {
 
 #define NS_STYLE_TRANSFORM_STYLE_FLAT 0
 #define NS_STYLE_TRANSFORM_STYLE_PRESERVE_3D 1
-
-// object {fill,stroke}-opacity inherited from context for SVG glyphs
-#define NS_STYLE_CONTEXT_FILL_OPACITY 0
-#define NS_STYLE_CONTEXT_STROKE_OPACITY 1
 
 // blending
 #define NS_STYLE_BLEND_NORMAL 0

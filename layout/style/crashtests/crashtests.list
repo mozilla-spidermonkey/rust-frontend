@@ -19,9 +19,9 @@ load 404470-1.html
 load 411603-1.html
 load 412588-1.html
 load 413274-1.xhtml
-load chrome://reftest/content/crashtests/layout/style/crashtests/416461-1.xul
+load chrome://reftest/content/crashtests/layout/style/crashtests/416461-1.xhtml
 load 418007-1.xhtml
-load chrome://reftest/content/crashtests/layout/style/crashtests/431705-1.xul
+load chrome://reftest/content/crashtests/layout/style/crashtests/431705-1.xhtml
 load 432561-1.html
 load 437170-1.html
 load 437532-1.html
@@ -312,3 +312,4 @@ load 1581579.html
 skip-if(release_or_beta) pref(dom.paintWorklet.enabled,true) pref(dom.worklet.enabled,true) load 1593766.html # bug 1581896
 pref(layout.css.motion-path.enabled,true) load 1594949.html
 pref(layout.css.motion-path.enabled,true) pref(layout.css.individual-transform.enabled,true) load 1594960.html
+load 1586444.html

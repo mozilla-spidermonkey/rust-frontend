@@ -5249,7 +5249,22 @@
           return;
         }
 
-        if (!browser.docShell || event.target != browser.docShell.document) {
+        if (!browser.docShell) {
+          return;
+        }
+        // Ensure `docShell.document` (an nsIWebNavigation idl prop) is there:
+        browser.docShell.QueryInterface(Ci.nsIWebNavigation);
+        if (event.target != browser.docShell.document) {
+          return;
+        }
+
+        // Ignore empty title changes on internal pages. This prevents the title
+        // from changing while Fluent is populating the (initially-empty) title
+        // element.
+        if (
+          !browser.contentTitle &&
+          browser.contentPrincipal.isSystemPrincipal
+        ) {
           return;
         }
 

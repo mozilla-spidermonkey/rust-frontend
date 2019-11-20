@@ -154,10 +154,6 @@ const Element* Gecko_GetMarkerPseudo(const Element* aElement) {
   return nsLayoutUtils::GetMarkerPseudo(aElement);
 }
 
-bool Gecko_IsInAnonymousSubtree(const Element* aElement) {
-  return aElement->IsInAnonymousSubtree();
-}
-
 nsTArray<nsIContent*>* Gecko_GetAnonymousContentForElement(
     const Element* aElement) {
   nsIAnonymousContentCreator* ac = do_QueryFrame(aElement->GetPrimaryFrame());
@@ -1575,10 +1571,6 @@ FontSizePrefs Gecko_GetBaseSize(nsAtom* aLanguage) {
   FontSizePrefs sizes;
   sizes.CopyFrom(prefs);
   return sizes;
-}
-
-const Element* Gecko_GetBindingParent(const Element* aElement) {
-  return aElement->GetBindingParent();
 }
 
 static StaticRefPtr<UACacheReporter> gUACacheReporter;

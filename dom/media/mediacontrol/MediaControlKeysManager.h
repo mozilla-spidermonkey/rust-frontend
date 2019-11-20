@@ -6,32 +6,40 @@
 #define DOM_MEDIA_MEDIACONTROL_MEDIACONTROLKEYSMANAGER_H_
 
 #include "MediaControlKeysEvent.h"
+#include "MediaEventSource.h"
 
 namespace mozilla {
 namespace dom {
 
 /**
- * MediaControlKeysManager is used to manage a source, which can globally
- * receive media control keys event, such as play, pause. It provides methods
- * to add or remove a listener to the source in order to listen media control
- * keys event.
+ * MediaControlKeysManager is a wrapper of MediaControlKeysEventSource, which
+ * is used to manage creating and destroying a real media keys event source.
+ *
+ * It monitors the amount of the media controller in MediaService, and would
+ * create the event source when there is any existing controller and destroy it
+ * when there is no controller.
  */
-class MediaControlKeysManager final {
+class MediaControlKeysManager final : public MediaControlKeysEventSource,
+                                      public MediaControlKeysEventListener {
  public:
-  MediaControlKeysManager();
-  ~MediaControlKeysManager();
+  NS_DECL_ISUPPORTS_INHERITED
+  MediaControlKeysManager() = default;
 
-  // Return false when there is no event source created, so that we are not able
-  // to add or remove listener, otherwise, calling these methods should always
-  // succeed.
-  bool AddListener(MediaControlKeysEventListener* aListener);
-  bool RemoveListener(MediaControlKeysEventListener* aListener);
+  void Init();
+
+  void OnKeyPressed(MediaControlKeysEvent aKeyEvent) override;
+
+  // The callback function for monitoring the media controller amount changed
+  // event.
+  void ControllerAmountChanged(uint64_t aControllerAmount);
 
  private:
+  ~MediaControlKeysManager();
   void StartMonitoringControlKeys();
   void StopMonitoringControlKeys();
   void CreateEventSource();
   RefPtr<MediaControlKeysEventSource> mEventSource;
+  MediaEventListener mControllerAmountChangedListener;
 };
 
 }  // namespace dom

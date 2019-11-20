@@ -75,6 +75,11 @@ pref("security.family_safety.mode", 2);
 
 pref("security.enterprise_roots.enabled", false);
 
+// If true, attempt to load the osclientcerts PKCS#11 module at startup on a
+// background thread. This module allows Firefox to use client certificates
+// stored in OS certificate storage. Currently only available for Windows.
+pref("security.osclientcerts.autoload", false);
+
 // The supported values of this pref are:
 // 0: do not fetch OCSP
 // 1: fetch OCSP for DV and EV certificates
@@ -182,10 +187,10 @@ pref("security.pki.mitm_canary_issuer.enabled", true);
 pref("security.pki.mitm_detected", false);
 
 // Intermediate CA Preloading settings
-#if defined(RELEASE_OR_BETA) || defined(MOZ_WIDGET_ANDROID)
-  pref("security.remote_settings.intermediates.enabled", false);
-#else
+#if defined(MOZ_NEW_CERT_STORAGE) && !defined(MOZ_WIDGET_ANDROID)
   pref("security.remote_settings.intermediates.enabled", true);
+#else
+  pref("security.remote_settings.intermediates.enabled", false);
 #endif
 pref("security.remote_settings.intermediates.bucket", "security-state");
 pref("security.remote_settings.intermediates.collection", "intermediates");
@@ -1971,6 +1976,7 @@ pref("intl.regional_prefs.use_os_locales",  false);
 // for ISO-8859-1
 pref("intl.fallbackCharsetList.ISO-8859-1", "windows-1252");
 pref("font.language.group",                 "chrome://global/locale/intl.properties");
+pref("font.cjk_pref_fallback_order",        "zh-cn,zh-hk,zh-tw,ja,ko");
 
 // Android-specific pref to control if keydown and keyup events are fired even
 // in during composition.  Note that those prefs are ignored if
@@ -2259,6 +2265,15 @@ pref("security.cert_pinning.enforcement_level", 0);
 // for tests.
 pref("security.cert_pinning.process_headers_from_non_builtin_roots", false);
 
+// Controls whether or not HPKP (the HTTP Public Key Pinning header) is enabled.
+// If true, the header is processed and collected HPKP information is consulted
+// when looking for pinning information.
+// If false, the header is not processed and collected HPKP information is not
+// consulted when looking for pinning information. Preloaded pins are not
+// affected by this preference.
+// Default: false
+pref("security.cert_pinning.hpkp.enabled", false);
+
 // If set to true strict checks will happen on the triggering principal for loads.
 // Android is disabled at the moment pending Bug 1504968
 #if !defined(RELEASE_OR_BETA) && !defined(ANDROID)
@@ -2296,6 +2311,8 @@ pref("extensions.blocklist.enabled", true);
 // OneCRL freshness checking depends on this value, so if you change it,
 // please also update security.onecrl.maximum_staleness_in_seconds.
 pref("extensions.blocklist.interval", 86400);
+// Whether to use the XML backend (true) or the remotesettings one (false).
+pref("extensions.blocklist.useXML", false);
 // Required blocklist freshness for OneCRL OCSP bypass
 // (default is 1.25x extensions.blocklist.interval, or 30 hours)
 pref("security.onecrl.maximum_staleness_in_seconds", 108000);

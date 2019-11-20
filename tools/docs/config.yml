@@ -13,11 +13,13 @@ categories:
         - remote
         - services/common/services
         - uriloader
+        - js
     build_doc:
         - mach
         - tools/try
         - build/buildsystem
         - taskcluster
+        - tools/docs
     testing_doc:
         - testing/marionette
         - testing/geckodriver
