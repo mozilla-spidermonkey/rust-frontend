@@ -17,6 +17,7 @@
 
 bool InitScript(JSContext* cx, JS::HandleScript script,
                 JS::HandleFunction functionProto);
-bool Create(JSContext* cx, const uint8_t* bytes, size_t length);
+bool Create(JSContext* cx, const uint8_t* bytes, size_t length,
+            bool* unimplemented);
 
 #endif /* frontend_Frontend2_h */
