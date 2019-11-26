@@ -78,6 +78,8 @@ class MOZ_STACK_CLASS BytecodeCompiler {
  public:
   JSContext* context() const { return cx; }
 
+  const JS::ReadOnlyCompileOptions& getOptions() const { return options; };
+
   ScriptSourceObject* sourceObjectPtr() const { return sourceObject.get(); }
 
  protected:
