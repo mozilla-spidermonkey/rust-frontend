@@ -60,7 +60,7 @@ pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize) -> Jspa
                 ),
                 unimplemented: false,
             },
-        Err(EmitError::Unimplemented(message)) => {
+        Err(EmitError::NotImplemented(message)) => {
             println!("Unimplemented: {}", message);
             JsparagusResult {
                 bytecode: CVec::empty(),
