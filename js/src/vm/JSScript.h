@@ -26,7 +26,6 @@
 
 #include "jstypes.h"
 
-#include "frontend-rs/frontend-rs.h"
 #include "frontend/BinASTRuntimeSupport.h"
 #include "frontend/NameAnalysisTypes.h"
 #include "gc/Barrier.h"
@@ -82,6 +81,7 @@ namespace frontend {
 struct BytecodeEmitter;
 class FunctionBox;
 class ModuleSharedContext;
+class Jsparagus;
 }  // namespace frontend
 
 namespace gc {
@@ -2496,8 +2496,7 @@ class JSScript : public js::BaseScript {
       js::HandleScriptSourceObject sourceObject,
       js::MutableHandle<JS::GCVector<js::Scope*>> scopes);
 
-  friend bool InitScript(JSContext* cx, js::HandleScript script,
-                         const JsparagusResult& jsparagus);
+  friend class js::frontend::Jsparagus;
 
  private:
   JSScript(js::HandleObject functionOrGlobal, uint8_t* stubEntry,
