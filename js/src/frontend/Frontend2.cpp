@@ -6,10 +6,23 @@
 
 #include "frontend/Frontend2.h"
 
-// #include "frontend-rs/frontend-rs.h"
-#include "gc/AllocKind.h"
+#include "mozilla/Span.h"  // mozilla::Span
 
-using JS::RootedScript;
+#include <stddef.h>  // size_t
+#include <stdint.h>  // uint8_t, uint32_t
+
+#include "frontend-rs/frontend-rs.h"  // CVec, JsparagusResult, free_jsparagus, run_jsparagus
+#include "frontend/BytecodeCompilation.h"  // GlobalScriptInfo
+#include "frontend/SourceNotes.h"          // jssrcnote
+#include "gc/Rooting.h"                    // RootedScriptSourceObject
+#include "js/HeapAPI.h"                    // JS::GCCellPtr
+#include "js/RootingAPI.h"                 // JS::Handle
+#include "js/TypeDecls.h"  // Rooted{Script,Value,String,Object}, jsbytecode
+#include "vm/JSAtom.h"     // AtomizeUTF8Chars
+#include "vm/JSScript.h"   // JSScript
+
+#include "vm/JSContext-inl.h"  // AutoKeepAtoms (used by BytecodeCompiler)
+
 using mozilla::Utf8Unit;
 
 using namespace js::gc;
@@ -22,8 +35,13 @@ int roundUp(int numToRound, int multiple) {
   return (numToRound + multiple - 1) & -multiple;
 }
 
-bool InitScript(JSContext* cx, HandleScript script,
-                const JsparagusResult& jsparagus) {
+namespace js {
+
+namespace frontend {
+
+/* static */
+bool Jsparagus::initScript(JSContext* cx, JS::Handle<JSScript*> script,
+                           const JsparagusResult& jsparagus) {
   uint32_t numGCThings = 1;
   if (!JSScript::createPrivateScriptData(cx, script, numGCThings)) {
     return false;
@@ -67,84 +85,79 @@ bool InitScript(JSContext* cx, HandleScript script,
   return script->shareScriptData(cx);
 }
 
-static bool Execute(JSContext* cx, HandleScript script) {
-  RootedValue result(cx);
-  result.setUndefined();
-  if (!JS_ExecuteScript(cx, script, &result)) {
-    return false;
-  }
+// Free given JsparagusResult on leaving scope.
+class AutoFreeJsparagusResult {
+  JsparagusResult* result_;
 
-  if (!result.isUndefined()) {
-    // Print.
-    RootedString str(cx, JS_ValueToSource(cx, result));
-    if (!str) {
-      return false;
+ public:
+  AutoFreeJsparagusResult() = delete;
+
+  AutoFreeJsparagusResult(JsparagusResult* result) : result_(result) {}
+  ~AutoFreeJsparagusResult() {
+    if (result_) {
+      free_jsparagus(*result_);
     }
-
-    UniqueChars utf8chars = JS_EncodeStringToUTF8(cx, str);
-    if (!utf8chars) {
-      return false;
-    }
-    printf("%s\n", utf8chars.get());
   }
-  return true;
-}
+};
 
-bool Create(JSContext* cx, const uint8_t* bytes, size_t length,
-            bool* unimplemented) {
+/* static */
+JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
+                                         JS::SourceText<Utf8Unit>& srcBuf,
+                                         ScriptSourceObject** sourceObjectOut,
+                                         bool* unimplemented) {
+  // FIXME: check info members and return with *unimplemented = true
+  //        if any field doesn't match to run_jsparagus.
+
+  auto bytes = reinterpret_cast<const uint8_t*>(srcBuf.get());
+  size_t length = srcBuf.length();
+
+  JSContext* cx = info.context();
   JsparagusResult jsparagus = run_jsparagus(bytes, length);
-  if (jsparagus.unimplemented) {
-    free_jsparagus(jsparagus);
+  AutoFreeJsparagusResult afjr(&jsparagus);
 
+  if (jsparagus.unimplemented) {
     *unimplemented = true;
-    return true;
+    return nullptr;
   }
 
   *unimplemented = false;
 
-  JS::CompileOptions options(cx);
-  options.setIntroductionType("js shell interactive")
-      .setIsRunOnce(true)
-      .setFileAndLine("typein", 1);
-
   ScriptSource* ss = cx->new_<ScriptSource>();
   if (!ss) {
-    return false;
+    return nullptr;
   }
 
   ScriptSourceHolder ssHolder(ss);  // TODO
 
-  if (!ss->initFromOptions(cx, options, mozilla::Nothing())) {
-    return false;
+  if (!ss->initFromOptions(cx, info.getOptions(), mozilla::Nothing())) {
+    return nullptr;
   }
 
   RootedScriptSourceObject sso(cx, ScriptSourceObject::create(cx, ss));
   if (!sso) {
-    return false;
+    return nullptr;
   }
 
-  if (!ScriptSourceObject::initFromOptions(cx, sso, options)) {
-    return false;
+  if (!ScriptSourceObject::initFromOptions(cx, sso, info.getOptions())) {
+    return nullptr;
   }
 
   RootedObject proto(cx);
   if (!GetFunctionPrototype(cx, GeneratorKind::NotGenerator,
                             FunctionAsyncKind::SyncFunction, &proto)) {
-    return false;
+    return nullptr;
   }
 
-  RootedScript script(cx, JSScript::Create(cx, cx->global(), options, sso, 0,
-                                           length, 0, length));
+  RootedScript script(cx, JSScript::Create(cx, cx->global(), info.getOptions(),
+                                           sso, 0, length, 0, length));
 
-  if (!InitScript(cx, script, jsparagus)) {
-    return false;
+  if (!initScript(cx, script, jsparagus)) {
+    return nullptr;
   }
 
-  if (!Execute(cx, script)) {
-    return false;
-  }
-
-  free_jsparagus(jsparagus);
-
-  return true;
+  return script;
 }
+
+}  // namespace frontend
+
+}  // namespace js

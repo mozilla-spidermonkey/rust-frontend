@@ -7,17 +7,41 @@
 #ifndef frontend_Frontend2_h
 #define frontend_Frontend2_h
 
-#include "js/CompilationAndEvaluation.h"
-#include "js/SourceText.h"
-#include "vm/GlobalObject.h"
-#include "vm/JSAtom.h"
-#include "vm/JSContext.h"
-#include "vm/JSFunction.h"
-#include "vm/JSScript.h"
+#include "mozilla/Utf8.h"  // mozilla::Utf8Unit
 
-bool InitScript(JSContext* cx, JS::HandleScript script,
-                JS::HandleFunction functionProto);
-bool Create(JSContext* cx, const uint8_t* bytes, size_t length,
-            bool* unimplemented);
+#include <stddef.h>  // size_t
+#include <stdint.h>  // uint8_t
+
+#include "js/RootingAPI.h"  // JS::Handle
+#include "js/SourceText.h"  // JS::SourceText
+#include "vm/JSScript.h"    // JSScript
+
+struct JSContext;
+
+struct JsparagusResult;
+
+namespace js {
+
+class ScriptSourceObject;
+
+namespace frontend {
+
+class GlobalScriptInfo;
+
+// This is declarated as a class mostly to solve dependency around `friend`
+// declarations in the simple way.
+class Jsparagus {
+  static bool initScript(JSContext* cx, JS::Handle<JSScript*> script,
+                         const JsparagusResult& jsparagus);
+
+ public:
+  static JSScript* compileGlobalScript(
+      GlobalScriptInfo& info, JS::SourceText<mozilla::Utf8Unit>& srcBuf,
+      ScriptSourceObject** sourceObjectOut, bool* unimplemented);
+};
+
+}  // namespace frontend
+
+}  // namespace js
 
 #endif /* frontend_Frontend2_h */

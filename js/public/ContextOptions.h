@@ -37,7 +37,8 @@ class JS_PUBLIC_API ContextOptions {
         dumpStackOnDebuggeeWouldRun_(false),
         werror_(false),
         strictMode_(false),
-        extraWarnings_(false)
+        extraWarnings_(false),
+        tryRustFrontend_(false)
 #ifdef FUZZING
         ,
         fuzzing_(false)
@@ -173,6 +174,14 @@ class JS_PUBLIC_API ContextOptions {
     return *this;
   }
 
+  // Try compiling Rust frontend first, and fallback to C++ implementation when
+  // it fails.
+  bool tryRustFrontend() const { return tryRustFrontend_; }
+  ContextOptions& setTryRustFrontend(bool flag) {
+    tryRustFrontend_ = flag;
+    return *this;
+  }
+
 #ifdef FUZZING
   bool fuzzing() const { return fuzzing_; }
   ContextOptions& setFuzzing(bool flag) {
@@ -212,6 +221,7 @@ class JS_PUBLIC_API ContextOptions {
   bool werror_ : 1;
   bool strictMode_ : 1;
   bool extraWarnings_ : 1;
+  bool tryRustFrontend_ : 1;
 #ifdef FUZZING
   bool fuzzing_ : 1;
 #endif

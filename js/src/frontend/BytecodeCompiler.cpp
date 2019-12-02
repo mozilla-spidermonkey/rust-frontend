@@ -20,6 +20,7 @@
 #include "frontend/EitherParser.h"
 #include "frontend/ErrorReporter.h"
 #include "frontend/FoldConstants.h"
+#include "frontend/Frontend2.h"  // Jsparagus
 #include "frontend/ModuleSharedContext.h"
 #include "frontend/Parser.h"
 #include "js/SourceText.h"
@@ -227,6 +228,17 @@ JSScript* frontend::CompileGlobalScript(
 JSScript* frontend::CompileGlobalScript(
     GlobalScriptInfo& info, JS::SourceText<Utf8Unit>& srcBuf,
     ScriptSourceObject** sourceObjectOut /* = nullptr */) {
+  if (info.context()->options().tryRustFrontend()) {
+    bool unimplemented = false;
+    auto script = Jsparagus::compileGlobalScript(info, srcBuf, sourceObjectOut,
+                                                 &unimplemented);
+    if (!unimplemented) {
+      return script;
+    }
+
+    fprintf(stderr, "Falling back!\n");
+  }
+
   return CreateGlobalScript(info, srcBuf, sourceObjectOut);
 }
 

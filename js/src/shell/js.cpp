@@ -76,7 +76,6 @@
 #if defined(JS_BUILD_BINAST)
 #  include "frontend/BinASTParser.h"
 #endif  // defined(JS_BUILD_BINAST)
-#include "frontend/Frontend2.h"
 #include "frontend/ModuleSharedContext.h"
 #include "frontend/ParseInfo.h"
 #include "frontend/Parser.h"
@@ -1380,8 +1379,7 @@ static MOZ_MUST_USE bool EvalUtf8AndPrint(JSContext* cx, const char* bytes,
 }
 
 static MOZ_MUST_USE bool ReadEvalPrintLoop(JSContext* cx, FILE* in,
-                                           bool compileOnly,
-                                           bool rustFrontend) {
+                                           bool compileOnly) {
   ShellContext* sc = GetShellContext(cx);
   int lineno = 1;
   bool hitEOF = false;
@@ -1434,25 +1432,10 @@ static MOZ_MUST_USE bool ReadEvalPrintLoop(JSContext* cx, FILE* in,
       break;
     }
 
-    bool unimplemented = false;
-    if (rustFrontend) {
-      AutoReportException are(cx);
-      if (!Create(cx, (const uint8_t*)buffer.begin(), buffer.length(),
-                  &unimplemented)) {
-        return false;
-      }
-
-      if (unimplemented) {
-        fprintf(stderr, "Falling back!\n");
-      }
-    }
-
-    if (!rustFrontend || unimplemented) {
-      // Report exceptions but keep going.
-      AutoReportException are(cx);
-      mozilla::Unused << EvalUtf8AndPrint(cx, buffer.begin(), buffer.length(),
-                                          startline, compileOnly);
-    }
+    // Report exceptions but keep going.
+    AutoReportException are(cx);
+    mozilla::Unused << EvalUtf8AndPrint(cx, buffer.begin(), buffer.length(),
+                                        startline, compileOnly);
 
     // If a let or const fail to initialize they will remain in an unusable
     // without further intervention. This call cleans up the global scope,
@@ -1502,8 +1485,7 @@ static void ReportCantOpenErrorUnknownEncoding(JSContext* cx,
 }
 
 static MOZ_MUST_USE bool Process(JSContext* cx, const char* filename,
-                                 bool forceTTY, FileKind kind,
-                                 bool rustFrontend) {
+                                 bool forceTTY, FileKind kind) {
   FILE* file;
   if (forceTTY || !filename || strcmp(filename, "-") == 0) {
     file = stdin;
@@ -1549,7 +1531,7 @@ static MOZ_MUST_USE bool Process(JSContext* cx, const char* filename,
   } else {
     // It's an interactive filehandle; drop into read-eval-print loop.
     MOZ_ASSERT(kind == FileScript);
-    if (!ReadEvalPrintLoop(cx, file, compileOnly, rustFrontend)) {
+    if (!ReadEvalPrintLoop(cx, file, compileOnly)) {
       return false;
     }
   }
@@ -10172,6 +10154,10 @@ static MOZ_MUST_USE bool ProcessArgs(JSContext* cx, OptionParser* op) {
     JS::ContextOptionsRef(cx).toggleExtraWarnings();
   }
 
+  if (op->getBoolOption("rust-frontend")) {
+    JS::ContextOptionsRef(cx).setTryRustFrontend(true);
+  }
+
   /* |scriptArgs| gets bound on the global before any code is run. */
   if (!BindScriptArgs(cx, op)) {
     return false;
@@ -10189,8 +10175,7 @@ static MOZ_MUST_USE bool ProcessArgs(JSContext* cx, OptionParser* op) {
   if (filePaths.empty() && utf16FilePaths.empty() && codeChunks.empty() &&
       modulePaths.empty() && binASTPaths.empty() &&
       !op->getStringArg("script")) {
-    return Process(cx, nullptr, true, FileScript,
-                   op->getBoolOption("rust-frontend")); /* Interactive. */
+    return Process(cx, nullptr, true, FileScript); /* Interactive. */
   }
 
   if (const char* path = op->getStringOption("module-load-path")) {
@@ -10229,8 +10214,7 @@ static MOZ_MUST_USE bool ProcessArgs(JSContext* cx, OptionParser* op) {
     if (fpArgno < ufpArgno && fpArgno < ccArgno && fpArgno < mpArgno &&
         fpArgno < baArgno) {
       char* path = filePaths.front();
-      if (!Process(cx, path, false, FileScript,
-                   op->getBoolOption("rust-frontend"))) {
+      if (!Process(cx, path, false, FileScript)) {
         return false;
       }
 
@@ -10241,8 +10225,7 @@ static MOZ_MUST_USE bool ProcessArgs(JSContext* cx, OptionParser* op) {
     if (ufpArgno < fpArgno && ufpArgno < ccArgno && ufpArgno < mpArgno &&
         ufpArgno < baArgno) {
       char* path = utf16FilePaths.front();
-      if (!Process(cx, path, false, FileScriptUtf16,
-                   op->getBoolOption("rust-frontend"))) {
+      if (!Process(cx, path, false, FileScriptUtf16)) {
         return false;
       }
 
@@ -10278,8 +10261,7 @@ static MOZ_MUST_USE bool ProcessArgs(JSContext* cx, OptionParser* op) {
     if (baArgno < fpArgno && baArgno < ufpArgno && baArgno < ccArgno &&
         baArgno < mpArgno) {
       char* path = binASTPaths.front();
-      if (!Process(cx, path, false, FileBinAST,
-                   op->getBoolOption("rust-frontend"))) {
+      if (!Process(cx, path, false, FileBinAST)) {
         return false;
       }
 
@@ -10291,8 +10273,7 @@ static MOZ_MUST_USE bool ProcessArgs(JSContext* cx, OptionParser* op) {
                mpArgno < baArgno);
 
     char* path = modulePaths.front();
-    if (!Process(cx, path, false, FileModule,
-                 op->getBoolOption("rust-frontend"))) {
+    if (!Process(cx, path, false, FileModule)) {
       return false;
     }
 
@@ -10305,15 +10286,13 @@ static MOZ_MUST_USE bool ProcessArgs(JSContext* cx, OptionParser* op) {
 
   /* The |script| argument is processed after all options. */
   if (const char* path = op->getStringArg("script")) {
-    if (!Process(cx, path, false, FileScript,
-                 op->getBoolOption("rust-frontend"))) {
+    if (!Process(cx, path, false, FileScript)) {
       return false;
     }
   }
 
   if (op->getBoolOption('i')) {
-    if (!Process(cx, nullptr, true, FileScript,
-                 op->getBoolOption("rust-frontend"))) {
+    if (!Process(cx, nullptr, true, FileScript)) {
       return false;
     }
   }
