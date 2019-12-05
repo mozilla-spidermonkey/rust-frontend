@@ -3,7 +3,7 @@ extern crate parser;
 use ast::types::Program;
 use bumpalo;
 use emitter::{emit, EmitResult, EmitError};
-use parser::parse_script;
+use parser::{parse_module, parse_script};
 use std::{mem, slice, str};
 
 #[repr(C)]
@@ -68,6 +68,27 @@ pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize) -> Jspa
                 unimplemented: true,
             }
         },
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn test_parse_script(text: *const u8, text_len: usize) -> bool {
+    let text = str::from_utf8(slice::from_raw_parts(text, text_len)).expect("Invalid UTF8");
+    let allocator = bumpalo::Bump::new();
+    match parse_script(&allocator, text) {
+        Ok(_) => true,
+        Err(_) => false,
+    }
+}
+
+
+#[no_mangle]
+pub unsafe extern "C" fn test_parse_module(text: *const u8, text_len: usize) -> bool {
+    let text = str::from_utf8(slice::from_raw_parts(text, text_len)).expect("Invalid UTF8");
+    let allocator = bumpalo::Bump::new();
+    match parse_module(&allocator, text) {
+        Ok(_) => true,
+        Err(_) => false,
     }
 }
 
