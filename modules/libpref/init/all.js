@@ -171,6 +171,11 @@ pref("security.cert_pinning.max_max_age_seconds", 5184000);
 // See https://wiki.mozilla.org/CA/Upcoming_Distrust_Actions for more details.
 pref("security.pki.distrust_ca_policy", 2);
 
+// 0: Disable CRLite entirely
+// 1: Enable and check revocations via CRLite, but only collect telemetry
+// 2: Enable and enforce revocations via CRLite
+pref("security.pki.crlite_mode", 1);
+
 // Issuer we use to detect MitM proxies. Set to the issuer of the cert of the
 // Firefox update service. The string format is whatever NSS uses to print a DN.
 // This value is set and cleared automatically.
@@ -431,11 +436,11 @@ pref("media.videocontrols.picture-in-picture.video-toggle.always-show", false);
   pref("media.navigator.video.red_ulpfec_enabled", false);
 
   #ifdef NIGHTLY_BUILD
-    pref("media.peerconnection.sdp.rust.enabled", true);
-    pref("media.peerconnection.sdp.rust.compare", true);
+    pref("media.peerconnection.sdp.parser", "sipcc");
+    pref("media.peerconnection.sdp.alternate_parse_mode", "never");
   #else
-    pref("media.peerconnection.sdp.rust.enabled", false);
-    pref("media.peerconnection.sdp.rust.compare", false);
+    pref("media.peerconnection.sdp.parser", "sipcc");
+    pref("media.peerconnection.sdp.alternate_parse_mode", "never");
   #endif
 
   pref("media.webrtc.debug.trace_mask", 0);
@@ -495,6 +500,7 @@ pref("media.videocontrols.picture-in-picture.video-toggle.always-show", false);
   #else
     pref("media.peerconnection.ice.obfuscate_host_addresses", true);
   #endif
+  pref("media.peerconnection.ice.obfuscate_host_addresses.whitelist", "");
   pref("media.peerconnection.ice.proxy_only_if_behind_proxy", false);
   pref("media.peerconnection.ice.proxy_only", false);
   pref("media.peerconnection.turn.disable", false);
@@ -1161,7 +1167,11 @@ pref("javascript.options.mem.gc_max_empty_chunk_count", 30);
 
 pref("javascript.options.showInConsole", false);
 
+#if defined(NIGHTLY_BUILD)
+pref("javascript.options.shared_memory", true);
+#else
 pref("javascript.options.shared_memory", false);
+#endif
 
 pref("javascript.options.throw_on_debuggee_would_run", false);
 pref("javascript.options.dump_stack_on_debuggee_would_run", false);
@@ -1518,6 +1528,11 @@ pref("network.sts.max_time_for_pr_close_during_shutdown", 5000);
 // This timeout can be disabled by setting this pref to 0.
 // The value is expected in seconds.
 pref("network.sts.pollable_event_timeout", 6);
+
+// Perform all network access on the socket process.
+// The pref requires "network.sts.socket_process.enable" to be true.
+// Changing these prefs requires a restart.
+pref("network.http.network_access_on_socket_process.enabled", false);
 
 // Enable/disable sni encryption.
 pref("network.security.esni.enabled", false);
@@ -2300,9 +2315,9 @@ pref("services.settings.security.onecrl.checked", 0);
 
 pref("extensions.abuseReport.enabled", true);
 // Allow AMO to handoff reports to the Firefox integrated dialog.
-pref("extensions.abuseReport.amWebAPI.enabled", false);
+pref("extensions.abuseReport.amWebAPI.enabled", true);
 // Opened as a sub-frame of the about:addons page when set to false.
-pref("extensions.abuseReport.openDialog", false);
+pref("extensions.abuseReport.openDialog", true);
 pref("extensions.abuseReport.url", "https://services.addons.mozilla.org/api/v4/abuse/report/addon/");
 pref("extensions.abuseReport.amoDetailsURL", "https://services.addons.mozilla.org/api/v4/addons/addon/");
 
@@ -2699,6 +2714,10 @@ pref("browser.tabs.remote.autostart", false);
 // Pref to control whether we use separate content processes for top-level load
 // of file:// URIs.
 pref("browser.tabs.remote.separateFileUriProcess", true);
+
+// Pref to control whether we put all data: uri's in the default
+// web process when running with fission.
+pref("browser.tabs.remote.dataUriInDefaultWebProcess", false);
 
 // Pref that enables top level web content pages that are opened from file://
 // URI pages to run in the file content process.
@@ -3895,6 +3914,7 @@ pref("signon.generation.available",         false);
 pref("signon.generation.enabled",           false);
 pref("signon.privateBrowsingCapture.enabled", false);
 pref("signon.storeWhenAutocompleteOff",     true);
+pref("signon.userInputRequiredToCapture.enabled", false);
 pref("signon.debug",                        false);
 pref("signon.recipes.path",                 "chrome://passwordmgr/content/recipes.json");
 pref("signon.schemeUpgrades",               false);
@@ -3975,6 +3995,12 @@ pref("network.tcp.tcp_fastopen_http_check_for_stalls_only_if_idle_for", 10);
 pref("network.tcp.tcp_fastopen_http_stalls_limit", 3);
 pref("network.tcp.tcp_fastopen_http_stalls_timeout", 20);
 
+// This pref controls if we send the "public-suffix-list-updated" notification
+// from PublicSuffixList.onUpdate() - Doing so would cause the PSL graph to
+// be updated while Firefox is running which may cause principals to have an
+// inconsistent state. See bug 1582647 comment 30
+pref("network.psl.onUpdate_notify", false);
+
 #ifdef MOZ_WIDGET_GTK
   pref("gfx.xrender.enabled",false);
   pref("widget.content.allow-gtk-dark-theme", false);
@@ -3982,6 +4008,7 @@ pref("network.tcp.tcp_fastopen_http_stalls_timeout", 20);
 #endif
 #ifdef MOZ_WAYLAND
   pref("widget.wayland_dmabuf_backend.enabled", false);
+  pref("widget.wayland_vsync.enabled", false);
 #endif
 
 // Timeout for outbound network geolocation provider XHR
@@ -4034,8 +4061,6 @@ pref("extensions.webextensions.enablePerformanceCounters", true);
 // reset, so we reduce memory footprint.
 pref("extensions.webextensions.performanceCountersMaxAge", 5000);
 
-// The HTML about:addons page.
-pref("extensions.htmlaboutaddons.enabled", true);
 // Whether to allow the inline options browser in HTML about:addons page.
 pref("extensions.htmlaboutaddons.inline-options.enabled", true);
 // Show recommendations on the extension and theme list views.
@@ -4432,6 +4457,7 @@ pref("browser.search.suggest.enabled.private", false);
 pref("browser.search.geoSpecificDefaults", false);
 pref("browser.search.geoip.url", "https://location.services.mozilla.com/v1/country?key=%MOZILLA_API_KEY%");
 pref("browser.search.geoip.timeout", 3000);
+pref("browser.search.modernConfig", false);
 pref("browser.search.separatePrivateDefault", false);
 pref("browser.search.separatePrivateDefault.ui.enabled", false);
 
@@ -4661,9 +4687,7 @@ pref("dom.events.testing.asyncClipboard", false);
 // Disable moz* APIs in DataTransfer
 pref("dom.datatransfer.mozAtAPIs", false);
 
-// Bug 1583614: This is on by default for Fission windows, but still
-// causes enough issues to prevent us from turning it on everywhere.
-pref("fission.rebuild_frameloaders_on_remoteness_change", false);
+pref("fission.rebuild_frameloaders_on_remoteness_change", true);
 
 // Support for legacy customizations that rely on checking the
 // user profile directory for these stylesheets:
@@ -4826,13 +4850,19 @@ pref("marionette.prefs.recommended", true);
 // https://bugzil.la/marionette-window-tracking
 pref("marionette.contentListener", false);
 
-// Indicates whether the remote agent is enabled. If it is false, the remote
-// agent will not be loaded.
-pref("remote.enabled", false);
+#if defined(ENABLE_REMOTE_AGENT)
+  // Indicates whether the remote agent is enabled.
+  // If it is false, the remote agent will not be loaded.
+  #if defined(NIGHTLY_BUILD)
+    pref("remote.enabled", true);
+  #else
+    pref("remote.enabled", false);
+  #endif
 
-// Limits remote agent to listen on loopback devices, e.g. 127.0.0.1,
-// localhost, and ::1.
-pref("remote.force-local", true);
+  // Limits remote agent to listen on loopback devices,
+  // e.g. 127.0.0.1, localhost, and ::1.
+  pref("remote.force-local", true);
+#endif
 
 // Defines the verbosity of the internal logger.
 //

@@ -599,6 +599,12 @@ class nsLayoutUtils {
       const nsIFrame* aFixedPosFrame, nsPresContext* aPresContext,
       const ContainerLayerParameters& aContainerParameters);
 
+  static mozilla::SideBits GetSideBitsAndAdjustAnchorForFixedPositionContent(
+      const nsIFrame* aViewportFrame, const nsIFrame* aFixedPosFrame,
+      mozilla::LayerPoint* aAnchor, const Rect* aAnchorRect);
+  static mozilla::SideBits GetSideBitsForFixedPositionContent(
+      const nsIFrame* aFixedPosFrame);
+
   /**
    * Get the scroll id for the root scrollframe of the presshell of the given
    * prescontext. Returns NULL_SCROLL_ID if it couldn't be found.
@@ -1399,10 +1405,16 @@ class nsLayoutUtils {
   static nsIFrame* GetDisplayListParent(nsIFrame* aFrame);
 
   /**
-   * Get a frame's next-in-flow, or, if it doesn't have one, its
+   * Get a frame's previous continuation, or, if it doesn't have one, its
+   * previous block-in-inline-split sibling.
+   */
+  static nsIFrame* GetPrevContinuationOrIBSplitSibling(const nsIFrame* aFrame);
+
+  /**
+   * Get a frame's next continuation, or, if it doesn't have one, its
    * block-in-inline-split sibling.
    */
-  static nsIFrame* GetNextContinuationOrIBSplitSibling(nsIFrame* aFrame);
+  static nsIFrame* GetNextContinuationOrIBSplitSibling(const nsIFrame* aFrame);
 
   /**
    * Get the first frame in the continuation-plus-ib-split-sibling chain
@@ -3160,7 +3172,7 @@ class nsSetAttrRunnable : public mozilla::Runnable {
 
   NS_DECL_NSIRUNNABLE
 
-  RefPtr<Element> mElement;
+  RefPtr<mozilla::dom::Element> mElement;
   RefPtr<nsAtom> mAttrName;
   nsAutoString mValue;
 };
@@ -3171,7 +3183,7 @@ class nsUnsetAttrRunnable : public mozilla::Runnable {
 
   NS_DECL_NSIRUNNABLE
 
-  RefPtr<Element> mElement;
+  RefPtr<mozilla::dom::Element> mElement;
   RefPtr<nsAtom> mAttrName;
 };
 

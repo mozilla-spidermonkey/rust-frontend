@@ -222,7 +222,7 @@ public class GeckoSession implements Parcelable {
         @WrapForJNI(calledFrom = "ui", dispatchTo = "current")
         public native void setMaxToolbarHeight(int height);
 
-        @WrapForJNI(calledFrom = "ui", dispatchTo = "current")
+        @WrapForJNI(calledFrom = "ui", dispatchTo = "gecko")
         public native void setFixedBottomOffset(int offset);
 
         @WrapForJNI(calledFrom = "ui", dispatchTo = "current")
@@ -3595,10 +3595,11 @@ public class GeckoSession implements Parcelable {
          * @param session The GeckoSession that initiated the callback.
          * @param request The {@link LoadRequest} containing the request details.
          *
-         * @return A {@link GeckoResult} with a AllowOrDeny value which indicates whether
+         * @return A {@link GeckoResult} with a {@link AllowOrDeny} value which indicates whether
          *         or not the load was handled. If unhandled, Gecko will continue the
-         *         load as normal. If handled (true value), Gecko will abandon the load.
-         *         A null return value is interpreted as false (unhandled).
+         *         load as normal. If handled (a {@link AllowOrDeny#DENY DENY} value), Gecko
+         *         will abandon the load. A null return value is interpreted as
+         *         {@link AllowOrDeny#ALLOW ALLOW} (unhandled).
          */
         @UiThread
         default @Nullable GeckoResult<AllowOrDeny> onLoadRequest(@NonNull GeckoSession session,
@@ -5377,6 +5378,10 @@ public class GeckoSession implements Parcelable {
 
 
     /* package */ void setFixedBottomOffset(final int offset) {
+        if (mFixedBottomOffset == offset) {
+            return;
+        }
+
         mFixedBottomOffset = offset;
 
         if (mCompositorReady) {

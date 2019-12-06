@@ -101,6 +101,7 @@ class BasePrincipal : public nsJSPrincipals {
                 DocumentDomainConsideration aConsideration);
 
   NS_IMETHOD GetOrigin(nsACString& aOrigin) final;
+  NS_IMETHOD GetAsciiOrigin(nsACString& aOrigin) override;
   NS_IMETHOD GetOriginNoSuffix(nsACString& aOrigin) final;
   NS_IMETHOD Equals(nsIPrincipal* other, bool* _retval) final;
   NS_IMETHOD EqualsConsideringDomain(nsIPrincipal* other, bool* _retval) final;
@@ -124,6 +125,7 @@ class BasePrincipal : public nsJSPrincipals {
                                  JS::MutableHandle<JS::Value> aVal) final;
   NS_IMETHOD GetAsciiSpec(nsACString& aSpec) override;
   NS_IMETHOD GetOriginSuffix(nsACString& aOriginSuffix) final;
+  NS_IMETHOD GetIsOnion(bool* aIsOnion) override;
   NS_IMETHOD GetIsInIsolatedMozBrowserElement(
       bool* aIsInIsolatedMozBrowserElement) final;
   NS_IMETHOD GetUserContextId(uint32_t* aUserContextId) final;
@@ -131,6 +133,7 @@ class BasePrincipal : public nsJSPrincipals {
   NS_IMETHOD GetSiteOrigin(nsACString& aOrigin) override;
   NS_IMETHOD IsThirdPartyURI(nsIURI* uri, bool* aRes) override;
   NS_IMETHOD IsThirdPartyPrincipal(nsIPrincipal* uri, bool* aRes) override;
+  NS_IMETHOD GetIsOriginPotentiallyTrustworthy(bool* aResult) override;
 
   nsresult ToJSON(nsACString& aJSON);
   static already_AddRefed<BasePrincipal> FromJSON(const nsACString& aJSON);
@@ -253,6 +256,17 @@ class BasePrincipal : public nsJSPrincipals {
                   const OriginAttributes& aOriginAttributes);
   void FinishInit(BasePrincipal* aOther,
                   const OriginAttributes& aOriginAttributes);
+
+  // KeyValT holds a principal subtype-specific key value and the associated
+  // parsed value after JSON parsing.
+  template<typename SerializedKey>
+  struct KeyValT
+  {
+    static_assert(sizeof(SerializedKey) == 1, "SerializedKey should be a uint8_t");
+    SerializedKey key;
+    bool valueWasSerialized;
+    nsCString value;
+  };
 
  private:
   static already_AddRefed<BasePrincipal> CreateContentPrincipal(

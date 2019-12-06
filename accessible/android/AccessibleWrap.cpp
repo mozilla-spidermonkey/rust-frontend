@@ -656,6 +656,12 @@ mozilla::java::GeckoBundle::LocalRef AccessibleWrap::ToBundle(
       java::sdk::Integer::ValueOf(parent ? parent->VirtualViewID() : 0));
 
   role role = WrapperRole();
+  if (role == roles::LINK && !(aState & states::LINKED)) {
+    // A link without the linked state (<a> with no href) shouldn't be presented
+    // as a link.
+    role = roles::TEXT;
+  }
+
   uint32_t flags = GetFlags(role, aState, aActionCount);
   GECKOBUNDLE_PUT(nodeInfo, "flags", java::sdk::Integer::ValueOf(flags));
   GECKOBUNDLE_PUT(nodeInfo, "className",
@@ -856,7 +862,7 @@ bool AccessibleWrap::HandleLiveRegionEvent(AccEvent* aEvent) {
     Accessible* atomicAncestor = nullptr;
     for (Accessible* parent = announcementTarget; parent;
          parent = parent->Parent()) {
-      Element* element = parent->Elm();
+      dom::Element* element = parent->Elm();
       if (element &&
           element->AttrValueIs(kNameSpaceID_None, nsGkAtoms::aria_atomic,
                                nsGkAtoms::_true, eCaseMatters)) {

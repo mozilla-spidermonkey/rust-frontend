@@ -69,6 +69,12 @@ nsNetworkLinkService::GetDnsSuffixList(nsTArray<nsCString>& aDnsSuffixList) {
 }
 
 NS_IMETHODIMP
+nsNetworkLinkService::GetPlatformDNSIndications(
+    uint32_t* aPlatformDNSIndications) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
 nsNetworkLinkService::Observe(nsISupports* subject, const char* topic,
                               const char16_t* data) {
   if (!strcmp("xpcom-shutdown-threads", topic)) {
@@ -160,6 +166,14 @@ void nsNetworkLinkService::OnLinkDown() {
 }
 
 void nsNetworkLinkService::OnLinkStatusKnown() { mStatusIsKnown = true; }
+
+void nsNetworkLinkService::OnDnsSuffixListUpdated() {
+  RefPtr<nsNetworkLinkService> self = this;
+  NS_DispatchToMainThread(
+      NS_NewRunnableFunction("nsNetworkLinkService::OnDnsSuffixListUpdated", [self]() {
+        self->NotifyObservers(NS_DNS_SUFFIX_LIST_UPDATED_TOPIC, nullptr);
+      }));
+}
 
 /* Sends the given event. Assumes aTopic/aData never goes out of scope (static
  * strings are ideal).

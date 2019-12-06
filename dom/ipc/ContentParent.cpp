@@ -14,19 +14,15 @@
 #include "BrowserParent.h"
 #include "mozilla/dom/MediaControlService.h"
 
-#if defined(ANDROID) || defined(LINUX)
-#  include <sys/time.h>
-#  include <sys/resource.h>
-#endif
-
 #include "chrome/common/process_watcher.h"
 
-#include "mozilla/a11y/PDocAccessible.h"
+#ifdef ACCESSIBILITY
+#  include "mozilla/a11y/PDocAccessible.h"
+#endif
 #include "GeckoProfiler.h"
 #include "GMPServiceParent.h"
 #include "HandlerServiceParent.h"
 #include "IHistory.h"
-#include "imgIContainer.h"
 #if defined(XP_WIN) && defined(ACCESSIBILITY)
 #  include "mozilla/a11y/AccessibleWrap.h"
 #  include "mozilla/a11y/Compatibility.h"
@@ -162,11 +158,9 @@
 #include "nsIMemoryInfoDumper.h"
 #include "nsIMemoryReporter.h"
 #include "nsIMozBrowserFrame.h"
-#include "nsIMutable.h"
 #include "nsINetworkLinkService.h"
 #include "nsIObserverService.h"
 #include "nsIParentChannel.h"
-#include "nsIRemoteWindowContext.h"
 #include "nsIScriptError.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsISearchService.h"
@@ -175,14 +169,12 @@
 #include "nsISound.h"
 #include "mozilla/mozSpellChecker.h"
 #include "nsIStringBundle.h"
-#include "nsISupportsPrimitives.h"
 #include "nsITimer.h"
 #include "nsIURIFixup.h"
 #include "nsIURL.h"
 #include "nsIDocShellTreeOwner.h"
 #include "nsIAppWindow.h"
 #include "nsIDOMChromeWindow.h"
-#include "nsIWindowWatcher.h"
 #include "nsPIWindowWatcher.h"
 #include "nsThread.h"
 #include "nsWindowWatcher.h"
@@ -222,14 +214,12 @@
 #include "mozilla/psm/PSMContentListener.h"
 #include "nsPluginHost.h"
 #include "nsPluginTags.h"
-#include "nsIBlocklistService.h"
 #include "nsITrackingDBService.h"
+#include "mozilla/GlobalStyleSheetCache.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
 #include "nsICaptivePortalService.h"
-#include "nsIObjectLoadingContent.h"
 #include "nsIBidiKeyboard.h"
-#include "nsLayoutStylesheetCache.h"
 #include "MMPrinter.h"
 #include "nsStreamUtils.h"
 #include "nsIAsyncInputStream.h"
@@ -726,6 +716,11 @@ const nsDependentSubstring RemoteTypePrefix(
 bool IsWebRemoteType(const nsAString& aContentProcessType) {
   return StringBeginsWith(aContentProcessType,
                           NS_LITERAL_STRING(DEFAULT_REMOTE_TYPE));
+}
+
+bool IsWebCoopCoepRemoteType(const nsAString& aContentProcessType) {
+  return StringBeginsWith(aContentProcessType,
+                          NS_LITERAL_STRING(WITH_COOP_COEP_REMOTE_TYPE_PREFIX));
 }
 
 /*static*/
@@ -1360,27 +1355,11 @@ void ContentParent::Init() {
   mScriptableHelper = new ScriptableCPInfo(this);
 }
 
-namespace {
-
-class RemoteWindowContext final : public nsIRemoteWindowContext,
-                                  public nsIInterfaceRequestor {
- public:
-  explicit RemoteWindowContext(BrowserParent* aBrowserParent)
-      : mBrowserParent(aBrowserParent) {}
-
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSIINTERFACEREQUESTOR
-  NS_DECL_NSIREMOTEWINDOWCONTEXT
-
- private:
-  ~RemoteWindowContext();
-  RefPtr<BrowserParent> mBrowserParent;
-};
-
 NS_IMPL_ISUPPORTS(RemoteWindowContext, nsIRemoteWindowContext,
                   nsIInterfaceRequestor)
 
-RemoteWindowContext::~RemoteWindowContext() {}
+RemoteWindowContext::RemoteWindowContext(BrowserParent* aBrowserParent)
+    : mBrowserParent(aBrowserParent) {}
 
 NS_IMETHODIMP
 RemoteWindowContext::GetInterface(const nsIID& aIID, void** aSink) {
@@ -1399,8 +1378,6 @@ RemoteWindowContext::GetUsePrivateBrowsing(bool* aUsePrivateBrowsing) {
   *aUsePrivateBrowsing = loadContext && loadContext->UsePrivateBrowsing();
   return NS_OK;
 }
-
-}  // namespace
 
 void ContentParent::MaybeAsyncSendShutDownMessage() {
   MOZ_ASSERT(NS_IsMainThread());
@@ -1572,32 +1549,6 @@ void ContentParent::OnChannelConnected(int32_t pid) {
   MOZ_ASSERT(NS_IsMainThread());
 
   SetOtherProcessId(pid);
-
-#if defined(ANDROID) || defined(LINUX)
-  // Check nice preference
-  int32_t nice = Preferences::GetInt("dom.ipc.content.nice", 0);
-
-  // Environment variable overrides preference
-  char* relativeNicenessStr = getenv("MOZ_CHILD_PROCESS_RELATIVE_NICENESS");
-  if (relativeNicenessStr) {
-    nice = atoi(relativeNicenessStr);
-  }
-
-  /* make the GUI thread have higher priority on single-cpu devices */
-  nsCOMPtr<nsIPropertyBag2> infoService =
-      do_GetService(NS_SYSTEMINFO_CONTRACTID);
-  if (infoService) {
-    int32_t cpus;
-    nsresult rv =
-        infoService->GetPropertyAsInt32(NS_LITERAL_STRING("cpucount"), &cpus);
-    if (NS_FAILED(rv)) {
-      cpus = 1;
-    }
-    if (nice != 0 && cpus == 1) {
-      setpriority(PRIO_PROCESS, pid, getpriority(PRIO_PROCESS, pid) + nice);
-    }
-  }
-#endif
 }
 
 void ContentParent::ProcessingError(Result aCode, const char* aReason) {
@@ -2483,8 +2434,8 @@ bool ContentParent::InitInternal(ProcessPriority aInitialPriority) {
 
   // Content processes have no permission to access profile directory, so we
   // send the file URL instead.
-  StyleSheet* ucs = nsLayoutStylesheetCache::Singleton()->GetUserContentSheet();
-  if (ucs) {
+  auto* sheetCache = GlobalStyleSheetCache::Singleton();
+  if (StyleSheet* ucs = sheetCache->GetUserContentSheet()) {
     SerializeURI(ucs->GetSheetURI(), xpcomInit.userContentSheetURL());
   } else {
     SerializeURI(nullptr, xpcomInit.userContentSheetURL());
@@ -2514,12 +2465,11 @@ bool ContentParent::InitInternal(ProcessPriority aInitialPriority) {
   screenManager.CopyScreensToRemote(this);
 
   // Send the UA sheet shared memory buffer and the address it is mapped at.
-  auto cache = nsLayoutStylesheetCache::Singleton();
   Maybe<SharedMemoryHandle> sharedUASheetHandle;
-  uintptr_t sharedUASheetAddress = cache->GetSharedMemoryAddress();
+  uintptr_t sharedUASheetAddress = sheetCache->GetSharedMemoryAddress();
 
   SharedMemoryHandle handle;
-  if (cache->ShareToProcess(OtherPid(), &handle)) {
+  if (sheetCache->ShareToProcess(OtherPid(), &handle)) {
     sharedUASheetHandle.emplace(handle);
   } else {
     sharedUASheetAddress = 0;
@@ -3794,35 +3744,25 @@ mozilla::ipc::IPCResult ContentParent::RecvPPresentationConstructor(
   return IPC_OK();
 }
 
-PSpeechSynthesisParent* ContentParent::AllocPSpeechSynthesisParent() {
 #ifdef MOZ_WEBSPEECH
+PSpeechSynthesisParent* ContentParent::AllocPSpeechSynthesisParent() {
   return new mozilla::dom::SpeechSynthesisParent();
-#else
-  return nullptr;
-#endif
 }
 
 bool ContentParent::DeallocPSpeechSynthesisParent(
     PSpeechSynthesisParent* aActor) {
-#ifdef MOZ_WEBSPEECH
   delete aActor;
   return true;
-#else
-  return false;
-#endif
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvPSpeechSynthesisConstructor(
     PSpeechSynthesisParent* aActor) {
-#ifdef MOZ_WEBSPEECH
   if (!static_cast<SpeechSynthesisParent*>(aActor)->SendInit()) {
     return IPC_FAIL_NO_REASON(this);
   }
   return IPC_OK();
-#else
-  return IPC_FAIL_NO_REASON(this);
-#endif
 }
+#endif
 
 mozilla::ipc::IPCResult ContentParent::RecvStartVisitedQueries(
     const nsTArray<URIParams>& aUris) {
@@ -4667,8 +4607,10 @@ PContentPermissionRequestParent*
 ContentParent::AllocPContentPermissionRequestParent(
     const nsTArray<PermissionRequest>& aRequests,
     const IPC::Principal& aPrincipal, const IPC::Principal& aTopLevelPrincipal,
-    const bool& aIsHandlingUserInput, const bool& aDocumentHasUserInput,
-    const DOMTimeStamp& aPageLoadTimestamp, const TabId& aTabId) {
+    const bool& aIsHandlingUserInput,
+    const bool& aMaybeUnsafePermissionDelegate,
+    const bool& aDocumentHasUserInput, const DOMTimeStamp& aPageLoadTimestamp,
+    const TabId& aTabId) {
   ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
   RefPtr<BrowserParent> tp =
       cpm->GetTopLevelBrowserParentByProcessAndTabId(this->ChildID(), aTabId);
@@ -4676,9 +4618,15 @@ ContentParent::AllocPContentPermissionRequestParent(
     return nullptr;
   }
 
+  nsIPrincipal* topPrincipal = aTopLevelPrincipal;
+  if (!topPrincipal) {
+    nsCOMPtr<nsIPrincipal> principal = tp->GetContentPrincipal();
+    topPrincipal = principal;
+  }
   return nsContentPermissionUtils::CreateContentPermissionRequestParent(
-      aRequests, tp->GetOwnerElement(), aPrincipal, aTopLevelPrincipal,
-      aIsHandlingUserInput, aDocumentHasUserInput, aPageLoadTimestamp, aTabId);
+      aRequests, tp->GetOwnerElement(), aPrincipal, topPrincipal,
+      aIsHandlingUserInput, aMaybeUnsafePermissionDelegate,
+      aDocumentHasUserInput, aPageLoadTimestamp, aTabId);
 }
 
 bool ContentParent::DeallocPContentPermissionRequestParent(
@@ -5283,16 +5231,12 @@ mozilla::ipc::IPCResult ContentParent::RecvStoreAndBroadcastBlobURLRegistration(
     return IPC_FAIL_NO_REASON(this);
   }
 
-  if (NS_SUCCEEDED(
-          BlobURLProtocolHandler::AddDataEntry(aURI, aPrincipal, blobImpl))) {
-    BroadcastBlobURLRegistration(aURI, blobImpl, aPrincipal, this);
-
-    // We want to store this blobURL, so we can unregister it if the child
-    // crashes.
-    mBlobURLs.AppendElement(aURI);
-  }
-
+  BlobURLProtocolHandler::AddDataEntry(aURI, aPrincipal, blobImpl);
   BroadcastBlobURLRegistration(aURI, blobImpl, aPrincipal, this);
+  // We want to store this blobURL, so we can unregister it if the child
+  // crashes.
+  mBlobURLs.AppendElement(aURI);
+
   return IPC_OK();
 }
 
@@ -5302,7 +5246,6 @@ ContentParent::RecvUnstoreAndBroadcastBlobURLUnregistration(
   BlobURLProtocolHandler::RemoveDataEntry(aURI, false /* Don't broadcast */);
   BroadcastBlobURLUnregistration(aURI, this);
   mBlobURLs.RemoveElement(aURI);
-
   return IPC_OK();
 }
 
@@ -5332,6 +5275,7 @@ mozilla::ipc::IPCResult ContentParent::RecvA11yHandlerControl(
 bool ContentParent::HandleWindowsMessages(const Message& aMsg) const {
   MOZ_ASSERT(aMsg.is_sync());
 
+#ifdef ACCESSIBILITY
   // a11y messages can be triggered by windows messages, which means if we
   // allow handling windows messages while we wait for the response to a sync
   // a11y message we can reenter the ipc message sending code.
@@ -5339,6 +5283,7 @@ bool ContentParent::HandleWindowsMessages(const Message& aMsg) const {
       a11y::PDocAccessible::PDocAccessibleEnd > aMsg.type()) {
     return false;
   }
+#endif
 
   return true;
 }
@@ -5787,7 +5732,7 @@ mozilla::ipc::IPCResult ContentParent::RecvBHRThreadHang(
     // XXX: We should be able to avoid this potentially expensive copy here by
     // moving our deserialized argument.
     nsCOMPtr<nsIHangDetails> hangDetails =
-        new nsHangDetails(HangDetails(aDetails));
+        new nsHangDetails(HangDetails(aDetails), PersistedToDisk::No);
     obs->NotifyObservers(hangDetails, "bhr-thread-hang", nullptr);
   }
   return IPC_OK();
@@ -6150,6 +6095,19 @@ mozilla::ipc::IPCResult ContentParent::RecvCommitBrowsingContextTransaction(
   aTransaction.Apply(aContext);
   return IPC_OK();
 }
+
+PParentToChildStreamParent* ContentParent::SendPParentToChildStreamConstructor(
+    PParentToChildStreamParent* aActor) {
+  MOZ_ASSERT(NS_IsMainThread());
+  return PContentParent::SendPParentToChildStreamConstructor(aActor);
+}
+
+PFileDescriptorSetParent* ContentParent::SendPFileDescriptorSetConstructor(
+    const FileDescriptor& aFD) {
+  MOZ_ASSERT(NS_IsMainThread());
+  return PContentParent::SendPFileDescriptorSetConstructor(aFD);
+}
+
 }  // namespace dom
 }  // namespace mozilla
 

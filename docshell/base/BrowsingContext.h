@@ -7,6 +7,8 @@
 #ifndef mozilla_dom_BrowsingContext_h
 #define mozilla_dom_BrowsingContext_h
 
+#include "GVAutoplayRequestUtils.h"
+#include "mozilla/LinkedList.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/Tuple.h"
@@ -220,8 +222,10 @@ class BrowsingContext : public nsISupports,
 
   uint64_t Id() const { return mBrowsingContextId; }
 
-  BrowsingContext* GetParent() const { return mParent; }
-
+  BrowsingContext* GetParent() const {
+    MOZ_ASSERT_IF(mParent, mParent->mType == mType);
+    return mParent;
+  }
   BrowsingContext* Top();
 
   already_AddRefed<BrowsingContext> GetOpener() const {
@@ -266,6 +270,20 @@ class BrowsingContext : public nsISupports,
   uint32_t SandboxFlags() { return mSandboxFlags; }
 
   bool InRDMPane() { return mInRDMPane; }
+
+  bool IsLoading();
+
+  // ScreenOrientation related APIs
+  void SetCurrentOrientation(OrientationType aType, float aAngle) {
+    SetCurrentOrientationType(aType);
+    SetCurrentOrientationAngle(aAngle);
+  }
+
+  void SetRDMPaneOrientation(OrientationType aType, float aAngle) {
+    if (mInRDMPane) {
+      SetCurrentOrientation(aType, aAngle);
+    }
+  }
 
   // Using the rules for choosing a browsing context we try to find
   // the browsing context with the given name in the set of
@@ -391,6 +409,8 @@ class BrowsingContext : public nsISupports,
 
   void StartDelayedAutoplayMediaComponents();
 
+  void ResetGVAutoplayRequestStatus();
+
   /**
    * Transaction object. This object is used to specify and then commit
    * modifications to synchronized fields in BrowsingContexts.
@@ -478,6 +498,11 @@ class BrowsingContext : public nsISupports,
   // Performs access control to check that 'this' can access 'aTarget'.
   bool CanAccess(BrowsingContext* aTarget, bool aConsiderOpener = true);
 
+  // The runnable will be called once there is idle time, or the top level
+  // page has been loaded or if a timeout has fired.
+  // Must be called only on the top level BrowsingContext.
+  void AddDeprioritizedLoadRunner(nsIRunnable* aRunner);
+
  protected:
   virtual ~BrowsingContext();
   BrowsingContext(BrowsingContext* aParent, BrowsingContextGroup* aGroup,
@@ -553,6 +578,11 @@ class BrowsingContext : public nsISupports,
 
   void DidSetIsPopupSpam();
 
+  void DidSetGVAudibleAutoplayRequestStatus();
+  void DidSetGVInaudibleAutoplayRequestStatus();
+
+  void DidSetLoading();
+
   // Type of BrowsingContent
   const Type mType;
 
@@ -601,6 +631,28 @@ class BrowsingContext : public nsISupports,
   // The start time of user gesture, this is only available if the browsing
   // context is in process.
   TimeStamp mUserGestureStart;
+
+  class DeprioritizedLoadRunner
+      : public mozilla::Runnable,
+        public mozilla::LinkedListElement<DeprioritizedLoadRunner> {
+   public:
+    explicit DeprioritizedLoadRunner(nsIRunnable* aInner)
+        : Runnable("DeprioritizedLoadRunner"), mInner(aInner) {}
+
+    NS_IMETHOD Run() override {
+      if (mInner) {
+        RefPtr<nsIRunnable> inner = std::move(mInner);
+        inner->Run();
+      }
+
+      return NS_OK;
+    }
+
+   private:
+    RefPtr<nsIRunnable> mInner;
+  };
+
+  mozilla::LinkedList<DeprioritizedLoadRunner> mDeprioritizedLoadRunner;
 };
 
 /**

@@ -33,9 +33,6 @@ user_pref("browser.contentHandlers.types.5.uri", "http://test1.example.org/rss?u
 user_pref("browser.download.panel.shown", true);
 user_pref("browser.newtabpage.activity-stream.default.sites", "");
 user_pref("browser.newtabpage.activity-stream.telemetry", false);
-// Make sure PingCentre doesn't hit the network.
-user_pref("browser.ping-centre.production.endpoint", "");
-user_pref("browser.ping-centre.staging.endpoint", "");
 // Point the url-classifier to the local testing server for fast failures
 user_pref("browser.safebrowsing.downloads.remote.url", "http://{server}/safebrowsing-dummy/update");
 user_pref("browser.safebrowsing.provider.google.gethashURL", "http://{server}/safebrowsing-dummy/gethash");
@@ -110,7 +107,6 @@ user_pref("extensions.defaultProviders.enabled", true);
 user_pref("extensions.getAddons.cache.enabled", false);
 // Make sure AddonRepository won't hit the network
 user_pref("extensions.getAddons.get.url", "http://{server}/extensions-dummy/repositoryGetURL");
-user_pref("extensions.getAddons.compatOverides.url", "http://{server}/extensions-dummy/repositoryCompatOverridesURL");
 user_pref("extensions.getAddons.search.browseURL", "http://{server}/extensions-dummy/repositoryBrowseURL");
 user_pref("extensions.hotfix.url", "http://{server}/extensions-dummy/hotfixURL");
 // Disable intalling any distribution add-ons

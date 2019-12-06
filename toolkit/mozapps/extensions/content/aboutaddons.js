@@ -84,6 +84,21 @@ XPCOMUtils.defineLazyPreferenceGetter(
 const PLUGIN_ICON_URL = "chrome://global/skin/plugins/pluginGeneric.svg";
 const EXTENSION_ICON_URL =
   "chrome://mozapps/skin/extensions/extensionGeneric.svg";
+const BUILTIN_THEME_PREVIEWS = new Map([
+  [
+    "default-theme@mozilla.org",
+    "chrome://mozapps/content/extensions/default-theme.svg",
+  ],
+  [
+    "firefox-compact-light@mozilla.org",
+    "chrome://mozapps/content/extensions/firefox-compact-light.svg",
+  ],
+  [
+    "firefox-compact-dark@mozilla.org",
+    "chrome://mozapps/content/extensions/firefox-compact-dark.svg",
+  ],
+]);
+
 const PERMISSION_MASKS = {
   "ask-to-activate": AddonManager.PERM_CAN_ASK_TO_ACTIVATE,
   enable: AddonManager.PERM_CAN_ENABLE,
@@ -106,6 +121,13 @@ const PRIVATE_BROWSING_PERMS = {
   permissions: [PRIVATE_BROWSING_PERM_NAME],
   origins: [],
 };
+
+function shouldSkipAnimations() {
+  return (
+    document.body.hasAttribute("skip-animations") ||
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
 
 const AddonCardListenerHandler = {
   ADDON_EVENTS: new Set([
@@ -419,6 +441,10 @@ function nl2br(text) {
  *          The URL of the best fitting screenshot, if any.
  */
 function getScreenshotUrlForAddon(addon) {
+  if (BUILTIN_THEME_PREVIEWS.has(addon.id)) {
+    return BUILTIN_THEME_PREVIEWS.get(addon.id);
+  }
+
   let { screenshots } = addon;
   if (!screenshots || !screenshots.length) {
     return null;
@@ -651,14 +677,8 @@ class PanelList extends HTMLElement {
     let openingEvent = this.triggeringEvent;
     this.triggeringEvent = triggeringEvent;
     this.open = false;
-    // Since the previously focused element (which is inside the panel) is now
-    // hidden, move the focus back to the element that opened the panel if it
-    // was opened with the keyboard.
-    if (
-      openingEvent &&
-      openingEvent.target &&
-      openingEvent.mozInputSource === MouseEvent.MOZ_SOURCE_KEYBOARD
-    ) {
+    // Refocus the button that opened the menu if we have one.
+    if (openingEvent && openingEvent.target) {
       openingEvent.target.focus();
     }
   }
@@ -919,8 +939,6 @@ class PanelList extends HTMLElement {
   }
 
   async onShow() {
-    let { triggeringEvent } = this;
-
     this.sendEvent("showing");
     this.addHideListeners();
     await this.setAlign();
@@ -928,14 +946,9 @@ class PanelList extends HTMLElement {
     // Wait until the next paint for the alignment to be set and panel to be
     // visible.
     requestAnimationFrame(() => {
-      // Focus the first visible panel-item if we were opened with the keyboard.
-      if (
-        triggeringEvent &&
-        triggeringEvent.mozInputSource === MouseEvent.MOZ_SOURCE_KEYBOARD
-      ) {
-        this.focusWalker.currentNode = this;
-        this.focusWalker.nextNode();
-      }
+      // Focus the first focusable panel-item.
+      this.focusWalker.currentNode = this;
+      this.focusWalker.nextNode();
 
       this.sendEvent("shown");
     });
@@ -1257,6 +1270,9 @@ class AddonPageHeader extends HTMLElement {
       this.heading = this.querySelector(".header-name");
       this.searchLabel = this.querySelector(".search-label");
       this.backButton = this.querySelector(".back-button");
+      this.pageOptionsMenuButton = this.querySelector(
+        '[action="page-options"]'
+      );
       // The addon-page-options element is outside of this element since this is
       // position: sticky and that would break the positioning of the menu.
       this.pageOptionsMenu = document.getElementById(
@@ -1264,10 +1280,16 @@ class AddonPageHeader extends HTMLElement {
       );
     }
     this.addEventListener("click", this);
+    // Use capture since the event is actually triggered on the internal
+    // panel-list and it doesn't bubble.
+    this.pageOptionsMenu.addEventListener("shown", this, true);
+    this.pageOptionsMenu.addEventListener("hidden", this, true);
   }
 
   disconnectedCallback() {
     this.removeEventListener("click", this);
+    this.pageOptionsMenu.removeEventListener("shown", this, true);
+    this.pageOptionsMenu.removeEventListener("hidden", this, true);
   }
 
   setViewInfo({ type, param }) {
@@ -1283,20 +1305,16 @@ class AddonPageHeader extends HTMLElement {
       document.l10n.setAttributes(this.heading, `${viewType}-heading`);
     }
 
-    if (
-      viewType === "extension" ||
-      viewType === "theme" ||
-      viewType === "shortcuts"
-    ) {
-      let labelType = viewType === "shortcuts" ? "extension" : viewType;
-      document.l10n.setAttributes(
-        this.searchLabel,
-        `${labelType}-heading-search-label`
-      );
-    } else {
-      this.searchLabel.removeAttribute("data-l10n-id");
-      this.searchLabel.textContent = "";
-    }
+    let customSearchLabelTypes = {
+      shortcuts: "extension",
+      extension: "extension",
+      theme: "theme",
+    };
+    let searchLabelType = customSearchLabelTypes[viewType] || "default";
+    document.l10n.setAttributes(
+      this.searchLabel,
+      `${searchLabelType}-heading-search-label`
+    );
   }
 
   handleEvent(e) {
@@ -1310,6 +1328,11 @@ class AddonPageHeader extends HTMLElement {
           this.pageOptionsMenu.toggle(e);
           break;
       }
+    } else if (e.type == "shown" || e.type == "hidden") {
+      this.pageOptionsMenuButton.setAttribute(
+        "aria-expanded",
+        this.pageOptionsMenu.open
+      );
     }
   }
 }
@@ -1335,7 +1358,7 @@ class AddonUpdatesMessage extends HTMLElement {
     this.button = document.createElement("button");
     this.button.addEventListener("click", e => {
       if (e.button === 0) {
-        loadViewFn("updates/available", e);
+        loadViewFn("updates/available");
       }
     });
     this.button.hidden = true;
@@ -1386,6 +1409,10 @@ class AddonPageOptions extends HTMLElement {
     return this.panel.toggle(...args);
   }
 
+  get open() {
+    return this.panel.open;
+  }
+
   render() {
     this.appendChild(importTemplate("addon-page-options"));
     this.panel = this.querySelector("panel-list");
@@ -1416,7 +1443,7 @@ class AddonPageOptions extends HTMLElement {
         await this.checkForUpdates();
         break;
       case "view-recent-updates":
-        loadViewFn("updates/recent", e);
+        loadViewFn("updates/recent");
         break;
       case "install-from-file":
         if (XPINSTALL_ENABLED) {
@@ -1440,7 +1467,7 @@ class AddonPageOptions extends HTMLElement {
         await this.resetAutomaticUpdates();
         break;
       case "manage-shortcuts":
-        loadViewFn("shortcuts/shortcuts", e);
+        loadViewFn("shortcuts/shortcuts");
         break;
     }
   }
@@ -1620,12 +1647,6 @@ class AddonOptions extends HTMLElement {
       case "report":
         el.hidden = !isAbuseReportSupported(addon);
         break;
-      case "toggle-disabled": {
-        let toggleDisabledAction = addon.userDisabled ? "enable" : "disable";
-        document.l10n.setAttributes(el, `${toggleDisabledAction}-addon-button`);
-        el.hidden = !hasPermission(addon, toggleDisabledAction);
-        break;
-      }
       case "install-update":
         el.hidden = !updateInstall;
         break;
@@ -2417,6 +2438,8 @@ class AddonCard extends HTMLElement {
       switch (action) {
         case "toggle-disabled":
           this.recordActionEvent(addon.userDisabled ? "enable" : "disable");
+          // Keep the checked state the same until the add-on's state changes.
+          e.target.checked = !addon.userDisabled;
           if (addon.userDisabled) {
             if (shouldShowPermissionsPrompt(addon)) {
               await showPermissionsPrompt(addon);
@@ -2425,10 +2448,6 @@ class AddonCard extends HTMLElement {
             }
           } else {
             await addon.disable();
-          }
-          if (e.mozInputSource == MouseEvent.MOZ_SOURCE_KEYBOARD) {
-            // Refocus the open menu button so it's clear where the focus is.
-            this.querySelector('[action="more-options"]').focus();
           }
           break;
         case "ask-to-activate":
@@ -2485,7 +2504,7 @@ class AddonCard extends HTMLElement {
             openOptionsInTab(addon.optionsURL);
           } else if (getOptionsType(addon) == "inline") {
             this.recordActionEvent("preferences", "inline");
-            loadViewFn(`detail/${this.addon.id}/preferences`, e);
+            loadViewFn(`detail/${this.addon.id}/preferences`);
           }
           break;
         case "remove":
@@ -2512,7 +2531,7 @@ class AddonCard extends HTMLElement {
           }
           break;
         case "expand":
-          loadViewFn(`detail/${this.addon.id}`, e);
+          loadViewFn(`detail/${this.addon.id}`);
           break;
         case "more-options":
           // Open panel on click from the keyboard.
@@ -2538,7 +2557,7 @@ class AddonCard extends HTMLElement {
             !this.expanded &&
             (e.target === this.addonNameEl || !e.target.closest("a"))
           ) {
-            loadViewFn(`detail/${this.addon.id}`, e);
+            loadViewFn(`detail/${this.addon.id}`);
           } else if (
             e.target.localName == "a" &&
             e.target.getAttribute("data-telemetry-name")
@@ -2678,25 +2697,25 @@ class AddonCard extends HTMLElement {
 
     card.setAttribute("active", addon.isActive);
 
-    // Update the icon.
-    let icon;
-    if (addon.type == "plugin") {
-      icon = PLUGIN_ICON_URL;
-    } else {
-      icon =
-        AddonManager.getPreferredIconURL(addon, 32, window) ||
-        EXTENSION_ICON_URL;
-    }
-    card.querySelector(".addon-icon").src = icon;
-
-    // Update the theme preview.
+    // Set the icon or theme preview.
+    let iconEl = card.querySelector(".addon-icon");
     let preview = card.querySelector(".card-heading-image");
-    preview.hidden = true;
     if (addon.type == "theme") {
+      iconEl.hidden = true;
       let screenshotUrl = getScreenshotUrlForAddon(addon);
       if (screenshotUrl) {
         preview.src = screenshotUrl;
-        preview.hidden = false;
+      }
+      preview.hidden = !screenshotUrl;
+    } else {
+      preview.hidden = true;
+      iconEl.hidden = false;
+      if (addon.type == "plugin") {
+        iconEl.src = PLUGIN_ICON_URL;
+      } else {
+        iconEl.src =
+          AddonManager.getPreferredIconURL(addon, 32, window) ||
+          EXTENSION_ICON_URL;
       }
     }
 
@@ -2711,6 +2730,20 @@ class AddonCard extends HTMLElement {
       });
     }
     name.title = `${addon.name} ${addon.version}`;
+
+    let toggleDisabledButton = card.querySelector('[action="toggle-disabled"]');
+    if (toggleDisabledButton) {
+      let toggleDisabledAction = addon.userDisabled ? "enable" : "disable";
+      toggleDisabledButton.hidden = !hasPermission(addon, toggleDisabledAction);
+      if (addon.type === "theme") {
+        document.l10n.setAttributes(
+          toggleDisabledButton,
+          `${toggleDisabledAction}-addon-button`
+        );
+      } else if (addon.type === "extension") {
+        toggleDisabledButton.checked = !addon.userDisabled;
+      }
+    }
 
     // Set the items in the more options menu.
     this.options.update(this, addon, this.updateInstall);
@@ -2805,6 +2838,14 @@ class AddonCard extends HTMLElement {
 
     this.card = importTemplate("card").firstElementChild;
 
+    // Remove the toggle-disabled button(s) based on type.
+    if (addon.type != "theme") {
+      this.card.querySelector(".theme-enable-button").remove();
+    }
+    if (addon.type != "extension") {
+      this.card.querySelector(".extension-enable-button").remove();
+    }
+
     let nameContainer = this.card.querySelector(".addon-name-container");
     let headingLevel = this.expanded ? "h1" : "h3";
     let nameHeading = document.createElement(headingLevel);
@@ -2823,7 +2864,7 @@ class AddonCard extends HTMLElement {
     let panelType = addon.type == "plugin" ? "plugin-options" : "addon-options";
     this.options = document.createElement(panelType);
     this.options.render();
-    this.card.querySelector(".more-options-menu").appendChild(this.options);
+    this.card.appendChild(this.options);
     this.optionsButton = this.card.querySelector(".more-options-button");
 
     // Set the contents.
@@ -2844,7 +2885,7 @@ class AddonCard extends HTMLElement {
 
     this.appendChild(this.card);
 
-    if (this.expanded && this.keyboardNavigation) {
+    if (this.expanded) {
       requestAnimationFrame(() => this.optionsButton.focus());
     }
 
@@ -2896,7 +2937,6 @@ class RecommendedAddonCard extends HTMLElement {
     let heading = card.querySelector(".addon-name-container");
     heading.textContent = "";
     heading.append(importTemplate("addon-name-container-in-disco-card"));
-    card.querySelector(".more-options-menu").remove();
 
     this.setCardContent(card, addon);
     if (addon.type != "theme") {
@@ -2935,13 +2975,14 @@ class RecommendedAddonCard extends HTMLElement {
 
     // Set the theme preview.
     let preview = card.querySelector(".card-heading-image");
-    preview.hidden = true;
     if (addon.type == "theme") {
       let screenshotUrl = getScreenshotUrlForAddon(addon);
       if (screenshotUrl) {
         preview.src = screenshotUrl;
         preview.hidden = false;
       }
+    } else {
+      preview.hidden = true;
     }
 
     // Set the name.
@@ -3022,7 +3063,7 @@ class RecommendedAddonCard extends HTMLElement {
           action: "manage",
           addon: this.discoAddon,
         });
-        loadViewFn(`detail/${this.addonId}`, event);
+        loadViewFn(`detail/${this.addonId}`);
         break;
       default:
         if (event.target.matches(".disco-addon-author a[href]")) {
@@ -3089,6 +3130,8 @@ class AddonList extends HTMLElement {
     super();
     this.sections = [];
     this.pendingUninstallAddons = new Set();
+    this._addonsToUpdate = new Set();
+    this._userFocusListenersAdded = false;
   }
 
   async connectedCallback() {
@@ -3281,9 +3324,7 @@ class AddonList extends HTMLElement {
       return;
     }
 
-    let insertSection = this.sections.findIndex(({ filterFn }) =>
-      filterFn(addon)
-    );
+    let insertSection = this._addonSectionIndex(addon);
 
     // Don't add the add-on if it doesn't go in a section.
     if (insertSection == -1) {
@@ -3312,24 +3353,144 @@ class AddonList extends HTMLElement {
   }
 
   updateAddon(addon) {
+    if (!this.getCard(addon)) {
+      // Try to add the add-on right away.
+      this.addAddon(addon);
+    } else if (this._addonSectionIndex(addon) == -1) {
+      // Try to remove the add-on right away.
+      this._updateAddon(addon);
+    } else if (this.isUserFocused) {
+      // Queue up a change for when the focus is cleared.
+      this.updateLater(addon);
+    } else {
+      // Not currently focused, make the change now.
+      this.withCardAnimation(() => this._updateAddon(addon));
+    }
+  }
+
+  updateLater(addon) {
+    this._addonsToUpdate.add(addon);
+    this._addUserFocusListeners();
+  }
+
+  _addUserFocusListeners() {
+    if (this._userFocusListenersAdded) {
+      return;
+    }
+
+    this._userFocusListenersAdded = true;
+    this.addEventListener("mouseleave", this);
+    this.addEventListener("hidden", this, true);
+    this.addEventListener("focusout", this);
+  }
+
+  _removeUserFocusListeners() {
+    if (!this._userFocusListenersAdded) {
+      return;
+    }
+
+    this.removeEventListener("mouseleave", this);
+    this.removeEventListener("hidden", this, true);
+    this.removeEventListener("focusout", this);
+    this._userFocusListenersAdded = false;
+  }
+
+  get hasMenuOpen() {
+    return !!this.querySelector("panel-list[open]");
+  }
+
+  get isUserFocused() {
+    return this.matches(":hover, :focus-within") || this.hasMenuOpen;
+  }
+
+  update() {
+    if (this._addonsToUpdate.size) {
+      this.withCardAnimation(() => {
+        for (let addon of this._addonsToUpdate) {
+          this._updateAddon(addon);
+        }
+        this._addonsToUpdate = new Set();
+      });
+    }
+  }
+
+  _getChildCoords() {
+    let results = new Map();
+    for (let child of this.querySelectorAll("addon-card")) {
+      results.set(child, child.getBoundingClientRect());
+    }
+    return results;
+  }
+
+  withCardAnimation(changeFn) {
+    if (shouldSkipAnimations()) {
+      changeFn();
+      return;
+    }
+
+    let origChildCoords = this._getChildCoords();
+
+    changeFn();
+
+    let newChildCoords = this._getChildCoords();
+    let cards = this.querySelectorAll("addon-card");
+    let transitionCards = [];
+    for (let card of cards) {
+      let orig = origChildCoords.get(card);
+      let moved = newChildCoords.get(card);
+      let changeY = moved.y - (orig || moved).y;
+      let cardEl = card.firstElementChild;
+
+      if (changeY != 0) {
+        cardEl.style.transform = `translateY(${changeY * -1}px)`;
+        transitionCards.push(card);
+      }
+    }
+    requestAnimationFrame(() => {
+      for (let card of transitionCards) {
+        card.firstElementChild.style.transition = "transform 125ms";
+      }
+
+      requestAnimationFrame(() => {
+        for (let card of transitionCards) {
+          let cardEl = card.firstElementChild;
+          cardEl.style.transform = "";
+          cardEl.addEventListener("transitionend", function handler(e) {
+            if (e.target == cardEl && e.propertyName == "transform") {
+              cardEl.style.transition = "";
+              cardEl.removeEventListener("transitionend", handler);
+            }
+          });
+        }
+      });
+    });
+  }
+
+  _addonSectionIndex(addon) {
+    return this.sections.findIndex(s => s.filterFn(addon));
+  }
+
+  _updateAddon(addon) {
     let card = this.getCard(addon);
     if (card) {
-      let sectionIndex = this.sections.findIndex(s => s.filterFn(addon));
+      let sectionIndex = this._addonSectionIndex(addon);
       if (sectionIndex != -1) {
         // Move the card, if needed. This will allow an animation between
         // page sections and provides clearer events for testing.
         if (card.parentNode.getAttribute("section") != sectionIndex) {
+          let { activeElement } = document;
+          let refocus = card.contains(activeElement);
           let oldSection = card.parentNode;
           this.insertCardInto(card, sectionIndex);
           this.updateSectionIfEmpty(oldSection);
+          if (refocus) {
+            activeElement.focus();
+          }
           this.sendEvent("move", { id: addon.id });
         }
       } else {
         this.removeAddon(addon);
       }
-    } else {
-      // Add the add-on, this will do nothing if it shouldn't be in the list.
-      this.addAddon(addon);
     }
   }
 
@@ -3427,6 +3588,13 @@ class AddonList extends HTMLElement {
     this.pendingUninstallAddons.delete(addon);
     this.removePendingUninstallBar(addon);
     this.removeAddon(addon);
+  }
+
+  handleEvent(e) {
+    if (!this.isUserFocused || (e.type == "mouseleave" && !this.hasMenuOpen)) {
+      this._removeUserFocusListeners();
+      this.update();
+    }
   }
 }
 customElements.define("addon-list", AddonList);
@@ -3783,12 +3951,11 @@ class ListView {
 }
 
 class DetailView {
-  constructor({ isKeyboardNavigation, param, root }) {
+  constructor({ param, root }) {
     let [id, selectedTab] = param.split("/");
     this.id = id;
     this.selectedTab = selectedTab;
     this.root = root;
-    this.isKeyboardNavigation = isKeyboardNavigation;
   }
 
   async render() {
@@ -3809,7 +3976,6 @@ class DetailView {
 
     card.setAddon(addon);
     card.expand();
-    card.keyboardNavigation = this.isKeyboardNavigation;
     await card.render();
     if (
       this.selectedTab === "preferences" &&
@@ -3951,7 +4117,7 @@ function initialize(opts) {
  * resolve once the view has been updated to conform with other about:addons
  * views.
  */
-async function show(type, param, { isKeyboardNavigation, historyEntryId }) {
+async function show(type, param, { historyEntryId }) {
   let container = document.createElement("div");
   container.setAttribute("current-view", type);
   addonPageHeader.setViewInfo({ type, param });
@@ -3959,7 +4125,6 @@ async function show(type, param, { isKeyboardNavigation, historyEntryId }) {
     await new ListView({ param, root: container }).render();
   } else if (type == "detail") {
     await new DetailView({
-      isKeyboardNavigation,
       param,
       root: container,
     }).render();

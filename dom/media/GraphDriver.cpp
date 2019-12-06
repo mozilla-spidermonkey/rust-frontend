@@ -455,10 +455,11 @@ TrackAndPromiseForOperation::TrackAndPromiseForOperation(
       mFlags(aFlags) {}
 
 AudioCallbackDriver::AudioCallbackDriver(MediaTrackGraphImpl* aGraphImpl,
+                                         uint32_t aOutputChannelCount,
                                          uint32_t aInputChannelCount,
                                          AudioInputType aAudioInputType)
     : GraphDriver(aGraphImpl),
-      mOutputChannels(0),
+      mOutputChannels(aOutputChannelCount),
       mSampleRate(0),
       mInputChannelCount(aInputChannelCount),
       mIterationDurationMS(MEDIA_GRAPH_TARGET_PERIOD_MS),
@@ -555,8 +556,6 @@ bool AudioCallbackDriver::Init() {
     output.format = CUBEB_SAMPLE_FLOAT32NE;
   }
 
-  // Query and set the number of channels this AudioCallbackDriver will use.
-  mOutputChannels = GraphImpl()->AudioOutputChannelCount();
   if (!mOutputChannels) {
     LOG(LogLevel::Warning, ("Output number of channels is 0."));
     MonitorAutoLock lock(GraphImpl()->GetMonitor());
@@ -581,7 +580,10 @@ bool AudioCallbackDriver::Init() {
       SpillBuffer<AudioDataValue, WEBAUDIO_BLOCK_SIZE * 2>(mOutputChannels);
 
   output.channels = mOutputChannels;
-  output.layout = CUBEB_LAYOUT_UNDEFINED;
+  AudioConfig::ChannelLayout::ChannelMap channelMap =
+      AudioConfig::ChannelLayout(mOutputChannels).Map();
+
+  output.layout = static_cast<uint32_t>(channelMap);
   output.prefs = CubebUtils::GetDefaultStreamPrefs();
 #if !defined(XP_WIN)
   if (mInputDevicePreference == CUBEB_DEVICE_PREF_VOICE) {

@@ -30,7 +30,6 @@
 #include "mozilla/Move.h"
 #include "mozilla/NullPrincipal.h"
 #include "mozilla/dom/BindingUtils.h"
-#include "mozilla/dom/DOMStringList.h"
 #include "mozilla/dom/File.h"
 #include "mozilla/dom/FileBlobImpl.h"
 #include "mozilla/dom/IDBMutableFileBinding.h"
@@ -47,11 +46,14 @@
 #include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "mozilla/SystemGroup.h"
 #include "nsCOMPtr.h"
+#include "nsIXPConnect.h"
 #include "nsQueryObject.h"
 #include "nsStreamUtils.h"
 #include "nsStringStream.h"
 #include "ProfilerHelpers.h"
 #include "ReportInternalError.h"
+
+#include <numeric>
 
 // Include this last to avoid path problems on Windows.
 #include "ActorsChild.h"
@@ -1492,12 +1494,13 @@ already_AddRefed<IDBRequest> IDBObjectStore::AddOrPut(
   MOZ_ASSERT(aCx);
   MOZ_ASSERT_IF(aFromCursor, aOverwrite);
 
-  if (mTransaction->GetMode() == IDBTransaction::CLEANUP || mDeletedSpec) {
+  if (mTransaction->GetMode() == IDBTransaction::Mode::Cleanup ||
+      mDeletedSpec) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_NOT_ALLOWED_ERR);
     return nullptr;
   }
 
-  if (!mTransaction->IsOpen()) {
+  if (!mTransaction->CanAcceptRequests()) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR);
     return nullptr;
   }
@@ -1511,12 +1514,17 @@ already_AddRefed<IDBRequest> IDBObjectStore::AddOrPut(
   StructuredCloneWriteInfo cloneWriteInfo(mTransaction->Database());
   nsTArray<IndexUpdateInfo> updateInfo;
 
-  GetAddInfo(aCx, aValueWrapper, aKey, cloneWriteInfo, key, updateInfo, aRv);
+  {
+    const auto autoStateRestore =
+        mTransaction->TemporarilyTransitionToInactive();
+    GetAddInfo(aCx, aValueWrapper, aKey, cloneWriteInfo, key, updateInfo, aRv);
+  }
+
   if (aRv.Failed()) {
     return nullptr;
   }
 
-  if (!mTransaction->IsOpen()) {
+  if (!mTransaction->CanAcceptRequests()) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR);
     return nullptr;
   }
@@ -1531,11 +1539,12 @@ already_AddRefed<IDBRequest> IDBObjectStore::AddOrPut(
   MOZ_ASSERT(maximalSizeFromPref > kMaxIDBMsgOverhead);
   const size_t kMaxMessageSize = maximalSizeFromPref - kMaxIDBMsgOverhead;
 
-  size_t indexUpdateInfoSize = 0;
-  for (size_t i = 0; i < updateInfo.Length(); i++) {
-    indexUpdateInfoSize += updateInfo[i].value().GetBuffer().Length();
-    indexUpdateInfoSize += updateInfo[i].localizedValue().GetBuffer().Length();
-  }
+  const size_t indexUpdateInfoSize =
+      std::accumulate(updateInfo.cbegin(), updateInfo.cend(), 0u,
+                      [](size_t old, const IndexUpdateInfo& updateInfo) {
+                        return old + updateInfo.value().GetBuffer().Length() +
+                               updateInfo.localizedValue().GetBuffer().Length();
+                      });
 
   const size_t messageSize = cloneWriteInfo.mCloneBuffer.data().Size() +
                              key.GetBuffer().Length() + indexUpdateInfoSize;
@@ -1685,7 +1694,7 @@ already_AddRefed<IDBRequest> IDBObjectStore::GetAllInternal(
     return nullptr;
   }
 
-  if (!mTransaction->IsOpen()) {
+  if (!mTransaction->CanAcceptRequests()) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR);
     return nullptr;
   }
@@ -1756,7 +1765,7 @@ already_AddRefed<IDBRequest> IDBObjectStore::Clear(JSContext* aCx,
     return nullptr;
   }
 
-  if (!mTransaction->IsOpen()) {
+  if (!mTransaction->CanAcceptRequests()) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR);
     return nullptr;
   }
@@ -1789,48 +1798,43 @@ already_AddRefed<IDBIndex> IDBObjectStore::Index(const nsAString& aName,
                                                  ErrorResult& aRv) {
   AssertIsOnOwningThread();
 
-  if (mTransaction->IsCommittingOrDone() || mDeletedSpec) {
+  if (mTransaction->IsCommittingOrFinished() || mDeletedSpec) {
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return nullptr;
   }
 
-  const nsTArray<IndexMetadata>& indexes = mSpec->indexes();
+  const nsTArray<IndexMetadata>& indexMetadatas = mSpec->indexes();
 
-  const IndexMetadata* metadata = nullptr;
+  const auto endIndexMetadatas = indexMetadatas.cend();
+  const auto foundMetadata =
+      std::find_if(indexMetadatas.cbegin(), endIndexMetadatas,
+                   [&aName](const auto& indexMetadata) {
+                     return indexMetadata.name() == aName;
+                   });
 
-  for (uint32_t idxCount = indexes.Length(), idxIndex = 0; idxIndex < idxCount;
-       idxIndex++) {
-    const IndexMetadata& index = indexes[idxIndex];
-    if (index.name() == aName) {
-      metadata = &index;
-      break;
-    }
-  }
-
-  if (!metadata) {
+  if (foundMetadata == endIndexMetadatas) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_NOT_FOUND_ERR);
     return nullptr;
   }
 
-  const int64_t desiredId = metadata->id();
+  const IndexMetadata& metadata = *foundMetadata;
+
+  const auto endIndexes = mIndexes.cend();
+  const auto foundIndex =
+      std::find_if(mIndexes.cbegin(), endIndexes,
+                   [desiredId = metadata.id()](const auto& index) {
+                     return index->Id() == desiredId;
+                   });
 
   RefPtr<IDBIndex> index;
 
-  for (uint32_t idxCount = mIndexes.Length(), idxIndex = 0; idxIndex < idxCount;
-       idxIndex++) {
-    RefPtr<IDBIndex>& existingIndex = mIndexes[idxIndex];
-
-    if (existingIndex->Id() == desiredId) {
-      index = existingIndex;
-      break;
-    }
-  }
-
-  if (!index) {
-    index = IDBIndex::Create(this, *metadata);
+  if (foundIndex == endIndexes) {
+    index = IDBIndex::Create(this, metadata);
     MOZ_ASSERT(index);
 
     mIndexes.AppendElement(index);
+  } else {
+    index = *foundIndex;
   }
 
   return index.forget();
@@ -1906,20 +1910,8 @@ void IDBObjectStore::GetKeyPath(JSContext* aCx,
 already_AddRefed<DOMStringList> IDBObjectStore::IndexNames() {
   AssertIsOnOwningThread();
 
-  const nsTArray<IndexMetadata>& indexes = mSpec->indexes();
-
-  RefPtr<DOMStringList> list = new DOMStringList();
-
-  if (!indexes.IsEmpty()) {
-    nsTArray<nsString>& listNames = list->StringArray();
-    listNames.SetCapacity(indexes.Length());
-
-    for (uint32_t index = 0; index < indexes.Length(); index++) {
-      listNames.InsertElementSorted(indexes[index].name());
-    }
-  }
-
-  return list.forget();
+  return CreateSortedDOMStringList(
+      mSpec->indexes(), [](const auto& index) { return index.name(); });
 }
 
 already_AddRefed<IDBRequest> IDBObjectStore::GetInternal(
@@ -1932,7 +1924,7 @@ already_AddRefed<IDBRequest> IDBObjectStore::GetInternal(
     return nullptr;
   }
 
-  if (!mTransaction->IsOpen()) {
+  if (!mTransaction->CanAcceptRequests()) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR);
     return nullptr;
   }
@@ -1989,7 +1981,7 @@ already_AddRefed<IDBRequest> IDBObjectStore::DeleteInternal(
     return nullptr;
   }
 
-  if (!mTransaction->IsOpen()) {
+  if (!mTransaction->CanAcceptRequests()) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR);
     return nullptr;
   }
@@ -2040,27 +2032,31 @@ already_AddRefed<IDBIndex> IDBObjectStore::CreateIndex(
     const IDBIndexParameters& aOptionalParameters, ErrorResult& aRv) {
   AssertIsOnOwningThread();
 
-  if (mTransaction->GetMode() != IDBTransaction::VERSION_CHANGE ||
+  if (mTransaction->GetMode() != IDBTransaction::Mode::VersionChange ||
       mDeletedSpec) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_NOT_ALLOWED_ERR);
     return nullptr;
   }
 
   IDBTransaction* const transaction = IDBTransaction::GetCurrent();
-  if (!transaction || transaction != mTransaction || !transaction->IsOpen()) {
+  if (!transaction || transaction != mTransaction ||
+      !transaction->CanAcceptRequests()) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR);
     return nullptr;
   }
 
   auto& indexes = const_cast<nsTArray<IndexMetadata>&>(mSpec->indexes());
-  for (uint32_t count = indexes.Length(), index = 0; index < count; index++) {
-    if (aName == indexes[index].name()) {
-      aRv.ThrowDOMException(
-          NS_ERROR_DOM_INDEXEDDB_CONSTRAINT_ERR,
-          nsPrintfCString("Index named '%s' already exists at index '%u'",
-                          NS_ConvertUTF16toUTF8(aName).get(), index));
-      return nullptr;
-    }
+  const auto end = indexes.cend();
+  const auto foundIt = std::find_if(
+      indexes.cbegin(), end,
+      [&aName](const auto& index) { return aName == index.name(); });
+  if (foundIt != end) {
+    aRv.ThrowDOMException(
+        NS_ERROR_DOM_INDEXEDDB_CONSTRAINT_ERR,
+        nsPrintfCString("Index named '%s' already exists at index '%zu'",
+                        NS_ConvertUTF16toUTF8(aName).get(),
+                        foundIt.GetIndex()));
+    return nullptr;
   }
 
   KeyPath keyPath(0);
@@ -2086,8 +2082,11 @@ already_AddRefed<IDBIndex> IDBObjectStore::CreateIndex(
   }
 
 #ifdef DEBUG
-  for (uint32_t count = mIndexes.Length(), index = 0; index < count; index++) {
-    MOZ_ASSERT(mIndexes[index]->Name() != aName);
+  {
+    const auto duplicateIndexName = std::any_of(
+        mIndexes.cbegin(), mIndexes.cend(),
+        [&aName](const auto& index) { return index->Name() == aName; });
+    MOZ_ASSERT(!duplicateIndexName);
   }
 #endif
 
@@ -2140,57 +2139,54 @@ already_AddRefed<IDBIndex> IDBObjectStore::CreateIndex(
 void IDBObjectStore::DeleteIndex(const nsAString& aName, ErrorResult& aRv) {
   AssertIsOnOwningThread();
 
-  if (mTransaction->GetMode() != IDBTransaction::VERSION_CHANGE ||
+  if (mTransaction->GetMode() != IDBTransaction::Mode::VersionChange ||
       mDeletedSpec) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_NOT_ALLOWED_ERR);
     return;
   }
 
   IDBTransaction* transaction = IDBTransaction::GetCurrent();
-  if (!transaction || transaction != mTransaction || !transaction->IsOpen()) {
+  if (!transaction || transaction != mTransaction ||
+      !transaction->CanAcceptRequests()) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR);
     return;
   }
 
   auto& metadataArray = const_cast<nsTArray<IndexMetadata>&>(mSpec->indexes());
 
-  int64_t foundId = 0;
+  const auto endMetadata = metadataArray.cend();
+  const auto foundMetadataIt = std::find_if(
+      metadataArray.cbegin(), endMetadata,
+      [&aName](const auto& metadata) { return aName == metadata.name(); });
 
-  for (uint32_t metadataCount = metadataArray.Length(), metadataIndex = 0;
-       metadataIndex < metadataCount; metadataIndex++) {
-    const IndexMetadata& metadata = metadataArray[metadataIndex];
-    MOZ_ASSERT(metadata.id());
-
-    if (aName == metadata.name()) {
-      foundId = metadata.id();
-
-      // Must do this before altering the metadata array!
-      for (uint32_t indexCount = mIndexes.Length(), indexIndex = 0;
-           indexIndex < indexCount; indexIndex++) {
-        RefPtr<IDBIndex>& index = mIndexes[indexIndex];
-
-        if (index->Id() == foundId) {
-          index->NoteDeletion();
-
-          RefPtr<IDBIndex>* deletedIndex = mDeletedIndexes.AppendElement();
-          deletedIndex->swap(mIndexes[indexIndex]);
-
-          mIndexes.RemoveElementAt(indexIndex);
-          break;
-        }
-      }
-
-      metadataArray.RemoveElementAt(metadataIndex);
-
-      RefreshSpec(/* aMayDelete */ false);
-      break;
-    }
-  }
-
-  if (!foundId) {
+  if (foundMetadataIt == endMetadata) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_NOT_FOUND_ERR);
     return;
   }
+
+  const auto foundId = foundMetadataIt->id();
+  MOZ_ASSERT(foundId);
+
+  // Must remove index from mIndexes before altering the metadata array!
+  {
+    const auto end = mIndexes.end();
+    const auto foundIt = std::find_if(
+        mIndexes.begin(), end,
+        [foundId](const auto& index) { return index->Id() == foundId; });
+    // TODO: Or should we assert foundIt != end?
+    if (foundIt != end) {
+      auto& index = *foundIt;
+
+      index->NoteDeletion();
+
+      mDeletedIndexes.EmplaceBack(std::move(index));
+      mIndexes.RemoveElementAt(foundIt.GetIndex());
+    }
+  }
+
+  metadataArray.RemoveElementAt(foundMetadataIt.GetIndex());
+
+  RefreshSpec(/* aMayDelete */ false);
 
   // Don't do this in the macro because we always need to increment the serial
   // number to keep in sync with the parent.
@@ -2217,7 +2213,7 @@ already_AddRefed<IDBRequest> IDBObjectStore::Count(JSContext* aCx,
     return nullptr;
   }
 
-  if (!mTransaction->IsOpen()) {
+  if (!mTransaction->CanAcceptRequests()) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR);
     return nullptr;
   }
@@ -2269,7 +2265,7 @@ already_AddRefed<IDBRequest> IDBObjectStore::OpenCursorInternal(
     return nullptr;
   }
 
-  if (!mTransaction->IsOpen()) {
+  if (!mTransaction->CanAcceptRequests()) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR);
     return nullptr;
   }
@@ -2398,11 +2394,8 @@ void IDBObjectStore::NoteDeletion() {
 
   mSpec = mDeletedSpec;
 
-  if (!mIndexes.IsEmpty()) {
-    for (uint32_t count = mIndexes.Length(), index = 0; index < count;
-         index++) {
-      mIndexes[index]->NoteDeletion();
-    }
+  for (const auto& index : mIndexes) {
+    index->NoteDeletion();
   }
 }
 
@@ -2416,14 +2409,15 @@ const nsString& IDBObjectStore::Name() const {
 void IDBObjectStore::SetName(const nsAString& aName, ErrorResult& aRv) {
   AssertIsOnOwningThread();
 
-  if (mTransaction->GetMode() != IDBTransaction::VERSION_CHANGE ||
+  if (mTransaction->GetMode() != IDBTransaction::Mode::VersionChange ||
       mDeletedSpec) {
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
   }
 
   IDBTransaction* transaction = IDBTransaction::GetCurrent();
-  if (!transaction || transaction != mTransaction || !transaction->IsOpen()) {
+  if (!transaction || transaction != mTransaction ||
+      !transaction->CanAcceptRequests()) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR);
     return;
   }

@@ -83,6 +83,11 @@ class MOZ_STACK_CLASS nsTreeSanitizer {
   bool mLogRemovals;
 
   /**
+   * Whether we should remove CSS conditional rules, no other changes.
+   */
+  bool mOnlyConditionalCSS;
+
+  /**
    * We have various tables of static atoms for elements and attributes.
    */
   class AtomsTable : public nsTHashtable<nsPtrHashKey<const nsStaticAtom>> {
@@ -209,7 +214,8 @@ class MOZ_STACK_CLASS nsTreeSanitizer {
    * @param aAttribute optional, the attribute being removed or modified.
    */
   void LogMessage(const char* aMessage, mozilla::dom::Document* aDoc,
-                  Element* aElement = nullptr, nsAtom* aAttr = nullptr);
+                  mozilla::dom::Element* aElement = nullptr,
+                  nsAtom* aAttr = nullptr);
 
   /**
    * The whitelist of HTML elements.

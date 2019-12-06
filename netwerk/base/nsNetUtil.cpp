@@ -20,13 +20,13 @@
 #include "mozilla/StoragePrincipalHelper.h"
 #include "mozilla/TaskQueue.h"
 #include "mozilla/Telemetry.h"
+#include "nsBufferedStreams.h"
 #include "nsCategoryCache.h"
 #include "nsContentUtils.h"
 #include "nsFileStreams.h"
 #include "nsHashKeys.h"
 #include "nsHttp.h"
 #include "nsMimeTypes.h"
-#include "nsIAsyncStreamCopier.h"
 #include "nsIAuthPrompt.h"
 #include "nsIAuthPrompt2.h"
 #include "nsIAuthPromptAdapterFactory.h"
@@ -35,7 +35,6 @@
 #include "nsIChannelEventSink.h"
 #include "nsIContentSniffer.h"
 #include "mozilla/dom/Document.h"
-#include "nsICookieService.h"
 #include "nsIDownloader.h"
 #include "nsIFileProtocolHandler.h"
 #include "nsIFileStreams.h"
@@ -46,7 +45,6 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsILoadContext.h"
 #include "nsIMIMEHeaderParam.h"
-#include "nsIMutable.h"
 #include "nsINode.h"
 #include "nsIObjectLoadingContent.h"
 #include "nsIOfflineCacheUpdate.h"
@@ -56,21 +54,15 @@
 #include "nsIProtocolProxyService.h"
 #include "mozilla/net/RedirectChannelRegistrar.h"
 #include "nsRequestObserverProxy.h"
-#include "nsIScriptSecurityManager.h"
 #include "nsISensitiveInfoHiddenURI.h"
 #include "nsISimpleStreamListener.h"
 #include "nsISocketProvider.h"
-#include "nsISocketProviderService.h"
 #include "nsIStandardURL.h"
 #include "nsIStreamLoader.h"
 #include "nsIIncrementalStreamLoader.h"
-#include "nsIStreamTransportService.h"
 #include "nsStringStream.h"
 #include "nsSyncStreamListener.h"
-#include "nsITransport.h"
 #include "nsIURIWithSpecialOrigin.h"
-#include "nsIURLParser.h"
-#include "nsIUUIDGenerator.h"
 #include "nsIViewSourceChannel.h"
 #include "nsInterfaceRequestorAgg.h"
 #include "plstr.h"
@@ -1263,9 +1255,9 @@ MOZ_MUST_USE nsresult NS_NewBufferedInputStream(
     uint32_t aBufferSize) {
   nsCOMPtr<nsIInputStream> inputStream = std::move(aInputStream);
 
-  nsresult rv;
-  nsCOMPtr<nsIBufferedInputStream> in =
-      do_CreateInstance(NS_BUFFEREDINPUTSTREAM_CONTRACTID, &rv);
+  nsCOMPtr<nsIBufferedInputStream> in;
+  nsresult rv = nsBufferedInputStream::Create(
+      nullptr, NS_GET_IID(nsIBufferedInputStream), getter_AddRefs(in));
   if (NS_SUCCEEDED(rv)) {
     rv = in->Init(inputStream, aBufferSize);
     if (NS_SUCCEEDED(rv)) {
@@ -3004,7 +2996,8 @@ nsresult NS_CompareLoadInfoAndLoadContext(nsIChannel* aChannel) {
   // the loadInfo will use originAttributes from the content. Thus, the
   // originAttributes between loadInfo and loadContext will be different.
   // That's why we have to skip the comparison for the favicon loading.
-  if (nsContentUtils::IsSystemPrincipal(loadInfo->LoadingPrincipal()) &&
+  if (loadInfo->LoadingPrincipal() &&
+      loadInfo->LoadingPrincipal()->IsSystemPrincipal() &&
       loadInfo->InternalContentPolicyType() ==
           nsIContentPolicy::TYPE_INTERNAL_IMAGE_FAVICON) {
     return NS_OK;
@@ -3125,7 +3118,7 @@ bool NS_ShouldClassifyChannel(nsIChannel* aChannel) {
   nsContentPolicyType type = loadInfo->GetExternalContentPolicyType();
   // Skip classifying channel triggered by system unless it is a top-level
   // load.
-  if (nsContentUtils::IsSystemPrincipal(loadInfo->TriggeringPrincipal()) &&
+  if (loadInfo->TriggeringPrincipal()->IsSystemPrincipal() &&
       nsIContentPolicy::TYPE_DOCUMENT != type) {
     return false;
   }
@@ -3146,6 +3139,15 @@ nsresult GetParameterHTTP(const nsACString& aHeaderVal, const char* aParamName,
                           nsAString& aResult) {
   return nsMIMEHeaderParamImpl::GetParameterHTTP(aHeaderVal, aParamName,
                                                  aResult);
+}
+
+bool ChannelIsPost(nsIChannel* aChannel) {
+  if (nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel)) {
+    nsAutoCString method;
+    Unused << httpChannel->GetRequestMethod(method);
+    return method.EqualsLiteral("POST");
+  }
+  return false;
 }
 
 bool SchemeIsHTTP(nsIURI* aURI) {

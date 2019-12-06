@@ -35,7 +35,6 @@
 #include "nsINetworkInterceptController.h"
 #include "nsIRefreshURI.h"
 #include "nsIScrollable.h"
-#include "nsIRemoteTab.h"
 #include "nsIWebNavigation.h"
 #include "nsIWebPageDescriptor.h"
 #include "nsIWebProgressListener.h"
@@ -74,6 +73,7 @@ class EventTarget;
 }  // namespace dom
 namespace net {
 class LoadInfo;
+class DocumentChannelRedirect;
 }  // namespace net
 }  // namespace mozilla
 
@@ -495,6 +495,24 @@ class nsDocShell final : public nsDocLoader,
 
   nsDocShell* GetInProcessChildAt(int32_t aIndex);
 
+  /**
+   * Helper function that finds the last URI and its transition flags for a
+   * channel.
+   *
+   * This method first checks the channel's property bag to see if previous
+   * info has been saved. If not, it gives back the referrer of the channel.
+   *
+   * @param aChannel
+   *        The channel we are transitioning to
+   * @param aURI
+   *        Output parameter with the previous URI, not addref'd
+   * @param aChannelRedirectFlags
+   *        If a redirect, output parameter with the previous redirect flags
+   *        from nsIChannelEventSink
+   */
+  static void ExtractLastVisit(nsIChannel* aChannel, nsIURI** aURI,
+                               uint32_t* aChannelRedirectFlags);
+
  private:  // member functions
   friend class nsDSURIContentListener;
   friend class FramingChecker;
@@ -735,34 +753,6 @@ class nsDocShell final : public nsDocLoader,
                                       bool aConsiderStoragePrincipal = false);
 
   /**
-   * Helper function that determines if channel is an HTTP POST.
-   *
-   * @param aChannel
-   *        The channel to test
-   *
-   * @return True iff channel is an HTTP post.
-   */
-  bool ChannelIsPost(nsIChannel* aChannel);
-
-  /**
-   * Helper function that finds the last URI and its transition flags for a
-   * channel.
-   *
-   * This method first checks the channel's property bag to see if previous
-   * info has been saved. If not, it gives back the referrer of the channel.
-   *
-   * @param aChannel
-   *        The channel we are transitioning to
-   * @param aURI
-   *        Output parameter with the previous URI, not addref'd
-   * @param aChannelRedirectFlags
-   *        If a redirect, output parameter with the previous redirect flags
-   *        from nsIChannelEventSink
-   */
-  void ExtractLastVisit(nsIChannel* aChannel, nsIURI** aURI,
-                        uint32_t* aChannelRedirectFlags);
-
-  /**
    * Helper function that caches a URI and a transition for saving later.
    *
    * @param aChannel
@@ -801,6 +791,24 @@ class nsDocShell final : public nsDocLoader,
   void AddURIVisit(nsIURI* aURI, nsIURI* aPreviousURI,
                    uint32_t aChannelRedirectFlags,
                    uint32_t aResponseStatus = 0);
+
+  /**
+   * Helper function that will add the redirect chain found in aRedirects using
+   * IHistory (see AddURI and SaveLastVisit above for details)
+   *
+   * @param aChannel
+   *        Channel that will have these properties saved
+   * @param aURI
+   *        The URI that was just visited
+   * @param aChannelRedirectFlags
+   *        For redirects, the redirect flags from nsIChannelEventSink
+   *        (0 otherwise)
+   * @param aRedirects
+   *        The redirect chain collected by the DocumentChannelParent
+   */
+  void SavePreviousRedirectsAndLastVisit(
+      nsIChannel* aChannel, nsIURI* aURI, uint32_t aChannelRedirectFlags,
+      const nsTArray<mozilla::net::DocumentChannelRedirect>& aRedirects);
 
   // Sets the current document's current state object to the given SHEntry's
   // state object. The current state object is eventually given to the page

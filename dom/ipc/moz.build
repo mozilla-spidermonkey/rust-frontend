@@ -58,6 +58,7 @@ EXPORTS.mozilla.dom += [
     'JSWindowActorService.h',
     'MemoryReportRequest.h',
     'PermissionMessageUtils.h',
+    'PropertyBagUtils.h',
     'ReferrerInfoUtils.h',
     'RemoteBrowser.h',
     'RemoteWebProgress.h',
@@ -109,6 +110,7 @@ UNIFIED_SOURCES += [
     'PermissionMessageUtils.cpp',
     'PreallocatedProcessManager.cpp',
     'ProcessPriorityManager.cpp',
+    'PropertyBagUtils.cpp',
     'ReferrerInfoUtils.cpp',
     'RemoteBrowser.cpp',
     'RemoteWebProgress.cpp',
@@ -131,14 +133,14 @@ SOURCES += [
 ]
 
 PREPROCESSED_IPDL_SOURCES += [
+    'PBrowser.ipdl',
+    'PBrowserBridge.ipdl',
     'PContent.ipdl',
 ]
 
 IPDL_SOURCES += [
     'DOMTypes.ipdlh',
     'MemoryReportTypes.ipdlh',
-    'PBrowser.ipdl',
-    'PBrowserBridge.ipdl',
     'PBrowserOrId.ipdlh',
     'PColorPicker.ipdl',
     'PContentPermission.ipdlh',

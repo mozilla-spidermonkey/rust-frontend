@@ -133,10 +133,10 @@ XPCSHELL_TESTS_MANIFESTS += ['test/unit/xpcshell.ini']
 
 EXTRA_JS_MODULES += [
     'AboutNewTab.jsm',
+    'AppUpdater.jsm',
     'AsyncTabSwitcher.jsm',
     'BrowserUsageTelemetry.jsm',
     'BrowserWindowTracker.jsm',
-    'ContentClick.jsm',
     'ContentCrashHandlers.jsm',
     'ContentObservers.js',
     'ContentSearch.jsm',
@@ -170,6 +170,11 @@ EXTRA_JS_MODULES += [
 if CONFIG['MOZ_ASAN_REPORTER']:
     EXTRA_JS_MODULES += [
         'AsanReporter.jsm',
+    ]
+
+if CONFIG['NIGHTLY_BUILD']:
+    EXTRA_JS_MODULES += [
+        'DelegatedCredsExperiment.jsm',
     ]
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':

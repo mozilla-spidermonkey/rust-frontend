@@ -149,17 +149,11 @@ var PermissionPromptPrototype = {
   },
 
   /**
-   * Provides the preferred name to use in the permission popups,
-   * based on the principal URI (the URI.hostPort for any URI scheme
-   * besides the moz-extension one which should default to the
-   * extension name).
+   * Indicates the type of the permission request from content. This type might
+   * be different from the permission key used in the permissions database.
    */
-  get principalName() {
-    if (this.principal.addonPolicy) {
-      return this.principal.addonPolicy.name;
-    }
-
-    return this.principal.URI.hostPort;
+  get type() {
+    return undefined;
   },
 
   /**
@@ -273,6 +267,20 @@ var PermissionPromptPrototype = {
    */
   get message() {
     throw new Error("Not implemented.");
+  },
+
+  /**
+   * Provides the preferred name to use in the permission popups,
+   * based on the principal URI (the URI.hostPort for any URI scheme
+   * besides the moz-extension one which should default to the
+   * extension name).
+   */
+  getPrincipalName(principal = this.principal) {
+    if (principal.addonPolicy) {
+      return principal.addonPolicy.name;
+    }
+
+    return principal.URI.hostPort;
   },
 
   /**
@@ -413,7 +421,10 @@ var PermissionPromptPrototype = {
         return;
       }
 
-      if (state == SitePermissions.ALLOW) {
+      if (
+        state == SitePermissions.ALLOW &&
+        !this.request.maybeUnsafePermissionDelegate
+      ) {
         this.allow();
         return;
       }
@@ -711,7 +722,8 @@ var PermissionPromptForRequestPrototype = {
   },
 
   get principal() {
-    return this.request.principal;
+    let request = this.request.QueryInterface(Ci.nsIContentPermissionRequest);
+    return request.getDelegatePrincipal(this.type);
   },
 
   cancel() {
@@ -739,6 +751,10 @@ function GeolocationPermissionPrompt(request) {
 GeolocationPermissionPrompt.prototype = {
   __proto__: PermissionPromptForRequestPrototype,
 
+  get type() {
+    return "geo";
+  },
+
   get permissionKey() {
     return "geo";
   },
@@ -752,7 +768,7 @@ GeolocationPermissionPrompt.prototype = {
     let options = {
       learnMoreURL: Services.urlFormatter.formatURLPref(pref),
       displayURI: false,
-      name: this.principalName,
+      name: this.getPrincipalName(),
     };
 
     if (this.principal.schemeIs("file")) {
@@ -762,6 +778,12 @@ GeolocationPermissionPrompt.prototype = {
       options.checkbox = {
         show: !PrivateBrowsingUtils.isWindowPrivate(this.browser.ownerGlobal),
       };
+    }
+
+    if (this.request.maybeUnsafePermissionDelegate) {
+      // Second name should be the third party origin
+      options.secondName = this.getPrincipalName(this.request.principal);
+      options.checkbox = { show: false };
     }
 
     if (options.checkbox.show) {
@@ -784,6 +806,13 @@ GeolocationPermissionPrompt.prototype = {
   get message() {
     if (this.principal.schemeIs("file")) {
       return gBrowserBundle.GetStringFromName("geolocation.shareWithFile3");
+    }
+
+    if (this.request.maybeUnsafePermissionDelegate) {
+      return gBrowserBundle.formatStringFromName(
+        "geolocation.shareWithSiteUnsafeDelegation",
+        ["<>", "{}"]
+      );
     }
 
     return gBrowserBundle.formatStringFromName("geolocation.shareWithSite3", [
@@ -888,6 +917,10 @@ function DesktopNotificationPermissionPrompt(request) {
 DesktopNotificationPermissionPrompt.prototype = {
   __proto__: PermissionPromptForRequestPrototype,
 
+  get type() {
+    return "desktop-notification";
+  },
+
   get permissionKey() {
     return "desktop-notification";
   },
@@ -903,7 +936,7 @@ DesktopNotificationPermissionPrompt.prototype = {
     return {
       learnMoreURL,
       displayURI: false,
-      name: this.principalName,
+      name: this.getPrincipalName(),
     };
   },
 
@@ -991,6 +1024,10 @@ function PersistentStoragePermissionPrompt(request) {
 PersistentStoragePermissionPrompt.prototype = {
   __proto__: PermissionPromptForRequestPrototype,
 
+  get type() {
+    return "persistent-storage";
+  },
+
   get permissionKey() {
     return "persistent-storage";
   },
@@ -1002,7 +1039,7 @@ PersistentStoragePermissionPrompt.prototype = {
     return {
       learnMoreURL,
       displayURI: false,
-      name: this.principalName,
+      name: this.getPrincipalName(),
     };
   },
 
@@ -1079,6 +1116,10 @@ function MIDIPermissionPrompt(request) {
 MIDIPermissionPrompt.prototype = {
   __proto__: PermissionPromptForRequestPrototype,
 
+  get type() {
+    return "midi";
+  },
+
   get permissionKey() {
     return this.permName;
   },
@@ -1087,7 +1128,7 @@ MIDIPermissionPrompt.prototype = {
     // TODO (bug 1433235) We need a security/permissions explanation URL for this
     let options = {
       displayURI: false,
-      name: this.principalName,
+      name: this.getPrincipalName(),
     };
 
     if (this.principal.schemeIs("file")) {
@@ -1169,6 +1210,10 @@ StorageAccessPermissionPrompt.prototype = {
 
   get usePermissionManager() {
     return false;
+  },
+
+  get type() {
+    return "storage-access";
   },
 
   get permissionKey() {

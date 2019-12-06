@@ -16,15 +16,12 @@ import type {
   FrameId,
   ActorId,
   Script,
-  Pause,
   PendingLocation,
   SourceId,
-  QueuedSourceData,
   Range,
 } from "../../types";
 
 import type { EventListenerCategoryList } from "../../actions/types";
-import actions from "../../actions";
 
 type URL = string;
 
@@ -181,27 +178,12 @@ export type TabPayload = {
   webExtensionInspectedWindowActor: ActorId,
 };
 
-/**
- * Actions
- * @memberof firefox
- * @static
- */
-export type Actions = {
-  paused: Pause => void,
-  resumed: ActorId => void,
-  newQueuedSources: (QueuedSourceData[]) => void,
-  fetchEventListeners: () => void,
-  updateThreads: typeof actions.updateThreads,
-  ensureHasThread: typeof actions.ensureHasThread,
-  setFramePositions: typeof actions.setFramePositions,
-};
-
 type ConsoleClient = {
   evaluateJSAsync: (
     script: Script,
     func: Function,
     params?: { frameActor: ?FrameId }
-  ) => Promise<{ result: Grip | null }>,
+  ) => Promise<{ result: ExpressionResult }>,
   autocomplete: (
     input: string,
     cursor: number,
@@ -265,7 +247,7 @@ export type DebuggerClient = {
   connect: () => Promise<*>,
   request: (packet: Object) => Promise<*>,
   attachConsole: (actor: String, listeners: Array<*>) => Promise<*>,
-  createObjectFront: (grip: Grip) => ObjectFront,
+  createObjectFront: (grip: Grip, thread: ThreadFront) => ObjectFront,
   release: (actor: String) => {},
   getFrontByID: (actor: String) => { release: () => Promise<*> },
 };
@@ -287,8 +269,8 @@ type ProcessDescriptor = Object;
  * @memberof firefox
  * @static
  */
-export type Grip = {
-  actor: string,
+export type Grip = {|
+  actor?: string,
   class: string,
   displayClass: string,
   displayName?: string,
@@ -307,8 +289,7 @@ export type Grip = {
   sealed: boolean,
   optimizedOut: boolean,
   type: string,
-  release: () => Promise<*>,
-};
+|};
 
 export type FunctionGrip = {|
   class: "Function",
@@ -344,7 +325,10 @@ export type SourceClient = {
  * @static
  */
 export type ObjectFront = {
+  actorID: string,
+  getGrip: () => Grip,
   getPrototypeAndProperties: () => any,
+  getProperty: string => { descriptor: any },
   addWatchpoint: (
     property: string,
     label: string,
@@ -354,12 +338,27 @@ export type ObjectFront = {
   release: () => Promise<*>,
 };
 
+export type LongStringFront = {
+  actorID: string,
+  getGrip: () => Grip,
+  release: () => Promise<*>,
+};
+
+export type ExpressionResult =
+  | ObjectFront
+  | LongStringFront
+  | Grip
+  | string
+  | number
+  | null;
+
 /**
  * ThreadFront
  * @memberof firefox
  * @static
  */
 export type ThreadFront = {
+  actorID: string,
   getFrames: (number, number) => Promise<{| frames: FrameFront[] |}>,
   resume: Function => Promise<*>,
   stepIn: Function => Promise<*>,
@@ -379,6 +378,7 @@ export type ThreadFront = {
   interrupt: () => Promise<*>,
   eventListeners: () => Promise<*>,
   on: (string, Function) => void,
+  off: (string, Function) => void,
   getSources: () => Promise<SourcesPacket>,
   reconfigure: ({ observeAsmJS: boolean }) => Promise<*>,
   getLastPausePacket: () => ?PausedPacket,

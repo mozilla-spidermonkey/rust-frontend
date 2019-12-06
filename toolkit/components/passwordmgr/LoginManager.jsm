@@ -455,10 +455,12 @@ LoginManager.prototype = {
     return this._storage.findLogins(origin, formActionOrigin, httpRealm);
   },
 
+  async searchLoginsAsync(matchData) {
+    log.debug("searchLoginsAsync:", matchData);
+    return this._storage.searchLoginsAsync(matchData);
+  },
+
   /**
-   * Public wrapper around _searchLogins to convert the nsIPropertyBag to a
-   * JavaScript object and decrypt the results.
-   *
    * @return {nsILoginInfo[]} which are decrypted.
    */
   searchLogins(matchData) {
@@ -468,15 +470,6 @@ LoginManager.prototype = {
     if (!matchData.hasKey("guid")) {
       if (!matchData.hasKey("origin")) {
         log.warn("searchLogins: An `origin` is recommended");
-      }
-
-      if (
-        !matchData.hasKey("formActionOrigin") &&
-        !matchData.hasKey("httpRealm")
-      ) {
-        log.warn(
-          "searchLogins: `formActionOrigin` or `httpRealm` is recommended"
-        );
       }
     }
 

@@ -13,14 +13,10 @@
 
 #include "xpcpublic.h"
 #include "XPCWrapper.h"
-#include "nsIInputStreamChannel.h"
 #include "nsILoadContext.h"
-#include "nsIServiceManager.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsIScriptContext.h"
 #include "nsIScriptError.h"
-#include "nsIURL.h"
-#include "nsIURIMutator.h"
 #include "nsINestedURI.h"
 #include "nspr.h"
 #include "nsJSPrincipals.h"
@@ -40,16 +36,10 @@
 #include "nsIStringBundle.h"
 #include "nsNetUtil.h"
 #include "nsIEffectiveTLDService.h"
-#include "nsIProperties.h"
 #include "nsDirectoryServiceDefs.h"
-#include "nsIFile.h"
-#include "nsIFileURL.h"
-#include "nsIZipReader.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsPIDOMWindow.h"
 #include "nsIDocShell.h"
-#include "nsIPrompt.h"
-#include "nsIWindowWatcher.h"
 #include "nsIConsoleService.h"
 #include "nsIOService.h"
 #include "nsIContent.h"
@@ -60,7 +50,6 @@
 #include "nsIChromeRegistry.h"
 #include "nsIResProtocolHandler.h"
 #include "nsIContentSecurityPolicy.h"
-#include "nsIAsyncVerifyRedirectCallback.h"
 #include "mozilla/Components.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/BindingUtils.h"
@@ -75,8 +64,6 @@
 #include "nsContentUtils.h"
 #include "nsJSUtils.h"
 #include "nsILoadInfo.h"
-#include "nsIDOMXULCommandDispatcher.h"
-#include "nsITreeSelection.h"
 
 // This should be probably defined on some other place... but I couldn't find it
 #define WEBAPPS_PERM_NAME "webapps-manage"
@@ -85,7 +72,6 @@ using namespace mozilla;
 using namespace mozilla::dom;
 
 nsIIOService* nsScriptSecurityManager::sIOService = nullptr;
-JSContext* nsScriptSecurityManager::sContext = nullptr;
 bool nsScriptSecurityManager::sStrictFileOriginPolicy = true;
 
 namespace {
@@ -1371,22 +1357,29 @@ nsresult nsScriptSecurityManager::Init() {
 
   mSystemPrincipal = system;
 
+  return NS_OK;
+}
+
+void nsScriptSecurityManager::InitJSCallbacks(JSContext* aCx) {
   //-- Register security check callback in the JS engine
   //   Currently this is used to control access to function.caller
-  sContext = danger::GetJSContext();
 
   static const JSSecurityCallbacks securityCallbacks = {
       ContentSecurityPolicyPermitsJSAction,
       JSPrincipalsSubsume,
   };
 
-  MOZ_ASSERT(!JS_GetSecurityCallbacks(sContext));
-  JS_SetSecurityCallbacks(sContext, &securityCallbacks);
-  JS_InitDestroyPrincipalsCallback(sContext, nsJSPrincipals::Destroy);
+  MOZ_ASSERT(!JS_GetSecurityCallbacks(aCx));
+  JS_SetSecurityCallbacks(aCx, &securityCallbacks);
+  JS_InitDestroyPrincipalsCallback(aCx, nsJSPrincipals::Destroy);
 
-  JS_SetTrustedPrincipals(sContext, system);
+  JS_SetTrustedPrincipals(aCx, BasePrincipal::Cast(mSystemPrincipal));
+}
 
-  return NS_OK;
+/* static */
+void nsScriptSecurityManager::ClearJSCallbacks(JSContext* aCx) {
+  JS_SetSecurityCallbacks(aCx, nullptr);
+  JS_SetTrustedPrincipals(aCx, nullptr);
 }
 
 static StaticRefPtr<nsScriptSecurityManager> gScriptSecMan;
@@ -1404,12 +1397,6 @@ nsScriptSecurityManager::~nsScriptSecurityManager(void) {
 }
 
 void nsScriptSecurityManager::Shutdown() {
-  if (sContext) {
-    JS_SetSecurityCallbacks(sContext, nullptr);
-    JS_SetTrustedPrincipals(sContext, nullptr);
-    sContext = nullptr;
-  }
-
   NS_IF_RELEASE(sIOService);
   BundleHelper::Shutdown();
 }

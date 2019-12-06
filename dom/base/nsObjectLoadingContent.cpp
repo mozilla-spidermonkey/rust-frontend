@@ -16,6 +16,7 @@
 #include "nsIContent.h"
 #include "nsIContentInlines.h"
 #include "nsIDocShell.h"
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/dom/BindContext.h"
 #include "mozilla/dom/Document.h"
 #include "nsIExternalProtocolHandler.h"
@@ -28,12 +29,8 @@
 #include "nsJSNPRuntime.h"
 #include "nsINestedURI.h"
 #include "nsScriptSecurityManager.h"
-#include "nsIScriptSecurityManager.h"
-#include "nsIStreamConverterService.h"
 #include "nsIURILoader.h"
 #include "nsIURL.h"
-#include "nsIWebNavigation.h"
-#include "nsIWebNavigationInfo.h"
 #include "nsIScriptChannel.h"
 #include "nsIBlocklistService.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
@@ -65,7 +62,6 @@
 
 #include "nsObjectLoadingContent.h"
 #include "mozAutoDocUpdate.h"
-#include "nsIContentSecurityPolicy.h"
 #include "GeckoProfiler.h"
 #include "nsPluginFrame.h"
 #include "nsWrapperCacheInlines.h"
@@ -308,20 +304,17 @@ class nsPluginCrashedEvent : public Runnable {
  public:
   nsCOMPtr<nsIContent> mContent;
   nsString mPluginDumpID;
-  nsString mBrowserDumpID;
   nsString mPluginName;
   nsString mPluginFilename;
   bool mSubmittedCrashReport;
 
   nsPluginCrashedEvent(nsIContent* aContent, const nsAString& aPluginDumpID,
-                       const nsAString& aBrowserDumpID,
                        const nsAString& aPluginName,
                        const nsAString& aPluginFilename,
                        bool submittedCrashReport)
       : Runnable("nsPluginCrashedEvent"),
         mContent(aContent),
         mPluginDumpID(aPluginDumpID),
-        mBrowserDumpID(aBrowserDumpID),
         mPluginName(aPluginName),
         mPluginFilename(aPluginFilename),
         mSubmittedCrashReport(submittedCrashReport) {}
@@ -343,7 +336,6 @@ nsPluginCrashedEvent::Run() {
 
   PluginCrashedEventInit init;
   init.mPluginDumpID = mPluginDumpID;
-  init.mBrowserDumpID = mBrowserDumpID;
   init.mPluginName = mPluginName;
   init.mPluginFilename = mPluginFilename;
   init.mSubmittedCrashReport = mSubmittedCrashReport;
@@ -2570,7 +2562,6 @@ nsObjectLoadingContent::PluginDestroyed() {
 NS_IMETHODIMP
 nsObjectLoadingContent::PluginCrashed(nsIPluginTag* aPluginTag,
                                       const nsAString& pluginDumpID,
-                                      const nsAString& browserDumpID,
                                       bool submittedCrashReport) {
   LOG(("OBJLC [%p]: Plugin Crashed, queuing crash event", this));
   NS_ASSERTION(mType == eType_Plugin, "PluginCrashed at non-plugin type");
@@ -2597,9 +2588,8 @@ nsObjectLoadingContent::PluginCrashed(nsIPluginTag* aPluginTag,
   aPluginTag->GetFilename(pluginFilename);
 
   nsCOMPtr<nsIRunnable> ev = new nsPluginCrashedEvent(
-      thisContent, pluginDumpID, browserDumpID,
-      NS_ConvertUTF8toUTF16(pluginName), NS_ConvertUTF8toUTF16(pluginFilename),
-      submittedCrashReport);
+      thisContent, pluginDumpID, NS_ConvertUTF8toUTF16(pluginName),
+      NS_ConvertUTF8toUTF16(pluginFilename), submittedCrashReport);
   nsresult rv = NS_DispatchToCurrentThread(ev);
   if (NS_FAILED(rv)) {
     NS_WARNING("failed to dispatch nsPluginCrashedEvent");
@@ -3037,7 +3027,7 @@ bool nsObjectLoadingContent::ShouldPlay(FallbackType& aReason) {
   // we really should do is disable plugins entirely in pages that use the
   // system principal, i.e. in chrome pages. That way the click-to-play code
   // here wouldn't matter at all. Bug 775301 is tracking this.
-  if (!nsContentUtils::IsSystemPrincipal(topDoc->NodePrincipal())) {
+  if (!topDoc->NodePrincipal()->IsSystemPrincipal()) {
     nsAutoCString permissionString;
     rv = pluginHost->GetPermissionStringForType(
         mContentType, nsPluginHost::eExcludeNone, permissionString);

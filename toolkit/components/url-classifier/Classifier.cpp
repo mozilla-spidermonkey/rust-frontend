@@ -5,12 +5,6 @@
 
 #include "Classifier.h"
 #include "LookupCacheV4.h"
-#include "nsIPrefBranch.h"
-#include "nsIPrefService.h"
-#include "nsISimpleEnumerator.h"
-#include "nsIRandomGenerator.h"
-#include "nsIInputStream.h"
-#include "nsISeekableStream.h"
 #include "nsIFile.h"
 #include "nsNetCID.h"
 #include "nsPrintfCString.h"
@@ -753,7 +747,7 @@ nsresult Classifier::AsyncApplyUpdates(const TableUpdateArray& aUpdates,
   RefPtr<Classifier> self = this;
   nsCOMPtr<nsIRunnable> bgRunnable = NS_NewRunnableFunction(
       "safebrowsing::Classifier::AsyncApplyUpdates",
-      [self, aUpdates, aCallback, callerThread] {
+      [self, aUpdates, aCallback, callerThread]() mutable {
         MOZ_ASSERT(self->OnUpdateThread(), "MUST be on update thread");
 
         nsresult bgRv;
@@ -773,19 +767,28 @@ nsresult Classifier::AsyncApplyUpdates(const TableUpdateArray& aUpdates,
           bgRv = NS_ERROR_OUT_OF_MEMORY;
         }
 
+        // Classifier is created in the worker thread and it has to be released
+        // in the worker thread(because of the constrain that LazyIdelThread has
+        // to be created and released in the same thread). We transfer the
+        // ownership to the caller thread here to gurantee that we don't release
+        // it in the udpate thread.
         nsCOMPtr<nsIRunnable> fgRunnable = NS_NewRunnableFunction(
             "safebrowsing::Classifier::AsyncApplyUpdates",
-            [self, aCallback, bgRv, failedTableNames, callerThread] {
+            [self = std::move(self), aCallback, bgRv, failedTableNames,
+             callerThread]() mutable {
+              RefPtr<Classifier> classifier = std::move(self);
+
               MOZ_ASSERT(NS_GetCurrentThread() == callerThread,
                          "MUST be on caller thread");
 
               LOG(("Step 2. ApplyUpdatesForeground on caller thread"));
               nsresult rv =
-                  self->ApplyUpdatesForeground(bgRv, failedTableNames);
+                  classifier->ApplyUpdatesForeground(bgRv, failedTableNames);
 
               LOG(("Step 3. Updates applied! Fire callback."));
               aCallback(rv);
             });
+
         callerThread->Dispatch(fgRunnable, NS_DISPATCH_NORMAL);
       });
 

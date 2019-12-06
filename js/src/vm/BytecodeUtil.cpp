@@ -28,6 +28,7 @@
 
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/SourceNotes.h"
+#include "gc/PublicIterators.h"
 #include "js/CharacterEncoding.h"
 #include "js/Printf.h"
 #include "js/Symbol.h"
@@ -47,7 +48,7 @@
 #include "vm/Realm.h"
 #include "vm/Shape.h"
 
-#include "gc/PrivateIterators-inl.h"
+#include "gc/GC-inl.h"
 #include "vm/BytecodeIterator-inl.h"
 #include "vm/BytecodeLocation-inl.h"
 #include "vm/JSContext-inl.h"
@@ -1432,14 +1433,6 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
       break;
     }
 
-    case JOF_CODE_OFFSET: {
-      ptrdiff_t off = GET_CODE_OFFSET(pc);
-      if (!sp->jsprintf(" %u (%+d)", unsigned(loc + int(off)), int(off))) {
-        return 0;
-      }
-      break;
-    }
-
     case JOF_SCOPE: {
       RootedScope scope(cx, script->getScope(GET_UINT32_INDEX(pc)));
       UniqueChars bytes;
@@ -1587,9 +1580,9 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
       }
       break;
 
-    case JOF_LOOPENTRY:
+    case JOF_LOOPHEAD:
       if (!sp->jsprintf(" (ic: %u, data: %u,%u)", GET_ICINDEX(pc),
-                        LoopEntryCanIonOsr(pc), LoopEntryDepthHint(pc))) {
+                        LoopHeadCanIonOsr(pc), LoopHeadDepthHint(pc))) {
         return 0;
       }
       break;
@@ -2088,6 +2081,7 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
 
       case JSOP_NEWINIT:
       case JSOP_NEWOBJECT:
+      case JSOP_NEWOBJECT_WITHGROUP:
       case JSOP_OBJWITHPROTO:
         return write("OBJ");
 

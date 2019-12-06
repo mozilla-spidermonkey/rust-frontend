@@ -542,6 +542,8 @@ class UrlbarQueryContext {
    *   Whether or not to allow providers to include autofill results.
    * @param {number} options.userContextId
    *   The container id where this context was generated, if any.
+   * @param {array} [options.sources]
+   *   A list of acceptable UrlbarUtils.RESULT_SOURCE for the context.
    */
   constructor(options = {}) {
     this._checkRequiredOptions(options, [
@@ -697,6 +699,15 @@ class UrlbarProvider {
   pickResult(result) {
     throw new Error("Trying to access the base class, must be overridden");
   }
+
+  /**
+   * Called when the user starts and ends an engagement with the urlbar.
+   *
+   * @param {boolean} isPrivate True if the engagement is in a private context.
+   * @param {string} state The state of the engagement, one of: start,
+   *        engagement, abandonment, discard.
+   */
+  onEngagement(isPrivate, state) {}
 }
 
 /**

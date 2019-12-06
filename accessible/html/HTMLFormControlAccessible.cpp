@@ -16,12 +16,8 @@
 #include "nsContentList.h"
 #include "mozilla/dom/HTMLInputElement.h"
 #include "mozilla/dom/HTMLTextAreaElement.h"
-#include "nsIEditor.h"
 #include "nsIFormControl.h"
 #include "nsIPersistentProperties2.h"
-#include "nsISelectionController.h"
-#include "nsIServiceManager.h"
-#include "nsITextControlElement.h"
 #include "nsITextControlFrame.h"
 #include "nsNameSpaceManager.h"
 #include "mozilla/dom/ScriptSettings.h"
@@ -373,13 +369,20 @@ void HTMLTextFieldAccessible::ActionNameAt(uint8_t aIndex, nsAString& aName) {
 bool HTMLTextFieldAccessible::DoAction(uint8_t aIndex) const {
   if (aIndex != 0) return false;
 
-  TakeFocus();
+  if (FocusMgr()->IsFocused(this)) {
+    // This already has focus, so TakeFocus()will do nothing. However, the user
+    // might be activating this element because they dismissed a touch keyboard
+    // and want to bring it back.
+    DoCommand();
+  } else {
+    TakeFocus();
+  }
   return true;
 }
 
 already_AddRefed<TextEditor> HTMLTextFieldAccessible::GetEditor() const {
-  nsCOMPtr<nsITextControlElement> textControlElement =
-      do_QueryInterface(mContent);
+  RefPtr<TextControlElement> textControlElement =
+      TextControlElement::FromNodeOrNull(mContent);
   if (!textControlElement) {
     return nullptr;
   }

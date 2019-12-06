@@ -22,7 +22,6 @@ namespace jit {
 #define OPCODE_LIST(_)              \
   _(JSOP_NOP)                       \
   _(JSOP_NOP_DESTRUCTURING)         \
-  _(JSOP_LABEL)                     \
   _(JSOP_ITERNEXT)                  \
   _(JSOP_POP)                       \
   _(JSOP_POPN)                      \
@@ -43,7 +42,6 @@ namespace jit {
   _(JSOP_POS)                       \
   _(JSOP_TONUMERIC)                 \
   _(JSOP_LOOPHEAD)                  \
-  _(JSOP_LOOPENTRY)                 \
   _(JSOP_VOID)                      \
   _(JSOP_UNDEFINED)                 \
   _(JSOP_HOLE)                      \
@@ -87,7 +85,6 @@ namespace jit {
   _(JSOP_NE)                        \
   _(JSOP_STRICTEQ)                  \
   _(JSOP_STRICTNE)                  \
-  _(JSOP_CONDSWITCH)                \
   _(JSOP_CASE)                      \
   _(JSOP_DEFAULT)                   \
   _(JSOP_LINENO)                    \
@@ -97,6 +94,7 @@ namespace jit {
   _(JSOP_NEWARRAY_COPYONWRITE)      \
   _(JSOP_INITELEM_ARRAY)            \
   _(JSOP_NEWOBJECT)                 \
+  _(JSOP_NEWOBJECT_WITHGROUP)       \
   _(JSOP_NEWINIT)                   \
   _(JSOP_INITELEM)                  \
   _(JSOP_INITELEM_GETTER)           \
@@ -446,6 +444,9 @@ class BaselineCodeGen {
   // Handles JSOP_LT, JSOP_GT, and friends
   MOZ_MUST_USE bool emitCompare();
 
+  // Handles JSOP_NEWOBJECT, JSOP_NEWOBJECT_WITHGROUP, and JSOP_NEWINIT.
+  MOZ_MUST_USE bool emitNewObject();
+
   // For a JOF_JUMP op, jumps to the op's jump target.
   void emitJump();
 
@@ -656,11 +657,11 @@ class BaselineInterpreterHandler {
 
   // Entry point to start interpreting a bytecode op. No registers are live. PC
   // is loaded from the frame.
-  Label interpretOp_;
+  NonAssertingLabel interpretOp_;
 
   // Like interpretOp_ but at this point the PC is expected to be in
   // InterpreterPCReg.
-  Label interpretOpWithPCReg_;
+  NonAssertingLabel interpretOpWithPCReg_;
 
   // Offsets of toggled jumps for debugger instrumentation.
   using CodeOffsetVector = Vector<uint32_t, 0, SystemAllocPolicy>;
@@ -668,8 +669,8 @@ class BaselineInterpreterHandler {
 
   // Offsets of toggled jumps for code coverage instrumentation.
   CodeOffsetVector codeCoverageOffsets_;
-  Label codeCoverageAtPrologueLabel_;
-  Label codeCoverageAtPCLabel_;
+  NonAssertingLabel codeCoverageAtPrologueLabel_;
+  NonAssertingLabel codeCoverageAtPCLabel_;
 
   // Offsets of IC calls for IsIonInlinableOp ops, for Ion bailouts.
   BaselineInterpreter::ICReturnOffsetVector icReturnOffsets_;
@@ -730,9 +731,8 @@ class BaselineInterpreterHandler {
     return false;
   }
 
-  MOZ_MUST_USE bool addDebugInstrumentationOffset(CodeOffset offset) {
-    return debugInstrumentationOffsets_.append(offset.offset());
-  }
+  MOZ_MUST_USE bool addDebugInstrumentationOffset(JSContext* cx,
+                                                  CodeOffset offset);
 
   const BaselineInterpreter::CallVMOffsets& callVMOffsets() const {
     return callVMOffsets_;

@@ -37,6 +37,14 @@ const INTERMEDIATES_SIGNER_PREF =
   "security.remote_settings.intermediates.signer";
 const LOGLEVEL_PREF = "browser.policies.loglevel";
 
+const INTERMEDIATES_ERRORS_TELEMETRY = "INTERMEDIATE_PRELOADING_ERRORS";
+const INTERMEDIATES_PENDING_TELEMETRY =
+  "security.intermediate_preloading_num_pending";
+const INTERMEDIATES_PRELOADED_TELEMETRY =
+  "security.intermediate_preloading_num_preloaded";
+const INTERMEDIATES_UPDATE_MS_TELEMETRY =
+  "INTERMEDIATE_PRELOADING_UPDATE_TIME_MS";
+
 const ONECRL_BUCKET_PREF = "services.settings.security.onecrl.bucket";
 const ONECRL_COLLECTION_PREF = "services.settings.security.onecrl.collection";
 const ONECRL_SIGNER_PREF = "services.settings.security.onecrl.signer";
@@ -407,9 +415,6 @@ class IntermediatePreloads {
   }
 
   async updatePreloadedIntermediates() {
-    // Bug 1429800: once the CertStateService has the correct interface, also
-    // store the whitelist status and crlite enrollment status
-
     if (!Services.prefs.getBoolPref(INTERMEDIATES_ENABLED_PREF, true)) {
       log.debug("Intermediate Preloading is disabled");
       Services.obs.notifyObservers(
@@ -478,6 +483,8 @@ class IntermediatePreloads {
       return;
     }
 
+    TelemetryStopwatch.start(INTERMEDIATES_UPDATE_MS_TELEMETRY);
+
     let toDownload = waiting.slice(0, maxDownloadsPerRun);
     let recordsCertsAndSubjects = [];
     for (let i = 0; i < toDownload.length; i += parallelDownloads) {
@@ -501,6 +508,9 @@ class IntermediatePreloads {
     }).catch(err => err);
     if (result != Cr.NS_OK) {
       Cu.reportError(`certStorage.addCerts failed: ${result}`);
+      Services.telemetry
+        .getHistogramById(INTERMEDIATES_ERRORS_TELEMETRY)
+        .add("failedToUpdateDB");
       return;
     }
     await col.db.execute(transaction => {
@@ -508,6 +518,22 @@ class IntermediatePreloads {
         transaction.update({ ...record, cert_import_complete: true });
       });
     });
+
+    const { data: finalCurrent } = await col.list();
+    const finalWaiting = finalCurrent.filter(
+      record => !record.cert_import_complete
+    );
+    const countPreloaded = finalCurrent.length - finalWaiting.length;
+
+    TelemetryStopwatch.finish(INTERMEDIATES_UPDATE_MS_TELEMETRY);
+    Services.telemetry.scalarSet(
+      INTERMEDIATES_PRELOADED_TELEMETRY,
+      countPreloaded
+    );
+    Services.telemetry.scalarSet(
+      INTERMEDIATES_PENDING_TELEMETRY,
+      finalWaiting.length
+    );
 
     Services.obs.notifyObservers(
       null,
@@ -523,6 +549,10 @@ class IntermediatePreloads {
       await this.updatePreloadedIntermediates();
     } catch (err) {
       log.warn(`Unable to update intermediate preloads: ${err}`);
+
+      Services.telemetry
+        .getHistogramById(INTERMEDIATES_ERRORS_TELEMETRY)
+        .add("failedToObserve");
     }
   }
 
@@ -602,6 +632,11 @@ class IntermediatePreloads {
         log.debug(`Download fetch completed: ${resp.ok} ${resp.status}`);
         if (!resp.ok) {
           Cu.reportError(`Failed to fetch ${remoteFilePath}: ${resp.status}`);
+
+          Services.telemetry
+            .getHistogramById(INTERMEDIATES_ERRORS_TELEMETRY)
+            .add("failedToFetch");
+
           return Promise.reject();
         }
         return resp.arrayBuffer();
@@ -632,12 +667,20 @@ class IntermediatePreloads {
       attachmentData = await this._downloadAttachmentBytes(record);
     } catch (err) {
       Cu.reportError(`Failed to download attachment: ${err}`);
+      Services.telemetry
+        .getHistogramById(INTERMEDIATES_ERRORS_TELEMETRY)
+        .add("failedToDownloadMisc");
       return result;
     }
 
     if (!attachmentData || attachmentData.length == 0) {
       // Bug 1519273 - Log telemetry for these rejections
       log.debug(`Empty attachment. Hash=${hash}`);
+
+      Services.telemetry
+        .getHistogramById(INTERMEDIATES_ERRORS_TELEMETRY)
+        .add("emptyAttachment");
+
       return result;
     }
 
@@ -648,6 +691,11 @@ class IntermediatePreloads {
           attachmentData.length
         } != ${size}`
       );
+
+      Services.telemetry
+        .getHistogramById(INTERMEDIATES_ERRORS_TELEMETRY)
+        .add("unexpectedLength");
+
       return result;
     }
 
@@ -658,6 +706,11 @@ class IntermediatePreloads {
       log.warn(
         `Invalid hash. CalculatedHash=${calculatedHash}, Hash=${hash}, data=${dataAsString}`
       );
+
+      Services.telemetry
+        .getHistogramById(INTERMEDIATES_ERRORS_TELEMETRY)
+        .add("unexpectedHash");
+
       return result;
     }
     log.debug(`downloaded cert with hash=${hash}, size=${size}`);
@@ -678,6 +731,13 @@ class IntermediatePreloads {
       );
     } catch (err) {
       Cu.reportError(`Failed to decode cert: ${err}`);
+
+      // Re-purpose the "failedToUpdateNSS" telemetry tag as "failed to
+      // decode preloaded intermediate certificate"
+      Services.telemetry
+        .getHistogramById(INTERMEDIATES_ERRORS_TELEMETRY)
+        .add("failedToUpdateNSS");
+
       return result;
     }
     result.cert = certBase64;
@@ -699,16 +759,23 @@ class IntermediatePreloads {
     }).catch(err => err);
     if (result != Cr.NS_OK) {
       Cu.reportError(`Failed to remove some intermediate certificates`);
+      Services.telemetry
+        .getHistogramById(INTERMEDIATES_ERRORS_TELEMETRY)
+        .add("failedToRemove");
     }
   }
+}
+
+function filterToDate(filter) {
+  return new Date(filter.details.name.replace(/-(full|diff)$/, ""));
 }
 
 // Helper function to compare filters. One filter is "less than" another filter (i.e. it sorts
 // earlier) if its date is older than the other. Non-incremental filters sort earlier than
 // incremental filters of the same date.
 function compareFilters(filterA, filterB) {
-  let timeA = new Date(filterA.details.name.replace(/-(full|diff)$/, ""));
-  let timeB = new Date(filterB.details.name.replace(/-(full|diff)$/, ""));
+  let timeA = filterToDate(filterA);
+  let timeB = filterToDate(filterB);
   // If timeA is older (i.e. it is less than) timeB, it sorts earlier, so return a value less than
   // 0.
   if (timeA < timeB) {
@@ -787,9 +854,26 @@ class CRLiteFilters {
         let buffer = await (await fetch(localURI)).arrayBuffer();
         let bytes = new Uint8Array(buffer);
         log.debug(`Downloaded ${filter.details.name}: ${bytes.length} bytes`);
-        // In a future bug, this code will pass the downloaded filter on to nsICertStorage.
         filtersDownloaded.push(filter.details.name);
+        if (filter.details.name.endsWith("-full")) {
+          let timestamp = filterToDate(filter).getTime() / 1000;
+          log.debug(`setting CRLite filter timestamp to ${timestamp}`);
+          const certList = Cc["@mozilla.org/security/certstorage;1"].getService(
+            Ci.nsICertStorage
+          );
+          await new Promise(resolve => {
+            certList.setFullCRLiteFilter(bytes, timestamp, rv => {
+              log.debug(`setFullCRLiteFilter: ${rv}`);
+              resolve();
+            });
+          });
+        } else {
+          log.debug(
+            "downloaded filter diff, but we don't support consuming them yet."
+          );
+        }
       } catch (e) {
+        log.debug(e);
         Cu.reportError("failed to download CRLite filter", e);
       }
     }

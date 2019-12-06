@@ -25,6 +25,12 @@ XPCOMUtils.defineLazyPreferenceGetter(
 );
 XPCOMUtils.defineLazyPreferenceGetter(
   this,
+  "useSeparateDataUriProcess",
+  "browser.tabs.remote.dataUriInDefaultWebProcess",
+  false
+);
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
   "allowLinkedWebInFileUriProcess",
   "browser.tabs.remote.allowLinkedWebInFileUriProcess",
   false
@@ -389,7 +395,8 @@ var E10SUtils = {
     aRemoteSubframes,
     aPreferredRemoteType = DEFAULT_REMOTE_TYPE,
     aCurrentUri = null,
-    aResultPrincipal = null
+    aResultPrincipal = null,
+    aIsSubframe = false
   ) {
     if (!aMultiProcess) {
       return NOT_REMOTE;
@@ -468,9 +475,14 @@ var E10SUtils = {
         return NOT_REMOTE;
 
       case "moz-extension":
-        return WebExtensionPolicy.useRemoteWebExtensions
-          ? EXTENSION_REMOTE_TYPE
-          : NOT_REMOTE;
+        if (WebExtensionPolicy.useRemoteWebExtensions) {
+          // Extension iframes should load in the same process
+          // as their outer frame, top-level ones should load
+          // in the extension process.
+          return aIsSubframe ? aPreferredRemoteType : EXTENSION_REMOTE_TYPE;
+        }
+
+        return NOT_REMOTE;
 
       default:
         // WebExtensions may set up protocol handlers for protocol names
@@ -521,7 +533,8 @@ var E10SUtils = {
     aMultiProcess,
     aRemoteSubframes,
     aPreferredRemoteType = DEFAULT_REMOTE_TYPE,
-    aCurrentPrincipal
+    aCurrentPrincipal,
+    aIsSubframe
   ) {
     if (!aMultiProcess) {
       return NOT_REMOTE;
@@ -533,11 +546,17 @@ var E10SUtils = {
       throw Cr.NS_ERROR_UNEXPECTED;
     }
 
-    // Null principals can be loaded in any remote process.
+    // Null principals can be loaded in any remote process, but when
+    // using fission we add the option to force them into the default
+    // web process for better test coverage.
     if (aPrincipal.isNullPrincipal) {
-      return aPreferredRemoteType == NOT_REMOTE
-        ? DEFAULT_REMOTE_TYPE
-        : aPreferredRemoteType;
+      if (
+        (aRemoteSubframes && useSeparateDataUriProcess) ||
+        aPreferredRemoteType == NOT_REMOTE
+      ) {
+        return WEB_REMOTE_TYPE;
+      }
+      return aPreferredRemoteType;
     }
 
     // We might care about the currently loaded URI. Pull it out of our current
@@ -553,7 +572,8 @@ var E10SUtils = {
       aRemoteSubframes,
       aPreferredRemoteType,
       currentURI,
-      aPrincipal
+      aPrincipal,
+      aIsSubframe
     );
   },
 
@@ -724,7 +744,7 @@ var E10SUtils = {
   },
 
   shouldLoadURI(aDocShell, aURI, aHasPostData) {
-    let remoteSubframes = aDocShell.useRemoteSubframes;
+    let { useRemoteSubframes } = aDocShell;
 
     // Inner frames should always load in the current process
     // XXX(nika): Handle shouldLoadURI-triggered process switches for remote
@@ -756,8 +776,10 @@ var E10SUtils = {
     // We should never be sending a POST request from the parent process to a
     // http(s) uri, so make sure we switch if we're currently in that process.
     if (
-      useHttpResponseProcessSelection &&
-      (aURI.scheme == "http" || aURI.scheme == "https") &&
+      (useRemoteSubframes || useHttpResponseProcessSelection) &&
+      (aURI.scheme == "http" ||
+        aURI.scheme == "https" ||
+        aURI.scheme == "data") &&
       Services.appinfo.remoteType != NOT_REMOTE
     ) {
       return true;
@@ -797,7 +819,7 @@ var E10SUtils = {
         this.getRemoteTypeForURIObject(
           aURI,
           true,
-          remoteSubframes,
+          useRemoteSubframes,
           remoteType,
           webNav.currentURI
         )
@@ -805,7 +827,7 @@ var E10SUtils = {
     }
 
     // If the URI can be loaded in the current process then continue
-    return this.shouldLoadURIInThisProcess(aURI, remoteSubframes);
+    return this.shouldLoadURIInThisProcess(aURI, useRemoteSubframes);
   },
 
   redirectLoad(

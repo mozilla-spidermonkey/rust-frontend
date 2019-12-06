@@ -23,7 +23,6 @@
 #include "gfxWindowsSurface.h"
 #include "nsWindowDbg.h"
 #include "cairo.h"
-#include "nsITimer.h"
 #include "nsRegion.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/Maybe.h"
@@ -130,6 +129,7 @@ class nsWindow final : public nsWindowBase {
   virtual void SetSizeConstraints(const SizeConstraints& aConstraints) override;
   virtual void LockAspectRatio(bool aShouldLock) override;
   virtual const SizeConstraints GetSizeConstraints() override;
+  virtual void SetWindowMouseTransparent(bool aIsTransparent) override;
   virtual void Move(double aX, double aY) override;
   virtual void Resize(double aWidth, double aHeight, bool aRepaint) override;
   virtual void Resize(double aX, double aY, double aWidth, double aHeight,

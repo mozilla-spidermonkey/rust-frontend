@@ -16,27 +16,19 @@
 #include "nsPluginInstanceOwner.h"
 #include "nsObjectLoadingContent.h"
 #include "nsIEventTarget.h"
-#include "nsIHTTPHeaderListener.h"
-#include "nsIHttpHeaderVisitor.h"
 #include "nsIObserverService.h"
 #include "nsIHttpProtocolHandler.h"
 #include "nsIHttpChannel.h"
 #include "nsIUploadChannel.h"
-#include "nsIByteRangeRequest.h"
 #include "nsIStreamListener.h"
 #include "nsIInputStream.h"
-#include "nsIOutputStream.h"
-#include "nsIURL.h"
 #include "nsTArray.h"
 #include "nsReadableUtils.h"
-#include "nsIStreamConverterService.h"
 #include "nsIFile.h"
 #include "nsISeekableStream.h"
 #include "nsNetUtil.h"
-#include "nsIFileStreams.h"
 #include "nsISimpleEnumerator.h"
 #include "nsIStringStream.h"
-#include "nsIProgressEventSink.h"
 #include "mozilla/dom/Document.h"
 #include "nsPluginLogging.h"
 #include "nsIScriptChannel.h"
@@ -62,17 +54,14 @@
 #include "nsEnumeratorUtils.h"
 #include "nsXPCOM.h"
 #include "nsXPCOMCID.h"
-#include "nsISupportsPrimitives.h"
 
 #include "nsXULAppAPI.h"
 
 // for the dialog
-#include "nsIWindowWatcher.h"
 
 #include "nsNetCID.h"
 #include "mozilla/Sprintf.h"
 #include "nsThreadUtils.h"
-#include "nsIInputStreamTee.h"
 #include "nsQueryObject.h"
 
 #include "nsIWeakReferenceUtils.h"
@@ -2753,8 +2742,8 @@ static void CheckForDisabledWindows() {
 #endif
 
 void nsPluginHost::PluginCrashed(nsNPAPIPlugin* aPlugin,
-                                 const nsAString& pluginDumpID,
-                                 const nsAString& browserDumpID) {
+                                 const nsAString& aPluginDumpID,
+                                 const nsACString& aAdditionalMinidumps) {
   nsPluginTag* crashedPluginTag = TagForPlugin(aPlugin);
   MOZ_ASSERT(crashedPluginTag);
 
@@ -2779,9 +2768,9 @@ void nsPluginHost::PluginCrashed(nsNPAPIPlugin* aPlugin,
     propbag->SetPropertyAsAString(NS_LITERAL_STRING("pluginName"),
                                   NS_ConvertUTF8toUTF16(pluginName));
     propbag->SetPropertyAsAString(NS_LITERAL_STRING("pluginDumpID"),
-                                  pluginDumpID);
-    propbag->SetPropertyAsAString(NS_LITERAL_STRING("browserDumpID"),
-                                  browserDumpID);
+                                  aPluginDumpID);
+    propbag->SetPropertyAsACString(NS_LITERAL_STRING("additionalMinidumps"),
+                                   aAdditionalMinidumps);
     propbag->SetPropertyAsBool(NS_LITERAL_STRING("submittedCrashReport"),
                                submittedCrashReport);
     obsService->NotifyObservers(propbag, "plugin-crashed", nullptr);
@@ -2802,8 +2791,8 @@ void nsPluginHost::PluginCrashed(nsNPAPIPlugin* aPlugin,
       nsCOMPtr<nsIObjectLoadingContent> objectContent(
           do_QueryInterface(domElement));
       if (objectContent) {
-        objectContent->PluginCrashed(crashedPluginTag, pluginDumpID,
-                                     browserDumpID, submittedCrashReport);
+        objectContent->PluginCrashed(crashedPluginTag, aPluginDumpID,
+                                     submittedCrashReport);
       }
 
       instance->Destroy();

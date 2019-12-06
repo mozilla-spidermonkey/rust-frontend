@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tarfile
 
 import requests
 
@@ -33,6 +34,7 @@ from mozdevice import ADBDevice
 from mozlog import commandline
 from mozpower import MozPower
 from mozprofile import create_profile
+from mozprofile.cli import parse_preferences
 from mozproxy import get_playback
 from mozrunner import runners
 
@@ -106,7 +108,7 @@ either Raptor or browsertime."""
                  is_release_build=False, debug_mode=False, post_startup_delay=None,
                  interrupt_handler=None, e10s=True, enable_webrender=False,
                  results_handler_class=RaptorResultsHandler, with_conditioned_profile=False,
-                 **kwargs):
+                 extra_prefs={}, **kwargs):
 
         # Override the magic --host HOST_IP with the value of the environment variable.
         if host == 'HOST_IP':
@@ -132,6 +134,8 @@ either Raptor or browsertime."""
             'e10s': e10s,
             'enable_webrender': enable_webrender,
             'with_conditioned_profile': with_conditioned_profile,
+            'enable_fission': extra_prefs.get('fission.autostart', False),
+            'extra_prefs': extra_prefs
         }
         # We can never use e10s on fennec
         if self.config['app'] == 'fennec':
@@ -221,6 +225,11 @@ either Raptor or browsertime."""
             path = os.path.join(self.profile_data_dir, profile)
             LOG.info("Merging profile: {}".format(path))
             self.profile.merge(path)
+
+        if self.config['extra_prefs'].get('fission.autostart', False):
+            LOG.info('Enabling fission via browser preferences')
+            LOG.info('Browser preferences: {}'.format(self.config['extra_prefs']))
+        self.profile.set_preferences(self.config['extra_prefs'])
 
         # share the profile dir with the config and the control server
         self.config['local_profile_dir'] = self.profile.profile
@@ -616,6 +625,7 @@ class Browsertime(Perftest):
         # add test specific preferences
         LOG.info("setting test-specific Firefox preferences")
         self.profile.set_preferences(json.loads(raw_prefs))
+        self.remove_mozprofile_delimiters_from_profile()
 
     def run_test_setup(self, test):
         super(Browsertime, self).run_test_setup(test)
@@ -665,9 +675,7 @@ class Browsertime(Perftest):
     def clean_up(self):
         super(Browsertime, self).clean_up()
 
-    def run_test(self, test, timeout):
-        self.run_test_setup(test)
-
+    def _compose_cmd(self, test, timeout):
         browsertime_script = [os.path.join(os.path.dirname(__file__), "..",
                               "browsertime", "browsertime_pageload.js")]
 
@@ -677,9 +685,41 @@ class Browsertime(Perftest):
 
         browsertime_script.extend(btime_args)
 
-        # timeout is a single page-load timeout value (ms) from the test INI
-        # this will be used for btime --timeouts.pageLoad
+        # pass a few extra options to the browsertime script
+        # XXX maybe these should be in the browsertime_args() func
+        browsertime_script.extend(["--browsertime.page_cycles",
+                                   str(test.get("page_cycles", 1))])
+        browsertime_script.extend(["--browsertime.url", test["test_url"]])
 
+        # Raptor's `pageCycleDelay` delay (ms) between pageload cycles
+        browsertime_script.extend(["--browsertime.page_cycle_delay", "1000"])
+        # Raptor's `foregroundDelay` delay (ms) for foregrounding app
+        browsertime_script.extend(["--browsertime.foreground_delay", "5000"])
+
+        # Raptor's `post startup delay` is settle time after the browser has started
+        browsertime_script.extend(["--browsertime.post_startup_delay",
+                                   str(self.post_startup_delay)])
+
+        if self.config['with_conditioned_profile']:
+            self.profile.profile = self.conditioned_profile_dir
+
+        return ([self.browsertime_node, self.browsertime_browsertimejs] +
+                self.driver_paths +
+                browsertime_script +
+                ['--firefox.profileTemplate', str(self.profile.profile),
+                 '--skipHar',
+                 '--video', self.browsertime_video and 'true' or 'false',
+                 '--visualMetrics', 'false',
+                 # url load timeout (milliseconds)
+                 '--timeouts.pageLoad', str(timeout),
+                 # running browser scripts timeout (milliseconds)
+                 '--timeouts.script', str(timeout * int(test.get("page_cycles", 1))),
+                 '-vv',
+                 '--resultDir', self.results_handler.result_dir_for_test(test),
+                 # -n option for the browsertime to restart the browser
+                 '-n', str(test.get('browser_cycles', 1))])
+
+    def _compute_process_timeout(self, test, timeout):
         # bt_timeout will be the overall browsertime cmd/session timeout (seconds)
         # browsertime deals with page cycles internally, so we need to give it a timeout
         # value that includes all page cycles
@@ -701,39 +741,13 @@ class Browsertime(Perftest):
         # if geckoProfile enabled, give browser more time for profiling
         if self.config['gecko_profile'] is True:
             bt_timeout += 5 * 60
+        return bt_timeout
 
-        # pass a few extra options to the browsertime script
-        # XXX maybe these should be in the browsertime_args() func
-        browsertime_script.extend(["--browsertime.page_cycles",
-                                  str(test.get("page_cycles", 1))])
-        browsertime_script.extend(["--browsertime.url", test["test_url"]])
-
-        # Raptor's `pageCycleDelay` delay (ms) between pageload cycles
-        browsertime_script.extend(["--browsertime.page_cycle_delay", "1000"])
-        # Raptor's `foregroundDelay` delay (ms) for foregrounding app
-        browsertime_script.extend(["--browsertime.foreground_delay", "5000"])
-
-        # Raptor's `post startup delay` is settle time after the browser has started
-        browsertime_script.extend(["--browsertime.post_startup_delay",
-                                  str(self.post_startup_delay)])
-
-        # the browser time script cannot restart the browser itself,
-        # so we have to keep -n option here.
-
-        cmd = ([self.browsertime_node, self.browsertime_browsertimejs] +
-               self.driver_paths +
-               browsertime_script +
-               ['--firefox.profileTemplate', str(self.profile.profile),
-                '--skipHar',
-                '--video', self.browsertime_video and 'true' or 'false',
-                '--visualMetrics', 'false',
-                # Timeout when waiting for url to load, in milliseconds
-                '--timeouts.pageLoad', str(timeout),
-                # Timeout when running browser scripts, in milliseconds
-                '--timeouts.script', str(timeout * int(test.get("page_cycles", 1))),
-                '-vv',
-                '--resultDir', self.results_handler.result_dir_for_test(test),
-                '-n', str(test.get('browser_cycles', 1))])
+    def run_test(self, test, timeout):
+        self.run_test_setup(test)
+        # timeout is a single page-load timeout value (ms) from the test INI
+        # this will be used for btime --timeouts.pageLoad
+        cmd = self._compose_cmd(test, timeout)
 
         if test.get('type') == "benchmark":
             cmd.extend(['--script',
@@ -763,7 +777,7 @@ class Browsertime(Perftest):
 
         try:
             proc = self.process_handler(cmd, env=env)
-            proc.run(timeout=bt_timeout,
+            proc.run(timeout=self._compute_process_timeout(test, timeout),
                      outputTimeout=2*60)
             proc.wait()
 
@@ -853,7 +867,8 @@ class Raptor(Perftest):
             power_test=self.config.get('power_test'),
             cpu_test=self.config.get('cpu_test'),
             memory_test=self.config.get('memory_test'),
-            with_conditioned_profile=self.config['with_conditioned_profile']
+            with_conditioned_profile=self.config['with_conditioned_profile'],
+            extra_prefs=self.config.get('extra_prefs')
         )
         browser_name, browser_version = self.get_browser_meta()
         self.results_handler.add_browser_meta(self.config['app'], browser_version)
@@ -1337,7 +1352,7 @@ class RaptorAndroid(PerftestAndroid, Raptor):
     def build_browser_profile(self):
         super(RaptorAndroid, self).build_browser_profile()
 
-        # Merge in the android profile
+        # Merge in the Android profile.
         path = os.path.join(self.profile_data_dir, 'raptor-android')
         LOG.info("Merging profile: {}".format(path))
         self.profile.merge(path)
@@ -1684,7 +1699,6 @@ class RaptorAndroid(PerftestAndroid, Raptor):
             dump_dir = tempfile.mkdtemp()
             remote_dir = posixpath.join(self.remote_profile, 'minidumps')
             if not self.device.is_dir(remote_dir):
-                LOG.error("No crash directory (%s) found on remote device" % remote_dir)
                 return
             self.device.pull(remote_dir, dump_dir)
             mozcrash.log_crashes(LOG, dump_dir, self.config['symbols_path'])
@@ -1703,6 +1717,19 @@ class RaptorAndroid(PerftestAndroid, Raptor):
 
 def main(args=sys.argv[1:]):
     args = parse_args()
+
+    args.extra_prefs = parse_preferences(args.extra_prefs or [])
+
+    if args.enable_fission:
+        args.extra_prefs.update({
+            'fission.autostart': True,
+            'dom.serviceWorkers.parent_intercept': True,
+            'browser.tabs.documentchannel': True,
+        })
+
+    if args.extra_prefs and args.extra_prefs.get('fission.autostart', False):
+        args.enable_fission = True
+
     commandline.setup_logging('raptor', args, {'tbpl': sys.stdout})
 
     LOG.info("raptor-start")
@@ -1771,6 +1798,7 @@ def main(args=sys.argv[1:]):
                           interrupt_handler=SignalHandler(),
                           enable_webrender=args.enable_webrender,
                           with_conditioned_profile=args.with_conditioned_profile,
+                          extra_prefs=args.extra_prefs or {}
                           )
 
     success = raptor.run_tests(raptor_test_list, raptor_test_names)
@@ -1794,6 +1822,16 @@ def main(args=sys.argv[1:]):
 
             LOG.critical(" ".join("%s: %s" % (subject, msg) for subject, msg in message))
         os.sys.exit(1)
+
+    # if we're running browsertime in the CI, we want to zip the result dir
+    if args.browsertime and not args.run_local:
+        result_dir = raptor.results_handler.result_dir()
+        if os.path.exists(result_dir):
+            LOG.info("Creating tarball at %s" % result_dir + ".tgz")
+            with tarfile.open(result_dir + ".tgz", "w:gz") as tar:
+                tar.add(result_dir, arcname=os.path.basename(result_dir))
+            LOG.info("Removing %s" % result_dir)
+            shutil.rmtree(result_dir)
 
     # when running raptor locally with gecko profiling on, use the view-gecko-profile
     # tool to automatically load the latest gecko profile in profiler.firefox.com

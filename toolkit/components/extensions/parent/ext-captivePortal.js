@@ -25,6 +25,8 @@ var { ExtensionPreferencesManager } = ChromeUtils.import(
 
 var { getSettingsAPI } = ExtensionPreferencesManager;
 
+const CAPTIVE_URL_PREF = "captivedetect.canonicalURL";
+
 function nameForCPSState(state) {
   switch (state) {
     case gCPS.UNKNOWN:
@@ -104,15 +106,30 @@ this.captivePortal = class extends ExtensionAPI {
             };
           },
         }).api(),
-        canonicalURL: getSettingsAPI(
-          context.extension.id,
-          "captiveURL",
-          () => {
-            return Services.prefs.getStringPref("captivedetect.canonicalURL");
+        canonicalURL: getSettingsAPI({
+          context,
+          name: "captiveURL",
+          callback() {
+            return Services.prefs.getStringPref(CAPTIVE_URL_PREF);
           },
-          undefined,
-          true
-        ),
+          readOnly: true,
+          onChange: new ExtensionCommon.EventManager({
+            context,
+            name: "captiveURL.onChange",
+            register: fire => {
+              let listener = (text, id) => {
+                fire.async({
+                  levelOfControl: "not_controllable",
+                  value: Services.prefs.getStringPref(CAPTIVE_URL_PREF),
+                });
+              };
+              Services.prefs.addObserver(CAPTIVE_URL_PREF, listener);
+              return () => {
+                Services.prefs.removeObserver(CAPTIVE_URL_PREF, listener);
+              };
+            },
+          }).api(),
+        }),
       },
     };
   }

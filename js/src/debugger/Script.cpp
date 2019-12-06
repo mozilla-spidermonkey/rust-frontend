@@ -532,6 +532,28 @@ static bool PushFunctionScript(JSContext* cx, Debugger* dbg, HandleFunction fun,
   return wrapped && NewbornArrayPush(cx, array, ObjectValue(*wrapped));
 }
 
+static bool PushInnerFunctions(JSContext* cx, Debugger* dbg, HandleObject array,
+                               mozilla::Span<const JS::GCCellPtr> gcThings) {
+  RootedFunction fun(cx);
+
+  for (JS::GCCellPtr gcThing : gcThings) {
+    if (!gcThing.is<JSObject>()) {
+      continue;
+    }
+
+    JSObject* obj = &gcThing.as<JSObject>();
+    if (obj->is<JSFunction>()) {
+      fun = &obj->as<JSFunction>();
+
+      if (!PushFunctionScript(cx, dbg, fun, array)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 bool DebuggerScript::CallData::getChildScripts() {
   if (!ensureScriptMaybeLazy()) {
     return false;
@@ -543,31 +565,15 @@ bool DebuggerScript::CallData::getChildScripts() {
     return false;
   }
 
-  RootedFunction fun(cx);
   if (obj->getReferent().is<JSScript*>()) {
     RootedScript script(cx, obj->getReferent().as<JSScript*>());
-    for (JS::GCCellPtr gcThing : script->gcthings()) {
-      if (!gcThing.is<JSObject>()) {
-        continue;
-      }
-
-      JSObject* obj = &gcThing.as<JSObject>();
-      if (obj->is<JSFunction>()) {
-        fun = &obj->as<JSFunction>();
-
-        if (!PushFunctionScript(cx, dbg, fun, result)) {
-          return false;
-        }
-      }
+    if (!PushInnerFunctions(cx, dbg, result, script->gcthings())) {
+      return false;
     }
   } else {
     Rooted<LazyScript*> lazy(cx, obj->getReferent().as<LazyScript*>());
-
-    for (const GCPtrFunction& innerFun : lazy->innerFunctions()) {
-      fun = innerFun;
-      if (!PushFunctionScript(cx, dbg, fun, result)) {
-        return false;
-      }
+    if (!PushInnerFunctions(cx, dbg, result, lazy->gcthings())) {
+      return false;
     }
   }
 
@@ -1502,7 +1508,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOP_TRY_DESTRUCTURING:
     case JSOP_LINENO:
     case JSOP_JUMPTARGET:
-    case JSOP_LABEL:
     case JSOP_UNDEFINED:
     case JSOP_IFNE:
     case JSOP_IFEQ:
@@ -1514,7 +1519,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOP_TRY:
     case JSOP_THROW:
     case JSOP_GOTO:
-    case JSOP_CONDSWITCH:
     case JSOP_TABLESWITCH:
     case JSOP_CASE:
     case JSOP_DEFAULT:
@@ -1576,6 +1580,7 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOP_NEWARRAY_COPYONWRITE:
     case JSOP_NEWINIT:
     case JSOP_NEWOBJECT:
+    case JSOP_NEWOBJECT_WITHGROUP:
     case JSOP_INITELEM:
     case JSOP_INITHIDDENELEM:
     case JSOP_INITELEM_INC:
@@ -1667,7 +1672,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOP_IS_CONSTRUCTING:
     case JSOP_OPTIMIZE_SPREADCALL:
     case JSOP_IMPORTMETA:
-    case JSOP_LOOPENTRY:
     case JSOP_INSTRUMENTATION_ACTIVE:
     case JSOP_INSTRUMENTATION_CALLBACK:
     case JSOP_INSTRUMENTATION_SCRIPT_ID:
@@ -1707,7 +1711,10 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOP_THROWMSG:
     case JSOP_FORCEINTERPRETER:
     case JSOP_UNUSED71:
+    case JSOP_UNUSED106:
+    case JSOP_UNUSED120:
     case JSOP_UNUSED149:
+    case JSOP_UNUSED227:
     case JSOP_LIMIT:
       return false;
   }

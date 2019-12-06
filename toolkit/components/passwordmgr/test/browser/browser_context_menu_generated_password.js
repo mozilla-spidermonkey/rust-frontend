@@ -161,8 +161,24 @@ add_task(async function fill_generated_password_empty_field() {
             "Password field should be highlighted"
           );
           LTU.loginField.checkPasswordMasked(input, false, "after fill");
+
+          info("cleaing the field");
+          input.setUserInput("");
         }
       );
+
+      let acPopup = document.getElementById("PopupAutoComplete");
+      await openACPopup(acPopup, browser, passwordInputSelector);
+
+      let pwgenItem = acPopup.querySelector(
+        `[originaltype="generatedPassword"]`
+      );
+      ok(
+        !pwgenItem || EventUtils.isHidden(pwgenItem),
+        "pwgen item should no longer be shown"
+      );
+
+      await closePopup(acPopup);
     }
   );
 });
@@ -299,7 +315,7 @@ add_task(async function fill_generated_password_with_matching_logins() {
       let popupMenu = document.getElementById("fill-login-popup");
       let firstLoginItem = popupMenu.getElementsByClassName(
         "context-login-item"
-      )[1];
+      )[0];
       firstLoginItem.doCommand();
 
       await passwordChangedPromise;

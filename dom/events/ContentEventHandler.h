@@ -12,7 +12,6 @@
 #include "nsCOMPtr.h"
 #include "nsIFrame.h"
 #include "nsINode.h"
-#include "nsISelectionController.h"
 
 class nsPresContext;
 class nsRange;
@@ -84,7 +83,6 @@ class MOZ_STACK_CLASS ContentEventHandler {
     nsresult SelectNodeContents(nsINode* aNodeToSelectContents);
 
    private:
-    nsINode* IsValidBoundary(nsINode* aNode) const;
     inline void AssertStartIsBeforeOrEqualToEnd();
 
     nsCOMPtr<nsINode> mRoot;

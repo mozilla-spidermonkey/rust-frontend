@@ -168,6 +168,9 @@ class DebuggerFrame : public NativeObject {
                                      size_t& result);
   static MOZ_MUST_USE bool getOlder(JSContext* cx, HandleDebuggerFrame frame,
                                     MutableHandleDebuggerFrame result);
+  static MOZ_MUST_USE bool getAsyncPromise(JSContext* cx,
+                                           HandleDebuggerFrame frame,
+                                           MutableHandleDebuggerObject result);
   static MOZ_MUST_USE bool getThis(JSContext* cx, HandleDebuggerFrame frame,
                                    MutableHandleValue result);
   static DebuggerFrameType getType(HandleDebuggerFrame frame);
@@ -182,14 +185,12 @@ class DebuggerFrame : public NativeObject {
       mozilla::Range<const char16_t> chars, HandleObject bindings,
       const EvalOptions& options);
 
-  MOZ_MUST_USE bool requireLive(JSContext* cx);
-  static MOZ_MUST_USE DebuggerFrame* check(JSContext* cx, HandleValue thisv,
-                                           bool checkLive);
+  static MOZ_MUST_USE DebuggerFrame* check(JSContext* cx, HandleValue thisv);
 
-  bool isLive() const;
+  bool isOnStack() const;
 
-  // Like isLive, but works even in the midst of a relocating GC.
-  bool isLiveMaybeForwarded() const;
+  // Like isOnStack, but works even in the midst of a relocating GC.
+  bool isOnStackMaybeForwarded() const;
 
   OnStepHandler* onStepHandler() const;
   OnPopHandler* onPopHandler() const;

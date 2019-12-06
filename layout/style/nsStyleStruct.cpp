@@ -14,7 +14,6 @@
 #include "nsStyleConsts.h"
 #include "nsString.h"
 #include "nsPresContext.h"
-#include "nsIAppShellService.h"
 #include "nsIWidget.h"
 #include "nsCRTGlue.h"
 #include "nsCSSProps.h"
@@ -743,10 +742,10 @@ nsStyleSVG::nsStyleSVG(const Document& aDocument)
       mFillRule(StyleFillRule::Nonzero),
       mPaintOrder(0),
       mShapeRendering(StyleShapeRendering::Auto),
-      mStrokeLinecap(NS_STYLE_STROKE_LINECAP_BUTT),
+      mStrokeLinecap(StyleStrokeLinecap::Butt),
       mStrokeLinejoin(NS_STYLE_STROKE_LINEJOIN_MITER),
       mDominantBaseline(NS_STYLE_DOMINANT_BASELINE_AUTO),
-      mTextAnchor(NS_STYLE_TEXT_ANCHOR_START),
+      mTextAnchor(StyleTextAnchor::Start),
       mContextFlags(
           (eStyleSVGOpacitySource_Normal << FILL_OPACITY_SOURCE_SHIFT) |
           (eStyleSVGOpacitySource_Normal << STROKE_OPACITY_SOURCE_SHIFT)) {
@@ -1166,7 +1165,7 @@ nsStylePosition::nsStylePosition(const Document& aDocument)
       mJustifySelf(NS_STYLE_JUSTIFY_AUTO),
       mFlexDirection(StyleFlexDirection::Row),
       mFlexWrap(StyleFlexWrap::Nowrap),
-      mObjectFit(NS_STYLE_OBJECT_FIT_FILL),
+      mObjectFit(StyleObjectFit::Fill),
       mOrder(NS_STYLE_ORDER_INITIAL),
       mFlexGrow(0.0f),
       mFlexShrink(1.0f),
@@ -2678,8 +2677,8 @@ nsStyleDisplay::nsStyleDisplay(const Document& aDocument)
       mOverflowClipBoxInline(StyleOverflowClipBox::PaddingBox),
       mResize(StyleResize::None),
       mOrient(StyleOrient::Inline),
-      mIsolation(NS_STYLE_ISOLATION_AUTO),
-      mTopLayer(NS_STYLE_TOP_LAYER_NONE),
+      mIsolation(StyleIsolation::Auto),
+      mTopLayer(StyleTopLayer::None),
       mTouchAction(StyleTouchAction_AUTO),
       mScrollBehavior(NS_STYLE_SCROLL_BEHAVIOR_AUTO),
       mOverscrollBehaviorX(StyleOverscrollBehavior::Auto),
@@ -3132,7 +3131,7 @@ nsStyleVisibility::nsStyleVisibility(const Document& aDocument)
       mVisible(NS_STYLE_VISIBILITY_VISIBLE),
       mImageRendering(NS_STYLE_IMAGE_RENDERING_AUTO),
       mWritingMode(NS_STYLE_WRITING_MODE_HORIZONTAL_TB),
-      mTextOrientation(NS_STYLE_TEXT_ORIENTATION_MIXED),
+      mTextOrientation(StyleTextOrientation::Mixed),
       mColorAdjust(StyleColorAdjust::Economy) {
   MOZ_COUNT_CTOR(nsStyleVisibility);
 }
@@ -3408,9 +3407,9 @@ nsStyleText::nsStyleText(const Document& aDocument)
       mTextJustify(StyleTextJustify::Auto),
       mWhiteSpace(StyleWhiteSpace::Normal),
       mHyphens(StyleHyphens::Manual),
-      mRubyAlign(NS_STYLE_RUBY_ALIGN_SPACE_AROUND),
-      mRubyPosition(NS_STYLE_RUBY_POSITION_OVER),
-      mTextSizeAdjust(NS_STYLE_TEXT_SIZE_ADJUST_AUTO),
+      mRubyAlign(StyleRubyAlign::SpaceAround),
+      mRubyPosition(StyleRubyPosition::Over),
+      mTextSizeAdjust(StyleTextSizeAdjust::Auto),
       mTextCombineUpright(NS_STYLE_TEXT_COMBINE_UPRIGHT_NONE),
       mControlCharacterVisibility(
           nsLayoutUtils::ControlCharVisibilityDefault()),
@@ -3426,6 +3425,7 @@ nsStyleText::nsStyleText(const Document& aDocument)
       mTextIndent(LengthPercentage::Zero()),
       mTextUnderlineOffset(StyleTextDecorationLength::Auto()),
       mTextDecorationSkipInk(StyleTextDecorationSkipInk::Auto),
+      mTextUnderlinePosition(StyleTextUnderlinePosition::Auto()),
       mWebkitTextStrokeWidth(0),
       mTextEmphasisStyle(StyleTextEmphasisStyle::None()) {
   MOZ_COUNT_CTOR(nsStyleText);
@@ -3464,6 +3464,7 @@ nsStyleText::nsStyleText(const nsStyleText& aSource)
       mTextIndent(aSource.mTextIndent),
       mTextUnderlineOffset(aSource.mTextUnderlineOffset),
       mTextDecorationSkipInk(aSource.mTextDecorationSkipInk),
+      mTextUnderlinePosition(aSource.mTextUnderlinePosition),
       mWebkitTextStrokeWidth(aSource.mWebkitTextStrokeWidth),
       mTextShadow(aSource.mTextShadow),
       mTextEmphasisStyle(aSource.mTextEmphasisStyle) {
@@ -3497,8 +3498,6 @@ nsChangeHint nsStyleText::CalcDifference(const nsStyleText& aNewData) const {
       (mLetterSpacing != aNewData.mLetterSpacing) ||
       (mLineHeight != aNewData.mLineHeight) ||
       (mTextIndent != aNewData.mTextIndent) ||
-      (mTextUnderlineOffset != aNewData.mTextUnderlineOffset) ||
-      (mTextDecorationSkipInk != aNewData.mTextDecorationSkipInk) ||
       (mTextJustify != aNewData.mTextJustify) ||
       (mWordSpacing != aNewData.mWordSpacing) ||
       (mMozTabSize != aNewData.mMozTabSize)) {
@@ -3524,7 +3523,10 @@ nsChangeHint nsStyleText::CalcDifference(const nsStyleText& aNewData) const {
 
   if (mTextShadow != aNewData.mTextShadow ||
       mTextEmphasisStyle != aNewData.mTextEmphasisStyle ||
-      mWebkitTextStrokeWidth != aNewData.mWebkitTextStrokeWidth) {
+      mWebkitTextStrokeWidth != aNewData.mWebkitTextStrokeWidth ||
+      mTextUnderlineOffset != aNewData.mTextUnderlineOffset ||
+      mTextDecorationSkipInk != aNewData.mTextDecorationSkipInk ||
+      mTextUnderlinePosition != aNewData.mTextUnderlinePosition) {
     hint |= nsChangeHint_UpdateSubtreeOverflow | nsChangeHint_SchedulePaint |
             nsChangeHint_RepaintFrame;
 
@@ -3667,7 +3669,10 @@ nsChangeHint nsStyleUI::CalcDifference(const nsStyleUI& aNewData) const {
     // of pointer-events. See SVGGeometryFrame::ReflowSVG's use of
     // GetHitTestFlags. (Only a reflow, no visual change.)
     hint |= nsChangeHint_NeedReflow |
-            nsChangeHint_NeedDirtyReflow;  // XXX remove me: bug 876085
+            nsChangeHint_NeedDirtyReflow |  // XXX remove me: bug 876085
+            nsChangeHint_SchedulePaint;     // pointer-events changes can change
+                                            // event regions overrides on layers
+                                            // and so needs a repaint.
   }
 
   if (mUserModify != aNewData.mUserModify) {
@@ -3703,9 +3708,9 @@ nsStyleUIReset::nsStyleUIReset(const Document& aDocument)
     : mUserSelect(StyleUserSelect::Auto),
       mScrollbarWidth(StyleScrollbarWidth::Auto),
       mForceBrokenImageIcon(0),
-      mIMEMode(NS_STYLE_IME_MODE_AUTO),
+      mIMEMode(StyleImeMode::Auto),
       mWindowDragging(StyleWindowDragging::Default),
-      mWindowShadow(NS_STYLE_WINDOW_SHADOW_DEFAULT),
+      mWindowShadow(StyleWindowShadow::Default),
       mWindowOpacity(1.0),
       mWindowTransformOrigin{LengthPercentage::FromPercentage(0.5),
                              LengthPercentage::FromPercentage(0.5),
@@ -3755,12 +3760,9 @@ nsChangeHint nsStyleUIReset::CalcDifference(
     hint |= nsChangeHint_SchedulePaint;
   }
 
-  if (mWindowOpacity != aNewData.mWindowOpacity ||
-      mMozWindowTransform != aNewData.mMozWindowTransform) {
-    hint |= nsChangeHint_UpdateWidgetProperties;
-  }
-
-  if (!hint && mIMEMode != aNewData.mIMEMode) {
+  if (!hint && (mIMEMode != aNewData.mIMEMode ||
+                mWindowOpacity != aNewData.mWindowOpacity ||
+                mMozWindowTransform != aNewData.mMozWindowTransform)) {
     hint |= nsChangeHint_NeutralChange;
   }
 

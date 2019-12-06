@@ -131,7 +131,6 @@
 #include "nsIConsoleService.h"
 
 #include "nsVariant.h"
-#include "nsIProperty.h"
 #include "nsCOMArray.h"
 #include "nsTArray.h"
 #include "nsBaseHashtable.h"
@@ -246,6 +245,8 @@ class nsXPConnect final : public nsIXPConnect {
   // Called by module code on dll shutdown.
   static void ReleaseXPConnectSingleton();
 
+  static void InitJSContext();
+
   void RecordTraversal(void* p, nsISupports* s);
 
  protected:
@@ -258,7 +259,7 @@ class nsXPConnect final : public nsIXPConnect {
   static nsXPConnect* gSelf;
   static bool gOnceAliveNowDead;
 
-  XPCJSRuntime* mRuntime;
+  XPCJSRuntime* mRuntime = nullptr;
   bool mShuttingDown;
 
   friend class nsIXPConnect;
@@ -2502,7 +2503,8 @@ nsresult CreateSandboxObject(JSContext* cx, JS::MutableHandleValue vp,
 // principal and line number 1 as a fallback.
 nsresult EvalInSandbox(JSContext* cx, JS::HandleObject sandbox,
                        const nsAString& source, const nsACString& filename,
-                       int32_t lineNo, JS::MutableHandleValue rval);
+                       int32_t lineNo, bool enforceFilenameRestrictions,
+                       JS::MutableHandleValue rval);
 
 // Helper for retrieving metadata stored in a reserved slot. The metadata
 // is set during the sandbox creation using the "metadata" option.

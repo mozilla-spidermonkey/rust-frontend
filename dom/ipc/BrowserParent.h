@@ -28,7 +28,6 @@
 #include "nsIBrowserDOMWindow.h"
 #include "nsIDOMEventListener.h"
 #include "nsIKeyEventInPluginCallback.h"
-#include "nsIRemoteTab.h"
 #include "nsIXULBrowserWindow.h"
 #include "nsRefreshDriver.h"
 #include "nsWeakReference.h"
@@ -254,7 +253,6 @@ class BrowserParent final : public PBrowserParent,
     mBrowserDOMWindow = aBrowserDOMWindow;
   }
 
-
   void SwapFrameScriptsFrom(nsTArray<FrameScriptInfo>& aFrameScripts) {
     aFrameScripts.SwapElements(mDelayedFrameScripts);
   }
@@ -439,8 +437,7 @@ class BrowserParent final : public PBrowserParent,
       const uint32_t& aStride, const gfx::SurfaceFormat& aFormat,
       const uint32_t& aHotspotX, const uint32_t& aHotspotY, const bool& aForce);
 
-  mozilla::ipc::IPCResult RecvSetStatus(const uint32_t& aType,
-                                        const nsString& aStatus);
+  mozilla::ipc::IPCResult RecvSetLinkStatus(const nsString& aStatus);
 
   mozilla::ipc::IPCResult RecvShowTooltip(const uint32_t& aX,
                                           const uint32_t& aY,
@@ -476,17 +473,17 @@ class BrowserParent final : public PBrowserParent,
 
   bool DeallocPColorPickerParent(PColorPickerParent* aColorPicker);
 
+#ifdef ACCESSIBILITY
   PDocAccessibleParent* AllocPDocAccessibleParent(PDocAccessibleParent*,
                                                   const uint64_t&,
                                                   const uint32_t&,
                                                   const IAccessibleHolder&);
-
   bool DeallocPDocAccessibleParent(PDocAccessibleParent*);
-
   virtual mozilla::ipc::IPCResult RecvPDocAccessibleConstructor(
       PDocAccessibleParent* aDoc, PDocAccessibleParent* aParentDoc,
       const uint64_t& aParentID, const uint32_t& aMsaaID,
       const IAccessibleHolder& aDocCOMProxy) override;
+#endif
 
   mozilla::ipc::IPCResult RecvNewWindowGlobal(
       ManagedEndpoint<PWindowGlobalParent>&& aEndpoint,
@@ -535,6 +532,7 @@ class BrowserParent final : public PBrowserParent,
 
 #if defined(MOZ_WIDGET_ANDROID)
   void DynamicToolbarMaxHeightChanged(ScreenIntCoord aHeight);
+  void DynamicToolbarOffsetChanged(ScreenIntCoord aOffset);
 #endif
 
   void Activate();

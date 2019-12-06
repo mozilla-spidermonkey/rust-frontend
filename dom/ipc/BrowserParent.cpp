@@ -68,11 +68,10 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsILoadInfo.h"
 #include "nsIPromptFactory.h"
-#include "nsITransportSecurityInfo.h"
 #include "nsIURI.h"
-#include "nsIWindowWatcher.h"
 #include "nsIWebBrowserChrome.h"
 #include "nsIWebProtocolHandlerRegistrar.h"
+#include "nsIXPConnect.h"
 #include "nsIXULBrowserWindow.h"
 #include "nsIAppWindow.h"
 #include "nsViewManager.h"
@@ -903,6 +902,14 @@ void BrowserParent::InitRendering() {
   layers::LayersId layersId = mRemoteLayerTreeOwner.GetLayersId();
   AddBrowserParentToTable(layersId, this);
 
+  RefPtr<nsFrameLoader> frameLoader = GetFrameLoader();
+  if (frameLoader) {
+    nsIFrame* frame = frameLoader->GetPrimaryFrameOfOwningContent();
+    if (frame) {
+      frame->InvalidateFrame();
+    }
+  }
+
   TextureFactoryIdentifier textureFactoryIdentifier;
   mRemoteLayerTreeOwner.GetTextureFactoryIdentifier(&textureFactoryIdentifier);
   Unused << SendInitRendering(textureFactoryIdentifier, layersId,
@@ -1097,6 +1104,12 @@ void BrowserParent::DynamicToolbarMaxHeightChanged(ScreenIntCoord aHeight) {
     Unused << SendDynamicToolbarMaxHeightChanged(aHeight);
   }
 }
+
+void BrowserParent::DynamicToolbarOffsetChanged(ScreenIntCoord aOffset) {
+  if (!mIsDestroyed) {
+    Unused << SendDynamicToolbarOffsetChanged(aOffset);
+  }
+}
 #endif
 
 void BrowserParent::HandleAccessKey(const WidgetKeyboardEvent& aEvent,
@@ -1128,22 +1141,17 @@ void BrowserParent::Deactivate(bool aWindowLowering) {
   }
 }
 
+#ifdef ACCESSIBILITY
 a11y::PDocAccessibleParent* BrowserParent::AllocPDocAccessibleParent(
     PDocAccessibleParent* aParent, const uint64_t&, const uint32_t&,
     const IAccessibleHolder&) {
-#ifdef ACCESSIBILITY
   // Reference freed in DeallocPDocAccessibleParent.
   return do_AddRef(new a11y::DocAccessibleParent()).take();
-#else
-  return nullptr;
-#endif
 }
 
 bool BrowserParent::DeallocPDocAccessibleParent(PDocAccessibleParent* aParent) {
-#ifdef ACCESSIBILITY
   // Free reference from AllocPDocAccessibleParent.
   static_cast<a11y::DocAccessibleParent*>(aParent)->Release();
-#endif
   return true;
 }
 
@@ -1151,7 +1159,6 @@ mozilla::ipc::IPCResult BrowserParent::RecvPDocAccessibleConstructor(
     PDocAccessibleParent* aDoc, PDocAccessibleParent* aParentDoc,
     const uint64_t& aParentID, const uint32_t& aMsaaID,
     const IAccessibleHolder& aDocCOMProxy) {
-#ifdef ACCESSIBILITY
   auto doc = static_cast<a11y::DocAccessibleParent*>(aDoc);
 
   // If this tab is already shutting down just mark the new actor as shutdown
@@ -1253,9 +1260,9 @@ mozilla::ipc::IPCResult BrowserParent::RecvPDocAccessibleConstructor(
     }
 #  endif
   }
-#endif
   return IPC_OK();
 }
+#endif
 
 PFilePickerParent* BrowserParent::AllocPFilePickerParent(const nsString& aTitle,
                                                          const int16_t& aMode) {
@@ -2012,18 +2019,15 @@ mozilla::ipc::IPCResult BrowserParent::RecvSetCursor(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult BrowserParent::RecvSetStatus(const uint32_t& aType,
-                                                     const nsString& aStatus) {
+mozilla::ipc::IPCResult BrowserParent::RecvSetLinkStatus(
+    const nsString& aStatus) {
   nsCOMPtr<nsIXULBrowserWindow> xulBrowserWindow = GetXULBrowserWindow();
   if (!xulBrowserWindow) {
     return IPC_OK();
   }
 
-  switch (aType) {
-    case nsIWebBrowserChrome::STATUS_LINK:
-      xulBrowserWindow->SetOverLink(aStatus, nullptr);
-      break;
-  }
+  xulBrowserWindow->SetOverLink(aStatus);
+
   return IPC_OK();
 }
 
@@ -2770,9 +2774,8 @@ mozilla::ipc::IPCResult BrowserParent::RecvSessionStoreUpdate(
     data.mIsPrivate.Construct() = aPrivatedMode.value();
   }
   if (aPositions.Length() != 0) {
-    data.mPositions.Construct().Assign(std::move(aPositions));
-    data.mPositionDescendants.Construct().Assign(
-        std::move(aPositionDescendants));
+    data.mPositions.Construct(std::move(aPositions));
+    data.mPositionDescendants.Construct(std::move(aPositionDescendants));
   }
   if (aIdVals.Length() != 0) {
     SessionStoreUtils::ComposeInputData(aIdVals, data.mId.Construct());
@@ -2792,20 +2795,20 @@ mozilla::ipc::IPCResult BrowserParent::RecvSessionStoreUpdate(
       url.AppendElement(input.url);
     }
 
-    data.mInputDescendants.Construct().Assign(std::move(descendants));
-    data.mNumId.Construct().Assign(std::move(numId));
-    data.mNumXPath.Construct().Assign(std::move(numXPath));
-    data.mInnerHTML.Construct().Assign(std::move(innerHTML));
-    data.mUrl.Construct().Assign(std::move(url));
+    data.mInputDescendants.Construct(std::move(descendants));
+    data.mNumId.Construct(std::move(numId));
+    data.mNumXPath.Construct(std::move(numXPath));
+    data.mInnerHTML.Construct(std::move(innerHTML));
+    data.mUrl.Construct(std::move(url));
   }
   // In normal case, we only update the storage when needed.
   // However, we need to reset the session storage(aOrigins.Length() will be 0)
   //   if the usage is over the "browser_sessionstore_dom_storage_limit".
   // In this case, aIsFullStorage is true.
   if (aOrigins.Length() != 0 || aIsFullStorage) {
-    data.mStorageOrigins.Construct().Assign(std::move(aOrigins));
-    data.mStorageKeys.Construct().Assign(std::move(aKeys));
-    data.mStorageValues.Construct().Assign(std::move(aValues));
+    data.mStorageOrigins.Construct(std::move(aOrigins));
+    data.mStorageKeys.Construct(std::move(aKeys));
+    data.mStorageValues.Construct(std::move(aValues));
     data.mIsFullStorage.Construct() = aIsFullStorage;
   }
 

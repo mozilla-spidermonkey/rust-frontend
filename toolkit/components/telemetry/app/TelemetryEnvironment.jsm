@@ -182,10 +182,19 @@ var TelemetryEnvironment = {
   },
 
   // Policy to use when saving preferences. Exported for using them in tests.
-  RECORD_PREF_STATE: 1, // Don't record the preference value
-  RECORD_PREF_VALUE: 2, // We only record user-set prefs.
-  RECORD_DEFAULTPREF_VALUE: 3, // We only record default pref if set
-  RECORD_DEFAULTPREF_STATE: 4, // We only record if the pref exists
+  // Reports "<user-set>" if there is a value set on the user branch
+  RECORD_PREF_STATE: 1,
+
+  // Reports the value set on the user branch, if one is set
+  RECORD_PREF_VALUE: 2,
+
+  // Reports the active value (set on either the user or default branch)
+  // for this pref, if one is set
+  RECORD_DEFAULTPREF_VALUE: 3,
+
+  // Reports "<set>" if a value for this pref is defined on either the user
+  // or default branch
+  RECORD_DEFAULTPREF_STATE: 4,
 
   // Testing method
   async testWatchPreferences(prefMap) {
@@ -257,7 +266,6 @@ const DEFAULT_ENVIRONMENT_PREFS = new Map([
   ["extensions.blocklist.url", { what: RECORD_PREF_VALUE }],
   ["extensions.formautofill.addresses.enabled", { what: RECORD_PREF_VALUE }],
   ["extensions.formautofill.creditCards.enabled", { what: RECORD_PREF_VALUE }],
-  ["extensions.htmlaboutaddons.enabled", { what: RECORD_PREF_VALUE }],
   ["extensions.legacy.enabled", { what: RECORD_PREF_VALUE }],
   ["extensions.strictCompatibility", { what: RECORD_PREF_VALUE }],
   ["extensions.update.enabled", { what: RECORD_PREF_VALUE }],

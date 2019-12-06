@@ -6,7 +6,8 @@
 "use strict";
 
 const mcRoot = `${__dirname}/../../../../../`;
-const getModule = mcPath => `module.exports = require("${mcRoot}${mcPath}");`;
+const getModule = mcPath =>
+  `module.exports = require("${(mcRoot + mcPath).replace(/\\/gi, "/")}");`;
 
 const { pref } = require("devtools-services");
 pref("devtools.debugger.remote-timeout", 10000);
@@ -102,7 +103,9 @@ requireHacker.global_hook("default", (path, module) => {
     react: () => getModule("devtools/client/shared/vendor/react-dev"),
     "devtools/client/shared/vendor/react": () =>
       getModule("devtools/client/shared/vendor/react-dev"),
-    chrome: () => `module.exports = { Cc: {}, Ci: {}, Cu: {} }`,
+    chrome: () =>
+      `module.exports = { Cc: {}, Ci: {}, Cu: {}, components: {stack: {caller: ""}} }`,
+    ChromeUtils: () => `module.exports = { import: () => ({}) }`,
     // Some modules depend on Chrome APIs which don't work in mocha. When such a module
     // is required, replace it with a mock version.
     "devtools/shared/l10n": () =>
@@ -112,9 +115,8 @@ requireHacker.global_hook("default", (path, module) => {
     "devtools/shared/plural-form": () =>
       getModule("devtools/client/webconsole/test/node/fixtures/PluralForm"),
     Services: () => `module.exports = require("devtools-services")`,
-    "devtools/shared/fronts/object": () => `() => {}`,
-    "devtools/shared/fronts/string": () =>
-      `() => ({LongStringFront: () => {}})`,
+    "devtools/server/debugger-server": () =>
+      `module.exports = {DebuggerServer: {}}`,
     "devtools/client/shared/components/SmartTrace": () => "{}",
     "devtools/client/netmonitor/src/components/TabboxPanel": () => "{}",
     "devtools/client/webconsole/utils/context-menu": () => "{}",

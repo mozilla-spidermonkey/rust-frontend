@@ -127,9 +127,11 @@ GCC_6 = GCC('6.4.0') + DEFAULT_C11
 GXX_6 = GXX('6.4.0') + DEFAULT_CXX_14 + SUPPORTS_GNUXX17 + SUPPORTS_DRAFT_CXX17_201500_VERSION
 GCC_7 = GCC('7.3.0') + DEFAULT_C11
 GXX_7 = GXX('7.3.0') + DEFAULT_CXX_14 + SUPPORTS_GNUXX17 + SUPPORTS_CXX17
+GCC_8 = GCC('8.3.0') + DEFAULT_C11
+GXX_8 = GXX('8.3.0') + DEFAULT_CXX_14 + SUPPORTS_GNUXX17 + SUPPORTS_CXX17
 
-DEFAULT_GCC = GCC_6
-DEFAULT_GXX = GXX_6
+DEFAULT_GCC = GCC_7
+DEFAULT_GXX = GXX_7
 
 GCC_PLATFORM_LITTLE_ENDIAN = {
     '__ORDER_LITTLE_ENDIAN__': 1234,
@@ -462,7 +464,7 @@ class BaseToolchainTest(BaseConfigureTest):
 
 
 def old_gcc_message(old_ver):
-    return 'Only GCC 6.1 or newer is supported (found version {}).'.format(old_ver)
+    return 'Only GCC 7.1 or newer is supported (found version {}).'.format(old_ver)
 
 
 class LinuxToolchainTest(BaseToolchainTest):
@@ -477,6 +479,8 @@ class LinuxToolchainTest(BaseToolchainTest):
         '/usr/bin/g++-6': GXX_6 + GCC_PLATFORM_X86_64_LINUX,
         '/usr/bin/gcc-7': GCC_7 + GCC_PLATFORM_X86_64_LINUX,
         '/usr/bin/g++-7': GXX_7 + GCC_PLATFORM_X86_64_LINUX,
+        '/usr/bin/gcc-8': GCC_8 + GCC_PLATFORM_X86_64_LINUX,
+        '/usr/bin/g++-8': GXX_8 + GCC_PLATFORM_X86_64_LINUX,
         '/usr/bin/clang': DEFAULT_CLANG + CLANG_PLATFORM_X86_64_LINUX,
         '/usr/bin/clang++': DEFAULT_CLANGXX + CLANG_PLATFORM_X86_64_LINUX,
         '/usr/bin/clang-5.0': CLANG_5_0 + CLANG_PLATFORM_X86_64_LINUX,
@@ -493,20 +497,8 @@ class LinuxToolchainTest(BaseToolchainTest):
     GXX_4_9_RESULT = GCC_4_9_RESULT
     GCC_5_RESULT = old_gcc_message('5.2.1')
     GXX_5_RESULT = GCC_5_RESULT
-    GCC_6_RESULT = CompilerResult(
-        flags=['-std=gnu99'],
-        version='6.4.0',
-        type='gcc',
-        compiler='/usr/bin/gcc-6',
-        language='C',
-    )
-    GXX_6_RESULT = CompilerResult(
-        flags=[],
-        version='6.4.0',
-        type='gcc',
-        compiler='/usr/bin/g++-6',
-        language='C++',
-    )
+    GCC_6_RESULT = old_gcc_message('6.4.0')
+    GXX_6_RESULT = GCC_6_RESULT
     GCC_7_RESULT = CompilerResult(
         flags=['-std=gnu99'],
         version='7.3.0',
@@ -515,14 +507,28 @@ class LinuxToolchainTest(BaseToolchainTest):
         language='C',
     )
     GXX_7_RESULT = CompilerResult(
-        flags=[],
+        flags=['-std=gnu++17'],
         version='7.3.0',
         type='gcc',
         compiler='/usr/bin/g++-7',
         language='C++',
     )
-    DEFAULT_GCC_RESULT = GCC_6_RESULT + {'compiler': '/usr/bin/gcc'}
-    DEFAULT_GXX_RESULT = GXX_6_RESULT + {'compiler': '/usr/bin/g++'}
+    GCC_8_RESULT = CompilerResult(
+        flags=['-std=gnu99'],
+        version='8.3.0',
+        type='gcc',
+        compiler='/usr/bin/gcc-8',
+        language='C',
+    )
+    GXX_8_RESULT = CompilerResult(
+        flags=['-std=gnu++17'],
+        version='8.3.0',
+        type='gcc',
+        compiler='/usr/bin/g++-8',
+        language='C++',
+    )
+    DEFAULT_GCC_RESULT = GCC_7_RESULT + {'compiler': '/usr/bin/gcc'}
+    DEFAULT_GXX_RESULT = GXX_7_RESULT + {'compiler': '/usr/bin/g++'}
 
     CLANG_3_3_RESULT = 'Only clang/llvm 5.0 or newer is supported.'
     CLANGXX_3_3_RESULT = 'Only clang/llvm 5.0 or newer is supported.'
@@ -536,7 +542,7 @@ class LinuxToolchainTest(BaseToolchainTest):
         language='C',
     )
     CLANGXX_5_0_RESULT = CompilerResult(
-        flags=['-std=gnu++14'],
+        flags=['-std=gnu++17'],
         version='5.0.1',
         type='clang',
         compiler='/usr/bin/clang++-5.0',
@@ -600,12 +606,12 @@ class LinuxToolchainTest(BaseToolchainTest):
         self.do_toolchain_test(self.PATHS, {
             'c_compiler': self.DEFAULT_GCC_RESULT,
             'cxx_compiler': (
-                'The target C compiler is version 6.4.0, while the target '
-                'C++ compiler is version 7.3.0. Need to use the same compiler '
+                'The target C compiler is version 7.3.0, while the target '
+                'C++ compiler is version 8.3.0. Need to use the same compiler '
                 'version.'),
         }, environ={
             'CC': 'gcc',
-            'CXX': 'g++-7',
+            'CXX': 'g++-8',
         })
 
         self.do_toolchain_test(self.PATHS, {
@@ -613,12 +619,12 @@ class LinuxToolchainTest(BaseToolchainTest):
             'cxx_compiler': self.DEFAULT_GXX_RESULT,
             'host_c_compiler': self.DEFAULT_GCC_RESULT,
             'host_cxx_compiler': (
-                'The host C compiler is version 6.4.0, while the host '
-                'C++ compiler is version 7.3.0. Need to use the same compiler '
+                'The host C compiler is version 7.3.0, while the host '
+                'C++ compiler is version 8.3.0. Need to use the same compiler '
                 'version.'),
         }, environ={
             'CC': 'gcc',
-            'HOST_CXX': 'g++-7',
+            'HOST_CXX': 'g++-8',
         })
 
     def test_mismatched_compiler(self):
@@ -879,7 +885,7 @@ class OSXToolchainTest(BaseToolchainTest):
         language='C',
     )
     DEFAULT_CLANGXX_RESULT = CompilerResult(
-        flags=['-std=gnu++14'],
+        flags=['-std=gnu++17'],
         version='5.0.1',
         type='clang',
         compiler='/usr/bin/clang++',
@@ -963,6 +969,8 @@ class WindowsToolchainTest(BaseToolchainTest):
         '/usr/bin/g++-5': GXX_5 + GCC_PLATFORM_X86_WIN,
         '/usr/bin/gcc-6': GCC_6 + GCC_PLATFORM_X86_WIN,
         '/usr/bin/g++-6': GXX_6 + GCC_PLATFORM_X86_WIN,
+        '/usr/bin/gcc-7': GCC_7 + GCC_PLATFORM_X86_WIN,
+        '/usr/bin/g++-7': GXX_7 + GCC_PLATFORM_X86_WIN,
         '/usr/bin/clang': DEFAULT_CLANG + CLANG_PLATFORM_X86_WIN,
         '/usr/bin/clang++': DEFAULT_CLANGXX + CLANG_PLATFORM_X86_WIN,
         '/usr/bin/clang-5.0': CLANG_5_0 + CLANG_PLATFORM_X86_WIN,
@@ -984,7 +992,7 @@ class WindowsToolchainTest(BaseToolchainTest):
     CLANGXX_CL_3_9_RESULT = 'Only clang-cl 8.0 or newer is supported (found version 3.9.0)'
     CLANGXX_CL_8_0_RESULT = CompilerResult(
         version='8.0.0',
-        flags=['-Xclang', '-std=c++14'],
+        flags=['-Xclang', '-std=c++17'],
         type='clang-cl',
         compiler='/usr/bin/clang-cl',
         language='C++',
@@ -1001,6 +1009,8 @@ class WindowsToolchainTest(BaseToolchainTest):
     GXX_5_RESULT = LinuxToolchainTest.GXX_5_RESULT
     GCC_6_RESULT = LinuxToolchainTest.GCC_6_RESULT
     GXX_6_RESULT = LinuxToolchainTest.GXX_6_RESULT
+    GCC_7_RESULT = LinuxToolchainTest.GCC_7_RESULT
+    GXX_7_RESULT = LinuxToolchainTest.GXX_7_RESULT
     DEFAULT_GCC_RESULT = LinuxToolchainTest.DEFAULT_GCC_RESULT
     DEFAULT_GXX_RESULT = LinuxToolchainTest.DEFAULT_GXX_RESULT
 
@@ -1660,6 +1670,22 @@ def gen_invoke_rustc(version, rustup_wrapper=False):
                     'x86_64-uwp-windows-gnu',
                     'x86_64-wrs-vxworks',
                 ]
+            # Additional targets from 1.38
+            if Version(version) >= '1.39.0':
+                rust_targets += [
+                    'aarch64-uwp-windows-msvc',
+                    'armv7-wrs-vxworks-eabihf',
+                    'i686-unknown-uefi',
+                    'i686-uwp-windows-msvc',
+                    'mips64-unknown-linux-muslabi64',
+                    'mips64el-unknown-linux-muslabi64',
+                    'sparc64-unknown-openbsd',
+                    'x86_64-linux-kernel',
+                    'x86_64-uwp-windows-msvc',
+                ]
+                rust_targets.remove('armv7-wrs-vxworks')
+                rust_targets.remove('i586-wrs-vxworks')
+
             return 0, '\n'.join(sorted(rust_targets)), ''
         if (len(args) == 6 and args[:2] == ('--crate-type', 'staticlib') and
             args[2].startswith('--target=') and args[3] == '-o'):
@@ -1671,7 +1697,7 @@ def gen_invoke_rustc(version, rustup_wrapper=False):
 
 
 class RustTest(BaseConfigureTest):
-    def get_rust_target(self, target, compiler_type='gcc', version='1.38.0',
+    def get_rust_target(self, target, compiler_type='gcc', version='1.39.0',
                         arm_target=None):
         environ = {
             'PATH': os.pathsep.join(
@@ -1755,6 +1781,7 @@ class RustTest(BaseConfigureTest):
             ('x86_64-pc-mingw32', 'clang', 'x86_64-pc-windows-gnu'),
             ('i686-w64-mingw32', 'clang', 'i686-pc-windows-gnu'),
             ('x86_64-w64-mingw32', 'clang', 'x86_64-pc-windows-gnu'),
+            ('aarch64-windows-mingw32', 'clang-cl', 'aarch64-pc-windows-msvc'),
         ):
             self.assertEqual(self.get_rust_target(autoconf, building_with_gcc), rust)
 

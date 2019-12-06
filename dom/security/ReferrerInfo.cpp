@@ -5,7 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsIClassInfoImpl.h"
-#include "nsICookieService.h"
+#include "nsIEffectiveTLDService.h"
 #include "nsIHttpChannel.h"
 #include "nsIObjectInputStream.h"
 #include "nsIObjectOutputStream.h"
@@ -19,6 +19,7 @@
 #include "ReferrerInfo.h"
 
 #include "mozilla/AntiTrackingCommon.h"
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/net/CookieSettings.h"
 #include "mozilla/net/HttpBaseChannel.h"
 #include "mozilla/dom/Element.h"
@@ -400,6 +401,14 @@ bool ReferrerInfo::ShouldSetNullOriginHeader(net::HttpBaseChannel* aChannel,
                                              nsIURI* aOriginURI) {
   MOZ_ASSERT(aChannel);
   MOZ_ASSERT(aOriginURI);
+
+  if (StaticPrefs::network_http_referer_hideOnionSource()) {
+    nsAutoCString host;
+    if (NS_SUCCEEDED(aOriginURI->GetAsciiHost(host)) &&
+        StringEndsWith(host, NS_LITERAL_CSTRING(".onion"))) {
+      return ReferrerInfo::IsCrossOriginRequest(aChannel);
+    }
+  }
 
   // When we're dealing with CORS (mode is "cors"), we shouldn't take the
   // Referrer-Policy into account

@@ -55,6 +55,17 @@ class Key;
 class PermissionRequestChild;
 class PermissionRequestParent;
 class SerializedStructuredCloneReadInfo;
+struct CloneInfo;
+
+}  // namespace indexedDB
+}  // namespace dom
+}  // namespace mozilla
+
+DECLARE_USE_COPY_CONSTRUCTORS(mozilla::dom::indexedDB::CloneInfo)
+
+namespace mozilla {
+namespace dom {
+namespace indexedDB {
 
 class ThreadLocal {
   friend class nsAutoPtr<ThreadLocal>;
@@ -96,7 +107,7 @@ class ThreadLocal {
     MOZ_ASSERT(mLoggingInfo.nextVersionChangeTransactionSerialNumber() >
                INT64_MIN);
 
-    if (aMode == IDBTransaction::VERSION_CHANGE) {
+    if (aMode == IDBTransaction::Mode::VersionChange) {
       return mLoggingInfo.nextVersionChangeTransactionSerialNumber()--;
     }
 
@@ -556,13 +567,13 @@ class BackgroundRequestChild final : public BackgroundRequestChildBase,
                                      public PBackgroundIDBRequestChild {
   friend class BackgroundTransactionChild;
   friend class BackgroundVersionChangeTransactionChild;
+  friend struct CloneInfo;
   friend IDBTransaction;
 
   class PreprocessHelper;
 
   RefPtr<IDBTransaction> mTransaction;
-  nsTArray<RefPtr<PreprocessHelper>> mPreprocessHelpers;
-  nsTArray<UniquePtr<JSStructuredCloneData>> mCloneDatas;
+  nsTArray<CloneInfo> mCloneInfos;
   uint32_t mRunningPreprocessHelpers;
   uint32_t mCurrentCloneDataIndex;
   nsresult mPreprocessResultCode;
@@ -604,6 +615,9 @@ class BackgroundRequestChild final : public BackgroundRequestChildBase,
 
   nsresult HandlePreprocess(const nsTArray<PreprocessInfo>& aPreprocessInfos);
 
+  nsresult HandlePreprocessInternal(
+      const nsTArray<PreprocessInfo>& aPreprocessInfos);
+
   // IPDL methods are only called by IPDL.
   void ActorDestroy(ActorDestroyReason aWhy) override;
 
@@ -612,6 +626,11 @@ class BackgroundRequestChild final : public BackgroundRequestChildBase,
 
   mozilla::ipc::IPCResult RecvPreprocess(
       const PreprocessParams& aParams) override;
+};
+
+struct CloneInfo {
+  RefPtr<BackgroundRequestChild::PreprocessHelper> mPreprocessHelper;
+  UniquePtr<JSStructuredCloneData> mCloneData;
 };
 
 // TODO: Consider defining different subclasses for the different cursor types,
@@ -730,8 +749,8 @@ class BackgroundCursorChild final : public PBackgroundIDBCursorChild {
   void HandleResponse(const nsTArray<IndexKeyCursorResponse>& aResponses);
 
   template <typename... Args>
-  void HandleIndividualCursorResponse(bool aUseAsCurrentResult,
-                                      Args&&... aArgs);
+  MOZ_MUST_USE RefPtr<IDBCursor> HandleIndividualCursorResponse(
+      bool aUseAsCurrentResult, Args&&... aArgs);
 
   // IPDL methods are only called by IPDL.
   void ActorDestroy(ActorDestroyReason aWhy) override;

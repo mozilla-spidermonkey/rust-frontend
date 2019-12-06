@@ -13,7 +13,6 @@
 #include "mozilla/dom/cache/ManagerId.h"
 #include "mozilla/dom/quota/QuotaManager.h"
 #include "mozIStorageConnection.h"
-#include "nsIFile.h"
 #include "nsIPrincipal.h"
 #include "nsIRunnable.h"
 #include "nsThreadUtils.h"
@@ -391,9 +390,10 @@ Context::QuotaInitRunnable::Run() {
 
       QuotaManager* qm = QuotaManager::Get();
       MOZ_DIAGNOSTIC_ASSERT(qm);
-      nsresult rv = qm->EnsureOriginIsInitialized(
+      nsresult rv = qm->EnsureStorageAndOriginIsInitialized(
           PERSISTENCE_TYPE_DEFAULT, mQuotaInfo.mSuffix, mQuotaInfo.mGroup,
-          mQuotaInfo.mOrigin, getter_AddRefs(mQuotaInfo.mDir));
+          mQuotaInfo.mOrigin, quota::Client::DOMCACHE,
+          getter_AddRefs(mQuotaInfo.mDir));
       if (NS_FAILED(rv)) {
         resolver->Resolve(rv);
         break;

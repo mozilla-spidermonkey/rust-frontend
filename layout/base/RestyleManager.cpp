@@ -563,7 +563,6 @@ nsCString RestyleManager::ChangeHintToString(nsChangeHint aHint) {
                          "UpdateBackgroundPosition",
                          "AddOrRemoveTransform",
                          "ScrollbarChange",
-                         "UpdateWidgetProperties",
                          "UpdateTableCellSpans",
                          "VisibilityChange"};
   static_assert(nsChangeHint_AllHints ==
@@ -1783,9 +1782,6 @@ void RestyleManager::ProcessRestyledFrames(nsStyleChangeList& aChangeList) {
         presContext->PresShell()->SynthesizeMouseMove(false);
         didUpdateCursor = true;
       }
-      if (hint & nsChangeHint_UpdateWidgetProperties) {
-        frame->UpdateWidgetProperties();
-      }
       if (hint & nsChangeHint_UpdateTableCellSpans) {
         frameConstructor->UpdateTableCellSpans(content);
       }
@@ -1796,6 +1792,7 @@ void RestyleManager::ProcessRestyledFrames(nsStyleChangeList& aChangeList) {
   }
 
   aChangeList.Clear();
+  FlushOverflowChangedTracker();
 }
 
 /* static */
@@ -2434,7 +2431,7 @@ struct RestyleManager::TextPostTraversalState {
 static void UpdateBackdropIfNeeded(nsIFrame* aFrame, ServoStyleSet& aStyleSet,
                                    nsStyleChangeList& aChangeList) {
   const nsStyleDisplay* display = aFrame->Style()->StyleDisplay();
-  if (display->mTopLayer != NS_STYLE_TOP_LAYER_TOP) {
+  if (display->mTopLayer != StyleTopLayer::Top) {
     return;
   }
 
@@ -3126,8 +3123,6 @@ void RestyleManager::DoProcessPendingRestyles(ServoTraversalFlags aFlags) {
 
   doc->ClearServoRestyleRoot();
 
-  FlushOverflowChangedTracker();
-
   ClearSnapshots();
   styleSet->AssertTreeIsClean();
   mHaveNonAnimationRestyles = false;
@@ -3350,7 +3345,8 @@ void RestyleManager::TakeSnapshotForAttributeChange(Element& aElement,
 // * lwtheme and lwthemetextcolor on root element of XUL document
 //   affects all descendants due to :-moz-lwtheme* pseudo-classes
 // * lang="" and xml:lang="" can affect all descendants due to :lang()
-//
+// * exportparts can affect all descendant parts. We could certainly integrate
+//   it better in the invalidation machinery if it was necessary.
 static inline bool AttributeChangeRequiresSubtreeRestyle(
     const Element& aElement, nsAtom* aAttr) {
   if (aAttr == nsGkAtoms::cellpadding) {
@@ -3360,7 +3356,11 @@ static inline bool AttributeChangeRequiresSubtreeRestyle(
     Document* doc = aElement.OwnerDoc();
     return doc->IsInChromeDocShell() && &aElement == doc->GetRootElement();
   }
-
+  // TODO(emilio, bug 1598094): Maybe finer-grained invalidation for exportparts
+  // attribute changes?
+  if (aAttr == nsGkAtoms::exportparts) {
+    return !!aElement.GetShadowRoot();
+  }
   return aAttr == nsGkAtoms::lang;
 }
 
@@ -3382,8 +3382,8 @@ void RestyleManager::AttributeChanged(Element* aElement, int32_t aNameSpaceID,
     // FIXME(emilio): Does this really need to re-selector-match?
     restyleHint |= StyleRestyleHint_RESTYLE_SELF;
   } else if (aElement->IsInShadowTree() && aAttribute == nsGkAtoms::part) {
-    // TODO(emilio): Maybe finer-grained invalidation for part attribute
-    // changes?
+    // TODO(emilio, bug 1598094): Maybe finer-grained invalidation for part
+    // attribute changes?
     restyleHint |= StyleRestyleHint_RESTYLE_SELF;
   }
 

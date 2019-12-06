@@ -28,7 +28,6 @@
 #include "mozilla/dom/Document.h"
 #include "nsIContentInlines.h"       // for nsINode::IsEditable()
 #include "nsIEditor.h"               // for nsIEditor, etc.
-#include "nsIObserver.h"             // for NS_DECL_NSIOBSERVER, etc.
 #include "nsIPlaintextEditor.h"      // for nsIPlaintextEditor, etc.
 #include "nsISelectionController.h"  // for nsISelectionController constants
 #include "nsISelectionListener.h"    // for nsISelectionListener
@@ -630,7 +629,10 @@ class EditorBase : public nsIEditor,
     //     styles because inline style can be specified with "style" attribute
     //     and/or CSS in <style> elements or CSS files.  So, we need to look
     //     for better implementation about this.
-    AutoStyleCacheArray mCachedInlineStyles;
+    // FYI: Initialization cost of AutoStyleCacheArray is expensive and it is
+    //      not used by TextEditor so that we should construct it only when
+    //      we're an HTMLEditor.
+    Maybe<AutoStyleCacheArray> mCachedInlineStyles;
 
     // If we tried to delete selection, set to true.
     bool mDidDeleteSelection;
@@ -698,7 +700,9 @@ class EditorBase : public nsIEditor,
       mNewBlockElement = nullptr;
       mSelectedRange->Clear();
       mChangedRange->Reset();
-      mCachedInlineStyles.Clear();
+      if (mCachedInlineStyles.isSome()) {
+        mCachedInlineStyles->Clear();
+      }
       mDidDeleteSelection = false;
       mDidDeleteNonCollapsedRange = false;
       mDidDeleteEmptyParentBlocks = false;

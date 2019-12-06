@@ -225,7 +225,7 @@ struct ShapeInfo {
   MACRO(Other, GCHeapUsed, shapesGCHeapBase)           \
   MACRO(Other, MallocHeap, shapesMallocHeapTreeTables) \
   MACRO(Other, MallocHeap, shapesMallocHeapDictTables) \
-  MACRO(Other, MallocHeap, shapesMallocHeapTreeKids)
+  MACRO(Other, MallocHeap, shapesMallocHeapTreeChildren)
 
   ShapeInfo() = default;
 
@@ -637,7 +637,6 @@ struct ZoneStats {
   MACRO(Other, MallocHeap, regexpZone)                     \
   MACRO(Other, MallocHeap, jitZone)                        \
   MACRO(Other, MallocHeap, baselineStubsOptimized)         \
-  MACRO(Other, MallocHeap, cachedCFG)                      \
   MACRO(Other, MallocHeap, uniqueIdMap)                    \
   MACRO(Other, MallocHeap, shapeTables)                    \
   MACRO(Other, MallocHeap, compartmentObjects)             \
@@ -731,7 +730,6 @@ struct RealmStats {
   MACRO(Other, MallocHeap, realmObject)                       \
   MACRO(Other, MallocHeap, realmTables)                       \
   MACRO(Other, MallocHeap, innerViewsTable)                   \
-  MACRO(Other, MallocHeap, lazyArrayBuffersTable)             \
   MACRO(Other, MallocHeap, objectMetadataTable)               \
   MACRO(Other, MallocHeap, savedStacksSet)                    \
   MACRO(Other, MallocHeap, varNamesSet)                       \

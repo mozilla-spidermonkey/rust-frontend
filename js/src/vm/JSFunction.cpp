@@ -765,7 +765,9 @@ inline void JSFunction::trace(JSTracer* trc) {
     // Functions can be be marked as interpreted despite having no script
     // yet at some points when parsing, and can be lazy with no lazy script
     // for self-hosted code.
-    if (hasScript() && !hasUncompletedScript()) {
+    if (isIncomplete()) {
+      MOZ_ASSERT(u.scripted.s.script_ == nullptr);
+    } else if (hasScript()) {
       JSScript* script = static_cast<JSScript*>(u.scripted.s.script_);
       TraceManuallyBarrieredEdge(trc, &script, "script");
       u.scripted.s.script_ = script;
@@ -1635,41 +1637,49 @@ static bool DelazifyCanonicalScriptedFunction(JSContext* cx,
 /* static */
 bool JSFunction::delazifyLazilyInterpretedFunction(JSContext* cx,
                                                    HandleFunction fun) {
-  MOZ_ASSERT(fun->isInterpretedLazy());
+  MOZ_ASSERT(fun->hasLazyScript());
   MOZ_ASSERT(cx->compartment() == fun->compartment());
 
   // The function must be same-compartment but might be cross-realm. Make sure
   // the script is created in the function's realm.
   AutoRealm ar(cx, fun);
 
-  if (fun->hasLazyScript()) {
-    Rooted<LazyScript*> lazy(cx, fun->lazyScript());
-    RootedFunction canonicalFun(cx, lazy->function());
+  Rooted<LazyScript*> lazy(cx, fun->lazyScript());
+  RootedFunction canonicalFun(cx, lazy->function());
 
-    // If this function is non-canonical, then use the canonical function first
-    // to get the delazified script. This may result in calling this method
-    // again on the canonical function. This ensures the canonical function is
-    // always non-lazy if any of the clones are non-lazy.
-    if (fun != canonicalFun) {
-      JSScript* script = JSFunction::getOrCreateScript(cx, canonicalFun);
-      if (!script) {
-        return false;
-      }
-
-      fun->setUnlazifiedScript(script);
-      return true;
+  // If this function is non-canonical, then use the canonical function first
+  // to get the delazified script. This may result in calling this method
+  // again on the canonical function. This ensures the canonical function is
+  // always non-lazy if any of the clones are non-lazy.
+  if (fun != canonicalFun) {
+    JSScript* script = JSFunction::getOrCreateScript(cx, canonicalFun);
+    if (!script) {
+      return false;
     }
 
-    // Even if we relazified the canonical function, the GC may not have swept
-    // the non-lazy script yet. In this case, we can reuse it.
-    if (lazy->hasScript()) {
-      fun->setUnlazifiedScript(lazy->maybeScript());
-      return true;
-    }
-
-    // Finally, compile the script if it really doesn't exist.
-    return DelazifyCanonicalScriptedFunction(cx, fun);
+    fun->setUnlazifiedScript(script);
+    return true;
   }
+
+  // Even if we relazified the canonical function, the GC may not have swept
+  // the non-lazy script yet. In this case, we can reuse it.
+  if (lazy->hasScript()) {
+    fun->setUnlazifiedScript(lazy->maybeScript());
+    return true;
+  }
+
+  // Finally, compile the script if it really doesn't exist.
+  return DelazifyCanonicalScriptedFunction(cx, fun);
+}
+
+/* static */
+bool JSFunction::delazifySelfHostedLazyFunction(JSContext* cx,
+                                                js::HandleFunction fun) {
+  MOZ_ASSERT(cx->compartment() == fun->compartment());
+
+  // The function must be same-compartment but might be cross-realm. Make sure
+  // the script is created in the function's realm.
+  AutoRealm ar(cx, fun);
 
   /* Lazily cloned self-hosted script. */
   MOZ_ASSERT(fun->isSelfHostedBuiltin());
@@ -1685,7 +1695,7 @@ void JSFunction::maybeRelazify(JSRuntime* rt) {
   // Try to relazify functions with a non-lazy script. Note: functions can be
   // marked as interpreted despite having no script yet at some points when
   // parsing.
-  if (!hasScript() || hasUncompletedScript()) {
+  if (isIncomplete()) {
     return;
   }
 
@@ -2252,7 +2262,7 @@ JSFunction* js::CloneFunctionReuseScript(
     MOZ_ASSERT(fun->hasSelfHostedLazyScript());
     MOZ_ASSERT(fun->compartment() == clone->compartment());
     SelfHostedLazyScript* lazy = fun->selfHostedLazyScript();
-    clone->initSelfHostLazyScript(lazy);
+    clone->initSelfHostedLazyScript(lazy);
     clone->initEnvironment(enclosingEnv);
   }
 

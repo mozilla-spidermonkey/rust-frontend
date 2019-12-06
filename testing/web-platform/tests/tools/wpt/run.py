@@ -347,6 +347,10 @@ class Chrome(BrowserSetup):
             kwargs["binary_args"].append("--enable-experimental-web-platform-features")
             # HACK(Hexcles): work around https://github.com/web-platform-tests/wpt/issues/16448
             kwargs["webdriver_args"].append("--disable-build-check")
+        if os.getenv("TASKCLUSTER_ROOT_URL"):
+            # We are on Taskcluster, where our Docker container does not have
+            # enough capabilities to run Chrome with sandboxing. (gh-20133)
+            kwargs["binary_args"].append("--no-sandbox")
 
 
 class ChromeAndroid(BrowserSetup):
@@ -472,8 +476,8 @@ class EdgeChromium(BrowserSetup):
                 kwargs["webdriver_binary"] = webdriver_binary
             else:
                 raise WptrunError("Unable to locate or install msedgedriver binary")
-        if browser_channel == "dev":
-            logger.info("Automatically turning on experimental features for Edge Dev")
+        if browser_channel in ("dev", "canary"):
+            logger.info("Automatically turning on experimental features for Edge Dev/Canary")
             kwargs["binary_args"].append("--enable-experimental-web-platform-features")
 
 

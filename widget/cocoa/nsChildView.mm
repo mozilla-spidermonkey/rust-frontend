@@ -36,7 +36,6 @@
 #include "nsFontMetrics.h"
 #include "nsIRollupListener.h"
 #include "nsViewManager.h"
-#include "nsIInterfaceRequestor.h"
 #include "nsIFile.h"
 #include "nsILocalFileMac.h"
 #include "nsGfxCIID.h"
@@ -72,7 +71,6 @@
 #include "mozilla/layers/IAPZCTreeManager.h"
 #include "mozilla/layers/APZInputBridge.h"
 #include "mozilla/layers/APZThreadUtils.h"
-#include "mozilla/layers/GLManager.h"
 #include "mozilla/layers/CompositorOGL.h"
 #include "mozilla/layers/CompositorBridgeParent.h"
 #include "mozilla/layers/BasicCompositor.h"
@@ -1708,10 +1706,8 @@ bool nsChildView::PreRender(WidgetRenderingContext* aContext) {
   // composition is done, thus keeping the GL context locked forever.
   mViewTearDownLock.Lock();
 
-  UniquePtr<GLManager> manager(GLManager::CreateGLManager(aContext->mLayerManager));
-  gl::GLContext* gl = manager ? manager->gl() : aContext->mGL;
-  if (gl) {
-    GLContextCGL::Cast(gl)->MigrateToActiveGPU();
+  if (aContext->mGL && gfxPlatform::CanMigrateMacGPUs()) {
+    GLContextCGL::Cast(aContext->mGL)->MigrateToActiveGPU();
   }
 
   return true;

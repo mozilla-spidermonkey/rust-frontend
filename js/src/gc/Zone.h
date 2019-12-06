@@ -212,10 +212,9 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   void addSizeOfIncludingThis(
       mozilla::MallocSizeOf mallocSizeOf, JS::CodeSizes* code, size_t* typePool,
       size_t* regexpZone, size_t* jitZone, size_t* baselineStubsOptimized,
-      size_t* cachedCFG, size_t* uniqueIdMap, size_t* shapeCaches,
-      size_t* atomsMarkBitmaps, size_t* compartmentObjects,
-      size_t* crossCompartmentWrappersTables, size_t* compartmentsPrivateData,
-      size_t* scriptCountsMapArg);
+      size_t* uniqueIdMap, size_t* shapeCaches, size_t* atomsMarkBitmaps,
+      size_t* compartmentObjects, size_t* crossCompartmentWrappersTables,
+      size_t* compartmentsPrivateData, size_t* scriptCountsMapArg);
 
   // Iterate over all cells in the zone. See the definition of ZoneCellIter
   // in gc/GC-inl.h for the possible arguments and documentation.
@@ -624,13 +623,6 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
 
   // Delete an empty compartment after its contents have been merged.
   void deleteEmptyCompartment(JS::Compartment* comp);
-
-  // Non-zero if the storage underlying any typed object in this zone might
-  // be detached. This is stored in Zone because IC stubs bake in a pointer
-  // to this field and Baseline IC code is shared across realms within a
-  // Zone. Furthermore, it's not entirely clear if this flag is ever set to
-  // a non-zero value since bug 1458011.
-  uint32_t detachedTypedObjects = 0;
 
   void finishRoots();
 

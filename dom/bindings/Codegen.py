@@ -1215,9 +1215,6 @@ class CGHeaders(CGWrapper):
             getAllTypes(descriptors + callbackDescriptors, dictionaries,
                         callbacks))
 
-        # Now make sure we're not trying to include the header from inside itself
-        declareIncludes.discard(prefix + ".h")
-
         def addHeaderForFunc(func, desc):
             if func is None:
                 return
@@ -1300,6 +1297,9 @@ class CGHeaders(CGWrapper):
             if jsParent:
                 parentDesc = jsImplemented.getDescriptor(jsParent.identifier.name)
                 declareIncludes.add(parentDesc.jsImplParentHeader)
+
+        # Now make sure we're not trying to include the header from inside itself
+        declareIncludes.discard(prefix + ".h")
 
         # Let the machinery do its thing.
         def _includeString(includes):
@@ -7534,7 +7534,7 @@ class CGCallGenerator(CGThing):
             if needsNonSystemPrincipal:
                 checkPrincipal = dedent(
                     """
-                    if (nsContentUtils::IsSystemPrincipal(principal)) {
+                    if (principal->IsSystemPrincipal()) {
                       principal = nullptr;
                     }
                     """)
@@ -8095,7 +8095,33 @@ class CGPerSignatureCall(CGThing):
 
         if useCounterName:
             # Generate a telemetry call for when [UseCounter] is used.
-            code = "SetUseCounter(obj, eUseCounter_%s);\n" % useCounterName
+            windowCode = fill(
+                """
+                SetUseCounter(obj, eUseCounter_${useCounterName});
+                """,
+                useCounterName = useCounterName)
+            workerCode = fill(
+                """
+                SetUseCounter(UseCounterWorker::${useCounterName});
+                """,
+                useCounterName = useCounterName)
+            code = ""
+            if idlNode.isExposedInWindow() and idlNode.isExposedInAnyWorker():
+                code += fill(
+                    """
+                    if (NS_IsMainThread()) {
+                      ${windowCode}
+                    } else {
+                      ${workerCode}
+                    }
+                    """,
+                    windowCode=windowCode,
+                    workerCode=workerCode)
+            elif idlNode.isExposedInWindow():
+                code += windowCode
+            elif idlNode.isExposedInAnyWorker():
+                code += workerCode
+
             cgThings.append(CGGeneric(code))
 
         self.cgRoot = CGList(cgThings)

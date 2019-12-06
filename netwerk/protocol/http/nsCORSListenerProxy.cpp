@@ -15,12 +15,10 @@
 #include "nsIHttpChannelInternal.h"
 #include "nsError.h"
 #include "nsContentUtils.h"
-#include "nsIScriptSecurityManager.h"
 #include "nsNetUtil.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsMimeTypes.h"
-#include "nsIStreamConverterService.h"
 #include "nsStringStream.h"
 #include "nsGkAtoms.h"
 #include "nsWhitespaceTokenizer.h"
@@ -40,6 +38,7 @@
 #include "nsICorsPreflightCallback.h"
 #include "nsISupportsImpl.h"
 #include "nsHttpChannel.h"
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/LoadInfo.h"
 #include "mozilla/NullPrincipal.h"
 #include "nsIHttpHeaderVisitor.h"
@@ -110,8 +109,7 @@ static void LogBlockedRequest(nsIRequest* aRequest, const char* aProperty,
   bool fromChromeContext = false;
   if (channel) {
     nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
-    fromChromeContext =
-        nsContentUtils::IsSystemPrincipal(loadInfo->TriggeringPrincipal());
+    fromChromeContext = loadInfo->TriggeringPrincipal()->IsSystemPrincipal();
   }
 
   // we are passing aProperty as the category so we can link to the
@@ -958,7 +956,7 @@ nsresult nsCORSListenerProxy::UpdateChannel(nsIChannel* aChannel,
 
   // Add the Origin header
   nsAutoCString origin;
-  rv = nsContentUtils::GetASCIIOrigin(mOriginHeaderPrincipal, origin);
+  rv = mOriginHeaderPrincipal->GetAsciiOrigin(origin);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIHttpChannel> http = do_QueryInterface(aChannel);
@@ -966,22 +964,8 @@ nsresult nsCORSListenerProxy::UpdateChannel(nsIChannel* aChannel,
 
   // hide the Origin header when requesting from .onion and requesting CORS
   if (StaticPrefs::network_http_referer_hideOnionSource()) {
-    nsCOMPtr<nsIURI> potentialOnionUri;  // the candidate uri in header Origin:
-    rv = mOriginHeaderPrincipal->GetURI(getter_AddRefs(potentialOnionUri));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsAutoCString potentialOnionHost;
-    rv = potentialOnionUri ? potentialOnionUri->GetAsciiHost(potentialOnionHost)
-                           : NS_ERROR_FAILURE;
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsAutoCString currentOrgin;
-    rv = nsContentUtils::GetASCIIOrigin(originalURI, currentOrgin);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    if (!currentOrgin.EqualsIgnoreCase(origin.get()) &&
-        StringEndsWith(potentialOnionHost, NS_LITERAL_CSTRING(".onion"))) {
-      origin.Truncate();
+    if (mOriginHeaderPrincipal->GetIsOnion()) {
+      origin.AssignLiteral("null");
     }
   }
 

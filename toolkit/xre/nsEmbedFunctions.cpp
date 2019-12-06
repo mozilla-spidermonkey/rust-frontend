@@ -17,9 +17,7 @@
 
 #include "nsIAppShell.h"
 #include "nsAppStartupNotifier.h"
-#include "nsIDirectoryService.h"
 #include "nsIFile.h"
-#include "nsIToolkitChromeRegistry.h"
 #include "nsIToolkitProfile.h"
 
 #ifdef XP_WIN
@@ -133,6 +131,10 @@ using mozilla::_ipdltest::IPDLUnitTestProcessChild;
 #  include "mozilla/sandboxing/sandboxLogging.h"
 #endif
 
+#if defined(MOZ_ENABLE_FORKSERVER)
+#  include "mozilla/ipc/ForkServer.h"
+#endif
+
 #include "VRProcessChild.h"
 
 using namespace mozilla;
@@ -224,7 +226,7 @@ void XRE_TermEmbedding() {
   delete gDirServiceProvider;
 }
 
-const char* XRE_ChildProcessTypeToString(GeckoProcessType aProcessType) {
+const char* XRE_GeckoProcessTypeToString(GeckoProcessType aProcessType) {
   return (aProcessType < GeckoProcessType_End)
              ? kGeckoProcessTypeString[aProcessType]
              : "invalid";
@@ -241,7 +243,7 @@ const char* XRE_ChildProcessTypeToAnnotation(GeckoProcessType aProcessType) {
     case GeckoProcessType_Content:
       return "content";
     default:
-      return XRE_ChildProcessTypeToString(aProcessType);
+      return XRE_GeckoProcessTypeToString(aProcessType);
   }
 }
 
@@ -264,7 +266,8 @@ void XRE_SetAndroidChildFds(JNIEnv* env, const XRE_AndroidChildFds& fds) {
 
 void XRE_SetProcessType(const char* aProcessTypeString) {
   static bool called = false;
-  if (called) {
+  if (called &&
+      sChildProcessType != GeckoProcessType_ForkServer) {
     MOZ_CRASH();
   }
   called = true;
@@ -582,8 +585,7 @@ nsresult XRE_InitChildProcess(int aArgc, char* aArgv[],
 #  endif
     printf_stderr(
         "\n\nCHILDCHILDCHILDCHILD (process type %s)\n  debug me @ %d\n\n",
-        XRE_ChildProcessTypeToString(XRE_GetProcessType()),
-        base::GetCurrentProcId());
+        XRE_GetProcessTypeString(), base::GetCurrentProcId());
     sleep(GetDebugChildPauseTime());
   }
 #elif defined(OS_WIN)
@@ -594,8 +596,7 @@ nsresult XRE_InitChildProcess(int aArgc, char* aArgv[],
   } else if (PR_GetEnv("MOZ_DEBUG_CHILD_PAUSE")) {
     printf_stderr(
         "\n\nCHILDCHILDCHILDCHILD (process type %s)\n  debug me @ %d\n\n",
-        XRE_ChildProcessTypeToString(XRE_GetProcessType()),
-        base::GetCurrentProcId());
+        XRE_GetProcessTypeString(), base::GetCurrentProcId());
     ::Sleep(GetDebugChildPauseTime());
   }
 #endif
@@ -730,6 +731,12 @@ nsresult XRE_InitChildProcess(int aArgc, char* aArgv[],
 #if defined(MOZ_SANDBOX) && defined(XP_WIN)
         case GeckoProcessType_RemoteSandboxBroker:
           process = new RemoteSandboxBrokerProcessChild(parentPID);
+          break;
+#endif
+
+#if defined(MOZ_ENABLE_FORKSERVER)
+        case GeckoProcessType_ForkServer:
+          MOZ_CRASH("Fork server should not go here");
           break;
 #endif
         default:
@@ -1025,5 +1032,11 @@ void XRE_InstallX11ErrorHandler() {
 #  else
   InstallX11ErrorHandler();
 #  endif
+}
+#endif
+
+#ifdef MOZ_ENABLE_FORKSERVER
+int XRE_ForkServer(int* aArgc, char*** aArgv) {
+  return mozilla::ipc::ForkServer::RunForkServer(aArgc, aArgv) ? 1 : 0;
 }
 #endif

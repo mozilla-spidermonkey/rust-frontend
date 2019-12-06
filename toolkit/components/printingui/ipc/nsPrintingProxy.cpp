@@ -12,7 +12,6 @@
 #include "mozilla/layout/RemotePrintJobChild.h"
 #include "mozilla/Unused.h"
 #include "nsIDocShell.h"
-#include "nsIDocShellTreeOwner.h"
 #include "nsIPrintingPromptService.h"
 #include "nsIPrintSession.h"
 #include "nsPIDOMWindow.h"
@@ -123,9 +122,8 @@ nsPrintingProxy::ShowPrintDialog(mozIDOMWindowProxy* parent,
 NS_IMETHODIMP
 nsPrintingProxy::ShowPrintProgressDialog(
     mozIDOMWindowProxy* parent,
-    nsIWebBrowserPrint* webBrowserPrint,  // ok to be null
-    nsIPrintSettings* printSettings,      // ok to be null
-    nsIObserver* openDialogObserver,      // ok to be null
+    nsIPrintSettings* printSettings,  // ok to be null
+    nsIObserver* openDialogObserver,  // ok to be null
     bool isForPrinting, nsIWebProgressListener** webProgressListener,
     nsIPrintProgressParams** printProgressParams, bool* notifyOnOpen) {
   NS_ENSURE_ARG(parent);

@@ -72,6 +72,21 @@ let ACTORS = {
     },
   },
 
+  ClickHandler: {
+    parent: {
+      moduleURI: "resource:///actors/ClickHandlerParent.jsm",
+    },
+    child: {
+      moduleURI: "resource:///actors/ClickHandlerChild.jsm",
+      events: {
+        click: { capture: true, mozSystemGroup: true },
+        auxclick: { capture: true, mozSystemGroup: true },
+      },
+    },
+
+    allFrames: true,
+  },
+
   // Collects description and icon information from meta tags.
   ContentMeta: {
     parent: {
@@ -241,20 +256,6 @@ let ACTORS = {
     allFrames: true,
   },
 
-  RFPHelper: {
-    parent: {
-      moduleURI: "resource:///actors/RFPHelperParent.jsm",
-    },
-    child: {
-      moduleURI: "resource:///actors/RFPHelperChild.jsm",
-      events: {
-        resize: {},
-      },
-    },
-
-    allFrames: true,
-  },
-
   ShieldFrame: {
     parent: {
       moduleURI: "resource://normandy-content/ShieldFrameParent.jsm",
@@ -276,6 +277,18 @@ let ACTORS = {
     },
 
     allFrames: true,
+  },
+
+  UITour: {
+    parent: {
+      moduleURI: "resource:///modules/UITourParent.jsm",
+    },
+    child: {
+      moduleURI: "resource:///modules/UITourChild.jsm",
+      events: {
+        mozUITour: { wantUntrusted: true },
+      },
+    },
   },
 };
 
@@ -334,16 +347,6 @@ let LEGACY_ACTORS = {
     },
   },
 
-  ClickHandler: {
-    child: {
-      module: "resource:///actors/ClickHandlerChild.jsm",
-      events: {
-        click: { capture: true, mozSystemGroup: true },
-        auxclick: { capture: true, mozSystemGroup: true },
-      },
-    },
-  },
-
   ContentSearch: {
     child: {
       module: "resource:///actors/ContentSearchChild.jsm",
@@ -379,16 +382,6 @@ let LEGACY_ACTORS = {
         DOMContentLoaded: {},
         pageshow: { mozSystemGroup: true },
       },
-    },
-  },
-
-  UITour: {
-    child: {
-      module: "resource:///modules/UITourChild.jsm",
-      events: {
-        mozUITour: { wantUntrusted: true },
-      },
-      permissions: ["uitour"],
     },
   },
 
@@ -502,12 +495,6 @@ let LEGACY_ACTORS = {
   TelemetryTimestamps.add("blankWindowShown");
 })();
 
-XPCOMUtils.defineLazyServiceGetters(this, {
-  aboutNewTabService: [
-    "@mozilla.org/browser/aboutnewtab-service;1",
-    "nsIAboutNewTabService",
-  ],
-});
 XPCOMUtils.defineLazyGetter(
   this,
   "WeaveService",
@@ -548,7 +535,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   PageThumbs: "resource://gre/modules/PageThumbs.jsm",
   PdfJs: "resource://pdf.js/PdfJs.jsm",
   PermissionUI: "resource:///modules/PermissionUI.jsm",
-  PingCentre: "resource:///modules/PingCentre.jsm",
   PlacesBackups: "resource://gre/modules/PlacesBackups.jsm",
   PlacesUtils: "resource://gre/modules/PlacesUtils.jsm",
   PluralForm: "resource://gre/modules/PluralForm.jsm",
@@ -569,7 +555,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   TabCrashHandler: "resource:///modules/ContentCrashHandlers.jsm",
   TabUnloader: "resource:///modules/TabUnloader.jsm",
   UIState: "resource://services-sync/UIState.jsm",
-  UITour: "resource:///modules/UITour.jsm",
   WebChannel: "resource://gre/modules/WebChannel.jsm",
   WindowsRegistry: "resource://gre/modules/WindowsRegistry.jsm",
 });
@@ -578,7 +563,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 XPCOMUtils.defineLazyModuleGetters(this, {
   AboutLoginsParent: "resource:///modules/AboutLoginsParent.jsm",
   AsyncPrefs: "resource://gre/modules/AsyncPrefs.jsm",
-  ContentClick: "resource:///modules/ContentClick.jsm",
   PluginManager: "resource:///actors/PluginParent.jsm",
   ReaderParent: "resource:///modules/ReaderParent.jsm",
 });
@@ -677,7 +661,6 @@ const listeners = {
     "AboutLogins:SyncEnable": ["AboutLoginsParent"],
     "AboutLogins:SyncOptions": ["AboutLoginsParent"],
     "AboutLogins:UpdateLogin": ["AboutLoginsParent"],
-    "Content:Click": ["ContentClick"],
     ContentSearch: ["ContentSearch"],
     "Reader:FaviconRequest": ["ReaderParent"],
     "Reader:UpdateReaderButton": ["ReaderParent"],
@@ -823,65 +806,6 @@ BrowserGlue.prototype = {
 
     const { Weave } = ChromeUtils.import("resource://services-sync/main.js");
     Weave.Service.scheduler.delayedAutoConnect(delay);
-  },
-
-  /**
-   * Lazily initialize PingCentre
-   */
-  get pingCentre() {
-    const MAIN_TOPIC_ID = "main";
-    Object.defineProperty(this, "pingCentre", {
-      value: new PingCentre({ topic: MAIN_TOPIC_ID }),
-    });
-    return this.pingCentre;
-  },
-
-  _sendMainPingCentrePing() {
-    let newTabSetting;
-    let homePageSetting;
-
-    // Check whether or not about:home and about:newtab have been overridden at this point.
-    // Different settings are encoded as follows:
-    //   * Value 0: default
-    //   * Value 1: about:blank
-    //   * Value 2: web extension
-    //   * Value 3: other custom URL(s)
-    // Settings for about:newtab and about:home are combined in a bitwise manner.
-
-    // Note that a user could use about:blank and web extension at the same time
-    // to overwrite the about:newtab, but the web extension takes priority, so the
-    // ordering matters in the following check.
-    if (
-      Services.prefs.getBoolPref("browser.newtabpage.enabled") &&
-      !aboutNewTabService.overridden
-    ) {
-      newTabSetting = 0;
-    } else if (aboutNewTabService.newTabURL.startsWith("moz-extension://")) {
-      newTabSetting = 2;
-    } else if (!Services.prefs.getBoolPref("browser.newtabpage.enabled")) {
-      newTabSetting = 1;
-    } else {
-      newTabSetting = 3;
-    }
-
-    const homePageURL = HomePage.get();
-    if (homePageURL === "about:home") {
-      homePageSetting = 0;
-    } else if (homePageURL === "about:blank") {
-      homePageSetting = 1;
-    } else if (homePageURL.startsWith("moz-extension://")) {
-      homePageSetting = 2;
-    } else {
-      homePageSetting = 3;
-    }
-
-    const payload = {
-      event: "AS_ENABLED",
-      value: newTabSetting | (homePageSetting << 2),
-    };
-    const ACTIVITY_STREAM_ID = "activity-stream";
-    const options = { filter: ACTIVITY_STREAM_ID };
-    this.pingCentre.sendPing(payload, options);
   },
 
   // nsIObserver implementation
@@ -1080,7 +1004,6 @@ BrowserGlue.prototype = {
         break;
       case "shield-init-complete":
         this._shieldInitComplete = true;
-        this._sendMainPingCentrePing();
         break;
     }
   },
@@ -1964,11 +1887,6 @@ BrowserGlue.prototype = {
 
     BrowserUsageTelemetry.uninit();
     SearchTelemetry.uninit();
-    // Only uninit PingCentre if the getter has initialized it
-    if (Object.prototype.hasOwnProperty.call(this, "pingCentre")) {
-      this.pingCentre.uninit();
-    }
-
     PageThumbs.uninit();
     NewTabUtils.uninit();
     AboutPrivateBrowsingHandler.uninit();
@@ -2264,6 +2182,42 @@ BrowserGlue.prototype = {
         Corroborate.init().catch(Cu.reportError);
       }
     });
+
+    // request startup of Chromium remote debugging protocol
+    // (observer will only be notified when --remote-debugger is passed)
+    if (AppConstants.ENABLE_REMOTE_AGENT) {
+      Services.tm.idleDispatchToMainThread(() => {
+        Services.obs.notifyObservers(null, "remote-startup-requested");
+      });
+    }
+
+    // Temporary for Delegated Credentials Study:
+    // https://bugzilla.mozilla.org/show_bug.cgi?id=1582591
+    // Disable in automation and non-nightly builds.
+    if (!Cu.isInAutomation && AppConstants.NIGHTLY_BUILD) {
+      let env = Cc["@mozilla.org/process/environment;1"].getService(
+        Ci.nsIEnvironment
+      );
+
+      // Disable under xpcshell-test.
+      if (!env.exists("XPCSHELL_TEST_PROFILE_DIR")) {
+        let { DelegatedCredsExperiment } = ChromeUtils.import(
+          "resource:///modules/DelegatedCredsExperiment.jsm"
+        );
+
+        let currentDate = new Date();
+        let expiryDate = new Date("2020-01-10 0:00:00");
+        if (currentDate < expiryDate) {
+          Services.tm.idleDispatchToMainThread(() => {
+            DelegatedCredsExperiment.runTest();
+          });
+        } else {
+          Services.tm.idleDispatchToMainThread(() => {
+            DelegatedCredsExperiment.uninstall();
+          });
+        }
+      }
+    }
 
     // Marionette needs to be initialized as very last step
     Services.tm.idleDispatchToMainThread(() => {
@@ -2873,16 +2827,17 @@ BrowserGlue.prototype = {
     const UI_VERSION = 89;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
-    let currentUIVersion;
-    if (Services.prefs.prefHasUserValue("browser.migration.version")) {
-      currentUIVersion = Services.prefs.getIntPref("browser.migration.version");
-      this._isNewProfile = false;
-    } else {
+    if (!Services.prefs.prefHasUserValue("browser.migration.version")) {
       // This is a new profile, nothing to migrate.
       Services.prefs.setIntPref("browser.migration.version", UI_VERSION);
       this._isNewProfile = true;
+      return;
     }
 
+    this._isNewProfile = false;
+    let currentUIVersion = Services.prefs.getIntPref(
+      "browser.migration.version"
+    );
     if (currentUIVersion >= UI_VERSION) {
       return;
     }
@@ -4491,10 +4446,3 @@ var JawsScreenReaderVersionCheck = {
     );
   },
 };
-
-// Listen for UITour messages.
-// Do it here instead of the UITour module itself so that the UITour module is lazy loaded
-// when the first message is received.
-Services.mm.addMessageListener("UITour:onPageEvent", function(aMessage) {
-  UITour.onPageEvent(aMessage, aMessage.data);
-});

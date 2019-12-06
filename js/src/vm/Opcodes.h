@@ -901,7 +901,10 @@
      * Pushes newly created object onto the stack.
      *
      * This opcode takes an object with the final shape, which can be set at
-     * the start and slots then filled in directly.
+     * the start and slots then filled in directly. We compute a group based on
+     * allocation site (or new group if the template's group is a singleton);
+     * see JSOP_NEWOBJECT_WITHGROUP for a variant that uses the same group as
+     * the template object.
      *
      *   Category: Literals
      *   Type: Object
@@ -1076,17 +1079,8 @@
      */ \
     MACRO(JSOP_STRICTSETPROP_SUPER, 105, "strictsetprop-super", NULL, 5, 3, 1, JOF_ATOM|JOF_PROP|JOF_PROPSET|JOF_DETECTING|JOF_CHECKSTRICT) \
     /*
-     * This opcode precedes every labeled statement. It's a no-op.
-     *
-     * 'offset' is the offset to the next instruction after this statement, the
-     * one 'break LABEL;' would jump to. IonMonkey uses this.
-     *
-     *   Category: Statements
-     *   Type: Jumps
-     *   Operands: int32_t offset
-     *   Stack: =>
      */ \
-    MACRO(JSOP_LABEL, 106, "label", NULL, 5, 0, 0, JOF_CODE_OFFSET) \
+    MACRO(JSOP_UNUSED106, 106, "unused", NULL, 1, 0, 0, JOF_BYTE) \
     /*
      * Pops the top three values on the stack as 'val', 'obj' and 'receiver',
      * and performs 'obj.prop = val', pushing 'val' back onto the stack.
@@ -1116,17 +1110,22 @@
      */ \
     MACRO(JSOP_FUNCALL, 108, "funcall", NULL, 3, -1, 1, JOF_ARGC|JOF_INVOKE|JOF_TYPESET|JOF_IC) \
     /*
-     * Another no-op.
-     *
      * This opcode is the target of the backwards jump for some loop.
+     *
+     * The uint8 argument is a bitfield. The lower 7 bits of the argument
+     * indicate the loop depth. This value starts at 1 and is just a hint:
+     * deeply nested loops all have the same value. The upper bit is set if Ion
+     * should be able to OSR at this point, which is true unless there is
+     * non-loop state on the stack.
+     *
      * See JSOP_JUMPTARGET for the icIndex operand.
      *
      *   Category: Statements
      *   Type: Jumps
-     *   Operands: uint32_t icIndex
+     *   Operands: uint32_t icIndex, uint8_t BITFIELD
      *   Stack: =>
      */ \
-    MACRO(JSOP_LOOPHEAD, 109, "loophead", NULL, 5, 0, 0, JOF_ICINDEX) \
+    MACRO(JSOP_LOOPHEAD, 109, "loophead", NULL, 6, 0, 0, JOF_LOOPHEAD) \
     /*
      * Looks up name on the environment chain and pushes the environment which
      * contains the name onto the stack. If not found, pushes global lexical
@@ -1242,40 +1241,8 @@
      */ \
     MACRO(JSOP_LINENO, 119, "lineno", NULL, 5, 0, 0, JOF_UINT32) \
     /*
-     * This no-op appears after the bytecode for EXPR in 'switch (EXPR) {...}'
-     * if the switch cannot be optimized using JSOP_TABLESWITCH.
-     *
-     * For a non-optimized switch statement like this:
-     *
-     *     switch (EXPR) {
-     *       case V0:
-     *         C0;
-     *       ...
-     *       default:
-     *         D;
-     *     }
-     *
-     * the bytecode looks like this:
-     *
-     *     (EXPR)
-     *     condswitch
-     *     (V0)
-     *     case ->C0
-     *     ...
-     *     default ->D
-     *     (C0)
-     *     ...
-     *     (D)
-     *
-     * Note that code for all case-labels is emitted first, then code for the
-     * body of each case clause.
-     *
-     *   Category: Statements
-     *   Type: Switch Statement
-     *   Operands:
-     *   Stack: =>
      */ \
-    MACRO(JSOP_CONDSWITCH, 120, "condswitch", NULL, 1, 0, 0, JOF_BYTE) \
+    MACRO(JSOP_UNUSED120, 120, "unused", NULL, 1, 0, 0, JOF_BYTE) \
     /*
      * Pops the top two values on the stack as 'val' and 'cond'. If 'cond' is
      * 'true', jumps to a 32-bit offset from the current bytecode, re-pushes
@@ -2444,19 +2411,8 @@
      */ \
     MACRO(JSOP_IMPLICITTHIS, 226, "implicitthis", "", 5, 0, 1, JOF_ATOM) \
     /*
-     * This opcode is the target of the entry jump for some loop. The uint8
-     * argument is a bitfield. The lower 7 bits of the argument indicate the
-     * loop depth. This value starts at 1 and is just a hint: deeply nested
-     * loops all have the same value. The upper bit is set if Ion should be
-     * able to OSR at this point, which is true unless there is non-loop state
-     * on the stack. See JSOP_JUMPTARGET for the icIndex argument.
-     *
-     *   Category: Statements
-     *   Type: Jumps
-     *   Operands: uint32_t icIndex, uint8_t BITFIELD
-     *   Stack: =>
      */ \
-    MACRO(JSOP_LOOPENTRY, 227, "loopentry", NULL, 6, 0, 0, JOF_LOOPENTRY) \
+    MACRO(JSOP_UNUSED227, 227, "unused", NULL, 1, 0, 0, JOF_BYTE) \
     /*
      * Converts the value on the top of the stack to a String.
      *
@@ -2578,7 +2534,21 @@
      *   Operands: int32_t offset
      *   Stack: cond => cond
      */ \
-    MACRO(JSOP_COALESCE, 241, "coalesce", NULL, 5, 1, 1, JOF_JUMP|JOF_DETECTING)
+    MACRO(JSOP_COALESCE, 241, "coalesce", NULL, 5, 1, 1, JOF_JUMP|JOF_DETECTING) \
+    /*
+     * Pushes newly created object onto the stack.
+     *
+     * This opcode takes an object with the final shape, which can be set at
+     * the start and slots then filled in directly. Uses the group from the
+     * template object; see JSOP_NEWOBJECT for a variant with different
+     * heuristics.
+     *
+     *   Category: Literals
+     *   Type: Object
+     *   Operands: uint32_t baseobjIndex
+     *   Stack: => obj
+     */ \
+    MACRO(JSOP_NEWOBJECT_WITHGROUP, 242, "newobjectwithgroup", NULL, 5, 0, 1, JOF_OBJECT|JOF_IC)
 
 // clang-format on
 
@@ -2587,7 +2557,6 @@
  * a power of two.  Use this macro to do so.
  */
 #define FOR_EACH_TRAILING_UNUSED_OPCODE(MACRO) \
-  MACRO(242)                                   \
   MACRO(243)                                   \
   MACRO(244)                                   \
   MACRO(245)                                   \

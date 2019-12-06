@@ -179,7 +179,8 @@ class nsBaseWidget : public nsIWidget, public nsSupportsWeakReference {
   virtual nsTransparencyMode GetTransparencyMode() override;
   virtual void GetWindowClipRegion(
       nsTArray<LayoutDeviceIntRect>* aRects) override;
-  virtual void SetWindowShadowStyle(int32_t aStyle) override {}
+  virtual void SetWindowShadowStyle(
+      mozilla::StyleWindowShadow aStyle) override {}
   virtual void SetShowsToolbarButton(bool aShow) override {}
   virtual void SetShowsFullScreenButton(bool aShow) override {}
   virtual void SetWindowAnimationType(WindowAnimationType aType) override {}
@@ -213,7 +214,7 @@ class nsBaseWidget : public nsIWidget, public nsSupportsWeakReference {
 
   already_AddRefed<mozilla::CompositorVsyncDispatcher>
   GetCompositorVsyncDispatcher();
-  void CreateCompositorVsyncDispatcher();
+  virtual void CreateCompositorVsyncDispatcher();
   virtual void CreateCompositor();
   virtual void CreateCompositor(int aWidth, int aHeight);
   virtual void SetCompositorWidgetDelegate(CompositorWidgetDelegate* delegate) {
@@ -691,6 +692,7 @@ class nsBaseWidget : public nsIWidget, public nsSupportsWeakReference {
   nsPopupType mPopupType;
   SizeConstraints mSizeConstraints;
   bool mHasRemoteContent;
+  bool mFissionWindow;
 
   bool mUpdateCursor;
   bool mUseAttachedEvents;

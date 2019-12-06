@@ -1013,7 +1013,7 @@ impl Stylist {
             );
             if !declarations.is_empty() {
                 let rule_node = self.rule_tree.insert_ordered_rules_with_important(
-                    declarations.drain().map(|a| a.for_rule_tree()),
+                    declarations.drain(..).map(|a| a.for_rule_tree()),
                     guards,
                 );
                 if rule_node != *self.rule_tree.root() {
@@ -2325,12 +2325,7 @@ impl Rule {
         level: CascadeLevel,
     ) -> ApplicableDeclarationBlock {
         let source = StyleSource::from_rule(self.style_rule.clone());
-        ApplicableDeclarationBlock::new(
-            source,
-            self.source_order,
-            level,
-            self.specificity(),
-        )
+        ApplicableDeclarationBlock::new(source, self.source_order, level, self.specificity())
     }
 
     /// Creates a new Rule.

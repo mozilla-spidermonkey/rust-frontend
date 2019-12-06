@@ -329,10 +329,14 @@ void profiler_shutdown();
 //                  substring, or
 //              (b) the filter is of the form "pid:<n>" where n is the process
 //                  id of the process that the thread is running in.
+//   "aActiveBrowsingContextID" Browsing Context of the active browser screen's
+//               active tab. It's being used to determine the profiled tab.
+//               It's "0" if we failed to get the ID.
 //   "aDuration" is the duration of entries in the profiler's circular buffer.
 void profiler_start(
     mozilla::PowerOfTwo32 aCapacity, double aInterval, uint32_t aFeatures,
     const char** aFilters, uint32_t aFilterCount,
+    uint64_t aActiveBrowsingContextID,
     const mozilla::Maybe<double>& aDuration = mozilla::Nothing());
 
 // Stop the profiler and discard the profile without saving it. A no-op if the
@@ -347,6 +351,7 @@ void profiler_stop();
 void profiler_ensure_started(
     mozilla::PowerOfTwo32 aCapacity, double aInterval, uint32_t aFeatures,
     const char** aFilters, uint32_t aFilterCount,
+    uint64_t aActiveBrowsingContextID,
     const mozilla::Maybe<double>& aDuration = mozilla::Nothing());
 
 //---------------------------------------------------------------------------
@@ -528,7 +533,8 @@ bool profiler_feature_active(uint32_t aFeature);
 void profiler_get_start_params(
     int* aEntrySize, mozilla::Maybe<double>* aDuration, double* aInterval,
     uint32_t* aFeatures,
-    mozilla::Vector<const char*, 0, mozilla::MallocAllocPolicy>* aFilters);
+    mozilla::Vector<const char*, 0, mozilla::MallocAllocPolicy>* aFilters,
+    uint64_t* aActiveBrowsingContextID);
 
 // The number of milliseconds since the process started. Operates the same
 // whether the profiler is active or inactive.
@@ -1058,6 +1064,40 @@ class MOZ_RAII AutoProfilerThreadWake {
   bool mIssuedWake;
 };
 
+// Ref-counted shell around a `ProfilingStack`, to be used by the owning
+// (Racy)RegisteredThread and AutoProfilerLabel.
+class ProfilingStackOwner {
+ public:
+  class ProfilingStack& ProfilingStack() {
+    return mProfilingStack;
+  }
+
+  // Using hand-rolled ref-counting, to evade leak checking (emergency patch
+  // for bug 1445822).
+  // TODO: Eliminate all/most leaks if possible.
+  void AddRef() const { ++mRefCnt; }
+  void Release() const {
+    MOZ_ASSERT(int32_t(mRefCnt) > 0);
+    if (--mRefCnt == 0) {
+      if (mProfilingStack.stackSize() > 0) {
+        DumpStackAndCrash();
+      }
+      delete this;
+    }
+  }
+
+ private:
+  ~ProfilingStackOwner() = default;
+
+  MOZ_NORETURN void DumpStackAndCrash() const;
+
+  class ProfilingStack mProfilingStack;
+
+  mutable Atomic<int32_t, MemoryOrdering::ReleaseAcquire,
+                 recordreplay::Behavior::DontPreserve>
+      mRefCnt;
+};
+
 // This class creates a non-owning ProfilingStack reference. Objects of this
 // class are stack-allocated, and so exist within a thread, and are thus bounded
 // by the lifetime of the thread, which ensures that the references held can't
@@ -1071,7 +1111,9 @@ class MOZ_RAII AutoProfilerLabel {
     MOZ_GUARD_OBJECT_NOTIFIER_INIT;
 
     // Get the ProfilingStack from TLS.
-    Push(sProfilingStack.get(), aLabel, aDynamicString, aCategoryPair, aFlags);
+    ProfilingStackOwner* profilingStackOwner = sProfilingStackOwnerTLS.get();
+    Push(profilingStackOwner ? &profilingStackOwner->ProfilingStack() : nullptr,
+         aLabel, aDynamicString, aCategoryPair, aFlags);
   }
 
   // This is the AUTO_PROFILER_LABEL_FAST variant. It retrieves the
@@ -1115,7 +1157,7 @@ class MOZ_RAII AutoProfilerLabel {
 
  public:
   // See the comment on the definition in platform.cpp for details about this.
-  static MOZ_THREAD_LOCAL(ProfilingStack*) sProfilingStack;
+  static MOZ_THREAD_LOCAL(ProfilingStackOwner*) sProfilingStackOwnerTLS;
 };
 
 class MOZ_RAII AutoProfilerTracing {

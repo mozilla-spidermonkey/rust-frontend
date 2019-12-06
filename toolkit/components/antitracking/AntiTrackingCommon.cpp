@@ -26,7 +26,6 @@
 #include "nsICookieService.h"
 #include "nsIDocShell.h"
 #include "nsIHttpChannelInternal.h"
-#include "nsIIOService.h"
 #include "nsIParentChannel.h"
 #include "nsIPermission.h"
 #include "nsPermissionManager.h"
@@ -34,7 +33,6 @@
 #include "nsIScriptError.h"
 #include "nsIURI.h"
 #include "nsIURIFixup.h"
-#include "nsIURL.h"
 #include "nsIWebProgressListener.h"
 #include "nsNetUtil.h"
 #include "nsPIDOMWindow.h"
@@ -830,6 +828,7 @@ bool CheckAntiTrackingPermission(nsIPrincipal* aPrincipal,
 
       LOG(("Found a matching permission"));
       found = true;
+      break;
     }
 
     if (!found) {
@@ -911,6 +910,31 @@ AntiTrackingCommon::AddFirstPartyStorageAccessGrantedFor(
     StorageAccessGrantedReason aReason,
     const AntiTrackingCommon::PerformFinalChecks& aPerformFinalChecks) {
   MOZ_ASSERT(aParentWindow);
+
+  switch (aReason) {
+    case eOpener:
+      if (!StaticPrefs::
+              privacy_restrict3rdpartystorage_heuristic_window_open()) {
+        LOG(
+            ("Bailing out early because the "
+             "privacy.restrict3rdpartystorage.heuristic.window_open preference "
+             "has been disabled"));
+        return StorageAccessGrantPromise::CreateAndReject(false, __func__);
+      }
+      break;
+    case eOpenerAfterUserInteraction:
+      if (!StaticPrefs::
+              privacy_restrict3rdpartystorage_heuristic_opened_window_after_interaction()) {
+        LOG(
+            ("Bailing out early because the "
+             "privacy.restrict3rdpartystorage.heuristic.opened_window_after_"
+             "interaction preference has been disabled"));
+        return StorageAccessGrantPromise::CreateAndReject(false, __func__);
+      }
+      break;
+    default:
+      break;
+  }
 
   nsCOMPtr<nsIURI> uri;
   aPrincipal->GetURI(getter_AddRefs(uri));

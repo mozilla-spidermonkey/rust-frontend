@@ -46,6 +46,7 @@
 #include "jit/StackSlotAllocator.h"
 #include "jit/VMFunctions.h"
 #include "js/RegExpFlags.h"  // JS::RegExpFlag
+#include "util/CheckedArithmetic.h"
 #include "util/Unicode.h"
 #include "vm/AsyncFunction.h"
 #include "vm/AsyncIteration.h"
@@ -7791,32 +7792,6 @@ void CodeGenerator::visitTypedObjectElements(LTypedObjectElements* lir) {
   }
 }
 
-void CodeGenerator::visitSetTypedObjectOffset(LSetTypedObjectOffset* lir) {
-  Register object = ToRegister(lir->object());
-  Register offset = ToRegister(lir->offset());
-  Register temp0 = ToRegister(lir->temp0());
-  Register temp1 = ToRegister(lir->temp1());
-
-  // Compute the base pointer for the typed object's owner.
-  masm.loadPtr(Address(object, OutlineTypedObject::offsetOfOwner()), temp0);
-
-  Label inlineObject, done;
-  masm.branchIfInlineTypedObject(temp0, temp1, &inlineObject);
-
-  masm.loadPrivate(Address(temp0, ArrayBufferObject::offsetOfDataSlot()),
-                   temp0);
-  masm.jump(&done);
-
-  masm.bind(&inlineObject);
-  masm.addPtr(ImmWord(InlineTypedObject::offsetOfDataStart()), temp0);
-
-  masm.bind(&done);
-
-  // Compute the new data pointer and set it in the object.
-  masm.addPtr(offset, temp0);
-  masm.storePtr(temp0, Address(object, OutlineTypedObject::offsetOfData()));
-}
-
 void CodeGenerator::visitStringLength(LStringLength* lir) {
   Register input = ToRegister(lir->string());
   Register output = ToRegister(lir->output());
@@ -13066,19 +13041,51 @@ void CodeGenerator::visitIsObjectAndBranch(LIsObjectAndBranch* ins) {
 }
 
 void CodeGenerator::visitIsNullOrUndefined(LIsNullOrUndefined* ins) {
+  MDefinition* input = ins->mir()->value();
   Register output = ToRegister(ins->output());
   ValueOperand value = ToValue(ins, LIsNullOrUndefined::Input);
 
-  Label isNotNull, done;
-  masm.branchTestNull(Assembler::NotEqual, value, &isNotNull);
+  if (input->mightBeType(MIRType::Null)) {
+    if (input->mightBeType(MIRType::Undefined)) {
+      Label isNotNull, done;
+      masm.branchTestNull(Assembler::NotEqual, value, &isNotNull);
 
-  masm.move32(Imm32(1), output);
-  masm.jump(&done);
+      masm.move32(Imm32(1), output);
+      masm.jump(&done);
 
-  masm.bind(&isNotNull);
-  masm.testUndefinedSet(Assembler::Equal, value, output);
+      masm.bind(&isNotNull);
+      masm.testUndefinedSet(Assembler::Equal, value, output);
 
-  masm.bind(&done);
+      masm.bind(&done);
+    } else {
+      masm.testNullSet(Assembler::Equal, value, output);
+    }
+  } else if (input->mightBeType(MIRType::Undefined)) {
+    masm.testUndefinedSet(Assembler::Equal, value, output);
+  } else {
+    masm.move32(Imm32(0), output);
+  }
+}
+
+void CodeGenerator::visitIsNullOrUndefinedAndBranch(
+    LIsNullOrUndefinedAndBranch* ins) {
+  MDefinition* input = ins->isNullOrUndefinedMir()->value();
+  Label* ifTrue = getJumpLabelForBranch(ins->ifTrue());
+  Label* ifFalse = getJumpLabelForBranch(ins->ifFalse());
+  ValueOperand value = ToValue(ins, LIsNullOrUndefinedAndBranch::Input);
+
+  ScratchTagScope tag(masm, value);
+  masm.splitTagForTest(value, tag);
+
+  if (input->mightBeType(MIRType::Null)) {
+    masm.branchTestNull(Assembler::Equal, tag, ifTrue);
+  }
+  if (input->mightBeType(MIRType::Undefined)) {
+    masm.branchTestUndefined(Assembler::Equal, tag, ifTrue);
+  }
+  if (!isNextBlock(ins->ifFalse()->lir())) {
+    masm.jump(ifFalse);
+  }
 }
 
 void CodeGenerator::loadOutermostJSScript(Register reg) {

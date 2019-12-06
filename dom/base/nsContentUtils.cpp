@@ -145,13 +145,11 @@
 #include "nsHtml5StringParser.h"
 #include "nsHTMLDocument.h"
 #include "nsHTMLTags.h"
-#include "nsIAddonPolicyService.h"
 #include "nsIAnonymousContentCreator.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
 #include "nsICategoryManager.h"
 #include "nsIChannelEventSink.h"
 #include "nsICharsetDetectionObserver.h"
-#include "nsIChromeRegistry.h"
 #include "nsIConsoleService.h"
 #include "nsIContent.h"
 #include "nsIContentInlines.h"
@@ -162,7 +160,6 @@
 #include "nsIDocShellTreeOwner.h"
 #include "mozilla/dom/Document.h"
 #include "nsIDocumentEncoder.h"
-#include "nsIDOMChromeWindow.h"
 #include "nsIDOMWindowUtils.h"
 #include "nsIDragService.h"
 #include "nsIFormControl.h"
@@ -179,7 +176,6 @@
 #include "nsILoadContext.h"
 #include "nsILoadGroup.h"
 #include "nsIMemoryReporter.h"
-#include "nsIMIMEHeaderParam.h"
 #include "nsIMIMEService.h"
 #include "nsINode.h"
 #include "mozilla/dom/NodeInfo.h"
@@ -191,7 +187,6 @@
 #include "nsIParser.h"
 #include "nsIParserUtils.h"
 #include "nsIPermissionManager.h"
-#include "nsIPluginHost.h"
 #include "nsIRequest.h"
 #include "nsIRunnable.h"
 #include "nsIScriptContext.h"
@@ -206,7 +201,7 @@
 #include "nsIURI.h"
 #include "nsIURIMutator.h"
 #include "nsIURIWithSpecialOrigin.h"
-#include "nsIURL.h"
+#include "nsIUUIDGenerator.h"
 #include "nsIWebNavigation.h"
 #include "nsIWidget.h"
 #include "nsIWindowMediator.h"
@@ -242,8 +237,6 @@
 #include "HTMLSplitOnSpacesTokenizer.h"
 #include "InProcessBrowserChildMessageManager.h"
 #include "nsContentTypeParser.h"
-#include "nsICookiePermission.h"
-#include "nsICookieService.h"
 #include "ThirdPartyUtil.h"
 #include "mozilla/EnumSet.h"
 #include "mozilla/BloomFilter.h"
@@ -1693,7 +1686,7 @@ bool nsContentUtils::PrincipalAllowsL10n(nsIPrincipal* aPrincipal,
   }
 
   // The system principal is always allowed.
-  if (IsSystemPrincipal(aPrincipal)) {
+  if (aPrincipal->IsSystemPrincipal()) {
     return true;
   }
 
@@ -1856,7 +1849,7 @@ bool nsContentUtils::CanCallerAccess(nsIPrincipal* aSubjectPrincipal,
 // static
 bool nsContentUtils::CanCallerAccess(const nsINode* aNode) {
   nsIPrincipal* subject = SubjectPrincipal();
-  if (IsSystemPrincipal(subject)) {
+  if (subject->IsSystemPrincipal()) {
     return true;
   }
 
@@ -1879,7 +1872,7 @@ bool nsContentUtils::CanCallerAccess(nsPIDOMWindowInner* aWindow) {
 bool nsContentUtils::PrincipalHasPermission(nsIPrincipal* aPrincipal,
                                             const nsAtom* aPerm) {
   // Chrome gets access by default.
-  if (IsSystemPrincipal(aPrincipal)) {
+  if (aPrincipal->IsSystemPrincipal()) {
     return true;
   }
 
@@ -2008,7 +2001,7 @@ bool nsContentUtils::ShouldResistFingerprinting(nsIPrincipal* aPrincipal) {
   if (!aPrincipal) {
     return false;
   }
-  bool isChrome = nsContentUtils::IsSystemPrincipal(aPrincipal);
+  bool isChrome = aPrincipal->IsSystemPrincipal();
   return !isChrome && ShouldResistFingerprinting();
 }
 
@@ -3429,6 +3422,9 @@ bool nsContentUtils::ContentIsDraggable(nsIContent* aContent) {
       return false;
     }
   }
+  if (aContent->IsSVGElement()) {
+    return false;
+  }
 
   // special handling for content area image and link dragging
   return IsDraggableImage(aContent) || IsDraggableLink(aContent);
@@ -3797,12 +3793,10 @@ void nsContentUtils::LogMessageToConsole(const char* aMsg) {
 }
 
 bool nsContentUtils::IsChildOfSameType(Document* aDoc) {
-  nsCOMPtr<nsIDocShellTreeItem> docShellAsItem(aDoc->GetDocShell());
-  nsCOMPtr<nsIDocShellTreeItem> sameTypeParent;
-  if (docShellAsItem) {
-    docShellAsItem->GetInProcessSameTypeParent(getter_AddRefs(sameTypeParent));
+  if (BrowsingContext* bc = aDoc->GetBrowsingContext()) {
+    return bc->GetParent();
   }
-  return sameTypeParent != nullptr;
+  return false;
 }
 
 bool nsContentUtils::IsPlainTextType(const nsACString& aContentType) {
@@ -4087,9 +4081,7 @@ nsresult nsContentUtils::DispatchInputEvent(Element* aEventTargetElement,
   }
 #ifdef DEBUG
   else {
-    nsCOMPtr<nsITextControlElement> textControlElement =
-        do_QueryInterface(aEventTargetElement);
-    MOZ_ASSERT(!textControlElement,
+    MOZ_ASSERT(!aEventTargetElement->IsTextControlElement(),
                "The event target may have editor, but we've not known it yet.");
   }
 #endif  // #ifdef DEBUG
@@ -4616,7 +4608,22 @@ already_AddRefed<DocumentFragment> nsContentUtils::CreateContextualFragment(
 
   while (content && content->IsElement()) {
     nsString& tagName = *tagStack.AppendElement();
-    tagName = content->NodeInfo()->QualifiedName();
+    // It mostly doesn't actually matter what tag name we use here: XML doesn't
+    // have parsing that depends on the open tag stack, apart from namespace
+    // declarations.  So this whole tagStack bit is just there to get the right
+    // namespace declarations to the XML parser.  That said, the parser _is_
+    // going to create elements with the tag names we provide here, so we need
+    // to make sure they are not names that can trigger custom element
+    // constructors.  Just make up a name that is never going to be a valid
+    // custom element name.
+    //
+    // The principled way to do this would probably be to add a new FromParser
+    // value and make sure we use it when creating the context elements, then
+    // make sure we teach all FromParser consumers (and in particular the custom
+    // element code) about it as needed.  But right now the XML parser never
+    // actually uses FromParser values other than NOT_FROM_PARSER, and changing
+    // that is pretty complicated.
+    tagName.AssignLiteral("notacustomelement");
 
     // see if we need to add xmlns declarations
     uint32_t count = content->AsElement()->GetAttrCount();
@@ -4704,7 +4711,7 @@ nsresult nsContentUtils::ParseFragmentHTML(const nsAString& aSourceBuffer,
   // If this is a chrome-privileged document, create a fragment first, and
   // sanitize it before insertion.
   RefPtr<DocumentFragment> fragment;
-  if (IsSystemPrincipal(aTargetNode->NodePrincipal())) {
+  if (aTargetNode->NodePrincipal()->IsSystemPrincipal()) {
     fragment = new DocumentFragment(aTargetNode->OwnerDoc()->NodeInfoManager());
     target = fragment;
   }
@@ -4798,7 +4805,7 @@ nsresult nsContentUtils::ParseFragmentXML(const nsAString& aSourceBuffer,
 
   // If this is a chrome-privileged document, sanitize the fragment before
   // returning.
-  if (IsSystemPrincipal(aDocument->NodePrincipal())) {
+  if (aDocument->NodePrincipal()->IsSystemPrincipal()) {
     // Don't fire mutation events for nodes removed by the sanitizer.
     nsAutoScriptBlockerSuppressNodeRemoved scriptBlocker;
 
@@ -4995,7 +5002,8 @@ bool nsContentUtils::IsInSameAnonymousTree(const nsINode* aNode,
   MOZ_ASSERT(aNode, "Must have a node to work with");
   MOZ_ASSERT(aContent, "Must have a content to work with");
 
-  if (aNode->IsInNativeAnonymousSubtree() != aContent->IsInNativeAnonymousSubtree()) {
+  if (aNode->IsInNativeAnonymousSubtree() !=
+      aContent->IsInNativeAnonymousSubtree()) {
     return false;
   }
 
@@ -5032,12 +5040,6 @@ bool nsContentUtils::SchemeIs(nsIURI* aURI, const char* aScheme) {
   nsCOMPtr<nsIURI> baseURI = NS_GetInnermostURI(aURI);
   NS_ENSURE_TRUE(baseURI, false);
   return baseURI->SchemeIs(aScheme);
-}
-
-bool nsContentUtils::IsSystemPrincipal(nsIPrincipal* aPrincipal) {
-  // Some consumers call us with a null aPrincipal and expect a false return
-  // value...
-  return aPrincipal && aPrincipal->IsSystemPrincipal();
 }
 
 bool nsContentUtils::IsExpandedPrincipal(nsIPrincipal* aPrincipal) {
@@ -5254,7 +5256,7 @@ void nsContentUtils::WarnScriptWasIgnored(Document* aDocument) {
     }
     privateBrowsing =
         !!aDocument->NodePrincipal()->OriginAttributesRef().mPrivateBrowsingId;
-    chromeContext = IsSystemPrincipal(aDocument->NodePrincipal());
+    chromeContext = aDocument->NodePrincipal()->IsSystemPrincipal();
   }
 
   msg.AppendLiteral(
@@ -8877,18 +8879,9 @@ bool nsContentUtils::HttpsStateIsModern(Document* aDocument) {
 
   MOZ_ASSERT(principal->GetIsContentPrincipal());
 
-  nsCOMPtr<nsIContentSecurityManager> csm =
-      do_GetService(NS_CONTENTSECURITYMANAGER_CONTRACTID);
-  NS_WARNING_ASSERTION(csm, "csm is null");
-  if (csm) {
-    bool isTrustworthyOrigin = false;
-    csm->IsOriginPotentiallyTrustworthy(principal, &isTrustworthyOrigin);
-    if (isTrustworthyOrigin) {
-      return true;
-    }
-  }
-
-  return false;
+  bool isTrustworthyOrigin = false;
+  principal->GetIsOriginPotentiallyTrustworthy(&isTrustworthyOrigin);
+  return isTrustworthyOrigin;
 }
 
 /* static */
@@ -8918,15 +8911,9 @@ bool nsContentUtils::ComputeIsSecureContext(nsIChannel* aChannel) {
     return false;
   }
 
-  nsCOMPtr<nsIContentSecurityManager> csm =
-      do_GetService(NS_CONTENTSECURITYMANAGER_CONTRACTID);
-  NS_WARNING_ASSERTION(csm, "csm is null");
-  if (csm) {
-    bool isTrustworthyOrigin = false;
-    csm->IsOriginPotentiallyTrustworthy(principal, &isTrustworthyOrigin);
-    return isTrustworthyOrigin;
-  }
-  return true;
+  bool isTrustworthyOrigin = false;
+  principal->GetIsOriginPotentiallyTrustworthy(&isTrustworthyOrigin);
+  return isTrustworthyOrigin;
 }
 
 /* static */
@@ -10244,9 +10231,9 @@ bool nsContentUtils::IsURIInList(nsIURI* aURI, const nsCString& aBlackList) {
           if (StringBeginsWith(filePath, pathInBlackList) &&
               (filePath.Length() == pathInBlackList.Length() ||
                pathInBlackList.EqualsLiteral("/") ||
-               filePath[pathInBlackList.Length()] == '/' ||
-               filePath[pathInBlackList.Length()] == '?' ||
-               filePath[pathInBlackList.Length()] == '#')) {
+               filePath[pathInBlackList.Length() - 1] == '/' ||
+               filePath[pathInBlackList.Length() - 1] == '?' ||
+               filePath[pathInBlackList.Length() - 1] == '#')) {
             return true;
           }
         }

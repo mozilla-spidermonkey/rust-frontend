@@ -54,11 +54,8 @@
 #include "nsDataHashtable.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsHashKeys.h"
-#include "nsICategoryManager.h"
 #include "nsIConsoleService.h"
-#include "nsIDirectoryService.h"
 #include "nsIFile.h"
-#include "nsIInputStream.h"
 #include "nsIMemoryReporter.h"
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
@@ -69,7 +66,6 @@
 #include "nsISafeOutputStream.h"
 #include "nsISimpleEnumerator.h"
 #include "nsIStringBundle.h"
-#include "nsIStringEnumerator.h"
 #include "nsISupportsImpl.h"
 #include "nsISupportsPrimitives.h"
 #include "nsIZipReader.h"
@@ -1199,7 +1195,7 @@ class CallbackNode {
 
 using PrefsHashTable = HashSet<UniquePtr<Pref>, PrefHasher>;
 
-static PrefsHashTable* gHashTable;
+static PrefsHashTable* gHashTable = nullptr;
 
 #ifdef DEBUG
 // This defines the type used to store our `once` mirrors checker. We can't use
@@ -1226,7 +1222,7 @@ static CallbackNode* gLastPriorityNode = nullptr;
 
 #ifdef ACCESS_COUNTS
 using AccessCountsHashTable = nsDataHashtable<nsCStringHashKey, uint32_t>;
-static AccessCountsHashTable* gAccessCounts;
+static AccessCountsHashTable* gAccessCounts = nullptr;
 
 static void AddAccessCount(const nsACString& aPrefName) {
   // FIXME: Servo reads preferences from background threads in unsafe ways (bug
@@ -3668,7 +3664,10 @@ void Preferences::InitializeUserPrefs() {
 
   // Don't set mCurrentFile until we're done so that dirty flags work properly.
   sPreferences->mCurrentFile = prefsFile.forget();
+}
 
+/* static */
+void Preferences::FinishInitializingUserPrefs() {
   sPreferences->NotifyServiceObservers(NS_PREFSERVICE_READ_TOPIC_ID);
 
   // At this point all the prefs files have been read and telemetry has been

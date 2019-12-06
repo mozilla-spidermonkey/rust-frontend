@@ -79,6 +79,7 @@ pub use self::text::{InitialLetter, LetterSpacing, LineBreak, LineHeight};
 pub use self::text::{OverflowWrap, TextOverflow, WordBreak, WordSpacing};
 pub use self::text::{TextAlign, TextEmphasisPosition, TextEmphasisStyle};
 pub use self::text::{TextDecorationLength, TextDecorationSkipInk};
+pub use self::text::TextUnderlinePosition;
 pub use self::time::Time;
 pub use self::transform::{Rotate, Scale, Transform, TransformOperation};
 pub use self::transform::{TransformOrigin, TransformStyle, Translate};
@@ -302,10 +303,8 @@ pub trait ToComputedValue {
 
     /// Convert a specified value to a computed value, using itself and the data
     /// inside the `Context`.
-    #[inline]
     fn to_computed_value(&self, context: &Context) -> Self::ComputedValue;
 
-    #[inline]
     /// Convert a computed value to specified value form.
     ///
     /// This will be used for recascading during animation.

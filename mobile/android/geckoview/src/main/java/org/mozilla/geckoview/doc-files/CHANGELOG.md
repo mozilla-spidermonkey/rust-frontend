@@ -13,6 +13,13 @@ exclude: true
 
 ⚠️  breaking change
 
+## v73
+- Added [`WebExtensionController.install`][73.1] and [`uninstall`][73.2] to
+  manage installed extensions
+
+[73.1]: {{javadoc_uri}}/WebExtensionController.html#install-java.lang.String-
+[73.2]: {{javadoc_uri}}/WebExtensionController.html#uninstall-org.mozilla.geckoview.WebExtension-
+
 ## v72
 - Added [`GeckoSession.NavigationDelegate.LoadRequest#hasUserGesture`][72.1]. This indicates
   if a load was requested while a user gesture was active (e.g., a tap).
@@ -47,6 +54,14 @@ exclude: true
   [`ContentBlockingController.Event.LOADED_LEVEL_1_TRACKING_CONTENT`][72.16] and
   [`ContentBlockingController.Event.LOADED_LEVEL_2_TRACKING_CONTENT`][72.17].
 - Replaced `subscription` argument in [`WebPushDelegate.onPushEvent`][72.18] from a [`WebPushSubscription`][72.19] to the [`String`][72.20] `scope`.
+- ⚠️ Renamed `WebExtension.ActionIcon` to [`Icon`][72.21].
+- Added ['GeckoWebExecutor#FETCH_FLAGS_STREAM_FAILURE_TEST'][72.22], which is a new
+  flag used to immediately fail when reading a `WebResponse` body.
+  ([bug 1594905]({{bugzilla}}1594905))
+- Changed [`CrashReporter#sendCrashReport(Context, File, JSONObject)`][72.23] to
+  accept a JSON object instead of a Map. Said object also includes the
+  application name that was previously passed as the fourth argument to the
+  method, which was thus removed.
 
 [72.1]: {{javadoc_uri}}/GeckoSession.NavigationDelegate.LoadRequest#hasUserGesture-
 [72.2]: {{javadoc_uri}}/Autofill.html
@@ -68,6 +83,9 @@ exclude: true
 [72.18]: {{javadoc_uri}}/WebPushController.html#onPushEvent-org.mozilla.geckoview.WebPushSubscription-byte:A-
 [72.19]: {{javadoc_uri}}/WebPushSubscription.html
 [72.20]: https://developer.android.com/reference/java/lang/String
+[72.21]: {{javadoc_uri}}/WebExtension.Icon.html
+[72.22]: {{javadoc_uri}}/GeckoWebExecutor.html#FETCH_FLAGS_STREAM_FAILURE_TEST
+[72.23]: {{javadoc_uri}}/CrashReporter#sendCrashReport-android.content.Context-java.io.File-org.json.JSONObject-
 
 ## v71
 - Added a content blocking flag for blocked social cookies to [`ContentBlocking`][70.17].
@@ -465,4 +483,4 @@ exclude: true
 [65.24]: {{javadoc_uri}}/CrashReporter.html#sendCrashReport-android.content.Context-android.os.Bundle-java.lang.String-
 [65.25]: {{javadoc_uri}}/GeckoResult.html
 
-[api-version]: 4c9f04038d8478206efac05b518920819faeacea
+[api-version]: 5856cdf682140fafdd09d74dbc004bf0b6bb7398

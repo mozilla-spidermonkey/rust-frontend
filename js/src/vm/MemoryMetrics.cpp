@@ -215,7 +215,7 @@ static void StatsZoneCallback(JSRuntime* rt, void* data, Zone* zone) {
   zone->addSizeOfIncludingThis(
       rtStats->mallocSizeOf_, &zStats.code, &zStats.typePool,
       &zStats.regexpZone, &zStats.jitZone, &zStats.baselineStubsOptimized,
-      &zStats.cachedCFG, &zStats.uniqueIdMap, &zStats.shapeTables,
+      &zStats.uniqueIdMap, &zStats.shapeTables,
       &rtStats->runtime.atomsMarkBitmaps, &zStats.compartmentObjects,
       &zStats.crossCompartmentWrappersTables, &zStats.compartmentsPrivateData,
       &zStats.scriptCountsMap);
@@ -240,9 +240,9 @@ static void StatsRealmCallback(JSContext* cx, void* data,
       &realmStats.typeInferenceArrayTypeTables,
       &realmStats.typeInferenceObjectTypeTables, &realmStats.realmObject,
       &realmStats.realmTables, &realmStats.innerViewsTable,
-      &realmStats.lazyArrayBuffersTable, &realmStats.objectMetadataTable,
-      &realmStats.savedStacksSet, &realmStats.varNamesSet,
-      &realmStats.nonSyntacticLexicalScopesTable, &realmStats.jitRealm);
+      &realmStats.objectMetadataTable, &realmStats.savedStacksSet,
+      &realmStats.varNamesSet, &realmStats.nonSyntacticLexicalScopesTable,
+      &realmStats.jitRealm);
 }
 
 static void StatsArenaCallback(JSRuntime* rt, void* data, gc::Arena* arena,

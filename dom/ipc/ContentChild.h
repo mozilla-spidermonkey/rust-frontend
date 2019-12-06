@@ -16,6 +16,7 @@
 #include "mozilla/dom/RemoteBrowser.h"
 #include "mozilla/dom/CPOWManagerGetter.h"
 #include "mozilla/StaticPtr.h"
+#include "mozilla/ipc/InputStreamUtils.h"
 #include "mozilla/ipc/Shmem.h"
 #include "mozilla/jsipc/CrossProcessObjectWrappers.h"
 #include "nsAutoPtr.h"
@@ -76,10 +77,12 @@ class GetFilesHelperChild;
 class TabContext;
 enum class MediaControlActions : uint32_t;
 
-class ContentChild final : public PContentChild,
-                           public nsIWindowProvider,
-                           public CPOWManagerGetter,
-                           public mozilla::ipc::IShmemAllocator {
+class ContentChild final
+    : public PContentChild,
+      public nsIWindowProvider,
+      public CPOWManagerGetter,
+      public mozilla::ipc::IShmemAllocator,
+      public mozilla::ipc::ChildToParentStreamActorManager {
   typedef mozilla::dom::ClonedMessageData ClonedMessageData;
   typedef mozilla::ipc::FileDescriptor FileDescriptor;
   typedef mozilla::ipc::PFileDescriptorSetChild PFileDescriptorSetChild;
@@ -255,9 +258,6 @@ class ContentChild final : public PContentChild,
 
   bool DeallocPPrintingChild(PPrintingChild*);
 
-  PChildToParentStreamChild* SendPChildToParentStreamConstructor(
-      PChildToParentStreamChild*);
-
   PChildToParentStreamChild* AllocPChildToParentStreamChild();
   bool DeallocPChildToParentStreamChild(PChildToParentStreamChild*);
 
@@ -290,9 +290,10 @@ class ContentChild final : public PContentChild,
 
   mozilla::ipc::IPCResult RecvNotifyEmptyHTTPCache();
 
+#ifdef MOZ_WEBSPEECH
   PSpeechSynthesisChild* AllocPSpeechSynthesisChild();
-
   bool DeallocPSpeechSynthesisChild(PSpeechSynthesisChild* aActor);
+#endif
 
   mozilla::ipc::IPCResult RecvRegisterChrome(
       nsTArray<ChromePackage>&& packages,
@@ -501,9 +502,6 @@ class ContentChild final : public PContentChild,
 
   bool IsForBrowser() const { return mIsForBrowser; }
 
-  PFileDescriptorSetChild* SendPFileDescriptorSetConstructor(
-      const FileDescriptor&);
-
   PFileDescriptorSetChild* AllocPFileDescriptorSetChild(const FileDescriptor&);
 
   bool DeallocPFileDescriptorSetChild(PFileDescriptorSetChild*);
@@ -530,8 +528,10 @@ class ContentChild final : public PContentChild,
       const nsTArray<PermissionRequest>& aRequests,
       const IPC::Principal& aPrincipal,
       const IPC::Principal& aTopLevelPrincipal,
-      const bool& aIsHandlingUserInput, const bool& aDocumentHasUserInput,
-      const DOMTimeStamp aPageLoadTimestamp, const TabId& aTabId);
+      const bool& aIsHandlingUserInput,
+      const bool& aMaybeUnsafePermissionDelegate,
+      const bool& aDocumentHasUserInput, const DOMTimeStamp aPageLoadTimestamp,
+      const TabId& aTabId);
   bool DeallocPContentPermissionRequestChild(
       PContentPermissionRequestChild* actor);
 
@@ -666,7 +666,7 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvSaveRecording(const FileDescriptor& aFile);
 
   mozilla::ipc::IPCResult RecvCrossProcessRedirect(
-      const RedirectToRealChannelArgs&& aArgs,
+      RedirectToRealChannelArgs&& aArgs,
       CrossProcessRedirectResolver&& aResolve);
 
   mozilla::ipc::IPCResult RecvStartDelayedAutoplayMediaComponents(
@@ -704,6 +704,11 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvInitSandboxTesting(
       Endpoint<PSandboxTestingChild>&& aEndpoint);
 #endif
+
+  PChildToParentStreamChild* SendPChildToParentStreamConstructor(
+      PChildToParentStreamChild* aActor) override;
+  PFileDescriptorSetChild* SendPFileDescriptorSetConstructor(
+      const FileDescriptor& aFD) override;
 
  private:
   static void ForceKillTimerCallback(nsITimer* aTimer, void* aClosure);

@@ -17,6 +17,9 @@ var ChromeUtils = require("ChromeUtils");
 const { BrowserLoader } = ChromeUtils.import(
   "resource://devtools/client/shared/browser-loader.js"
 );
+const {
+  getAdHocFrontOrPrimitiveGrip,
+} = require("devtools/shared/fronts/object");
 
 loader.lazyRequireGetter(
   this,
@@ -30,6 +33,13 @@ loader.lazyRequireGetter(
   "devtools/client/webconsole/constants",
   true
 );
+loader.lazyRequireGetter(
+  this,
+  "START_IGNORE_ACTION",
+  "devtools/client/shared/redux/middleware/ignore",
+  true
+);
+const ConsoleCommands = require("devtools/client/webconsole/commands.js");
 
 const ZoomKeys = require("devtools/client/shared/zoom-keys");
 
@@ -131,6 +141,14 @@ class WebConsoleUI {
     this._initializer = (async () => {
       this._initUI();
       await this._attachTargets();
+
+      this._commands = new ConsoleCommands({
+        debuggerClient: this.hud.currentTarget.client,
+        proxy: this.getProxy(),
+        threadFront: this.hud.toolbox && this.hud.toolbox.threadFront,
+        currentTarget: this.hud.currentTarget,
+      });
+
       await this.wrapper.init();
 
       const id = WebConsoleUtils.supportsString(this.hudId);
@@ -148,6 +166,10 @@ class WebConsoleUI {
     }
 
     this.React = this.ReactDOM = this.FrameView = null;
+
+    if (this.wrapper) {
+      this.wrapper.getStore().dispatch(START_IGNORE_ACTION);
+    }
 
     if (this.outputNode) {
       // We do this because it's much faster than letting React handle the ConsoleOutput
@@ -235,11 +257,15 @@ class WebConsoleUI {
   }
 
   inspectObjectActor(objectActor) {
+    const webConsoleFront = this.webConsoleFront;
     this.wrapper.dispatchMessageAdd(
       {
         helperResult: {
           type: "inspectObject",
-          object: objectActor,
+          object:
+            objectActor && objectActor.getGrip
+              ? objectActor
+              : getAdHocFrontOrPrimitiveGrip(objectActor, webConsoleFront),
         },
       },
       true
@@ -466,31 +492,6 @@ class WebConsoleUI {
         }
       });
     }
-  }
-
-  /**
-   * Release an actor.
-   *
-   * @private
-   * @param string actor
-   *        The actor ID you want to release.
-   */
-  releaseActor(actor) {
-    const proxy = this.getProxy();
-    if (!proxy) {
-      return null;
-    }
-
-    return proxy.releaseActor(actor);
-  }
-
-  /**
-   * @param {String} expression
-   * @param {Object} options
-   * @returns {Promise}
-   */
-  evaluateJSAsync(expression, options) {
-    return this.getProxy().webConsoleFront.evaluateJSAsync(expression, options);
   }
 
   getLongString(grip) {

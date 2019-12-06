@@ -30,16 +30,12 @@ WIN_LIBS=                                       \
 #include "mozilla/BackgroundHangMonitor.h"
 #include "nsIWebBrowserPrint.h"
 #include "nsString.h"
-#include "nsIServiceManager.h"
 #include "nsReadableUtils.h"
 #include "nsIPrintSettings.h"
 #include "nsIPrintSettingsWin.h"
 #include "nsIPrinterEnumerator.h"
 
 #include "nsRect.h"
-
-#include "nsIPrefService.h"
-#include "nsIPrefBranch.h"
 
 #include "nsCRT.h"
 #include "prenv.h" /* for PR_GetEnv */
@@ -48,7 +44,6 @@ WIN_LIBS=                                       \
 #include <winspool.h>
 
 // For Localization
-#include "nsIStringBundle.h"
 
 // For NS_CopyUnicodeToNative
 #include "nsNativeCharsetUtils.h"
@@ -359,30 +354,11 @@ static nsresult ShowNativePrintDialog(HWND aHWnd,
   return NS_OK;
 }
 
-//------------------------------------------------------------------
-static void PrepareForPrintDialog(nsIWebBrowserPrint* aWebBrowserPrint,
-                                  nsIPrintSettings* aPS) {
-  NS_ASSERTION(aWebBrowserPrint, "Can't be null");
-  NS_ASSERTION(aPS, "Can't be null");
-
-  bool isIFrameSelected;
-  bool isRangeSelection;
-
-  aWebBrowserPrint->GetIsIFrameSelected(&isIFrameSelected);
-  aWebBrowserPrint->GetIsRangeSelection(&isRangeSelection);
-
-  // Now determine how to set up the Frame print UI
-  aPS->SetPrintOptions(nsIPrintSettings::kEnableSelectionRB,
-                       isRangeSelection || isIFrameSelected);
-}
-
 //----------------------------------------------------------------------------------
 //-- Show Print Dialog
 //----------------------------------------------------------------------------------
 nsresult NativeShowPrintDialog(HWND aHWnd, nsIWebBrowserPrint* aWebBrowserPrint,
                                nsIPrintSettings* aPrintSettings) {
-  PrepareForPrintDialog(aWebBrowserPrint, aPrintSettings);
-
   nsresult rv = ShowNativePrintDialog(aHWnd, aPrintSettings);
   if (aHWnd) {
     ::DestroyWindow(aHWnd);

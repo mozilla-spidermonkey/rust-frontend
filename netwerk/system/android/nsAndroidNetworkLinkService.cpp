@@ -152,6 +152,12 @@ nsAndroidNetworkLinkService::GetDnsSuffixList(
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsAndroidNetworkLinkService::GetPlatformDNSIndications(
+    uint32_t* aPlatformDNSIndications) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 void nsAndroidNetworkLinkService::OnNetworkChanged() {
   if (mozilla::StaticPrefs::network_notify_changed()) {
     if (!mNetworkChangeTime.IsNull()) {
@@ -195,6 +201,14 @@ void nsAndroidNetworkLinkService::OnLinkDown() {
 }
 
 void nsAndroidNetworkLinkService::OnLinkStatusKnown() { mStatusIsKnown = true; }
+
+void nsAndroidNetworkLinkService::OnDnsSuffixListUpdated() {
+  RefPtr<nsAndroidNetworkLinkService> self = this;
+  NS_DispatchToMainThread(
+      NS_NewRunnableFunction("nsAndroidNetworkLinkService::OnDnsSuffixListUpdated", [self]() {
+        self->NotifyObservers(NS_DNS_SUFFIX_LIST_UPDATED_TOPIC, nullptr);
+      }));
+}
 
 /* Sends the given event. Assumes aTopic/aData never goes out of scope (static
  * strings are ideal).

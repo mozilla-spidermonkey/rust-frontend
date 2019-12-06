@@ -15,7 +15,6 @@
 #include "nsErrorService.h"
 #include "netCore.h"
 #include "nsIObserverService.h"
-#include "nsIPrefService.h"
 #include "nsXPCOM.h"
 #include "nsIProxiedProtocolHandler.h"
 #include "nsIProxyInfo.h"
@@ -28,18 +27,15 @@
 #include "nsIConsoleService.h"
 #include "nsIUploadChannel2.h"
 #include "nsXULAppAPI.h"
-#include "nsIScriptSecurityManager.h"
 #include "nsIProtocolProxyCallback.h"
 #include "nsICancelable.h"
 #include "nsINetworkLinkService.h"
-#include "nsPISocketTransportService.h"
 #include "nsAsyncRedirectVerifyHelper.h"
 #include "nsURLHelper.h"
 #include "nsIProtocolProxyService2.h"
 #include "MainThreadUtils.h"
 #include "nsINode.h"
 #include "nsIWidget.h"
-#include "nsIHttpChannel.h"
 #include "nsThreadUtils.h"
 #include "mozilla/LoadInfo.h"
 #include "mozilla/net/NeckoCommon.h"
@@ -447,6 +443,22 @@ void nsIOService::DestroySocketProcess() {
 
 bool nsIOService::SocketProcessReady() {
   return mSocketProcess && mSocketProcess->IsConnected();
+}
+
+static bool sUseSocketProcess = false;
+static bool sUseSocketProcessChecked = false;
+
+bool nsIOService::UseSocketProcess() {
+  if (sUseSocketProcessChecked) {
+    return sUseSocketProcess;
+  }
+
+  sUseSocketProcessChecked = true;
+  if (Preferences::GetBool("network.process.enabled")) {
+    sUseSocketProcess = Preferences::GetBool(
+        "network.http.network_access_on_socket_process.enabled", true);
+  }
+  return sUseSocketProcess;
 }
 
 // static

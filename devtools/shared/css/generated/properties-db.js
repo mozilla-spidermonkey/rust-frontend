@@ -3206,6 +3206,7 @@ exports.CSS_PROPERTIES = {
       "text-rendering",
       "-moz-control-character-visibility",
       "text-underline-offset",
+      "text-underline-position",
       "text-decoration-skip-ink",
       "cursor",
       "pointer-events",
@@ -10314,6 +10315,23 @@ exports.CSS_PROPERTIES = {
       "unset"
     ]
   },
+  "text-underline-position": {
+    "isInherited": true,
+    "subproperties": [
+      "text-underline-position"
+    ],
+    "supports": [],
+    "values": [
+      "auto",
+      "inherit",
+      "initial",
+      "left",
+      "revert",
+      "right",
+      "under",
+      "unset"
+    ]
+  },
   "top": {
     "isInherited": false,
     "subproperties": [
@@ -10794,49 +10812,6 @@ exports.CSS_PROPERTIES = {
       "revert",
       "unset"
     ]
-  },
-  "zoom": {
-    "isInherited": false,
-    "subproperties": [
-      "transform",
-      "transform-origin"
-    ],
-    "supports": [],
-    "values": [
-      "accumulatematrix",
-      "bottom",
-      "center",
-      "inherit",
-      "initial",
-      "interpolatematrix",
-      "left",
-      "matrix",
-      "matrix3d",
-      "none",
-      "perspective",
-      "revert",
-      "right",
-      "rotate",
-      "rotate3d",
-      "rotateX",
-      "rotateY",
-      "rotateZ",
-      "scale",
-      "scale3d",
-      "scaleX",
-      "scaleY",
-      "scaleZ",
-      "skew",
-      "skewX",
-      "skewY",
-      "top",
-      "translate",
-      "translate3d",
-      "translateX",
-      "translateY",
-      "translateZ",
-      "unset"
-    ]
   }
 };
 
@@ -10907,6 +10882,10 @@ exports.PREFERENCES = [
   [
     "text-justify",
     "layout.css.text-justify.enabled"
+  ],
+  [
+    "text-underline-position",
+    "layout.css.text-underline-position.enabled"
   ],
   [
     "touch-action",

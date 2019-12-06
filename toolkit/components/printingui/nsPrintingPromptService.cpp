@@ -8,7 +8,6 @@
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/StaticPtr.h"
-#include "nsIServiceManager.h"
 #include "nsISupportsUtils.h"
 #include "nsString.h"
 #include "nsIPrintDialogService.h"
@@ -81,9 +80,8 @@ nsPrintingPromptService::ShowPrintDialog(mozIDOMWindowProxy* parent,
 NS_IMETHODIMP
 nsPrintingPromptService::ShowPrintProgressDialog(
     mozIDOMWindowProxy* parent,
-    nsIWebBrowserPrint* webBrowserPrint,  // ok to be null
-    nsIPrintSettings* printSettings,      // ok to be null
-    nsIObserver* openDialogObserver,      // ok to be null
+    nsIPrintSettings* printSettings,  // ok to be null
+    nsIObserver* openDialogObserver,  // ok to be null
     bool isForPrinting, nsIWebProgressListener** webProgressListener,
     nsIPrintProgressParams** printProgressParams, bool* notifyOnOpen) {
 #if !defined(XP_MACOSX)

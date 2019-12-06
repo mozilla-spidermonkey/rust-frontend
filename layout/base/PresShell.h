@@ -16,6 +16,7 @@
 #include "GeckoProfiler.h"
 #include "TouchManager.h"
 #include "Units.h"
+#include "Visibility.h"
 #include "ZoomConstraintsClient.h"
 #include "gfxPoint.h"
 #include "mozilla/ArenaObjectID.h"
@@ -43,7 +44,6 @@
 #include "nsFrameState.h"
 #include "nsHashKeys.h"
 #include "nsIContent.h"
-#include "nsIImageLoadingContent.h"
 #include "nsIObserver.h"
 #include "nsISelectionController.h"
 #include "nsIWidget.h"
@@ -1499,6 +1499,18 @@ class PresShell final : public nsStubDocumentObserver,
   }
 
   nsPoint GetVisualViewportOffsetRelativeToLayoutViewport() const;
+
+  // Returns state of the dynamic toolbar.
+  DynamicToolbarState GetDynamicToolbarState() const {
+    if (!mPresContext) {
+      return DynamicToolbarState::None;
+    }
+
+    return mPresContext->GetDynamicToolbarState();
+  }
+  // Returns the visual viewport size during the dynamic toolbar is being
+  // shown/hidden.
+  nsSize GetVisualViewportSizeUpdatedByDynamicToolbar() const;
 
   /* Enable/disable author style level. Disabling author style disables the
    * entire author level of the cascade, including the HTML preshint level.

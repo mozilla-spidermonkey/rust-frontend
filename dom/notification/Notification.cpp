@@ -6,6 +6,7 @@
 
 #include "mozilla/dom/Notification.h"
 
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/Components.h"
 #include "mozilla/Encoding.h"
 #include "mozilla/EventStateManager.h"
@@ -49,11 +50,9 @@
 #include "nsIPermission.h"
 #include "nsIPushService.h"
 #include "nsIScriptError.h"
-#include "nsIScriptSecurityManager.h"
 #include "nsIServiceWorkerManager.h"
 #include "nsISimpleEnumerator.h"
 #include "nsIUUIDGenerator.h"
-#include "nsIXPConnect.h"
 #include "nsNetUtil.h"
 #include "nsProxyRelease.h"
 #include "nsServiceManagerUtils.h"
@@ -471,7 +470,7 @@ NS_IMPL_QUERY_INTERFACE_CYCLE_COLLECTION_INHERITED(
 
 NS_IMETHODIMP
 NotificationPermissionRequest::Run() {
-  bool isSystem = nsContentUtils::IsSystemPrincipal(mPrincipal);
+  bool isSystem = mPrincipal->IsSystemPrincipal();
   bool blocked = false;
   if (isSystem) {
     mPermission = NotificationPermission::Granted;
@@ -1513,7 +1512,7 @@ NotificationPermission Notification::GetPermissionInternal(
   AssertIsOnMainThread();
   MOZ_ASSERT(aPrincipal);
 
-  if (nsContentUtils::IsSystemPrincipal(aPrincipal)) {
+  if (aPrincipal->IsSystemPrincipal()) {
     return NotificationPermission::Granted;
   } else {
     // Allow files to show notifications by default.

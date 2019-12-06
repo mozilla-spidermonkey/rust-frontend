@@ -522,7 +522,7 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
   // in-order and terminate if one has an out-of-bounds range.
   // We enable bulk memory semantics if shared memory is enabled.
 #ifdef ENABLE_WASM_BULKMEM_OPS
-  const bool eagerBoundsCheck = false;
+  const bool eagerBoundsCheck = cx->options().wasmCranelift();
 #else
   // Bulk memory must be available if shared memory is enabled.
   const bool eagerBoundsCheck =
@@ -531,7 +531,8 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
 
   if (eagerBoundsCheck) {
     // Perform all error checks up front so that this function does not perform
-    // partial initialization if an error is reported.
+    // partial initialization if an error is reported. In addition, we need to
+    // to report OOBs as a link error when bulk-memory is disabled.
 
     for (const ElemSegment* seg : elemSegments_) {
       if (!seg->active()) {
@@ -574,19 +575,11 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
       uint32_t offset = EvaluateInitExpr(globalImportValues, seg->offset());
       uint32_t count = seg->length();
 
-      // Allow zero-sized initializations even if they are out-of-bounds. This
-      // behavior technically only applies when bulk-memory-operations are
-      // enabled, but we will fail with an error during eager bounds checking
-      // above in that case.
-      if (count == 0) {
-        continue;
-      }
-
       if (!eagerBoundsCheck) {
         uint32_t tableLength = tables[seg->tableIndex]->length();
         if (offset > tableLength || tableLength - offset < count) {
           JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                                   JSMSG_WASM_BAD_FIT, "elem", "table");
+                                   JSMSG_WASM_OUT_OF_BOUNDS);
           return false;
         }
       }
@@ -610,18 +603,10 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
       uint32_t offset = EvaluateInitExpr(globalImportValues, seg->offset());
       uint32_t count = seg->bytes.length();
 
-      // Allow zero-sized initializations even if they are out-of-bounds. This
-      // behavior technically only applies when bulk-memory-operations are
-      // enabled, but we will fail with an error during eager bounds checking
-      // above in that case.
-      if (count == 0) {
-        continue;
-      }
-
       if (!eagerBoundsCheck) {
         if (offset > memoryLength || memoryLength - offset < count) {
           JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                                   JSMSG_WASM_BAD_FIT, "data", "memory");
+                                   JSMSG_WASM_OUT_OF_BOUNDS);
           return false;
         }
       }
@@ -1196,7 +1181,7 @@ bool Module::makeStructTypeDescrs(
   MOZ_CRASH("Should not have seen any struct types");
 #else
 
-#  ifndef ENABLE_TYPED_OBJECTS
+#  ifndef JS_HAS_TYPED_OBJECTS
 #    error "GC types require TypedObject"
 #  endif
 

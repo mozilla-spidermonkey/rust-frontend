@@ -26,17 +26,13 @@
 #include "nsIFile.h"
 #include "nsFrameLoader.h"
 #include "nsFrameLoaderOwner.h"
-#include "nsIWebNavigation.h"
-#include "nsIDocShell.h"
 #include "nsIContent.h"
 #include "nsIContentInlines.h"
 #include "nsIImageLoadingContent.h"
-#include "nsITextControlElement.h"
 #include "nsUnicharUtils.h"
 #include "nsIURL.h"
 #include "nsIURIMutator.h"
 #include "mozilla/dom/Document.h"
-#include "nsIScriptSecurityManager.h"
 #include "nsIPrincipal.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsIWebBrowserPersist.h"
@@ -49,6 +45,7 @@
 #include "nsIMIMEInfo.h"
 #include "nsRange.h"
 #include "BrowserParent.h"
+#include "mozilla/TextControlElement.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/HTMLAreaElement.h"
 #include "mozilla/dom/HTMLAnchorElement.h"
@@ -56,6 +53,7 @@
 #include "nsVariant.h"
 #include "nsQueryObject.h"
 
+using namespace mozilla;
 using namespace mozilla::dom;
 using mozilla::IgnoreErrors;
 
@@ -513,11 +511,11 @@ nsresult DragDataProducer::Produce(DataTransfer* aDataTransfer, bool* aCanDrag,
   nsIContent* editingElement = mSelectionTargetNode->IsEditable()
                                    ? mSelectionTargetNode->GetEditingHost()
                                    : nullptr;
-  nsCOMPtr<nsITextControlElement> textControl =
-      nsITextControlElement::GetTextControlElementFromEditingHost(
-          editingElement);
-  if (textControl) {
-    nsISelectionController* selcon = textControl->GetSelectionController();
+  RefPtr<TextControlElement> textControlElement =
+      TextControlElement::GetTextControlElementFromEditingHost(editingElement);
+  if (textControlElement) {
+    nsISelectionController* selcon =
+        textControlElement->GetSelectionController();
     if (selcon) {
       selection =
           selcon->GetSelection(nsISelectionController::SELECTION_NORMAL);
@@ -556,7 +554,7 @@ nsresult DragDataProducer::Produce(DataTransfer* aDataTransfer, bool* aCanDrag,
     return NS_OK;
   }
 
-  if (isChromeShell && textControl) {
+  if (isChromeShell && textControlElement) {
     // Only use the selection if the target node is in the selection.
     if (!selection->ContainsNode(*mSelectionTargetNode, false, IgnoreErrors()))
       return NS_OK;

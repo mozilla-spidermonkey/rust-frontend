@@ -15,13 +15,8 @@
 #include "nsHttpChannel.h"
 #include "nsHttpAuthCache.h"
 #include "nsStandardURL.h"
-#include "nsIHttpChannel.h"
-#include "nsIStandardURL.h"
 #include "LoadContextInfo.h"
 #include "nsCategoryManagerUtils.h"
-#include "nsIPrefService.h"
-#include "nsIPrefBranch.h"
-#include "nsIPrefLocalizedString.h"
 #include "nsIProcessSwitchRequestor.h"
 #include "nsSocketProviderService.h"
 #include "nsISocketProvider.h"
@@ -45,11 +40,10 @@
 #include "nsISiteSecurityService.h"
 #include "nsIStreamConverterService.h"
 #include "nsCRT.h"
-#include "nsIMemoryReporter.h"
 #include "nsIParentalControlsService.h"
 #include "nsPIDOMWindow.h"
-#include "nsINetworkLinkService.h"
 #include "nsHttpChannelAuthProvider.h"
+#include "nsINetworkLinkService.h"
 #include "nsNetUtil.h"
 #include "nsServiceManagerUtils.h"
 #include "nsComponentManagerUtils.h"
@@ -61,9 +55,11 @@
 #include "nsRFPService.h"
 #include "rust-helper/src/helper.h"
 
+#include "mozilla/net/HttpConnectionMgrParent.h"
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/net/NeckoParent.h"
 #include "mozilla/net/RequestContextService.h"
+#include "mozilla/net/SocketProcessParent.h"
 #include "mozilla/ipc/URIUtils.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/Unused.h"
@@ -224,6 +220,7 @@ nsHttpHandler::nsHttpHandler()
       mTailDelayMax(6000),
       mTailTotalMax(0),
       mRedirectionLimit(10),
+      mBeConservativeForProxy(true),
       mPhishyUserPassLength(1),
       mQoSBits(0x00),
       mEnforceAssocReq(false),
@@ -487,6 +484,8 @@ nsresult nsHttpHandler::Init() {
   rv = InitConnectionMgr();
   if (NS_FAILED(rv)) return rv;
 
+  mAltSvcCache = MakeUnique<AltSvcCache>();
+
   mRequestContextService = RequestContextService::GetOrCreate();
 
 #if defined(ANDROID)
@@ -586,19 +585,35 @@ nsresult nsHttpHandler::InitConnectionMgr() {
     return NS_OK;
   }
 
-  nsresult rv;
+  if (mConnMgr) {
+    return NS_OK;
+  }
 
-  if (!mConnMgr) {
+  if (gIOService->UseSocketProcess() && XRE_IsParentProcess()) {
+    if (!gIOService->SocketProcessReady()) {
+      gIOService->CallOrWaitForSocketProcess(
+          []() { Unused << gHttpHandler->InitConnectionMgr(); });
+      return NS_OK;
+    }
+
+    RefPtr<HttpConnectionMgrParent> connMgr = new HttpConnectionMgrParent();
+    if (!SocketProcessParent::GetSingleton()->SendPHttpConnectionMgrConstructor(
+            connMgr)) {
+      return NS_ERROR_FAILURE;
+    }
+
+    mConnMgr = connMgr;
+  } else {
+    MOZ_ASSERT(XRE_IsSocketProcess() || !gIOService->UseSocketProcess());
     mConnMgr = new nsHttpConnectionMgr();
   }
 
-  rv = mConnMgr->Init(
+  return mConnMgr->Init(
       mMaxUrgentExcessiveConns, mMaxConnections,
       mMaxPersistentConnectionsPerServer, mMaxPersistentConnectionsPerProxy,
       mMaxRequestDelay, mThrottleEnabled, mThrottleVersion, mThrottleSuspendFor,
       mThrottleResumeFor, mThrottleReadLimit, mThrottleReadInterval,
-      mThrottleHoldTime, mThrottleMaxTime);
-  return rv;
+      mThrottleHoldTime, mThrottleMaxTime, mBeConservativeForProxy);
 }
 
 nsresult nsHttpHandler::AddStandardRequestHeaders(
@@ -804,14 +819,6 @@ void nsHttpHandler::NotifyObservers(nsIChannel* chan, const char* event) {
   LOG(("nsHttpHandler::NotifyObservers [chan=%p event=\"%s\"]\n", chan, event));
   nsCOMPtr<nsIObserverService> obsService = services::GetObserverService();
   if (obsService) obsService->NotifyObservers(chan, event, nullptr);
-}
-
-void nsHttpHandler::NotifyObservers(nsIProcessSwitchRequestor* request,
-                                    const char* event) {
-  LOG(("nsHttpHandler::NotifyObservers [request=%p event=\"%s\"]\n", request,
-       event));
-  nsCOMPtr<nsIObserverService> obsService = services::GetObserverService();
-  if (obsService) obsService->NotifyObservers(request, event, nullptr);
 }
 
 nsresult nsHttpHandler::AsyncOnChannelRedirect(
@@ -1327,10 +1334,13 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
   if (PREF_CHANGED(HTTP_PREF("proxy.respect-be-conservative"))) {
     rv =
         Preferences::GetBool(HTTP_PREF("proxy.respect-be-conservative"), &cVar);
-    if (NS_SUCCEEDED(rv) && mConnMgr) {
-      Unused << mConnMgr->UpdateParam(
-          nsHttpConnectionMgr::PROXY_BE_CONSERVATIVE,
-          static_cast<int32_t>(cVar));
+    if (NS_SUCCEEDED(rv)) {
+      mBeConservativeForProxy = cVar;
+      if (mConnMgr) {
+        Unused << mConnMgr->UpdateParam(
+            nsHttpConnectionMgr::PROXY_BE_CONSERVATIVE,
+            static_cast<int32_t>(mBeConservativeForProxy));
+      }
     }
   }
 
@@ -2155,7 +2165,7 @@ nsHttpHandler::GetMisc(nsACString& value) {
 
 NS_IMETHODIMP
 nsHttpHandler::GetAltSvcCacheKeys(nsTArray<nsCString>& value) {
-  return mConnMgr->GetAltSvcCacheKeys(value);
+  return mAltSvcCache->GetAltSvcCacheKeys(value);
 }
 
 //-----------------------------------------------------------------------------
@@ -2174,8 +2184,8 @@ nsHttpHandler::Observe(nsISupports* subject, const char* topic,
     mHandlerActive = false;
 
     // clear cache of all authentication credentials.
-    Unused << mAuthCache.ClearAll();
-    Unused << mPrivateAuthCache.ClearAll();
+    mAuthCache.ClearAll();
+    mPrivateAuthCache.ClearAll();
     if (mWifiTickler) mWifiTickler->Cancel();
 
     // Inform nsIOService that network is tearing down.
@@ -2209,9 +2219,10 @@ nsHttpHandler::Observe(nsISupports* subject, const char* topic,
     // initialize connection manager
     rv = InitConnectionMgr();
     MOZ_ASSERT(NS_SUCCEEDED(rv));
+    mAltSvcCache = MakeUnique<AltSvcCache>();
   } else if (!strcmp(topic, "net:clear-active-logins")) {
-    Unused << mAuthCache.ClearAll();
-    Unused << mPrivateAuthCache.ClearAll();
+    mAuthCache.ClearAll();
+    mPrivateAuthCache.ClearAll();
   } else if (!strcmp(topic, "net:cancel-all-connections")) {
     if (mConnMgr) {
       mConnMgr->AbortAndCloseAllConnections(0, nullptr);
@@ -2244,19 +2255,16 @@ nsHttpHandler::Observe(nsISupports* subject, const char* topic,
          nsCOMPtr<nsIURI> uri = do_QueryInterface(subject);
 #endif
   } else if (!strcmp(topic, "last-pb-context-exited")) {
-    Unused << mPrivateAuthCache.ClearAll();
-    if (mConnMgr) {
-      mConnMgr->ClearAltServiceMappings();
+    mPrivateAuthCache.ClearAll();
+    if (mAltSvcCache) {
+      mAltSvcCache->ClearAltServiceMappings();
     }
   } else if (!strcmp(topic, "browser:purge-session-history")) {
     if (mConnMgr) {
-      if (gSocketTransportService) {
-        nsCOMPtr<nsIRunnable> event = NewRunnableMethod(
-            "net::nsHttpConnectionMgr::ClearConnectionHistory", mConnMgr,
-            &nsHttpConnectionMgr::ClearConnectionHistory);
-        gSocketTransportService->Dispatch(event, NS_DISPATCH_NORMAL);
+      Unused << mConnMgr->ClearConnectionHistory();
+      if (mAltSvcCache) {
+        mAltSvcCache->ClearAltServiceMappings();
       }
-      mConnMgr->ClearAltServiceMappings();
     }
   } else if (!strcmp(topic, NS_NETWORK_LINK_TOPIC)) {
     nsAutoCString converted = NS_ConvertUTF16toUTF8(data);
@@ -2701,30 +2709,28 @@ bool nsHttpHandler::IsHttp3VersionSupportedHex(const nsACString& version) {
 
 nsresult nsHttpHandler::InitiateTransaction(HttpTransactionShell* aTrans,
                                             int32_t aPriority) {
-  return mConnMgr->AddTransaction(aTrans->AsHttpTransaction(), aPriority);
+  return mConnMgr->AddTransaction(aTrans, aPriority);
 }
 nsresult nsHttpHandler::InitiateTransactionWithStickyConn(
     HttpTransactionShell* aTrans, int32_t aPriority,
     HttpTransactionShell* aTransWithStickyConn) {
-  return mConnMgr->AddTransactionWithStickyConn(
-      aTrans->AsHttpTransaction(), aPriority,
-      aTransWithStickyConn->AsHttpTransaction());
+  return mConnMgr->AddTransactionWithStickyConn(aTrans, aPriority,
+                                                aTransWithStickyConn);
 }
 
 nsresult nsHttpHandler::RescheduleTransaction(HttpTransactionShell* trans,
                                               int32_t priority) {
-  return mConnMgr->RescheduleTransaction(trans->AsHttpTransaction(), priority);
+  return mConnMgr->RescheduleTransaction(trans, priority);
 }
 
 void nsHttpHandler::UpdateClassOfServiceOnTransaction(
     HttpTransactionShell* trans, uint32_t classOfService) {
-  mConnMgr->UpdateClassOfServiceOnTransaction(trans->AsHttpTransaction(),
-                                              classOfService);
+  mConnMgr->UpdateClassOfServiceOnTransaction(trans, classOfService);
 }
 
 nsresult nsHttpHandler::CancelTransaction(HttpTransactionShell* trans,
                                           nsresult reason) {
-  return mConnMgr->CancelTransaction(trans->AsHttpTransaction(), reason);
+  return mConnMgr->CancelTransaction(trans, reason);
 }
 
 }  // namespace net

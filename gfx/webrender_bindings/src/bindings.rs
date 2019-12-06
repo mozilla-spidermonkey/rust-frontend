@@ -352,10 +352,21 @@ pub struct WrImageDescriptor {
     pub height: i32,
     pub stride: i32,
     pub opacity: OpacityType,
+    pub prefer_compositor_surface: bool,
 }
 
 impl<'a> Into<ImageDescriptor> for &'a WrImageDescriptor {
     fn into(self) -> ImageDescriptor {
+        let mut flags = ImageDescriptorFlags::empty();
+
+        if self.opacity == OpacityType::Opaque {
+            flags |= ImageDescriptorFlags::IS_OPAQUE;
+        }
+
+        if self.prefer_compositor_surface {
+            flags |= ImageDescriptorFlags::PREFER_COMPOSITOR_SURFACE;
+        }
+
         ImageDescriptor {
             size: DeviceIntSize::new(self.width, self.height),
             stride: if self.stride != 0 {
@@ -364,9 +375,8 @@ impl<'a> Into<ImageDescriptor> for &'a WrImageDescriptor {
                 None
             },
             format: self.format,
-            is_opaque: self.opacity == OpacityType::Opaque,
             offset: 0,
-            allow_mipmaps: false,
+            flags,
         }
     }
 }
@@ -1742,12 +1752,12 @@ pub extern "C" fn wr_transaction_pinch_zoom(
 }
 
 #[no_mangle]
-pub extern "C" fn wr_transaction_set_is_transform_pinch_zooming(
+pub extern "C" fn wr_transaction_set_is_transform_async_zooming(
     txn: &mut Transaction,
     animation_id: u64,
     is_zooming: bool
 ) {
-    txn.set_is_transform_pinch_zooming(is_zooming, PropertyBindingId::new(animation_id));
+    txn.set_is_transform_async_zooming(is_zooming, PropertyBindingId::new(animation_id));
 }
 
 #[no_mangle]

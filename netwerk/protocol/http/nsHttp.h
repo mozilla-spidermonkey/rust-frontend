@@ -55,7 +55,7 @@ enum class SpdyVersion {
 };
 
 extern const nsCString kHttp3Version;
-const char kHttp3VersionHEX[] = "ff00000017";  // this is draft 23.
+const char kHttp3VersionHEX[] = "ff00000018";  // this is draft 24.
 
 //-----------------------------------------------------------------------------
 // http connection capabilities
@@ -335,6 +335,11 @@ class ParsedHeaderValueListList {
 };
 
 void LogHeaders(const char* lineStart);
+
+// Convert HTTP response codes returned by a proxy to nsresult.
+// This function should be only used when we get a failed response to the
+// CONNECT method.
+nsresult HttpProxyResponseToErrorCode(uint32_t aStatusCode);
 
 }  // namespace net
 }  // namespace mozilla

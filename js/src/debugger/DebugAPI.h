@@ -94,21 +94,16 @@ class DebugAPI {
   static void traceFramesWithLiveHooks(JSTracer* tracer);
 
   /*
-   * A Debugger object is live if:
-   *   * the Debugger JSObject is live (Debugger::trace handles this case); OR
-   *   * it is in the middle of dispatching an event (the event dispatching
-   *     code roots it in this case); OR
-   *   * it is debugging at least one live compartment, and at least one of the
-   *     following is true:
-   *       - it has a debugger hook installed
-   *       - it has a breakpoint set on a live script
-   *       - it has a watchpoint set on a live object.
+   * Trace (inferred) owning edges from generator objects to Debugger.Frames.
    *
-   * DebugAPI::markIteratively handles the last case. If it finds any Debugger
-   * objects that are definitely live but not yet marked, it marks them and
-   * returns true. If not, it returns false.
+   * Even if a Debugger.Frame for a live suspended generator object is entirely
+   * unreachable from JS, if it has onStep or onPop hooks set, then collecting
+   * it would have observable side effects - namely, the hooks would fail to run
+   * if the generator is resumed. The effect is the same as if the generator
+   * object held an owning edge to its Debugger.Frame.
    */
-  static MOZ_MUST_USE bool markIteratively(GCMarker* marker);
+  static inline void traceGeneratorFrame(JSTracer* tracer,
+                                         AbstractGeneratorObject* generator);
 
   // Trace cross compartment edges in all debuggers relevant to the current GC.
   static void traceCrossCompartmentEdges(JSTracer* tracer);
@@ -118,6 +113,8 @@ class DebugAPI {
 
   // Trace debugging information for a JSScript.
   static void traceDebugScript(JSTracer* trc, JSScript* script);
+
+  static void traceFromRealm(JSTracer* trc, Realm* realm);
 
   // The garbage collector calls this after everything has been marked, but
   // before anything has been finalized. We use this to clear Debugger /
@@ -398,6 +395,8 @@ class DebugAPI {
   static void slowPathOnPromiseSettled(JSContext* cx,
                                        Handle<PromiseObject*> promise);
   static bool inFrameMaps(AbstractFramePtr frame);
+  static void slowPathTraceGeneratorFrame(JSTracer* tracer,
+                                          AbstractGeneratorObject* generator);
 };
 
 // Suppresses all debuggee NX checks, i.e., allow all execution. Used to allow

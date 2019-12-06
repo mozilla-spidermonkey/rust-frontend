@@ -54,6 +54,7 @@ class ScrollFrameHelper : public nsIReflowCallback {
   typedef mozilla::layers::Layer Layer;
   typedef mozilla::layers::LayerManager LayerManager;
   typedef mozilla::layout::ScrollAnchorContainer ScrollAnchorContainer;
+  using Element = mozilla::dom::Element;
 
   class AsyncScroll;
   class AsyncSmoothMSDScroll;
@@ -122,18 +123,17 @@ class ScrollFrameHelper : public nsIReflowCallback {
   /**
    * @note This method might destroy the frame, pres shell and other objects.
    */
-  void FinishReflowForScrollbar(mozilla::dom::Element* aElement, nscoord aMinXY,
+  void FinishReflowForScrollbar(Element* aElement, nscoord aMinXY,
                                 nscoord aMaxXY, nscoord aCurPosXY,
                                 nscoord aPageIncrement, nscoord aIncrement);
   /**
    * @note This method might destroy the frame, pres shell and other objects.
    */
-  void SetScrollbarEnabled(mozilla::dom::Element* aElement, nscoord aMaxPos);
+  void SetScrollbarEnabled(Element* aElement, nscoord aMaxPos);
   /**
    * @note This method might destroy the frame, pres shell and other objects.
    */
-  void SetCoordAttribute(mozilla::dom::Element* aElement, nsAtom* aAtom,
-                         nscoord aSize);
+  void SetCoordAttribute(Element* aElement, nsAtom* aAtom, nscoord aSize);
 
   nscoord GetCoordAttribute(nsIFrame* aFrame, nsAtom* aAtom,
                             nscoord aDefaultValue, nscoord* aRangeStart,
@@ -176,6 +176,7 @@ class ScrollFrameHelper : public nsIReflowCallback {
   nsRect GetScrollRange(nscoord aWidth, nscoord aHeight) const;
   nsSize GetVisualViewportSize() const;
   nsPoint GetVisualViewportOffset() const;
+  nsRect GetVisualScrollRange() const;
 
   /**
    * Return the 'optimal viewing region' as a rect suitable for use by
@@ -207,9 +208,6 @@ class ScrollFrameHelper : public nsIReflowCallback {
   }
 
   bool IsProcessingScrollEvent() const { return mProcessingScrollEvent; }
-
- protected:
-  nsRect GetVisualScrollRange() const;
 
  public:
   static void AsyncScrollCallback(ScrollFrameHelper* aInstance,
@@ -521,10 +519,10 @@ class ScrollFrameHelper : public nsIReflowCallback {
                                           AnonymousContentKey& aKey);
 
   // owning references to the nsIAnonymousContentCreator-built content
-  nsCOMPtr<mozilla::dom::Element> mHScrollbarContent;
-  nsCOMPtr<mozilla::dom::Element> mVScrollbarContent;
-  nsCOMPtr<mozilla::dom::Element> mScrollCornerContent;
-  nsCOMPtr<mozilla::dom::Element> mResizerContent;
+  nsCOMPtr<Element> mHScrollbarContent;
+  nsCOMPtr<Element> mVScrollbarContent;
+  nsCOMPtr<Element> mScrollCornerContent;
+  nsCOMPtr<Element> mResizerContent;
 
   class ScrollEvent;
   class ScrollEndEvent;
@@ -902,6 +900,9 @@ class nsHTMLScrollFrame : public nsContainerFrame,
   }
   nsPoint GetVisualViewportOffset() const final {
     return mHelper.GetVisualViewportOffset();
+  }
+  nsRect GetVisualScrollRange() const final {
+    return mHelper.GetVisualScrollRange();
   }
   nsSize GetLineScrollAmount() const final {
     return mHelper.GetLineScrollAmount();
@@ -1361,6 +1362,9 @@ class nsXULScrollFrame final : public nsBoxFrame,
   }
   nsPoint GetVisualViewportOffset() const final {
     return mHelper.GetVisualViewportOffset();
+  }
+  nsRect GetVisualScrollRange() const final {
+    return mHelper.GetVisualScrollRange();
   }
   nsSize GetLineScrollAmount() const final {
     return mHelper.GetLineScrollAmount();

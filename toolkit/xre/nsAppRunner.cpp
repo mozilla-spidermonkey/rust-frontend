@@ -58,17 +58,11 @@
 #include "prenv.h"
 #include "prtime.h"
 
-#include "nsIAppShellService.h"
 #include "nsIAppStartup.h"
 #include "nsAppStartupNotifier.h"
 #include "nsIMutableArray.h"
-#include "nsICategoryManager.h"
-#include "nsIChromeRegistry.h"
 #include "nsCommandLine.h"
-#include "nsIComponentManager.h"
 #include "nsIComponentRegistrar.h"
-#include "nsIConsoleService.h"
-#include "nsIContentHandler.h"
 #include "nsIDialogParamBlock.h"
 #include "mozilla/ModuleUtils.h"
 #include "nsIIOService.h"
@@ -82,20 +76,17 @@
 #include "nsIServiceManager.h"
 #include "nsIStringBundle.h"
 #include "nsISupportsPrimitives.h"
-#include "nsIToolkitChromeRegistry.h"
 #include "nsIToolkitProfile.h"
+#include "nsIUUIDGenerator.h"
 #include "nsToolkitProfileService.h"
 #include "nsIURI.h"
 #include "nsIURL.h"
 #include "nsIWindowCreator.h"
-#include "nsIWindowMediator.h"
 #include "nsIWindowWatcher.h"
 #include "nsIXULAppInfo.h"
 #include "nsIXULRuntime.h"
 #include "nsPIDOMWindow.h"
-#include "nsIBaseWindow.h"
 #include "nsIWidget.h"
-#include "nsIDocShell.h"
 #include "nsAppShellCID.h"
 #include "mozilla/dom/quota/QuotaManager.h"
 #include "mozilla/scache/StartupCache.h"
@@ -640,9 +631,10 @@ SYNC_ENUMS(VR, VR)
 SYNC_ENUMS(RDD, RDD)
 SYNC_ENUMS(SOCKET, Socket)
 SYNC_ENUMS(SANDBOX_BROKER, RemoteSandboxBroker)
+SYNC_ENUMS(FORKSERVER, ForkServer)
 
 // .. and ensure that that is all of them:
-static_assert(GeckoProcessType_RemoteSandboxBroker + 1 == GeckoProcessType_End,
+static_assert(GeckoProcessType_ForkServer + 1 == GeckoProcessType_End,
               "Did not find the final GeckoProcessType");
 
 NS_IMETHODIMP
@@ -1202,7 +1194,7 @@ class ScopedXPCOMStartup {
   ScopedXPCOMStartup() : mServiceManager(nullptr) {}
   ~ScopedXPCOMStartup();
 
-  nsresult Initialize();
+  nsresult Initialize(bool aInitJSContext = true);
   nsresult SetWindowCreator(nsINativeAppSupport* native);
 
  private:
@@ -1259,13 +1251,13 @@ static const mozilla::Module::ContractIDEntry kXREContracts[] = {
 extern const mozilla::Module kXREModule = {mozilla::Module::kVersion, kXRECIDs,
                                            kXREContracts};
 
-nsresult ScopedXPCOMStartup::Initialize() {
+nsresult ScopedXPCOMStartup::Initialize(bool aInitJSContext) {
   NS_ASSERTION(gDirServiceProvider, "Should not get here!");
 
   nsresult rv;
 
   rv = NS_InitXPCOM(&mServiceManager, gDirServiceProvider->GetAppDir(),
-                    gDirServiceProvider);
+                    gDirServiceProvider, aInitJSContext);
   if (NS_FAILED(rv)) {
     NS_ERROR("Couldn't start xpcom!");
     mServiceManager = nullptr;
@@ -2699,10 +2691,8 @@ static void MOZ_gdk_display_close(GdkDisplay* display) {
     g_free(theme_name);
   }
 
-#    ifdef MOZ_WIDGET_GTK
   // A workaround for https://bugzilla.gnome.org/show_bug.cgi?id=703257
   if (gtk_check_version(3, 9, 8) != NULL) skip_display_close = true;
-#    endif
 
   bool buggyCairoShutdown = cairo_version() < CAIRO_VERSION_ENCODE(1, 4, 0);
 
@@ -4344,10 +4334,21 @@ nsresult XREMain::XRE_mainRun() {
     }
   }
 
+  // We'd like to initialize the JSContext *after* reading the user prefs.
+  // Unfortunately that's not possible if we have to do profile migration
+  // because that requires us to execute JS before reading user prefs.
+  // Restarting the browser after profile migration would fix this. See
+  // bug 1592523.
+  bool initializedJSContext = false;
+
   {
     // Profile Migration
     if (mAppData->flags & NS_XRE_ENABLE_PROFILE_MIGRATOR && gDoMigration) {
       gDoMigration = false;
+
+      xpc::InitializeJSContext();
+      initializedJSContext = true;
+
       nsCOMPtr<nsIProfileMigrator> pm(
           do_CreateInstance(NS_PROFILEMIGRATOR_CONTRACTID));
       if (pm) {
@@ -4388,6 +4389,18 @@ nsresult XREMain::XRE_mainRun() {
   // Initialize user preferences before notifying startup observers so they're
   // ready in time for early consumers, such as the component loader.
   mDirProvider.InitializeUserPrefs();
+
+  // Now that all (user) prefs have been loaded we can initialize the main
+  // thread's JSContext.
+  if (!initializedJSContext) {
+    xpc::InitializeJSContext();
+  }
+
+  // Finally, now that JS has been initialized, we can finish pref loading. This
+  // needs to happen after JS and XPConnect initialization because AutoConfig
+  // files require JS execution. Note that this means AutoConfig files can't
+  // override JS engine start-up prefs.
+  mDirProvider.FinishInitializingUserPrefs();
 
   nsAppStartupNotifier::NotifyObservers(APPSTARTUP_CATEGORY);
 
@@ -4710,11 +4723,13 @@ int XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig) {
 
   bool appInitiatedRestart = false;
 
-  // Start the real application
+  // Start the real application. We use |aInitJSContext = false| because
+  // XRE_mainRun wants to initialize the JSContext after reading user prefs.
+
   mScopedXPCOM = MakeUnique<ScopedXPCOMStartup>();
   if (!mScopedXPCOM) return 1;
 
-  rv = mScopedXPCOM->Initialize();
+  rv = mScopedXPCOM->Initialize(/* aInitJSContext = */ false);
   NS_ENSURE_SUCCESS(rv, 1);
 
   // run!
@@ -4888,6 +4903,10 @@ nsresult XRE_DeinitCommandLine() {
 
 GeckoProcessType XRE_GetProcessType() {
   return mozilla::startup::sChildProcessType;
+}
+
+const char* XRE_GetProcessTypeString() {
+  return XRE_GeckoProcessTypeToString(XRE_GetProcessType());
 }
 
 bool XRE_IsE10sParentProcess() {

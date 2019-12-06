@@ -66,7 +66,12 @@ loader.lazyRequireGetter(
   "saveScreenshot",
   "devtools/shared/screenshot/save"
 );
-loader.lazyRequireGetter(this, "ObjectFront", "devtools/shared/fronts/object");
+loader.lazyRequireGetter(
+  this,
+  "ObjectFront",
+  "devtools/shared/fronts/object",
+  true
+);
 
 // This import to chrome code is forbidden according to the inspector specific
 // eslintrc. TODO: Fix in Bug 1591091.
@@ -151,7 +156,12 @@ function Inspector(toolbox) {
   this.telemetry = toolbox.telemetry;
   this.store = Store({
     createObjectFront: object => {
-      return new ObjectFront(toolbox.target.client, object);
+      return new ObjectFront(
+        this.inspectorFront.conn,
+        this.inspectorFront.targetFront,
+        this.inspectorFront,
+        object
+      );
     },
     releaseActor: actor => {
       if (!actor) {
@@ -1786,7 +1796,6 @@ Inspector.prototype = {
     this._markupFrame.contentWindow.focus();
     this._markupBox.style.visibility = "visible";
     this.markup = new MarkupView(this, this._markupFrame, this._toolbox.win);
-    this.markup.init();
     this.emit("markuploaded");
   },
 

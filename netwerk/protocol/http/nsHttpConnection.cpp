@@ -899,6 +899,15 @@ nsresult nsHttpConnection::Activate(nsAHttpTransaction* trans, uint32_t caps,
     RefPtr<NullHttpTransaction> baseTrans(do_QueryReferent(mWeakTrans));
     rv = mTLSFilter->SetProxiedTransaction(trans, baseTrans);
     NS_ENSURE_SUCCESS(rv, rv);
+    if (mTransaction->ConnectionInfo()->UsingConnect()) {
+      SpdyConnectTransaction* trans =
+          baseTrans ? baseTrans->QuerySpdyConnectTransaction() : nullptr;
+      if (trans && !trans->IsWebsocket()) {
+        // If we are here, the tunnel is already established. Let the
+        // transaction know that proxy connect is successful.
+        mTransaction->OnProxyConnectComplete(200);
+      }
+    }
     mTransaction = mTLSFilter;
   }
 
@@ -1006,6 +1015,12 @@ nsresult nsHttpConnection::AddTransaction(nsAHttpTransaction* httpTransaction,
   needTunnel = needTunnel && transCI->UsingConnect();
   needTunnel = needTunnel && httpTransaction->QueryHttpTransaction();
 
+  // Let the transaction know that the tunnel is already established and we
+  // don't need to setup the tunnel again.
+  if (transCI->UsingConnect() && mEverUsedSpdy && mTLSFilter) {
+    httpTransaction->OnProxyConnectComplete(200);
+  }
+
   bool isWebsocket = false;
   nsHttpTransaction* trans = httpTransaction->QueryHttpTransaction();
   if (trans) {
@@ -1070,7 +1085,7 @@ void nsHttpConnection::Close(nsresult reason, bool aIsShutdown) {
     if (((reason == NS_ERROR_NET_RESET) ||
          (NS_ERROR_GET_MODULE(reason) == NS_ERROR_MODULE_SECURITY)) &&
         mConnInfo && !(mTransactionCaps & NS_HTTP_ERROR_SOFTLY)) {
-      gHttpHandler->ConnMgr()->ClearHostMapping(mConnInfo);
+      gHttpHandler->AltServiceCache()->ClearHostMapping(mConnInfo);
     }
 
     if (mSocketTransport) {
@@ -1416,6 +1431,7 @@ nsresult nsHttpConnection::OnHeadersAvailable(nsAHttpTransaction* trans,
                                 : mConnInfo->EndToEndSSL();
     bool onlyConnect = mTransactionCaps & NS_HTTP_CONNECT_ONLY;
 
+    mTransaction->OnProxyConnectComplete(responseStatus);
     if (responseStatus == 200) {
       LOG(("proxy CONNECT succeeded! endtoendssl=%d onlyconnect=%d\n", isHttps,
            onlyConnect));

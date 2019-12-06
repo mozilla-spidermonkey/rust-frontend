@@ -20,12 +20,8 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 // by setting UrlbarView.removeStaleRowsTimeout.
 const DEFAULT_REMOVE_STALE_ROWS_TIMEOUT = 400;
 
-// The classNames of view elements that can be selected.
-const SELECTABLE_ELEMENTS = [
-  "urlbarView-row",
-  "urlbarView-tip-button",
-  "urlbarView-tip-help",
-];
+const getBoundsWithoutFlushing = element =>
+  element.ownerGlobal.windowUtils.getBoundsWithoutFlushing(element);
 
 /**
  * Receives and displays address bar autocomplete results.
@@ -57,7 +53,6 @@ class UrlbarView {
     this._rows.addEventListener("overflow", this);
     this._rows.addEventListener("underflow", this);
 
-    this.window.addEventListener("deactivate", this);
     this.window.gBrowser.tabContainer.addEventListener("TabSelect", this);
 
     this.controller.setView(this);
@@ -288,11 +283,13 @@ class UrlbarView {
   }
 
   /**
+   * Returns the result of the row containing the given element, or the result
+   * of the element if it itself is a row.
+   *
    * @param {Element} element
    *   An element in the view.
    * @returns {UrlbarResult}
-   *   The result attached to parameter `element`, if `element` is a row or a
-   *   decendant of a row.
+   *   The result of the element's row.
    */
   getResultFromElement(element) {
     if (!this.isOpen) {
@@ -306,6 +303,31 @@ class UrlbarView {
     }
 
     return row.result;
+  }
+
+  /**
+   * Returns the element closest to the given element that can be
+   * selected/picked.  If the element itself can be selected, it's returned.  If
+   * there is no such element, null is returned.
+   *
+   * @param {Element} element
+   *   An element in the view.
+   * @returns {Element}
+   *   The closest element that can be picked including the element itself, or
+   *   null if there is no such element.
+   */
+  getClosestSelectableElement(element) {
+    let result = this.getResultFromElement(element);
+    if (result && result.type == UrlbarUtils.RESULT_TYPE.TIP) {
+      if (
+        element.classList.contains("urlbarView-tip-button") ||
+        element.classList.contains("urlbarView-tip-help")
+      ) {
+        return element;
+      }
+      return null;
+    }
+    return element.closest(".urlbarView-row");
   }
 
   /**
@@ -409,10 +431,30 @@ class UrlbarView {
     }
   }
 
-  reOpen() {
-    if (this._rows.firstElementChild) {
-      this._openPanel();
+  maybeReopen() {
+    // Reopen if we have cached results and the input is focused, unless the
+    // search string is empty or different. We don't restore the empty search
+    // because this is supposed to restore the search status when the user
+    // abandoned a search engagement, just opening the dropdown is not
+    // considered a sufficient engagement.
+    if (
+      this.input.megabar &&
+      this._rows.firstElementChild &&
+      this.input.focused &&
+      this.input.value &&
+      this._queryContext.searchString == this.input.value
+    ) {
+      // In some cases where we can move across tabs with an open panel.
+      if (!this.isOpen) {
+        this._openPanel();
+      }
+      this.input.startQuery({
+        autofillIgnoresSelection: true,
+        searchString: this.input.value,
+      });
+      return true;
     }
+    return false;
   }
 
   // UrlbarController listener methods.
@@ -553,8 +595,6 @@ class UrlbarView {
     this.panel.removeAttribute("actionoverride");
 
     if (!this.input.megabar) {
-      let getBoundsWithoutFlushing = element =>
-        this.window.windowUtils.getBoundsWithoutFlushing(element);
       let px = number => number.toFixed(2) + "px";
       let inputRect = getBoundsWithoutFlushing(this.input.textbox);
 
@@ -623,6 +663,9 @@ class UrlbarView {
         );
       }
     }
+
+    this._enableOrDisableRowWrap();
+
     this.input.inputField.setAttribute("aria-expanded", "true");
     this.input.dropmarker.setAttribute("open", "true");
 
@@ -759,37 +802,50 @@ class UrlbarView {
   }
 
   _createRowContent(item) {
+    // The url is the only element that can wrap, thus all the other elements
+    // are child of noWrap.
+    let noWrap = this._createElement("span");
+    noWrap.className = "urlbarView-no-wrap";
+    item._content.appendChild(noWrap);
+
     let typeIcon = this._createElement("span");
     typeIcon.className = "urlbarView-type-icon";
-    item._content.appendChild(typeIcon);
+
+    if (!this.input.megabar) {
+      noWrap.appendChild(typeIcon);
+    }
 
     let favicon = this._createElement("img");
     favicon.className = "urlbarView-favicon";
-    item._content.appendChild(favicon);
+    noWrap.appendChild(favicon);
     item._elements.set("favicon", favicon);
+
+    if (this.input.megabar) {
+      noWrap.appendChild(typeIcon);
+    }
 
     let title = this._createElement("span");
     title.className = "urlbarView-title";
-    item._content.appendChild(title);
+    noWrap.appendChild(title);
     item._elements.set("title", title);
 
     let tagsContainer = this._createElement("span");
     tagsContainer.className = "urlbarView-tags";
-    item._content.appendChild(tagsContainer);
+    noWrap.appendChild(tagsContainer);
     item._elements.set("tagsContainer", tagsContainer);
 
     let titleSeparator = this._createElement("span");
     titleSeparator.className = "urlbarView-title-separator";
-    item._content.appendChild(titleSeparator);
+    noWrap.appendChild(titleSeparator);
     item._elements.set("titleSeparator", titleSeparator);
 
     let action = this._createElement("span");
-    action.className = "urlbarView-secondary urlbarView-action";
-    item._content.appendChild(action);
+    action.className = "urlbarView-action";
+    noWrap.appendChild(action);
     item._elements.set("action", action);
 
     let url = this._createElement("span");
-    url.className = "urlbarView-secondary urlbarView-url";
+    url.className = "urlbarView-url";
     item._content.appendChild(url);
     item._elements.set("url", url);
   }
@@ -826,6 +882,14 @@ class UrlbarView {
     helpIcon.setAttribute("data-l10n-id", "urlbar-tip-help-icon");
     item._elements.set("helpButton", helpIcon);
     item._content.appendChild(helpIcon);
+
+    // Due to role=button, the button and help icon can sometimes become
+    // focused.  We want to prevent that because the input should always be
+    // focused instead.  (This happens when input.search("", { focus: false })
+    // is called, a tip is the first result but not heuristic, and the user tabs
+    // the into the button from the navbar buttons.  The input is skipped and
+    // the focus goes straight to the tip button.)
+    item.addEventListener("focus", () => this.input.focus(), true);
   }
 
   _updateRow(item, result) {
@@ -959,6 +1023,7 @@ class UrlbarView {
 
     let url = item._elements.get("url");
     if (setURL) {
+      item.setAttribute("has-url", "true");
       this._addTextContentWithHighlights(
         url,
         result.payload.displayUrl,
@@ -966,6 +1031,7 @@ class UrlbarView {
       );
       url._tooltip = result.payload.displayUrl;
     } else {
+      item.removeAttribute("has-url");
       url.textContent = "";
       url._tooltip = "";
     }
@@ -980,6 +1046,12 @@ class UrlbarView {
       title.removeAttribute("isurl");
     }
     item._elements.get("action").textContent = action;
+
+    if (!title.hasAttribute("isurl")) {
+      title.setAttribute("dir", "auto");
+    } else {
+      title.removeAttribute("dir");
+    }
 
     item._elements.get("titleSeparator").hidden = !action && !setURL;
   }
@@ -1301,6 +1373,14 @@ class UrlbarView {
     }
   }
 
+  _enableOrDisableRowWrap() {
+    if (getBoundsWithoutFlushing(this.input.textbox).width <= 500) {
+      this._rows.setAttribute("wrap", "true");
+    } else {
+      this._rows.removeAttribute("wrap");
+    }
+  }
+
   _setElementOverflowing(element, overflowing) {
     element.toggleAttribute("overflow", overflowing);
     if (overflowing) {
@@ -1376,11 +1456,12 @@ class UrlbarView {
       // Ignore right clicks.
       return;
     }
-    let target = event.target;
-    while (!SELECTABLE_ELEMENTS.includes(target.className)) {
-      target = target.parentNode;
+    let element = this.getClosestSelectableElement(event.target);
+    if (!element) {
+      // Ignore clicks on elements that can't be selected/picked.
+      return;
     }
-    this._selectElement(target, { updateInput: false });
+    this._selectElement(element, { updateInput: false });
     this.controller.speculativeConnect(
       this.selectedResult,
       this._queryContext,
@@ -1393,7 +1474,12 @@ class UrlbarView {
       // Ignore right clicks.
       return;
     }
-    this.input.pickElement(event.target, event);
+    let element = this.getClosestSelectableElement(event.target);
+    if (!element) {
+      // Ignore clicks on elements that can't be selected/picked.
+      return;
+    }
+    this.input.pickElement(element, event);
   }
 
   _on_overflow(event) {
@@ -1418,6 +1504,7 @@ class UrlbarView {
 
   _on_resize() {
     if (this.input.megabar) {
+      this._enableOrDisableRowWrap();
       return;
     }
 
@@ -1434,20 +1521,15 @@ class UrlbarView {
     this.close();
   }
 
-  _on_deactivate() {
-    // When switching to another browser window, open tabs, history or other
-    // data sources are likely to change, so make sure we don't re-show stale
-    // results when switching back.
-    if (!UrlbarPrefs.get("ui.popup.disable_autohide")) {
-      this.clear();
-    }
-  }
-
   _on_TabSelect() {
+    // A TabSelect doesn't always change urlbar focus, so we must try to reopen
+    // here too, not just on focus.
+    if (this.maybeReopen()) {
+      return;
+    }
     // The input may retain focus when switching tabs in which case we
     // need to close the view explicitly.
     this.close();
-    this.clear();
   }
 }
 

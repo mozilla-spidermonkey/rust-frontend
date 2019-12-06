@@ -16,11 +16,9 @@
 #include "nsScreen.h"
 #include "nsHistory.h"
 #include "nsDOMNavigationTiming.h"
-#include "nsICookieService.h"
 #include "nsIDOMStorageManager.h"
 #include "nsIPermission.h"
 #include "nsIPermissionManager.h"
-#include "nsIPrefBranch.h"
 #include "nsISecureBrowserUI.h"
 #include "nsIWebProgressListener.h"
 #include "mozilla/AntiTrackingCommon.h"
@@ -55,7 +53,6 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIPermissionManager.h"
 #include "nsIScriptContext.h"
-#include "nsISlowScriptDebug.h"
 #include "nsWindowMemoryReporter.h"
 #include "nsWindowSizes.h"
 #include "WindowNamedPropertiesHandler.h"
@@ -99,6 +96,7 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/ProcessHangMonitor.h"
 #include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/ThrottledEventQueue.h"
 #include "AudioChannelService.h"
 #include "nsAboutProtocolUtils.h"
@@ -125,16 +123,13 @@
 #include "nsIScrollableFrame.h"
 #include "nsView.h"
 #include "nsViewManager.h"
-#include "nsISelectionController.h"
 #include "nsIPrompt.h"
 #include "nsIPromptService.h"
 #include "nsIPromptFactory.h"
-#include "nsIAddonPolicyService.h"
 #include "nsIWritablePropertyBag2.h"
 #include "nsIWebNavigation.h"
 #include "nsIWebBrowserChrome.h"
 #include "nsIWebBrowserFind.h"  // For window.find()
-#include "nsIWindowMediator.h"  // For window.find()
 #include "nsComputedDOMStyle.h"
 #include "nsDOMCID.h"
 #include "nsDOMWindowUtils.h"
@@ -154,12 +149,9 @@
 #include "nsIObserverService.h"
 #include "nsFocusManager.h"
 #include "nsIAppWindow.h"
-#include "nsITimedChannel.h"
 #include "nsServiceManagerUtils.h"
 #include "mozilla/dom/CustomEvent.h"
-#include "nsIJARChannel.h"
 #include "nsIScreenManager.h"
-#include "nsIEffectiveTLDService.h"
 #include "nsIClassifiedChannel.h"
 
 #include "xpcprivate.h"
@@ -182,7 +174,6 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Selection.h"
 #include "nsFrameLoader.h"
-#include "nsISupportsPrimitives.h"
 #include "nsXPCOMCID.h"
 #include "mozilla/Logging.h"
 #include "prenv.h"
@@ -218,6 +209,7 @@
 #include "nsXULControllers.h"
 #include "mozilla/dom/AudioContext.h"
 #include "mozilla/dom/BrowserElementDictionariesBinding.h"
+#include "mozilla/dom/BrowsingContextGroup.h"
 #include "mozilla/dom/cache/CacheStorage.h"
 #include "mozilla/dom/Console.h"
 #include "mozilla/dom/Fetch.h"
@@ -238,6 +230,7 @@
 #include "mozilla/dom/U2F.h"
 #include "mozilla/dom/WebIDLGlobalNameHash.h"
 #include "mozilla/dom/Worklet.h"
+
 #ifdef HAVE_SIDEBAR
 #  include "mozilla/dom/ExternalBinding.h"
 #endif
@@ -309,6 +302,11 @@ using mozilla::TimeStamp;
 
 static LazyLogModule gDOMLeakPRLogOuter("DOMLeakOuter");
 extern LazyLogModule gPageCacheLog;
+
+#ifdef DEBUG
+static LazyLogModule gDocShellAndDOMWindowLeakLogging(
+    "DocShellAndDOMWindowLeak");
+#endif
 
 nsGlobalWindowOuter::OuterWindowByIdTable*
     nsGlobalWindowOuter::sOuterWindowsById = nullptr;
@@ -1132,13 +1130,11 @@ nsGlobalWindowOuter::nsGlobalWindowOuter(uint64_t aWindowID)
 #ifdef DEBUG
   mSerial = nsContentUtils::InnerOrOuterWindowCreated();
 
-  if (!PR_GetEnv("MOZ_QUIET")) {
-    printf_stderr(
-        "++DOMWINDOW == %d (%p) [pid = %d] [serial = %d] [outer = %p]\n",
-        nsContentUtils::GetCurrentInnerOrOuterWindowCount(),
-        static_cast<void*>(ToCanonicalSupports(this)), getpid(), mSerial,
-        nullptr);
-  }
+  MOZ_LOG(gDocShellAndDOMWindowLeakLogging, LogLevel::Info,
+          ("++DOMWINDOW == %d (%p) [pid = %d] [serial = %d] [outer = %p]\n",
+           nsContentUtils::GetCurrentInnerOrOuterWindowCount(),
+           static_cast<void*>(ToCanonicalSupports(this)), getpid(), mSerial,
+           nullptr));
 #endif
 
   MOZ_LOG(gDOMLeakPRLogOuter, LogLevel::Debug,
@@ -1188,7 +1184,7 @@ nsGlobalWindowOuter::~nsGlobalWindowOuter() {
   nsContentUtils::InnerOrOuterWindowDestroyed();
 
 #ifdef DEBUG
-  if (!PR_GetEnv("MOZ_QUIET")) {
+  if (MOZ_LOG_TEST(gDocShellAndDOMWindowLeakLogging, LogLevel::Info)) {
     nsAutoCString url;
     if (mLastOpenedURI) {
       url = mLastOpenedURI->GetSpecOrDefault();
@@ -1200,12 +1196,13 @@ nsGlobalWindowOuter::~nsGlobalWindowOuter() {
       }
     }
 
-    printf_stderr(
-        "--DOMWINDOW == %d (%p) [pid = %d] [serial = %d] [outer = %p] [url = "
-        "%s]\n",
-        nsContentUtils::GetCurrentInnerOrOuterWindowCount(),
-        static_cast<void*>(ToCanonicalSupports(this)), getpid(), mSerial,
-        nullptr, url.get());
+    MOZ_LOG(
+        gDocShellAndDOMWindowLeakLogging, LogLevel::Info,
+        ("--DOMWINDOW == %d (%p) [pid = %d] [serial = %d] [outer = %p] [url = "
+         "%s]\n",
+         nsContentUtils::GetCurrentInnerOrOuterWindowCount(),
+         static_cast<void*>(ToCanonicalSupports(this)), getpid(), mSerial,
+         nullptr, url.get()));
   }
 #endif
 
@@ -1537,7 +1534,7 @@ void nsGlobalWindowOuter::SetInitialPrincipalToSubject(
   // docshell.
   // NOTE: Please keep this logic in sync with AppWindow::Initialize().
   if (nsContentUtils::IsExpandedPrincipal(newWindowPrincipal) ||
-      (nsContentUtils::IsSystemPrincipal(newWindowPrincipal) &&
+      (newWindowPrincipal->IsSystemPrincipal() &&
        GetDocShell()->ItemType() != nsIDocShellTreeItem::typeChrome)) {
     newWindowPrincipal = nullptr;
   }
@@ -1636,7 +1633,7 @@ NS_IMPL_ISUPPORTS(WindowStateHolder, WindowStateHolder)
 bool nsGlobalWindowOuter::ComputeIsSecureContext(Document* aDocument,
                                                  SecureContextFlags aFlags) {
   nsCOMPtr<nsIPrincipal> principal = aDocument->NodePrincipal();
-  if (nsContentUtils::IsSystemPrincipal(principal)) {
+  if (principal->IsSystemPrincipal()) {
     return true;
   }
 
@@ -1692,25 +1689,16 @@ bool nsGlobalWindowOuter::ComputeIsSecureContext(Document* aDocument,
     }
   }
 
-  nsCOMPtr<nsIContentSecurityManager> csm =
-      do_GetService(NS_CONTENTSECURITYMANAGER_CONTRACTID);
-  NS_WARNING_ASSERTION(csm, "csm is null");
-  if (csm) {
-    bool isTrustworthyOrigin = false;
-    csm->IsOriginPotentiallyTrustworthy(principal, &isTrustworthyOrigin);
-    if (isTrustworthyOrigin) {
-      return true;
-    }
-  }
-
-  return false;
+  bool isTrustworthyOrigin = false;
+  principal->GetIsOriginPotentiallyTrustworthy(&isTrustworthyOrigin);
+  return isTrustworthyOrigin;
 }
 
 // We need certain special behavior for remote XUL whitelisted domains, but we
 // don't want that behavior to take effect in automation, because we whitelist
 // all the mochitest domains. So we need to check a pref here.
 static bool TreatAsRemoteXUL(nsIPrincipal* aPrincipal) {
-  MOZ_ASSERT(!nsContentUtils::IsSystemPrincipal(aPrincipal));
+  MOZ_ASSERT(!aPrincipal->IsSystemPrincipal());
   return nsContentUtils::AllowXULXBLForPrincipal(aPrincipal) &&
          !Preferences::GetBool("dom.use_xbl_scopes_for_remote_xul", false);
 }
@@ -1793,7 +1781,7 @@ static JS::RealmCreationOptions& SelectZone(
     JSContext* aCx, nsIPrincipal* aPrincipal, nsGlobalWindowInner* aNewInner,
     JS::RealmCreationOptions& aOptions) {
   // Use the shared system compartment for chrome windows.
-  if (nsContentUtils::IsSystemPrincipal(aPrincipal)) {
+  if (aPrincipal->IsSystemPrincipal()) {
     return aOptions.setExistingCompartment(xpc::PrivilegedJunkScope());
   }
 
@@ -1852,8 +1840,8 @@ static nsresult CreateNativeGlobalForInner(JSContext* aCx,
   xpc::InitGlobalObjectOptions(options, aPrincipal);
 
   // Determine if we need the Components object.
-  bool needComponents = nsContentUtils::IsSystemPrincipal(aPrincipal) ||
-                        TreatAsRemoteXUL(aPrincipal);
+  bool needComponents =
+      aPrincipal->IsSystemPrincipal() || TreatAsRemoteXUL(aPrincipal);
   uint32_t flags = needComponents ? 0 : xpc::OMIT_COMPONENTS_OBJECT;
   flags |= xpc::DONT_FIRE_ONNEWGLOBALHOOK;
 
@@ -2237,7 +2225,7 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
   // it runs JS code for this realm. We skip the check if this window is for
   // chrome JS or an add-on.
   nsCOMPtr<nsIPrincipal> principal = mDoc->NodePrincipal();
-  if (GetDocGroup() && !nsContentUtils::IsSystemPrincipal(principal) &&
+  if (GetDocGroup() && !principal->IsSystemPrincipal() &&
       !BasePrincipal::Cast(principal)->AddonPolicy()) {
     js::SetRealmValidAccessPtr(
         cx, newInnerGlobal, newInnerWindow->GetDocGroup()->GetValidAccessPtr());
@@ -2258,7 +2246,7 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
     // until we have a real chrome doc.
     if (!mDocShell ||
         mDocShell->ItemType() != nsIDocShellTreeItem::typeChrome ||
-        nsContentUtils::IsSystemPrincipal(mDoc->NodePrincipal())) {
+        mDoc->NodePrincipal()->IsSystemPrincipal()) {
       newInnerWindow->mHasNotifiedGlobalCreated = true;
       nsContentUtils::AddScriptRunner(NewRunnableMethod(
           "nsGlobalWindowOuter::DispatchDOMWindowCreated", this,
@@ -2391,12 +2379,11 @@ void nsGlobalWindowOuter::DispatchDOMWindowCreated() {
     nsAutoString origin;
     nsIPrincipal* principal = mDoc->NodePrincipal();
     nsContentUtils::GetUTFOrigin(principal, origin);
-    observerService->NotifyObservers(
-        static_cast<nsIDOMWindow*>(this),
-        nsContentUtils::IsSystemPrincipal(principal)
-            ? "chrome-document-global-created"
-            : "content-document-global-created",
-        origin.get());
+    observerService->NotifyObservers(static_cast<nsIDOMWindow*>(this),
+                                     principal->IsSystemPrincipal()
+                                         ? "chrome-document-global-created"
+                                         : "content-document-global-created",
+                                     origin.get());
   }
 }
 
@@ -3312,12 +3299,6 @@ nsresult nsGlobalWindowOuter::GetInnerSize(CSSIntSize& aSize) {
     return NS_OK;
   }
 
-  // If the visual viewport has been overriden, return that.
-  if (presShell->IsVisualViewportSizeSet()) {
-    aSize = CSSIntRect::FromAppUnitsRounded(presShell->GetVisualViewportSize());
-    return NS_OK;
-  }
-
   // Whether or not the css viewport has been overridden, we can get the
   // correct value by looking at the visible area of the presContext.
   RefPtr<nsViewManager> viewManager = presShell->GetViewManager();
@@ -3325,7 +3306,15 @@ nsresult nsGlobalWindowOuter::GetInnerSize(CSSIntSize& aSize) {
     viewManager->FlushDelayedResize(false);
   }
 
-  aSize = CSSIntRect::FromAppUnitsRounded(presContext->GetVisibleArea().Size());
+  // FIXME: Bug 1598487 - Return the layout viewport instead of the ICB.
+  nsSize viewportSize = presContext->GetVisibleArea().Size();
+  if (presContext->GetDynamicToolbarState() == DynamicToolbarState::Collapsed) {
+    viewportSize =
+        nsLayoutUtils::ExpandHeightForViewportUnits(presContext, viewportSize);
+  }
+
+  aSize = CSSIntRect::FromAppUnitsRounded(viewportSize);
+
   return NS_OK;
 }
 
@@ -3350,24 +3339,8 @@ void nsGlobalWindowOuter::SetInnerWidthOuter(int32_t aInnerWidth,
   CheckSecurityWidthAndHeight(&aInnerWidth, nullptr, aCallerType);
   RefPtr<PresShell> presShell = mDocShell->GetPresShell();
 
-  // Setting inner width should set the visual viewport. Most of the
-  // time, this is the same as the CSS viewport, and when we set one,
-  // we implicitly set both of them. But if
-  // presShell->IsVisualViewportSizeSet() returns true, that means
-  // that the two diverge. In that case we only set the visual viewport.
-  // This mirrors the logic in ::GetInnerSize() and ensures that JS
-  // behaves sanely when setting and then getting the innerWidth.
-  if (presShell && presShell->IsVisualViewportSizeSet()) {
-    CSSSize viewportSize =
-        CSSRect::FromAppUnits(presShell->GetVisualViewportSize());
-    viewportSize.width = aInnerWidth;
-    nsLayoutUtils::SetVisualViewportSize(presShell, viewportSize);
-    return;
-  }
-
-  // We're going to set both viewports. If the css viewport has been
-  // overridden, change the css viewport override. The visual viewport
-  // will adopt this value via the logic in ::GetInnerSize().
+  // Setting inner width should set the CSS viewport. If the CSS viewport
+  // has been overridden, change the override.
   if (presShell && presShell->GetIsViewportOverridden()) {
     nscoord height = 0;
 
@@ -3381,8 +3354,7 @@ void nsGlobalWindowOuter::SetInnerWidthOuter(int32_t aInnerWidth,
     return;
   }
 
-  // Nothing has been overriden, so change the docshell itself, which will
-  // affect both viewports.
+  // Nothing has been overriden, so change the docshell itself.
   int32_t height = 0;
   int32_t unused = 0;
 
@@ -3412,24 +3384,8 @@ void nsGlobalWindowOuter::SetInnerHeightOuter(int32_t aInnerHeight,
   CheckSecurityWidthAndHeight(nullptr, &aInnerHeight, aCallerType);
   RefPtr<PresShell> presShell = mDocShell->GetPresShell();
 
-  // Setting inner height should set the visual viewport. Most of the
-  // time, this is the same as the CSS viewport, and when we set one,
-  // we implicitly set both of them. But if
-  // presShell->IsVisualViewportSizeSet() returns true, that means
-  // that the two diverge. In that case we only set the visual viewport.
-  // This mirrors the logic in ::GetInnerSize() and ensures that JS
-  // behaves sanely when setting and then getting the innerHeight.
-  if (presShell && presShell->IsVisualViewportSizeSet()) {
-    CSSSize viewportSize =
-        CSSRect::FromAppUnits(presShell->GetVisualViewportSize());
-    viewportSize.height = aInnerHeight;
-    nsLayoutUtils::SetVisualViewportSize(presShell, viewportSize);
-    return;
-  }
-
-  // We're going to set both viewports. If the css viewport has been
-  // overridden, change the css viewport override. The visual viewport
-  // will adopt this value via the logic in ::GetInnerSize().
+  // Setting inner height should set the CSS viewport. If the CSS viewport
+  // has been overridden, change the override.
   if (presShell && presShell->GetIsViewportOverridden()) {
     nscoord width = 0;
 
@@ -3443,8 +3399,7 @@ void nsGlobalWindowOuter::SetInnerHeightOuter(int32_t aInnerHeight,
     return;
   }
 
-  // Nothing has been overriden, so change the docshell itself, which will
-  // affect both viewports.
+  // Nothing has been overriden, so change the docshell itself.
   int32_t height = 0;
   int32_t width = 0;
 
@@ -3622,7 +3577,9 @@ Maybe<CSSIntSize> nsGlobalWindowOuter::GetRDMDeviceSize(
   // Bug 1576256: This does not work for cross-process subframes.
   const Document* topInProcessContentDoc =
       aDocument.GetTopLevelContentDocument();
-  BrowsingContext* bc = topInProcessContentDoc ? topInProcessContentDoc->GetBrowsingContext() : nullptr;
+  BrowsingContext* bc = topInProcessContentDoc
+                            ? topInProcessContentDoc->GetBrowsingContext()
+                            : nullptr;
   if (bc && bc->InRDMPane()) {
     nsIDocShell* docShell = topInProcessContentDoc->GetDocShell();
     if (docShell) {
@@ -5895,7 +5852,7 @@ bool nsGlobalWindowOuter::GatherPostMessageData(
     nsContentUtils::GetUTFOrigin(*aCallerDocumentURI, aOrigin);
   } else {
     // in case of a sandbox with a system principal origin can be empty
-    if (!nsContentUtils::IsSystemPrincipal(callerPrin)) {
+    if (!callerPrin->IsSystemPrincipal()) {
       return false;
     }
   }
@@ -5983,7 +5940,7 @@ bool nsGlobalWindowOuter::GetPrincipalForPostMessage(
                 R"(origin "%s".)",
                 targetURL.get(), targetOrigin.get(), sourceOrigin.get())),
             "DOM", !!principal->PrivateBrowsingId(),
-            nsContentUtils::IsSystemPrincipal(principal));
+            principal->IsSystemPrincipal());
 
         attrs = principal->OriginAttributesRef();
       }
@@ -6073,45 +6030,7 @@ void nsGlobalWindowOuter::PostMessageMozOuter(JSContext* aCx,
     return;
   }
 
-  if (mDoc &&
-      StaticPrefs::dom_separate_event_queue_for_post_message_enabled() &&
-      !DocGroup::TryToLoadIframesInBackground()) {
-    Document* doc = mDoc->GetTopLevelContentDocument();
-    if (doc && doc->GetReadyStateEnum() < Document::READYSTATE_COMPLETE) {
-      // As long as the top level is loading, we can dispatch events to the
-      // queue because the queue will be flushed eventually
-      mozilla::dom::TabGroup* tabGroup = TabGroup();
-      aError = tabGroup->QueuePostMessageEvent(event.forget());
-      return;
-    }
-  }
-
-  if (mDoc && DocGroup::TryToLoadIframesInBackground()) {
-    RefPtr<nsIDocShell> docShell = GetDocShell();
-    RefPtr<nsDocShell> dShell = nsDocShell::Cast(docShell);
-
-    // PostMessage that are added to the tabGroup are the ones that
-    // can be flushed when the top level document is loaded
-    if (dShell) {
-      if (!dShell->TreatAsBackgroundLoad()) {
-        Document* doc = mDoc->GetTopLevelContentDocument();
-        if (doc && doc->GetReadyStateEnum() < Document::READYSTATE_COMPLETE) {
-          // As long as the top level is loading, we can dispatch events to the
-          // queue because the queue will be flushed eventually
-          mozilla::dom::TabGroup* tabGroup = TabGroup();
-          aError = tabGroup->QueuePostMessageEvent(event.forget());
-          return;
-        }
-      } else if (mDoc->GetReadyStateEnum() < Document::READYSTATE_COMPLETE) {
-        mozilla::dom::DocGroup* docGroup = GetDocGroup();
-        aError = docGroup->QueueIframePostMessages(event.forget(),
-                                                   dShell->GetOuterWindowID());
-        return;
-      }
-    }
-  }
-
-  aError = Dispatch(TaskCategory::Other, event.forget());
+  event->DispatchToTargetThread(aError);
 }
 
 class nsCloseEvent : public Runnable {
@@ -7751,8 +7670,14 @@ mozilla::dom::TabGroup* nsGlobalWindowOuter::TabGroupOuter() {
       RefPtr<BrowsingContext> openerBC = GetBrowsingContext()->GetOpener();
       nsPIDOMWindowOuter* opener =
           openerBC ? openerBC->GetDOMWindow() : nullptr;
-      MOZ_ASSERT_IF(opener && Cast(opener) != this,
-                    opener->TabGroup() == mTabGroup);
+      // For the case that a page A (foo.com) contains an iframe B (bar.com) and
+      // B contains an iframe C (foo.com), it can not guarantee that A and C are
+      // in same tabgroup in Fission mode. And if C reference back to A via
+      // window.open, we hit this assertion. Ignore this assertion in Fission
+      // given that tabgroup eventually will be removed after bug 1561715.
+      MOZ_ASSERT_IF(
+          !StaticPrefs::fission_autostart() && opener && Cast(opener) != this,
+          opener->TabGroup() == mTabGroup);
     }
     mIsValidatingTabGroup = false;
   }

@@ -26,7 +26,6 @@
 #include "nsIUploadChannel2.h"
 #include "nsIProgressEventSink.h"
 #include "nsIURI.h"
-#include "nsIEffectiveTLDService.h"
 #include "nsIStringEnumerator.h"
 #include "nsISupportsPriority.h"
 #include "nsIClassOfService.h"
@@ -34,7 +33,6 @@
 #include "nsIApplicationCache.h"
 #include "nsIResumableChannel.h"
 #include "nsITraceableChannel.h"
-#include "nsILoadContext.h"
 #include "nsILoadInfo.h"
 #include "mozilla/net/NeckoCommon.h"
 #include "nsThreadUtils.h"
@@ -461,10 +459,7 @@ class HttpBaseChannel : public nsHashPropertyBag,
     return mRequestHead.ClearHeader(nsHttp::Referer);
   }
 
-  MOZ_MUST_USE nsresult SetTopWindowURI(nsIURI* aTopWindowURI) {
-    mTopWindowURI = aTopWindowURI;
-    return NS_OK;
-  }
+  void SetTopWindowURI(nsIURI* aTopWindowURI) { mTopWindowURI = aTopWindowURI; }
 
   void SetContentBlockingAllowListPrincipal(nsIPrincipal* aPrincipal) {
     mContentBlockingAllowListPrincipal = aPrincipal;
@@ -516,6 +511,10 @@ class HttpBaseChannel : public nsHashPropertyBag,
   // Called before we create the redirect target channel.
   already_AddRefed<nsILoadInfo> CloneLoadInfoForRedirect(
       nsIURI* aNewURI, uint32_t aRedirectFlags);
+
+  // True if we've already applied content conversion to the data
+  // passed to mListener.
+  bool HasAppliedConversion() { return mHasAppliedConversion; }
 
  protected:
   nsresult GetTopWindowURI(nsIURI* aURIBeingLoaded, nsIURI** aTopWindowURI);
@@ -622,8 +621,8 @@ class HttpBaseChannel : public nsHashPropertyBag,
   // Proxy release all members above on main thread.
   void ReleaseMainThreadOnlyReferences();
 
-  nsresult ExplicitSetUploadStreamLength(uint64_t aContentLength,
-                                         bool aStreamHasHeaders);
+  void ExplicitSetUploadStreamLength(uint64_t aContentLength,
+                                     bool aStreamHasHeaders);
 
   void MaybeResumeAsyncOpen();
 
@@ -732,6 +731,9 @@ class HttpBaseChannel : public nsHashPropertyBag,
 
   uint32_t mUpgradeToSecure : 1;
   uint32_t mApplyConversion : 1;
+  // Set to true if DoApplyContentConversions has been applied to
+  // our default mListener.
+  uint32_t mHasAppliedConversion : 1;
   uint32_t mIsPending : 1;
   uint32_t mWasOpened : 1;
   // if 1 all "http-on-{opening|modify|etc}-request" observers have been called

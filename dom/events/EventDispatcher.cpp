@@ -25,6 +25,7 @@
 #include "GeckoProfiler.h"
 #include "KeyboardEvent.h"
 #include "Layers.h"
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/ContentEvents.h"
 #include "mozilla/dom/CloseEvent.h"
 #include "mozilla/dom/CustomEvent.h"
@@ -121,7 +122,7 @@ static bool IsEventTargetChrome(EventTarget* aEventTarget,
     }
   } else if (nsCOMPtr<nsIScriptObjectPrincipal> sop =
                  do_QueryInterface(aEventTarget->GetOwnerGlobal())) {
-    isChrome = nsContentUtils::IsSystemPrincipal(sop->GetPrincipal());
+    isChrome = sop->GetPrincipal()->IsSystemPrincipal();
   }
   return isChrome;
 }
@@ -1132,6 +1133,11 @@ nsresult EventDispatcher::DispatchDOMEvent(nsISupports* aTarget,
   if (aDOMEvent) {
     WidgetEvent* innerEvent = aDOMEvent->WidgetEventPtr();
     NS_ENSURE_TRUE(innerEvent, NS_ERROR_ILLEGAL_VALUE);
+
+    // Don't modify the event if it's being dispatched right now.
+    if (innerEvent->mFlags.mIsBeingDispatched) {
+      return NS_ERROR_DOM_INVALID_STATE_ERR;
+    }
 
     bool dontResetTrusted = false;
     if (innerEvent->mFlags.mDispatchedAtLeastOnce) {

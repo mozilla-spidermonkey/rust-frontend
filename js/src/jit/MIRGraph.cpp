@@ -126,6 +126,9 @@ bool MIRGraph::removeSuccessorBlocks(MBasicBlock* start) {
   // Mark all successors.
   Vector<MBasicBlock*, 4, SystemAllocPolicy> blocks;
   for (size_t i = 0; i < start->numSuccessors(); i++) {
+    if (!start->getSuccessor(i)) {
+      continue;
+    }
     if (start->getSuccessor(i)->isMarked()) {
       continue;
     }
@@ -141,6 +144,9 @@ bool MIRGraph::removeSuccessorBlocks(MBasicBlock* start) {
     }
 
     for (size_t j = 0; j < block->numSuccessors(); j++) {
+      if (!block->getSuccessor(j)) {
+        continue;
+      }
       if (block->getSuccessor(j)->isMarked()) {
         continue;
       }
@@ -1156,9 +1162,6 @@ AbortReason MBasicBlock::setBackedge(TempAllocator& alloc, MBasicBlock* pred) {
   }
 
   if (hadTypeChange) {
-    for (MPhiIterator phi = phisBegin(); phi != phisEnd(); phi++) {
-      phi->removeOperand(phi->numOperands() - 1);
-    }
     return AbortReason::Disable;
   }
 
@@ -1432,7 +1435,6 @@ bool MBasicBlock::inheritPhisFromBackedge(TempAllocator& alloc,
       return false;
     }
     *hadTypeChange |= typeChange;
-    setSlot(slot, entryDef);
   }
 
   return true;

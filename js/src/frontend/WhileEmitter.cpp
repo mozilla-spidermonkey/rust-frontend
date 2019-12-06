@@ -17,56 +17,49 @@ using mozilla::Maybe;
 
 WhileEmitter::WhileEmitter(BytecodeEmitter* bce) : bce_(bce) {}
 
-bool WhileEmitter::emitBody(const Maybe<uint32_t>& whilePos,
-                            const Maybe<uint32_t>& bodyPos,
+bool WhileEmitter::emitCond(const Maybe<uint32_t>& whilePos,
+                            const Maybe<uint32_t>& condPos,
                             const Maybe<uint32_t>& endPos) {
   MOZ_ASSERT(state_ == State::Start);
 
-  // Minimize bytecodes issued for one or more iterations by jumping to
-  // the condition below the body and closing the loop if the condition
-  // is true with a backward branch. For iteration count i:
-  //
-  //  i    test at the top                 test at the bottom
-  //  =    ===============                 ==================
-  //  0    ifeq-pass                       goto; ifne-fail
-  //  1    ifeq-fail; goto; ifne-pass      goto; ifne-pass; ifne-fail
-  //  2    2*(ifeq-fail; goto); ifeq-pass  goto; 2*ifne-pass; ifne-fail
-  //  . . .
-  //  N    N*(ifeq-fail; goto); ifeq-pass  goto; N*ifne-pass; ifne-fail
-
-  // If we have a single-line while, like "while (x) ;", we want to
-  // emit the line note before the initial goto, so that the
-  // debugger sees a single entry point.  This way, if there is a
-  // breakpoint on the line, it will only fire once; and "next"ing
-  // will skip the whole loop.  However, for the multi-line case we
-  // want to emit the line note after the initial goto, so that
-  // "cont" stops on each iteration -- but without a stop before the
-  // first iteration.
+  // If we have a single-line while, like "while (x) ;", we want to emit the
+  // line note before the loop, so that the debugger sees a single entry point.
+  // This way, if there is a breakpoint on the line, it will only fire once; and
+  // "next"ing will skip the whole loop. However, for the multi-line case we
+  // want to emit the line note for the JSOP_LOOPHEAD, so that "cont" stops on
+  // each iteration -- but without a stop before the first iteration.
   if (whilePos && endPos &&
       bce_->parser->errorReporter().lineAt(*whilePos) ==
           bce_->parser->errorReporter().lineAt(*endPos)) {
     if (!bce_->updateSourceCoordNotes(*whilePos)) {
       return false;
     }
-  }
-
-  JumpTarget top = {BytecodeOffset::invalidOffset()};
-  if (!bce_->emitJumpTarget(&top)) {
-    return false;
+    // Emit a NOP to ensure the source position is not part of the loop.
+    if (!bce_->emit1(JSOP_NOP)) {
+      return false;
+    }
   }
 
   loopInfo_.emplace(bce_, StatementKind::WhileLoop);
-  loopInfo_->setContinueTarget(top.offset);
 
-  if (!bce_->newSrcNote(SRC_WHILE, &noteIndex_)) {
+  if (!bce_->newSrcNote(SRC_WHILE)) {
     return false;
   }
 
-  if (!loopInfo_->emitEntryJump(bce_)) {
+  if (!loopInfo_->emitLoopHead(bce_, condPos)) {
     return false;
   }
 
-  if (!loopInfo_->emitLoopHead(bce_, bodyPos)) {
+#ifdef DEBUG
+  state_ = State::Cond;
+#endif
+  return true;
+}
+
+bool WhileEmitter::emitBody() {
+  MOZ_ASSERT(state_ == State::Cond);
+
+  if (!bce_->emitJump(JSOP_IFEQ, &loopInfo_->breaks)) {
     return false;
   }
 
@@ -78,25 +71,16 @@ bool WhileEmitter::emitBody(const Maybe<uint32_t>& whilePos,
   return true;
 }
 
-bool WhileEmitter::emitCond(const Maybe<uint32_t>& condPos) {
+bool WhileEmitter::emitEnd() {
   MOZ_ASSERT(state_ == State::Body);
 
   tdzCacheForBody_.reset();
 
-  if (!loopInfo_->emitLoopEntry(bce_, condPos)) {
+  if (!loopInfo_->emitContinueTarget(bce_)) {
     return false;
   }
 
-#ifdef DEBUG
-  state_ = State::Cond;
-#endif
-  return true;
-}
-
-bool WhileEmitter::emitEnd() {
-  MOZ_ASSERT(state_ == State::Cond);
-
-  if (!loopInfo_->emitLoopEnd(bce_, JSOP_IFNE)) {
+  if (!loopInfo_->emitLoopEnd(bce_, JSOP_GOTO)) {
     return false;
   }
 
@@ -106,12 +90,7 @@ bool WhileEmitter::emitEnd() {
     return false;
   }
 
-  if (!bce_->setSrcNoteOffset(noteIndex_, SrcNote::While::BackJumpOffset,
-                              loopInfo_->loopEndOffsetFromEntryJump())) {
-    return false;
-  }
-
-  if (!loopInfo_->patchBreaksAndContinues(bce_)) {
+  if (!loopInfo_->patchBreaks(bce_)) {
     return false;
   }
 

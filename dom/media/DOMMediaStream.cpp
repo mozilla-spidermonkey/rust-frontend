@@ -25,7 +25,6 @@
 #include "mozilla/media/MediaUtils.h"
 #include "nsContentUtils.h"
 #include "nsGlobalWindowInner.h"
-#include "nsIScriptError.h"
 #include "nsIUUIDGenerator.h"
 #include "nsPIDOMWindow.h"
 #include "nsProxyRelease.h"
@@ -395,6 +394,16 @@ void DOMMediaStream::AddTrackInternal(MediaStreamTrack* aTrack) {
       ("DOMMediaStream %p Adding owned track %p", this, aTrack));
   AddTrack(*aTrack);
   DispatchTrackEvent(NS_LITERAL_STRING("addtrack"), aTrack);
+}
+
+void DOMMediaStream::RemoveTrackInternal(MediaStreamTrack* aTrack) {
+  LOG(LogLevel::Debug,
+      ("DOMMediaStream %p Removing owned track %p", this, aTrack));
+  if (!HasTrack(*aTrack)) {
+    return;
+  }
+  RemoveTrack(*aTrack);
+  DispatchTrackEvent(NS_LITERAL_STRING("removetrack"), aTrack);
 }
 
 already_AddRefed<nsIPrincipal> DOMMediaStream::GetPrincipal() {

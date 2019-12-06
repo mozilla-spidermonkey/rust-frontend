@@ -36,26 +36,6 @@ function openContextMenu(aMessage, aBrowser, aActor) {
     linkReferrerInfo = E10SUtils.deserializeReferrerInfo(linkReferrerInfo);
   }
 
-  // For now, JS Window Actors don't deserialize Principals automatically, so we
-  // have to do it ourselves. See bug 1557852.
-  if (principal) {
-    principal = E10SUtils.deserializePrincipal(principal);
-  }
-  if (storagePrincipal) {
-    storagePrincipal = E10SUtils.deserializePrincipal(storagePrincipal);
-  }
-
-  if (data.context.principal) {
-    data.context.principal = E10SUtils.deserializePrincipal(
-      data.context.principal
-    );
-  }
-  if (data.context.storagePrincipal) {
-    data.context.storagePrincipal = E10SUtils.deserializePrincipal(
-      data.context.storagePrincipal
-    );
-  }
-
   nsContextMenu.contentData = {
     context: data.context,
     browser,
@@ -974,14 +954,10 @@ class nsContextMenu {
     }
 
     let formOrigin = LoginHelper.getLoginOrigin(documentURI.spec);
-    let formActionOrigin = LoginHelper.getLoginOrigin(
-      loginFillInfo.formActionOrigin
-    );
     let fragment = nsContextMenu.LoginManagerContextMenu.addLoginsToMenu(
       this.targetIdentifier,
       this.browser,
-      formOrigin,
-      formActionOrigin
+      formOrigin
     );
     let isGeneratedPasswordEnabled =
       LoginHelper.generationAvailable && LoginHelper.generationEnabled;
@@ -993,12 +969,6 @@ class nsContextMenu {
     this.showItem("fill-login-no-logins", !fragment);
     this.showItem("fill-login-generated-password", canFillGeneratedPassword);
     this.showItem("generated-password-separator", canFillGeneratedPassword);
-
-    this.setItemAttr(
-      "fill-login-generated-password",
-      "disabled",
-      PrivateBrowsingUtils.isWindowPrivate(window)
-    );
 
     if (!fragment) {
       return;
@@ -1019,8 +989,8 @@ class nsContextMenu {
     });
   }
 
-  fillGeneratedPassword() {
-    nsContextMenu.LoginManagerContextMenu.fillGeneratedPassword(
+  useGeneratedPassword() {
+    nsContextMenu.LoginManagerContextMenu.useGeneratedPassword(
       this.targetIdentifier,
       this.contentData.documentURIObject,
       this.browser

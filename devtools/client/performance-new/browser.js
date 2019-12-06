@@ -16,6 +16,7 @@
  * @typedef {import("./@types/perf").RecordingStateFromPreferences} RecordingStateFromPreferences
  * @typedef {import("./@types/perf").RestartBrowserWithEnvironmentVariable} RestartBrowserWithEnvironmentVariable
  * @typedef {import("./@types/perf").GetEnvironmentVariable} GetEnvironmentVariable
+ * @typedef {import("./@types/perf").GetActiveBrowsingContextID} GetActiveBrowsingContextID
  */
 
 /**
@@ -158,25 +159,10 @@ function receiveProfile(profile, getSymbolTableCallback) {
  * function always returns a valid array of strings.
  * @param {PreferenceFront} preferenceFront
  * @param {string} prefName
- * @param {string[]} defaultValue
  */
-async function _getArrayOfStringsPref(preferenceFront, prefName, defaultValue) {
-  let array;
-  try {
-    const text = await preferenceFront.getCharPref(prefName);
-    array = JSON.parse(text);
-  } catch (error) {
-    return defaultValue;
-  }
-
-  if (
-    Array.isArray(array) &&
-    array.every(feature => typeof feature === "string")
-  ) {
-    return array;
-  }
-
-  return defaultValue;
+async function _getArrayOfStringsPref(preferenceFront, prefName) {
+  const text = await preferenceFront.getCharPref(prefName);
+  return JSON.parse(text);
 }
 
 /**
@@ -186,29 +172,12 @@ async function _getArrayOfStringsPref(preferenceFront, prefName, defaultValue) {
  * even exists. Gracefully handle malformed data or missing data. Ensure that this
  * function always returns a valid array of strings.
  * @param {string} prefName
- * @param {string[]} defaultValue
  */
-async function _getArrayOfStringsHostPref(prefName, defaultValue) {
+async function _getArrayOfStringsHostPref(prefName) {
   const { Services } = lazyServices();
-  let array;
-  try {
-    const text = Services.prefs.getStringPref(
-      prefName,
-      JSON.stringify(defaultValue)
-    );
-    array = JSON.parse(text);
-  } catch (error) {
-    return defaultValue;
-  }
+  const text = Services.prefs.getStringPref(prefName);
 
-  if (
-    Array.isArray(array) &&
-    array.every(feature => typeof feature === "string")
-  ) {
-    return array;
-  }
-
-  return defaultValue;
+  return JSON.parse(text);
 }
 
 /**
@@ -216,14 +185,9 @@ async function _getArrayOfStringsHostPref(prefName, defaultValue) {
  *
  * @param {PreferenceFront} preferenceFront
  * @param {string} prefName
- * @param {number} defaultValue
  */
-async function _getIntPref(preferenceFront, prefName, defaultValue) {
-  try {
-    return await preferenceFront.getIntPref(prefName);
-  } catch (error) {
-    return defaultValue;
-  }
+async function _getIntPref(preferenceFront, prefName) {
+  return preferenceFront.getIntPref(prefName);
 }
 
 /**
@@ -233,34 +197,14 @@ async function _getIntPref(preferenceFront, prefName, defaultValue) {
  * different features or configurations.
  *
  * @param {PreferenceFront} preferenceFront
- * @param {RecordingStateFromPreferences} defaultPrefs
  */
-async function getRecordingPreferencesFromDebuggee(
-  preferenceFront,
-  defaultPrefs
-) {
+async function getRecordingPreferencesFromDebuggee(preferenceFront) {
   const [entries, interval, features, threads, objdirs] = await Promise.all([
-    _getIntPref(
-      preferenceFront,
-      `devtools.performance.recording.entries`,
-      defaultPrefs.entries
-    ),
-    _getIntPref(
-      preferenceFront,
-      `devtools.performance.recording.interval`,
-      defaultPrefs.interval
-    ),
-    _getArrayOfStringsPref(
-      preferenceFront,
-      `devtools.performance.recording.features`,
-      defaultPrefs.features
-    ),
-    _getArrayOfStringsPref(
-      preferenceFront,
-      `devtools.performance.recording.threads`,
-      defaultPrefs.threads
-    ),
-    _getArrayOfStringsHostPref(OBJDIRS_PREF, defaultPrefs.objdirs),
+    _getIntPref(preferenceFront, ENTRIES_PREF),
+    _getIntPref(preferenceFront, INTERVAL_PREF),
+    _getArrayOfStringsPref(preferenceFront, FEATURES_PREF),
+    _getArrayOfStringsPref(preferenceFront, THREADS_PREF),
+    _getArrayOfStringsHostPref(OBJDIRS_PREF),
   ]);
 
   return { entries, interval, features, threads, objdirs };
@@ -545,6 +489,33 @@ function openFilePickerForObjdir(window, objdirs, changeObjdirs) {
   });
 }
 
+/**
+ * Gets the ID of active BrowsingContext from the browser.
+ *
+ * @type {GetActiveBrowsingContextID}
+ */
+function getActiveBrowsingContextID() {
+  const { Services } = lazyServices();
+  const win = Services.wm.getMostRecentWindow("navigator:browser");
+
+  if (
+    win &&
+    win.gBrowser &&
+    win.gBrowser.selectedBrowser &&
+    win.gBrowser.selectedBrowser.browsingContext &&
+    win.gBrowser.selectedBrowser.browsingContext.id
+  ) {
+    return win.gBrowser.selectedBrowser.browsingContext.id;
+  }
+
+  console.error(
+    "Failed to get the active BrowsingContext ID while starting the profiler."
+  );
+  // `0` mean that we failed to ge the active BrowsingContext ID, and it's
+  // treated as null value in the platform.
+  return 0;
+}
+
 module.exports = {
   receiveProfile,
   getRecordingPreferencesFromDebuggee,
@@ -553,4 +524,5 @@ module.exports = {
   restartBrowserWithEnvironmentVariable,
   getEnvironmentVariable,
   openFilePickerForObjdir,
+  getActiveBrowsingContextID,
 };

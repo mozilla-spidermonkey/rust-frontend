@@ -69,6 +69,7 @@
 #include "util/Text.h"
 #include "vm/AsyncFunction.h"
 #include "vm/AsyncIteration.h"
+#include "vm/ErrorObject.h"
 #include "vm/GlobalObject.h"
 #include "vm/Interpreter.h"
 #include "vm/Iteration.h"
@@ -385,7 +386,7 @@ static bool GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-#ifdef ENABLE_TYPED_OBJECTS
+#ifdef JS_HAS_TYPED_OBJECTS
   value = BooleanValue(true);
 #else
   value = BooleanValue(false);
@@ -394,7 +395,7 @@ static bool GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-#ifdef ENABLE_INTL_API
+#ifdef JS_HAS_INTL_API
   value = BooleanValue(true);
 #else
   value = BooleanValue(false);
@@ -791,6 +792,12 @@ static bool WasmGcEnabled(JSContext* cx, unsigned argc, Value* vp) {
 static bool WasmMultiValueEnabled(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   args.rval().setBoolean(wasm::HasMultiValueSupport(cx));
+  return true;
+}
+
+static bool WasmBigIntEnabled(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  args.rval().setBoolean(wasm::HasI64BigIntSupport(cx));
   return true;
 }
 
@@ -4360,7 +4367,6 @@ static bool ShellCloneAndExecuteScript(JSContext* cx, unsigned argc,
 
   JS::CompileOptions options(cx);
   options.setFileAndLine(filename.get(), lineno);
-  options.setNoScriptRval(true);
 
   JS::SourceText<char16_t> srcBuf;
   if (!srcBuf.init(cx, src, srclen, SourceOwnership::Borrowed)) {
@@ -4382,14 +4388,19 @@ static bool ShellCloneAndExecuteScript(JSContext* cx, unsigned argc,
     return false;
   }
 
-  AutoRealm ar(cx, global);
-
   JS::RootedValue rval(cx);
-  if (!JS::CloneAndExecuteScript(cx, script, &rval)) {
+  {
+    AutoRealm ar(cx, global);
+    if (!JS::CloneAndExecuteScript(cx, script, &rval)) {
+      return false;
+    }
+  }
+
+  if (!cx->compartment()->wrap(cx, &rval)) {
     return false;
   }
 
-  args.rval().setUndefined();
+  args.rval().set(rval);
   return true;
 }
 
@@ -6635,6 +6646,10 @@ gc::ZealModeHelpText),
     JS_FN_HELP("wasmMultiValueEnabled", WasmMultiValueEnabled, 1, 0,
 "wasmMultiValueEnabled()",
 "  Returns a boolean indicating whether the WebAssembly multi-value proposal is enabled."),
+
+    JS_FN_HELP("wasmBigIntEnabled", WasmBigIntEnabled, 1, 0,
+"wasmBigIntEnabled()",
+"  Returns a boolean indicating whether the WebAssembly I64 to BigInt proposal is enabled."),
 
     JS_FN_HELP("wasmDebugSupport", WasmDebugSupport, 1, 0,
 "wasmDebugSupport()",

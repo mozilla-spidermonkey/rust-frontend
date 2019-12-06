@@ -116,9 +116,6 @@ RenderedFrameId RendererOGL::UpdateAndRender(
 
 #if defined(XP_MACOSX)
   widgetContext.mGL = mCompositor->gl();
-// TODO: we don't have a notion of compositor here.
-//#elif defined(MOZ_WIDGET_ANDROID)
-//  widgetContext.mCompositor = mCompositor;
 #endif
 
   if (!mCompositor->GetWidget()->PreRender(&widgetContext)) {
@@ -162,10 +159,13 @@ RenderedFrameId RendererOGL::UpdateAndRender(
   if (aReadbackBuffer.isSome()) {
     MOZ_ASSERT(aReadbackSize.isSome());
     MOZ_ASSERT(aReadbackFormat.isSome());
-    wr_renderer_readback(mRenderer, aReadbackSize.ref().width,
-                         aReadbackSize.ref().height, aReadbackFormat.ref(),
-                         &aReadbackBuffer.ref()[0],
-                         aReadbackBuffer.ref().length());
+    if (!mCompositor->MaybeReadback(aReadbackSize.ref(), aReadbackFormat.ref(),
+                                    aReadbackBuffer.ref())) {
+      wr_renderer_readback(mRenderer, aReadbackSize.ref().width,
+                           aReadbackSize.ref().height, aReadbackFormat.ref(),
+                           &aReadbackBuffer.ref()[0],
+                           aReadbackBuffer.ref().length());
+    }
   }
 
   mScreenshotGrabber.MaybeGrabScreenshot(mRenderer, size.ToUnknownSize());

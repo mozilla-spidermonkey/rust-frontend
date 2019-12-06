@@ -8,6 +8,7 @@
 
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/AsyncEventDispatcher.h"
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/dom/Date.h"
 #include "mozilla/dom/Directory.h"
@@ -24,7 +25,6 @@
 #include "nsCRTGlue.h"
 #include "nsQueryObject.h"
 
-#include "nsITextControlElement.h"
 #include "nsIRadioVisitor.h"
 #include "InputType.h"
 
@@ -38,7 +38,6 @@
 #include "nsPIDOMWindow.h"
 #include "nsRepeatService.h"
 #include "nsContentCID.h"
-#include "nsIComponentManager.h"
 #include "mozilla/dom/ProgressEvent.h"
 #include "nsGkAtoms.h"
 #include "nsStyleConsts.h"
@@ -50,7 +49,6 @@
 #include "nsITextControlFrame.h"
 #include "nsIFrame.h"
 #include "nsRangeFrame.h"
-#include "nsIServiceManager.h"
 #include "nsError.h"
 #include "nsIEditor.h"
 #include "nsAttrValueOrString.h"
@@ -103,8 +101,6 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/TextUtils.h"
-
-#include "nsIIDNService.h"
 
 #include <limits>
 
@@ -945,8 +941,8 @@ static nsresult FireEventForAccessibility(HTMLInputElement* aTarget,
 HTMLInputElement::HTMLInputElement(
     already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo,
     FromParser aFromParser, FromClone aFromClone)
-    : nsGenericHTMLFormElementWithState(std::move(aNodeInfo), aFromParser,
-                                        kInputDefaultType->value),
+    : TextControlElement(std::move(aNodeInfo), aFromParser,
+                         kInputDefaultType->value),
       mAutocompleteAttrState(nsContentUtils::eAutocompleteAttrState_Unknown),
       mAutocompleteInfoState(nsContentUtils::eAutocompleteAttrState_Unknown),
       mDisabledChanged(false),
@@ -1037,8 +1033,8 @@ TextControlState* HTMLInputElement::GetEditorState() const {
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(HTMLInputElement)
 
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(
-    HTMLInputElement, nsGenericHTMLFormElementWithState)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(HTMLInputElement,
+                                                  TextControlElement)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mValidity)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mControllers)
   if (tmp->IsSingleLineTextControl(false)) {
@@ -1050,8 +1046,8 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(
   }
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(
-    HTMLInputElement, nsGenericHTMLFormElementWithState)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(HTMLInputElement,
+                                                TextControlElement)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mValidity)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mControllers)
   if (tmp->IsSingleLineTextControl(false)) {
@@ -1064,9 +1060,11 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(
   // XXX should unlink more?
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
-NS_IMPL_ISUPPORTS_CYCLE_COLLECTION_INHERITED(
-    HTMLInputElement, nsGenericHTMLFormElementWithState, nsITextControlElement,
-    imgINotificationObserver, nsIImageLoadingContent, nsIConstraintValidation)
+NS_IMPL_ISUPPORTS_CYCLE_COLLECTION_INHERITED(HTMLInputElement,
+                                             TextControlElement,
+                                             imgINotificationObserver,
+                                             nsIImageLoadingContent,
+                                             nsIConstraintValidation)
 
 // nsINode
 
@@ -2186,8 +2184,7 @@ HTMLInputElement* HTMLInputElement::GetOwnerNumberControl() {
 
 void HTMLInputElement::SetUserInput(const nsAString& aValue,
                                     nsIPrincipal& aSubjectPrincipal) {
-  if (mType == NS_FORM_INPUT_FILE &&
-      !nsContentUtils::IsSystemPrincipal(&aSubjectPrincipal)) {
+  if (mType == NS_FORM_INPUT_FILE && !aSubjectPrincipal.IsSystemPrincipal()) {
     return;
   }
 
@@ -2234,11 +2231,11 @@ TextEditor* HTMLInputElement::GetTextEditorFromState() {
   return nullptr;
 }
 
-NS_IMETHODIMP_(TextEditor*)
-HTMLInputElement::GetTextEditor() { return GetTextEditorFromState(); }
+TextEditor* HTMLInputElement::GetTextEditor() {
+  return GetTextEditorFromState();
+}
 
-NS_IMETHODIMP_(TextEditor*)
-HTMLInputElement::GetTextEditorWithoutCreation() {
+TextEditor* HTMLInputElement::GetTextEditorWithoutCreation() {
   TextControlState* state = GetEditorState();
   if (!state) {
     return nullptr;
@@ -2246,8 +2243,7 @@ HTMLInputElement::GetTextEditorWithoutCreation() {
   return state->GetTextEditorWithoutCreation();
 }
 
-NS_IMETHODIMP_(nsISelectionController*)
-HTMLInputElement::GetSelectionController() {
+nsISelectionController* HTMLInputElement::GetSelectionController() {
   TextControlState* state = GetEditorState();
   if (state) {
     return state->GetSelectionController();
@@ -2263,8 +2259,7 @@ nsFrameSelection* HTMLInputElement::GetConstFrameSelection() {
   return nullptr;
 }
 
-NS_IMETHODIMP
-HTMLInputElement::BindToFrame(nsTextControlFrame* aFrame) {
+nsresult HTMLInputElement::BindToFrame(nsTextControlFrame* aFrame) {
   TextControlState* state = GetEditorState();
   if (state) {
     return state->BindToFrame(aFrame);
@@ -2272,16 +2267,14 @@ HTMLInputElement::BindToFrame(nsTextControlFrame* aFrame) {
   return NS_ERROR_FAILURE;
 }
 
-NS_IMETHODIMP_(void)
-HTMLInputElement::UnbindFromFrame(nsTextControlFrame* aFrame) {
+void HTMLInputElement::UnbindFromFrame(nsTextControlFrame* aFrame) {
   TextControlState* state = GetEditorState();
   if (state && aFrame) {
     state->UnbindFromFrame(aFrame);
   }
 }
 
-NS_IMETHODIMP
-HTMLInputElement::CreateEditor() {
+nsresult HTMLInputElement::CreateEditor() {
   TextControlState* state = GetEditorState();
   if (state) {
     return state->PrepareEditor();
@@ -2289,16 +2282,14 @@ HTMLInputElement::CreateEditor() {
   return NS_ERROR_FAILURE;
 }
 
-NS_IMETHODIMP_(void)
-HTMLInputElement::UpdateOverlayTextVisibility(bool aNotify) {
+void HTMLInputElement::UpdateOverlayTextVisibility(bool aNotify) {
   TextControlState* state = GetEditorState();
   if (state) {
     state->UpdateOverlayTextVisibility(aNotify);
   }
 }
 
-NS_IMETHODIMP_(bool)
-HTMLInputElement::GetPlaceholderVisibility() {
+bool HTMLInputElement::GetPlaceholderVisibility() {
   TextControlState* state = GetEditorState();
   if (!state) {
     return false;
@@ -2307,24 +2298,21 @@ HTMLInputElement::GetPlaceholderVisibility() {
   return state->GetPlaceholderVisibility();
 }
 
-NS_IMETHODIMP_(void)
-HTMLInputElement::SetPreviewValue(const nsAString& aValue) {
+void HTMLInputElement::SetPreviewValue(const nsAString& aValue) {
   TextControlState* state = GetEditorState();
   if (state) {
     state->SetPreviewText(aValue, true);
   }
 }
 
-NS_IMETHODIMP_(void)
-HTMLInputElement::GetPreviewValue(nsAString& aValue) {
+void HTMLInputElement::GetPreviewValue(nsAString& aValue) {
   TextControlState* state = GetEditorState();
   if (state) {
     state->GetPreviewText(aValue);
   }
 }
 
-NS_IMETHODIMP_(void)
-HTMLInputElement::EnablePreview() {
+void HTMLInputElement::EnablePreview() {
   if (mIsPreviewEnabled) {
     return;
   }
@@ -2335,11 +2323,9 @@ HTMLInputElement::EnablePreview() {
                                   nsChangeHint_ReconstructFrame);
 }
 
-NS_IMETHODIMP_(bool)
-HTMLInputElement::IsPreviewEnabled() { return mIsPreviewEnabled; }
+bool HTMLInputElement::IsPreviewEnabled() { return mIsPreviewEnabled; }
 
-NS_IMETHODIMP_(bool)
-HTMLInputElement::GetPreviewVisibility() {
+bool HTMLInputElement::GetPreviewVisibility() {
   TextControlState* state = GetEditorState();
   if (!state) {
     return false;
@@ -2733,8 +2719,7 @@ nsresult HTMLInputElement::SetValueInternal(const nsAString& aValue,
   return NS_OK;
 }
 
-NS_IMETHODIMP
-HTMLInputElement::SetValueChanged(bool aValueChanged) {
+nsresult HTMLInputElement::SetValueChanged(bool aValueChanged) {
   bool valueChangedBefore = mValueChanged;
 
   mValueChanged = aValueChanged;
@@ -2906,16 +2891,11 @@ nsresult HTMLInputElement::MaybeSubmitForm(nsPresContext* aPresContext) {
     WidgetMouseEvent event(true, eMouseClick, nullptr, WidgetMouseEvent::eReal);
     nsEventStatus status = nsEventStatus_eIgnore;
     presShell->HandleDOMEventWithTarget(submitContent, &event, &status);
-  } else if (!mForm->ImplicitSubmissionIsDisabled() &&
-             mForm->SubmissionCanProceed(nullptr)) {
-    // TODO: removing this code and have the submit event sent by the form,
-    // bug 592124.
+  } else if (!mForm->ImplicitSubmissionIsDisabled()) {
     // If there's only one text control, just submit the form
     // Hold strong ref across the event
-    RefPtr<mozilla::dom::HTMLFormElement> form = mForm;
-    InternalFormEvent event(true, eFormSubmit);
-    nsEventStatus status = nsEventStatus_eIgnore;
-    presShell->HandleDOMEventWithTarget(form, &event, &status);
+    RefPtr<mozilla::dom::HTMLFormElement> form(mForm);
+    form->MaybeSubmit(nullptr);
   }
 
   return NS_OK;
@@ -4155,27 +4135,14 @@ nsresult HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor) {
           case NS_FORM_INPUT_SUBMIT:
           case NS_FORM_INPUT_IMAGE:
             if (mForm) {
-              InternalFormEvent event(true, (mType == NS_FORM_INPUT_RESET)
-                                                ? eFormReset
-                                                : eFormSubmit);
-              event.mOriginator = this;
-              nsEventStatus status = nsEventStatus_eIgnore;
-
-              RefPtr<PresShell> presShell =
-                  aVisitor.mPresContext->GetPresShell();
-
-              // If |PresShell::Destroy| has been called due to
-              // handling the event the pres context will return a null
-              // pres shell.  See bug 125624.
-              // TODO: removing this code and have the submit event sent by the
-              // form, see bug 592124.
-              if (presShell && (event.mMessage != eFormSubmit ||
-                                mForm->SubmissionCanProceed(this))) {
-                // Hold a strong ref while dispatching
-                RefPtr<mozilla::dom::HTMLFormElement> form(mForm);
-                presShell->HandleDOMEventWithTarget(form, &event, &status);
-                aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
+              // Hold a strong ref while dispatching
+              RefPtr<mozilla::dom::HTMLFormElement> form(mForm);
+              if (mType == NS_FORM_INPUT_RESET) {
+                form->MaybeReset(this);
+              } else {
+                form->MaybeSubmit(this);
               }
+              aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
             }
             break;
 
@@ -6734,21 +6701,17 @@ nsresult HTMLInputElement::GetValidationMessage(nsAString& aValidationMessage,
   return mInputType->GetValidationMessage(aValidationMessage, aType);
 }
 
-NS_IMETHODIMP_(bool)
-HTMLInputElement::IsSingleLineTextControl() const {
+bool HTMLInputElement::IsSingleLineTextControl() const {
   return IsSingleLineTextControl(false);
 }
 
-NS_IMETHODIMP_(bool)
-HTMLInputElement::IsTextArea() const { return false; }
+bool HTMLInputElement::IsTextArea() const { return false; }
 
-NS_IMETHODIMP_(bool)
-HTMLInputElement::IsPasswordTextControl() const {
+bool HTMLInputElement::IsPasswordTextControl() const {
   return mType == NS_FORM_INPUT_PASSWORD;
 }
 
-NS_IMETHODIMP_(int32_t)
-HTMLInputElement::GetCols() {
+int32_t HTMLInputElement::GetCols() {
   // Else we know (assume) it is an input with size attr
   const nsAttrValue* attr = GetParsedAttr(nsGkAtoms::size);
   if (attr && attr->Type() == nsAttrValue::eInteger) {
@@ -6761,16 +6724,13 @@ HTMLInputElement::GetCols() {
   return DEFAULT_COLS;
 }
 
-NS_IMETHODIMP_(int32_t)
-HTMLInputElement::GetWrapCols() {
+int32_t HTMLInputElement::GetWrapCols() {
   return 0;  // only textarea's can have wrap cols
 }
 
-NS_IMETHODIMP_(int32_t)
-HTMLInputElement::GetRows() { return DEFAULT_ROWS; }
+int32_t HTMLInputElement::GetRows() { return DEFAULT_ROWS; }
 
-NS_IMETHODIMP_(void)
-HTMLInputElement::GetDefaultValueFromContent(nsAString& aValue) {
+void HTMLInputElement::GetDefaultValueFromContent(nsAString& aValue) {
   TextControlState* state = GetEditorState();
   if (state) {
     GetDefaultValue(aValue);
@@ -6782,28 +6742,29 @@ HTMLInputElement::GetDefaultValueFromContent(nsAString& aValue) {
   }
 }
 
-NS_IMETHODIMP_(bool)
-HTMLInputElement::ValueChanged() const { return mValueChanged; }
+bool HTMLInputElement::ValueChanged() const { return mValueChanged; }
 
-NS_IMETHODIMP_(void)
-HTMLInputElement::GetTextEditorValue(nsAString& aValue,
-                                     bool aIgnoreWrap) const {
+void HTMLInputElement::GetTextEditorValue(nsAString& aValue,
+                                          bool aIgnoreWrap) const {
   TextControlState* state = GetEditorState();
   if (state) {
     state->GetValue(aValue, aIgnoreWrap);
   }
 }
 
-NS_IMETHODIMP_(void)
-HTMLInputElement::InitializeKeyboardEventListeners() {
+bool HTMLInputElement::TextEditorValueEquals(const nsAString& aValue) const {
+  TextControlState* state = GetEditorState();
+  return state ? state->ValueEquals(aValue) : aValue.IsEmpty();
+}
+
+void HTMLInputElement::InitializeKeyboardEventListeners() {
   TextControlState* state = GetEditorState();
   if (state) {
     state->InitializeKeyboardEventListeners();
   }
 }
 
-NS_IMETHODIMP_(void)
-HTMLInputElement::OnValueChanged(bool aNotify, ValueChangeKind aKind) {
+void HTMLInputElement::OnValueChanged(bool aNotify, ValueChangeKind aKind) {
   if (aKind != ValueChangeKind::Internal) {
     mLastValueChangeWasInteractive = aKind == ValueChangeKind::UserInteraction;
   }
@@ -6822,8 +6783,7 @@ HTMLInputElement::OnValueChanged(bool aNotify, ValueChangeKind aKind) {
   }
 }
 
-NS_IMETHODIMP_(bool)
-HTMLInputElement::HasCachedSelection() {
+bool HTMLInputElement::HasCachedSelection() {
   bool isCached = false;
   TextControlState* state = GetEditorState();
   if (state) {

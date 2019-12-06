@@ -39,7 +39,7 @@
 #include "js/SliceBudget.h"
 #include "js/StableStringChars.h"
 #include "js/Wrapper.h"
-#if ENABLE_INTL_API
+#if JS_HAS_INTL_API
 #  include "unicode/uloc.h"
 #endif
 #include "util/Windows.h"
@@ -136,7 +136,7 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
       gcInitialized(false),
       emptyString(nullptr),
       defaultFreeOp_(nullptr),
-#if !ENABLE_INTL_API
+#if !JS_HAS_INTL_API
       thousandsSeparator(nullptr),
       decimalSeparator(nullptr),
       numGrouping(nullptr),
@@ -149,6 +149,7 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
       staticStrings(nullptr),
       commonNames(nullptr),
       wellKnownSymbols(nullptr),
+      liveSABs(0),
       offthreadIonCompilationEnabled_(true),
       parallelParsingEnabled_(true),
 #ifdef DEBUG
@@ -242,7 +243,7 @@ void JSRuntime::destroyRuntime() {
   MOZ_ASSERT(childRuntimeCount == 0);
   MOZ_ASSERT(initialized_);
 
-#ifdef ENABLE_INTL_API
+#ifdef JS_HAS_INTL_API
   sharedIntlData.ref().destroyInstance();
 #endif
 
@@ -296,7 +297,7 @@ void JSRuntime::destroyRuntime() {
   }
 #endif
 
-#if !ENABLE_INTL_API
+#if !JS_HAS_INTL_API
   FinishRuntimeNumberState(this);
 #endif
 
@@ -370,7 +371,7 @@ void JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
         sharedImmutableStrings_->sizeOfExcludingThis(mallocSizeOf);
   }
 
-#ifdef ENABLE_INTL_API
+#ifdef JS_HAS_INTL_API
   rtSizes->sharedIntlData +=
       sharedIntlData.ref().sizeOfExcludingThis(mallocSizeOf);
 #endif
@@ -544,7 +545,7 @@ const char* JSRuntime::getDefaultLocale() {
 
   // Use ICU if available to retrieve the default locale, this ensures ICU's
   // default locale matches our default locale.
-#if ENABLE_INTL_API
+#if JS_HAS_INTL_API
   const char* locale = uloc_getDefault();
 #else
   const char* locale = setlocale(LC_ALL, nullptr);
@@ -572,7 +573,7 @@ const char* JSRuntime::getDefaultLocale() {
   return defaultLocale.ref().get();
 }
 
-#ifdef ENABLE_INTL_API
+#ifdef JS_HAS_INTL_API
 void JSRuntime::traceSharedIntlData(JSTracer* trc) {
   sharedIntlData.ref().trace(trc);
 }

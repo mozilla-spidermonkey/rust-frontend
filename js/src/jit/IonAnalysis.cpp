@@ -18,6 +18,7 @@
 #include "jit/LIR.h"
 #include "jit/Lowering.h"
 #include "jit/MIRGraph.h"
+#include "util/CheckedArithmetic.h"
 #include "vm/RegExpObject.h"
 #include "vm/SelfHosting.h"
 
@@ -4886,6 +4887,10 @@ bool jit::AnalyzeArgumentsUsage(JSContext* cx, JSScript* scriptArg) {
   MDefinition* argumentsValue = graph.entryBlock()->getSlot(info.argsObjSlot());
 
   bool argumentsContentsObserved = false;
+
+  if (argumentsValue->isImplicitlyUsed()) {
+    return true;
+  }
 
   for (MUseDefIterator uses(argumentsValue); uses; uses++) {
     MDefinition* use = uses.def();

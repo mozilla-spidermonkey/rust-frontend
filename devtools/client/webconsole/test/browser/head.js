@@ -125,7 +125,15 @@ function logAllStoreChanges(hud) {
         return { id, type, parameters, messageText };
       }
     );
-    info("messages : " + JSON.stringify(debugMessages));
+    info(
+      "messages : " +
+        JSON.stringify(debugMessages, function(key, value) {
+          if (value && value.getGrip) {
+            return value.getGrip();
+          }
+          return value;
+        })
+    );
   });
 }
 
@@ -1577,8 +1585,22 @@ async function waitForLazyRequests(toolbox) {
   });
 }
 
-async function clearOutput(hud, clearStorage = true) {
-  const onMessagesCleared = hud.ui.once("messages-cleared");
-  hud.ui.clearOutput(clearStorage);
-  await onMessagesCleared;
+/**
+ * Clear the console output and wait for eventual object actors to be released.
+ *
+ * @param {WebConsole} hud
+ * @param {Object} An options object with the following properties:
+ *                 - {Boolean} keepStorage: true to prevent clearing the messages storage.
+ */
+async function clearOutput(hud, { keepStorage = false } = {}) {
+  const { ui } = hud;
+  const promises = [ui.once("messages-cleared")];
+
+  // If there's an object inspector, we need to wait for the actors to be released.
+  if (ui.outputNode.querySelector(".object-inspector")) {
+    promises.push(ui.once("fronts-released"));
+  }
+
+  ui.clearOutput(!keepStorage);
+  await Promise.all(promises);
 }

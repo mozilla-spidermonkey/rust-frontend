@@ -30,6 +30,7 @@
 #include "mozilla/TimeStamp.h"
 #include "mozilla/gfx/Point.h"
 #include "mozilla/widget/IMEData.h"
+#include "VsyncSource.h"
 #include "nsDataHashtable.h"
 #include "nsIObserver.h"
 #include "nsIWidgetListener.h"
@@ -1117,7 +1118,7 @@ class nsIWidget : public nsISupports {
    *
    * Ignored on child widgets and on non-Mac platforms.
    */
-  virtual void SetWindowShadowStyle(int32_t aStyle) = 0;
+  virtual void SetWindowShadowStyle(mozilla::StyleWindowShadow aStyle) = 0;
 
   /**
    * Set the opacity of the window.
@@ -1134,6 +1135,13 @@ class nsIWidget : public nsISupports {
    * Ignored on child widgets and on non-Mac platforms.
    */
   virtual void SetWindowTransform(const mozilla::gfx::Matrix& aTransform) {}
+
+  /**
+   * Set whether the window should ignore mouse events or not.
+   *
+   * This is only used on popup windows.
+   */
+  virtual void SetWindowMouseTransparent(bool aIsTransparent) {}
 
   /*
    * On Mac OS X, this method shows or hides the pill button in the titlebar
@@ -2016,6 +2024,12 @@ class nsIWidget : public nsISupports {
    * return the compositor which is doing that on our behalf.
    */
   virtual CompositorBridgeChild* GetRemoteRenderer() { return nullptr; }
+
+  /**
+   * If this widget has its own vsync source, return it, otherwise return
+   * nullptr. An example of such local source would be Wayland frame callbacks.
+   */
+  virtual RefPtr<mozilla::gfx::VsyncSource> GetVsyncSource() { return nullptr; }
 
   /**
    * Returns true if the widget requires synchronous repaints on resize,

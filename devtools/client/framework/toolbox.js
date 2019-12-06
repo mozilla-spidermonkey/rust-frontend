@@ -627,7 +627,7 @@ Toolbox.prototype = {
       targetFront.on("frame-update", this._updateFrames);
       targetFront.on("inspect-object", this._onInspectObject);
 
-      targetFront.onFront("inspector", async inspectorFront => {
+      targetFront.watchFronts("inspector", async inspectorFront => {
         registerWalkerListeners(this.store, inspectorFront.walker);
       });
 
@@ -673,6 +673,12 @@ Toolbox.prototype = {
   },
 
   _stopThreadFrontListeners: function(threadFront) {
+    // Only cleanup thread listeners if it has been attached.
+    // We may have closed the toolbox before it attached, or
+    // we may not have attached to the target at all.
+    if (!threadFront) {
+      return;
+    }
     threadFront.off("paused", this._onPausedState);
     threadFront.off("resumed", this._onResumedState);
   },
@@ -3490,20 +3496,23 @@ Toolbox.prototype = {
   },
 
   inspectObjectActor: async function(objectActor, inspectFromAnnotation) {
+    const objectGrip =
+      objectActor && objectActor.getGrip ? objectActor.getGrip() : objectActor;
+
     if (
       this.currentToolId != "inspector" &&
-      objectActor.preview &&
-      objectActor.preview.nodeType === domNodeConstants.ELEMENT_NODE
+      objectGrip.preview &&
+      objectGrip.preview.nodeType === domNodeConstants.ELEMENT_NODE
     ) {
-      return this.viewElementInInspector(objectActor, inspectFromAnnotation);
+      return this.viewElementInInspector(objectGrip, inspectFromAnnotation);
     }
 
-    if (objectActor.class == "Function") {
-      const { url, line } = objectActor.location;
+    if (objectGrip.class == "Function") {
+      const { url, line } = objectGrip.location;
       return this.viewSourceInDebugger(url, line);
     }
 
-    if (objectActor.type !== "null" && objectActor.type !== "undefined") {
+    if (objectGrip.type !== "null" && objectGrip.type !== "undefined") {
       // Open then split console and inspect the object in the variables view,
       // when the objectActor doesn't represent an undefined or null value.
       if (this.currentToolId != "webconsole") {

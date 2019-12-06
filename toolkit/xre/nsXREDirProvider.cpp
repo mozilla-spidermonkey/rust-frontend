@@ -13,12 +13,10 @@
 #include "xpcpublic.h"
 
 #include "nsIAppStartup.h"
-#include "nsIDirectoryEnumerator.h"
 #include "nsIFile.h"
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
 #include "nsISimpleEnumerator.h"
-#include "nsIToolkitChromeRegistry.h"
 #include "nsIToolkitProfileService.h"
 #include "nsIXULRuntime.h"
 #include "commonupdatedir.h"
@@ -884,6 +882,17 @@ void nsXREDirProvider::InitializeUserPrefs() {
     mProfileNotified = true;
 
     mozilla::Preferences::InitializeUserPrefs();
+  }
+}
+
+void nsXREDirProvider::FinishInitializingUserPrefs() {
+  if (!mPrefsInitialized) {
+    // See InitializeUserPrefs above.
+    mozilla::AutoRestore<bool> ar(mProfileNotified);
+    mProfileNotified = true;
+
+    mozilla::Preferences::FinishInitializingUserPrefs();
+
     mPrefsInitialized = true;
   }
 }

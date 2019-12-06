@@ -20,20 +20,21 @@
 #include "mozJSComponentLoader.h"
 #include "nsAutoPtr.h"
 #include "nsNetUtil.h"
+#include "nsContentSecurityUtils.h"
 
 #include "nsExceptionHandler.h"
 #include "nsIMemoryInfoDumper.h"
 #include "nsIMemoryReporter.h"
 #include "nsIObserverService.h"
-#include "nsIDebug2.h"
-#include "nsIDocShell.h"
 #include "mozilla/dom/Document.h"
 #include "nsIRunnable.h"
 #include "nsIPlatformInfo.h"
 #include "nsPIDOMWindow.h"
 #include "nsPrintfCString.h"
+#include "nsScriptSecurityManager.h"
 #include "nsThreadPool.h"
 #include "nsWindowSizes.h"
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/Services.h"
@@ -70,7 +71,6 @@
 #include "GeckoProfiler.h"
 #include "NodeUbiReporting.h"
 #include "nsIInputStream.h"
-#include "nsIXULRuntime.h"
 #include "nsJSPrincipals.h"
 
 #ifdef XP_WIN
@@ -1120,6 +1120,8 @@ void XPCJSRuntime::Shutdown(JSContext* cx) {
 
   JS::SetGCSliceCallback(cx, mPrevGCSliceCallback);
 
+  nsScriptSecurityManager::ClearJSCallbacks(cx);
+
   // Shut down the helper threads
   gHelperThreads->Shutdown();
   gHelperThreads = nullptr;
@@ -1487,10 +1489,6 @@ static void ReportZoneStats(const JS::ZoneStats& zStats,
                  zStats.baselineStubsOptimized,
                  "The Baseline JIT's optimized IC stubs (excluding code).");
 
-  ZRREPORT_BYTES(pathPrefix + NS_LITERAL_CSTRING("jit-cached-cfg"),
-                 zStats.cachedCFG,
-                 "The cached CFG to construct Ion code out of it.");
-
   ZRREPORT_BYTES(pathPrefix + NS_LITERAL_CSTRING("script-counts-map"),
                  zStats.scriptCountsMap,
                  "Profiling-related information for scripts.");
@@ -1679,11 +1677,11 @@ static void ReportZoneStats(const JS::ZoneStats& zStats,
         "Property tables of shapes in dictionary mode.");
   }
 
-  if (shapeInfo.shapesMallocHeapTreeKids > 0) {
+  if (shapeInfo.shapesMallocHeapTreeChildren > 0) {
     REPORT_BYTES(
-        pathPrefix + NS_LITERAL_CSTRING("shapes/malloc-heap/tree-kids"),
-        KIND_HEAP, shapeInfo.shapesMallocHeapTreeKids,
-        "Kid hashes of shapes in a property tree.");
+        pathPrefix + NS_LITERAL_CSTRING("shapes/malloc-heap/tree-children"),
+        KIND_HEAP, shapeInfo.shapesMallocHeapTreeChildren,
+        "Sets of shape children in a property tree.");
   }
 
   if (sundriesGCHeap > 0) {
@@ -1895,10 +1893,6 @@ static void ReportRealmStats(const JS::RealmStats& realmStats,
   ZRREPORT_BYTES(realmJSPathPrefix + NS_LITERAL_CSTRING("inner-views"),
                  realmStats.innerViewsTable,
                  "The table for array buffer inner views.");
-
-  ZRREPORT_BYTES(realmJSPathPrefix + NS_LITERAL_CSTRING("lazy-array-buffers"),
-                 realmStats.lazyArrayBuffersTable,
-                 "The table for typed object lazy array buffers.");
 
   ZRREPORT_BYTES(
       realmJSPathPrefix + NS_LITERAL_CSTRING("object-metadata"),
@@ -3054,6 +3048,8 @@ void XPCJSRuntime::Initialize(JSContext* cx) {
   // these jsids filled in later when we have a JSContext to work with.
   mStrIDs[0] = JSID_VOID;
 
+  nsScriptSecurityManager::GetScriptSecurityManager()->InitJSCallbacks(cx);
+
   // Unconstrain the runtime's threshold on nominal heap size, to avoid
   // triggering GC too often if operating continuously near an arbitrary
   // finite threshold (0xffffffff is infinity for uint32_t parameters).
@@ -3075,6 +3071,10 @@ void XPCJSRuntime::Initialize(JSContext* cx) {
   JS_AddWeakPointerCompartmentCallback(cx, WeakPointerCompartmentCallback,
                                        this);
   JS_SetWrapObjectCallbacks(cx, &WrapObjectCallbacks);
+  if (XRE_IsE10sParentProcess()) {
+    JS::SetFilenameValidationCallback(
+        nsContentSecurityUtils::ValidateScriptFilename);
+  }
   js::SetPreserveWrapperCallback(cx, PreserveWrapper);
   JS_InitReadPrincipalsCallback(cx, nsJSPrincipals::ReadPrincipals);
   JS_SetAccumulateTelemetryCallback(cx, AccumulateTelemetryCallback);
@@ -3275,8 +3275,7 @@ void XPCJSRuntime::RemoveGCCallback(xpcGCCallback cb) {
 
 JSObject* XPCJSRuntime::GetUAWidgetScope(JSContext* cx,
                                          nsIPrincipal* principal) {
-  MOZ_ASSERT(!nsContentUtils::IsSystemPrincipal(principal),
-             "Running UA Widget in chrome");
+  MOZ_ASSERT(!principal->IsSystemPrincipal(), "Running UA Widget in chrome");
 
   RootedObject scope(cx);
   do {

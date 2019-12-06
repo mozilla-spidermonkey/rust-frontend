@@ -14,7 +14,6 @@
 #include "nsIFileChannel.h"
 #include "nsIHttpChannel.h"
 #include "nsIHttpChannelInternal.h"
-#include "nsIScriptSecurityManager.h"
 #include "nsISupportsPriority.h"
 #include "nsIThreadRetargetableRequest.h"
 #include "nsIUploadChannel2.h"
@@ -311,7 +310,8 @@ AlternativeDataStreamListener::OnStopRequest(nsIRequest* aRequest,
   // continue the final step for the case FetchDriver::OnStopRequest is called
   // earlier than AlternativeDataStreamListener::OnStopRequest
   MOZ_ASSERT(fetchDriver);
-  return fetchDriver->FinishOnStopRequest(this);
+  fetchDriver->FinishOnStopRequest(this);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -1262,16 +1262,17 @@ FetchDriver::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
     }
   }
 
-  return FinishOnStopRequest(altDataListener);
+  FinishOnStopRequest(altDataListener);
+  return NS_OK;
 }
 
-nsresult FetchDriver::FinishOnStopRequest(
+void FetchDriver::FinishOnStopRequest(
     AlternativeDataStreamListener* aAltDataListener) {
   AssertIsOnMainThread();
   // OnStopRequest is not called from channel, that means the main data loading
   // does not finish yet. Reaching here since alternative data loading finishes.
   if (!mOnStopRequestCalled) {
-    return NS_OK;
+    return;
   }
 
   MOZ_DIAGNOSTIC_ASSERT(!mAltDataListener);
@@ -1280,7 +1281,7 @@ nsresult FetchDriver::FinishOnStopRequest(
       aAltDataListener->Status() == AlternativeDataStreamListener::LOADING) {
     // For LOADING case, channel holds the reference of altDataListener, no need
     // to restore it to mAltDataListener.
-    return NS_OK;
+    return;
   }
 
   if (mObserver) {
@@ -1298,7 +1299,6 @@ nsresult FetchDriver::FinishOnStopRequest(
   }
 
   mChannel = nullptr;
-  return NS_OK;
 }
 
 NS_IMETHODIMP

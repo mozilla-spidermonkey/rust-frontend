@@ -21,11 +21,11 @@
 #include "jit/IonTypes.h"      // jit::MIRType
 #include "js/GCAnnotations.h"  // JS_HAZ_GC_POINTER
 #include "js/Id.h"
-#include "js/TracingAPI.h"   // JSTracer
-#include "js/TypeDecls.h"    // IF_BIGINT
-#include "js/Utility.h"      // UniqueChars
-#include "js/Value.h"        // JSVAL_TYPE_*
-#include "js/Vector.h"       // js::Vector
+#include "js/TracingAPI.h"  // JSTracer
+#include "js/TypeDecls.h"   // IF_BIGINT
+#include "js/Utility.h"     // UniqueChars
+#include "js/Value.h"       // JSVAL_TYPE_*
+#include "js/Vector.h"      // js::Vector
 #include "util/DiagnosticAssertions.h"
 #include "vm/TaggedProto.h"  // js::TaggedProto
 
@@ -186,11 +186,7 @@ enum : uint32_t {
 
   // (0x00200000 is unused)
 
-  /*
-   * For a global object, whether any array buffers in this compartment with
-   * typed object views have ever been detached.
-   */
-  OBJECT_FLAG_TYPED_OBJECT_HAS_DETACHED_BUFFER = 0x00400000,
+  // (0x00400000 is unused)
 
   /*
    * Whether objects with this type should be allocated directly in the

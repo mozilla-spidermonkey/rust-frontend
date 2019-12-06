@@ -23,14 +23,11 @@
 #include "nsDOMTokenList.h"
 #include "nsDeviceContext.h"
 #include "nsIContentInlines.h"
-#include "nsICrashReporter.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "nsILoadContext.h"
 #include "nsIFrame.h"
-#include "nsIMemoryReporter.h"
 #include "nsIMozBrowserFrame.h"
 #include "nsINode.h"
-#include "nsIPrincipal.h"
 #include "nsIURI.h"
 #include "nsFontMetrics.h"
 #include "nsHTMLStyleSheet.h"
@@ -56,6 +53,7 @@
 #include "mozilla/Mutex.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ServoElementSnapshot.h"
+#include "mozilla/ShadowParts.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/RestyleManager.h"
 #include "mozilla/SizeOfState.h"
@@ -1675,14 +1673,15 @@ static already_AddRefed<StyleSheet> LoadImportSheet(
   nsCOMPtr<nsIURI> uri = aURL.GetURI();
   nsresult rv = uri ? NS_OK : NS_ERROR_FAILURE;
 
-  StyleSheet* previousFirstChild = aParent->GetFirstChild();
+  size_t previousSheetCount = aParent->ChildSheets().Length();
   if (NS_SUCCEEDED(rv)) {
+    // TODO(emilio): We should probably make LoadChildSheet return the
+    // stylesheet rather than the return code.
     rv = aLoader->LoadChildSheet(*aParent, aParentLoadData, uri, media,
                                  aReusableSheets);
   }
 
-  if (NS_FAILED(rv) || !aParent->GetFirstChild() ||
-      aParent->GetFirstChild() == previousFirstChild) {
+  if (NS_FAILED(rv) || previousSheetCount == aParent->ChildSheets().Length()) {
     // Servo and Gecko have different ideas of what a valid URL is, so we might
     // get in here with a URL string that NS_NewURI can't handle.  We may also
     // reach here via an import cycle.  For the import cycle case, we need some
@@ -1702,11 +1701,11 @@ static already_AddRefed<StyleSheet> LoadImportSheet(
         ReferrerInfo::CreateForExternalCSSResources(emptySheet);
     emptySheet->SetReferrerInfo(referrerInfo);
     emptySheet->SetComplete();
-    aParent->PrependStyleSheet(emptySheet);
+    aParent->AppendStyleSheet(*emptySheet);
     return emptySheet.forget();
   }
 
-  RefPtr<StyleSheet> sheet = static_cast<StyleSheet*>(aParent->GetFirstChild());
+  RefPtr<StyleSheet> sheet = aParent->ChildSheets().LastElement();
   return sheet.forget();
 }
 
@@ -1932,4 +1931,20 @@ void Gecko_LoadData_DeregisterLoad(const StyleLoadData* aData) {
 
 void Gecko_PrintfStderr(const nsCString* aStr) {
   printf_stderr("%s", aStr->get());
+}
+
+nsAtom* Gecko_Element_ImportedPart(const nsAttrValue* aValue,
+                                   nsAtom* aPartName) {
+  if (aValue->Type() != nsAttrValue::eShadowParts) {
+    return nullptr;
+  }
+  return aValue->GetShadowPartsValue().GetReverse(aPartName);
+}
+
+nsAtom* Gecko_Element_ExportedPart(const nsAttrValue* aValue,
+                                   nsAtom* aPartName) {
+  if (aValue->Type() != nsAttrValue::eShadowParts) {
+    return nullptr;
+  }
+  return aValue->GetShadowPartsValue().Get(aPartName);
 }

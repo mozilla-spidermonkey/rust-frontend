@@ -6,10 +6,10 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/AntiTrackingCommon.h"
-#include "mozilla/DebugOnly.h"
-
 #include "mozilla/dom/ContentParent.h"
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/ContentPrincipal.h"
+#include "mozilla/DebugOnly.h"
 #include "mozilla/Pair.h"
 #include "mozilla/Services.h"
 #include "mozilla/SystemGroup.h"
@@ -19,17 +19,17 @@
 #include "nsNetUtil.h"
 #include "nsTArray.h"
 #include "nsReadableUtils.h"
-#include "nsILineInputStream.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsDirectoryServiceDefs.h"
+#include "mozIStorageCompletionCallback.h"
+#include "mozIStorageService.h"
+#include "mozIStorageStatementCallback.h"
 #include "mozilla/storage.h"
 #include "mozilla/Attributes.h"
 #include "nsXULAppAPI.h"
 #include "nsIPrincipal.h"
 #include "nsIURIMutator.h"
 #include "nsContentUtils.h"
-#include "nsIScriptSecurityManager.h"
-#include "nsIEffectiveTLDService.h"
 #include "nsPIDOMWindow.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/net/NeckoMessageUtils.h"
@@ -1668,7 +1668,7 @@ nsPermissionManager::AddFromPrincipal(nsIPrincipal* aPrincipal,
 
   // We don't add the system principal because it actually has no URI and we
   // always allow action for them.
-  if (nsContentUtils::IsSystemPrincipal(aPrincipal)) {
+  if (aPrincipal->IsSystemPrincipal()) {
     return NS_OK;
   }
 
@@ -1977,7 +1977,7 @@ nsPermissionManager::RemoveFromPrincipal(nsIPrincipal* aPrincipal,
   NS_ENSURE_ARG_POINTER(aPrincipal);
 
   // System principals are never added to the database, no need to remove them.
-  if (nsContentUtils::IsSystemPrincipal(aPrincipal)) {
+  if (aPrincipal->IsSystemPrincipal()) {
     return NS_OK;
   }
 
@@ -2205,7 +2205,7 @@ nsPermissionManager::GetPermissionObject(nsIPrincipal* aPrincipal,
 
   *aResult = nullptr;
 
-  if (nsContentUtils::IsSystemPrincipal(aPrincipal)) {
+  if (aPrincipal->IsSystemPrincipal()) {
     return NS_OK;
   }
 

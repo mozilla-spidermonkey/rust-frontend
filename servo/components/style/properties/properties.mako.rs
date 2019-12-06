@@ -1260,12 +1260,12 @@ impl LonghandId {
             LonghandId::Stroke |
             LonghandId::CaretColor |
             % endif
-            % if engine in ["gecko", "servo-2013"]:
             LonghandId::BackgroundColor |
             LonghandId::BorderTopColor |
             LonghandId::BorderRightColor |
             LonghandId::BorderBottomColor |
             LonghandId::BorderLeftColor |
+            % if engine in ["gecko", "servo-2013"]:
             LonghandId::OutlineColor |
             % endif
             LonghandId::Color
@@ -1315,14 +1315,12 @@ impl LonghandId {
             LonghandId::MozScriptLevel |
             % endif
 
-            % if engine in ["gecko", "servo-2013"]:
             // Needed to compute the first available font, in order to
             // compute font-relative units correctly.
             LonghandId::FontSize |
             LonghandId::FontWeight |
             LonghandId::FontStretch |
             LonghandId::FontStyle |
-            % endif
             LonghandId::FontFamily |
 
             // Needed to properly compute the writing mode, to resolve logical
@@ -1815,8 +1813,8 @@ pub enum CountedUnknownProperty {
 }
 
 impl CountedUnknownProperty {
-    /// Parse the counted unknown property.
-    pub fn parse_for_test(property_name: &str) -> Option<Self> {
+    /// Parse the counted unknown property, for testing purposes only.
+    pub fn parse_for_testing(property_name: &str) -> Option<Self> {
         ascii_case_insensitive_phf_map! {
             unknown_id -> CountedUnknownProperty = {
                 % for property in data.counted_unknown_properties:
@@ -1828,6 +1826,7 @@ impl CountedUnknownProperty {
     }
 
     /// Returns the underlying index, used for use counter.
+    #[inline]
     pub fn bit(self) -> usize {
         self as usize
     }
@@ -1844,9 +1843,16 @@ impl PropertyId {
         })
     }
 
-    /// Returns a given property from the string `s`.
+    /// Returns a given property from the given name, _regardless of whether it
+    /// is enabled or not_, or Err(()) for unknown properties.
     ///
-    /// Returns Err(()) for unknown properties.
+    /// Do not use for non-testing purposes.
+    pub fn parse_unchecked_for_testing(name: &str) -> Result<Self, ()> {
+        Self::parse_unchecked(name, None)
+    }
+
+    /// Returns a given property from the given name, _regardless of whether it
+    /// is enabled or not_, or Err(()) for unknown properties.
     fn parse_unchecked(
         property_name: &str,
         use_counters: Option< &UseCounters>,

@@ -719,6 +719,55 @@
     }
   }
 
+  class MozAutocompleteGeneratedPasswordRichlistitem extends MozAutocompleteTwoLineRichlistitem {
+    constructor() {
+      super();
+
+      // Line 2 and line 3 both display text with a different line-height than
+      // line 1 but we want the line-height to be the same so we wrap the text
+      // in <span> and only adjust the line-height via font CSS properties on them.
+      this.generatedPasswordText = document.createElement("span");
+
+      this.line3Text = document.createElement("span");
+      this.line3 = document.createElement("div");
+      this.line3.className = "label-row generated-password-autosave";
+      this.line3.append(this.line3Text);
+    }
+
+    get _autoSaveString() {
+      if (!this.__autoSaveString) {
+        let brandShorterName = Services.strings
+          .createBundle("chrome://branding/locale/brand.properties")
+          .GetStringFromName("brandShorterName");
+        this.__autoSaveString = Services.strings
+          .createBundle("chrome://passwordmgr/locale/passwordmgr.properties")
+          .formatStringFromName("generatedPasswordWillBeSaved", [
+            brandShorterName,
+          ]);
+      }
+      return this.__autoSaveString;
+    }
+
+    _adjustAcItem() {
+      let { generatedPassword, willAutoSaveGeneratedPassword } = JSON.parse(
+        this.getAttribute("ac-label")
+      );
+      let line2Label = this.querySelector(".line2-label");
+      line2Label.textContent = "";
+      this.generatedPasswordText.textContent = generatedPassword;
+      line2Label.append(this.generatedPasswordText);
+
+      if (willAutoSaveGeneratedPassword) {
+        this.line3Text.textContent = this._autoSaveString;
+        this.querySelector(".labels-wrapper").append(this.line3);
+      } else {
+        this.line3.remove();
+      }
+
+      super._adjustAcItem();
+    }
+  }
+
   customElements.define(
     "autocomplete-richlistitem",
     MozElements.MozAutocompleteRichlistitem,
@@ -754,6 +803,14 @@
   customElements.define(
     "autocomplete-login-richlistitem",
     MozAutocompleteLoginRichlistitem,
+    {
+      extends: "richlistitem",
+    }
+  );
+
+  customElements.define(
+    "autocomplete-generated-password-richlistitem",
+    MozAutocompleteGeneratedPasswordRichlistitem,
     {
       extends: "richlistitem",
     }

@@ -12,7 +12,6 @@
 #include "nsIMutableArray.h"
 #include "mozilla/dom/PContentPermissionRequestChild.h"
 #include "mozilla/dom/ipc/IdType.h"
-#include "nsIDOMEventListener.h"
 #include "PermissionDelegateHandler.h"
 
 // Microsoft's API Name hackery sucks
@@ -73,6 +72,7 @@ class nsContentPermissionUtils {
       const nsTArray<PermissionRequest>& aRequests, Element* aElement,
       nsIPrincipal* aPrincipal, nsIPrincipal* aTopLevelPrincipal,
       const bool aIsHandlingUserInput,
+      const bool aMaybeUnsafePermissionDelegate,
       const bool aUserHadInteractedWithDocument,
       const DOMTimeStamp aDocumentDOMContentLoadedTimestamp,
       const TabId& aTabId);
@@ -120,10 +120,14 @@ class ContentPermissionRequestBase : public nsIContentPermissionRequest {
 
   NS_IMETHOD GetTypes(nsIArray** aTypes) override;
   NS_IMETHOD GetPrincipal(nsIPrincipal** aPrincipal) override;
+  NS_IMETHOD GetDelegatePrincipal(const nsACString& aType,
+                                  nsIPrincipal** aPrincipal) override;
   NS_IMETHOD GetTopLevelPrincipal(nsIPrincipal** aTopLevelPrincipal) override;
   NS_IMETHOD GetWindow(mozIDOMWindow** aWindow) override;
   NS_IMETHOD GetElement(mozilla::dom::Element** aElement) override;
   NS_IMETHOD GetIsHandlingUserInput(bool* aIsHandlingUserInput) override;
+  NS_IMETHOD GetMaybeUnsafePermissionDelegate(
+      bool* aMaybeUnsafePermissionDelegate) override;
   NS_IMETHOD GetUserHadInteractedWithDocument(
       bool* aUserHadInteractedWithDocument) override;
   NS_IMETHOD GetDocumentDOMContentLoadedTimestamp(
@@ -167,6 +171,7 @@ class ContentPermissionRequestBase : public nsIContentPermissionRequest {
   nsCString mType;
   bool mIsHandlingUserInput;
   bool mUserHadInteractedWithDocument;
+  bool mMaybeUnsafePermissionDelegate;
   DOMTimeStamp mDocumentDOMContentLoadedTimestamp;
 };
 

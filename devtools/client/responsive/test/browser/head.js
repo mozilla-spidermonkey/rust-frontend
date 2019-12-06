@@ -231,26 +231,26 @@ function waitForViewportResizeTo(ui, width, height) {
     // See bug 1302879.
     const browser = ui.getViewportBrowser();
 
-    const onResizeViewport = data => {
+    const onContentResize = data => {
       if (!isSizeMatching(data)) {
         return;
       }
-      ui.off("viewport-resize", onResizeViewport);
+      ui.off("content-resize", onContentResize);
       browser.removeEventListener("mozbrowserloadend", onBrowserLoadEnd);
-      info(`Got viewport-resize to ${width} x ${height}`);
+      info(`Got content-resize to ${width} x ${height}`);
       resolve();
     };
 
     const onBrowserLoadEnd = async function() {
       const data = ui.getViewportSize(ui);
-      onResizeViewport(data);
+      onContentResize(data);
     };
 
     info(`Waiting for viewport-resize to ${width} x ${height}`);
     // We're changing the viewport size, which may also change the content
     // size. We wait on the viewport resize event, and check for the
     // desired size.
-    ui.on("viewport-resize", onResizeViewport);
+    ui.on("content-resize", onContentResize);
     browser.addEventListener("mozbrowserloadend", onBrowserLoadEnd, {
       once: true,
     });
@@ -381,7 +381,9 @@ async function selectMenuItem({ toolWindow }, selector, value) {
   info(`Selecting ${value} in ${selector}.`);
 
   await testMenuItems(toolWindow, button, items => {
-    const menuItem = items.find(item => item.getAttribute("label") === value);
+    const menuItem = items.find(item =>
+      item.getAttribute("label").includes(value)
+    );
     isnot(
       menuItem,
       undefined,
@@ -556,11 +558,24 @@ async function testTouchEventsOverride(ui, expected) {
   );
 }
 
-function testViewportDeviceMenuLabel(ui, expected) {
+function testViewportDeviceMenuLabel(ui, expectedDeviceName) {
   info("Test viewport's device select label");
 
   const label = ui.toolWindow.document.querySelector("#device-selector .title");
-  is(label.textContent, expected, `Device Select value should be: ${expected}`);
+  const deviceEl = label.querySelector(".device-name");
+  if (deviceEl) {
+    is(
+      deviceEl.textContent,
+      expectedDeviceName,
+      `Device Select value should be: ${expectedDeviceName}`
+    );
+  } else {
+    is(
+      label.textContent,
+      expectedDeviceName,
+      `Device Select value should be: ${expectedDeviceName}`
+    );
+  }
 }
 
 async function toggleTouchSimulation(ui) {
@@ -674,7 +689,7 @@ function addDeviceInModal(ui, device) {
   return saved;
 }
 
-function editDeviceInModal(ui, device, newDevice) {
+async function editDeviceInModal(ui, device, newDevice) {
   const { Simulate } = ui.toolWindow.require(
     "devtools/client/shared/vendor/react-dom-test-utils"
   );
@@ -717,7 +732,15 @@ function editDeviceInModal(ui, device, newDevice) {
       state.devices.custom.find(({ name }) => name == newDevice.name) &&
       !state.devices.custom.find(({ name }) => name == device.name)
   );
+
+  // Editing a custom device triggers a "device-change" message.
+  // Wait for the `device-changed` event to avoid unfinished requests during the
+  // tests.
+  const onDeviceChanged = ui.once("device-changed");
+
   Simulate.click(formSave);
+
+  await onDeviceChanged;
   return saved;
 }
 

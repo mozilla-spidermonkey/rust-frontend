@@ -43,7 +43,6 @@
 #include "nsIContent.h"
 #include "nsID.h"
 #include "nsIFrame.h"
-#include "nsIHTMLAbsPosEditor.h"
 #include "nsINode.h"
 #include "nsLiteralString.h"
 #include "nsRange.h"
@@ -641,7 +640,7 @@ nsresult HTMLEditor::OnEndHandlingTopLevelEditSubActionInternal() {
       if (NS_WARN_IF(NS_FAILED(rv))) {
         return rv;
       }
-      TopLevelEditSubActionDataRef().mCachedInlineStyles.Clear();
+      TopLevelEditSubActionDataRef().mCachedInlineStyles->Clear();
     }
   }
 
@@ -1292,7 +1291,7 @@ nsresult HTMLEditor::PrepareInlineStylesForCaret() {
   // For most actions we want to clear the cached styles, but there are
   // exceptions
   if (!IsStyleCachePreservingSubAction(GetTopLevelEditSubAction())) {
-    TopLevelEditSubActionDataRef().mCachedInlineStyles.Clear();
+    TopLevelEditSubActionDataRef().mCachedInlineStyles->Clear();
   }
   return NS_OK;
 }
@@ -5012,9 +5011,8 @@ nsresult HTMLEditor::IndentListChild(RefPtr<Element>* aCurList,
             previousEditableSibling->NodeInfo()->NameAtom() &&
         aCurPoint.GetContainer()->NodeInfo()->NamespaceID() ==
             previousEditableSibling->NodeInfo()->NamespaceID()) {
-      nsresult rv =
-          MoveNodeToEndWithTransaction(MOZ_KnownLive(*aCurNode->AsContent()),
-                                       *previousEditableSibling);
+      nsresult rv = MoveNodeToEndWithTransaction(
+          MOZ_KnownLive(*aCurNode->AsContent()), *previousEditableSibling);
       if (NS_WARN_IF(Destroyed())) {
         return NS_ERROR_EDITOR_DESTROYED;
       }
@@ -5030,8 +5028,7 @@ nsresult HTMLEditor::IndentListChild(RefPtr<Element>* aCurList,
       *aCurList ? GetPriorHTMLSibling(aCurNode, SkipWhitespace::Yes) : nullptr;
   if (!*aCurList ||
       (previousEditableSibling && previousEditableSibling != *aCurList)) {
-    nsAtom* containerName =
-        aCurPoint.GetContainer()->NodeInfo()->NameAtom();
+    nsAtom* containerName = aCurPoint.GetContainer()->NodeInfo()->NameAtom();
     // Create a new nested list of correct type.
     SplitNodeResult splitNodeResult =
         MaybeSplitAncestorsForInsertWithTransaction(
@@ -5053,9 +5050,8 @@ nsresult HTMLEditor::IndentListChild(RefPtr<Element>* aCurList,
   }
   // tuck the node into the end of the active list
   RefPtr<nsINode> container = *aCurList;
-  nsresult rv =
-      MoveNodeToEndWithTransaction(MOZ_KnownLive(*aCurNode->AsContent()),
-                                   *container);
+  nsresult rv = MoveNodeToEndWithTransaction(
+      MOZ_KnownLive(*aCurNode->AsContent()), *container);
   if (NS_WARN_IF(Destroyed())) {
     return NS_ERROR_EDITOR_DESTROYED;
   }
@@ -8153,7 +8149,7 @@ nsresult HTMLEditor::HandleInsertParagraphInHeadingElement(Element& aHeader,
       sibling = GetNextHTMLSibling(aHeader.GetNextSibling());
     }
     if (!sibling || !sibling->IsHTMLElement(nsGkAtoms::br)) {
-      TopLevelEditSubActionDataRef().mCachedInlineStyles.Clear();
+      TopLevelEditSubActionDataRef().mCachedInlineStyles->Clear();
       mTypeInState->ClearAllProps();
 
       // Create a paragraph
@@ -9367,7 +9363,7 @@ nsresult HTMLEditor::CacheInlineStyles(nsINode& aNode) {
   MOZ_ASSERT(IsTopLevelEditSubActionDataAvailable());
 
   nsresult rv = GetInlineStyles(
-      aNode, TopLevelEditSubActionDataRef().mCachedInlineStyles);
+      aNode, *TopLevelEditSubActionDataRef().mCachedInlineStyles);
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "GetInlineStyles() failed");
   return rv;
 }
@@ -9446,7 +9442,7 @@ nsresult HTMLEditor::ReapplyCachedStyles() {
   for (size_t i = 0; i < styleCacheArrayAtInsertionPoint.Length(); ++i) {
     StyleCache& styleCacheAtInsertionPoint = styleCacheArrayAtInsertionPoint[i];
     StyleCache& styleCacheBeforeEdit =
-        TopLevelEditSubActionDataRef().mCachedInlineStyles[i];
+        TopLevelEditSubActionDataRef().mCachedInlineStyles->ElementAt(i);
     if (styleCacheBeforeEdit.mPresent) {
       bool bFirst, bAny, bAll;
       bFirst = bAny = bAll = false;

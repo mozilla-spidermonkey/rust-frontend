@@ -173,6 +173,15 @@ bool BaselineInterpreterHandler::recordCallRetAddr(JSContext* cx,
   return true;
 }
 
+bool BaselineInterpreterHandler::addDebugInstrumentationOffset(
+    JSContext* cx, CodeOffset offset) {
+  if (!debugInstrumentationOffsets_.append(offset.offset())) {
+    ReportOutOfMemory(cx);
+    return false;
+  }
+  return true;
+}
+
 MethodStatus BaselineCompiler::compile() {
   JSScript* script = handler.script();
   JitSpew(JitSpew_BaselineScripts, "Baseline compiling script %s:%u:%u (%p)",
@@ -769,7 +778,7 @@ bool BaselineInterpreterCodeGen::emitIsDebuggeeCheck() {
     restoreInterpreterPCReg();
   }
   masm.bind(&skipCheck);
-  return handler.addDebugInstrumentationOffset(toggleOffset);
+  return handler.addDebugInstrumentationOffset(cx, toggleOffset);
 }
 
 static void MaybeIncrementCodeCoverageCounter(MacroAssembler& masm,
@@ -1250,8 +1259,12 @@ bool BaselineCodeGen<Handler>::emitInterruptCheck() {
 
   prepareVMCall();
 
+  // Use a custom RetAddrEntry::Kind so DebugModeOSR can distinguish this call
+  // from other callVMs that might happen at this pc.
+  const RetAddrEntry::Kind kind = RetAddrEntry::Kind::InterruptCheck;
+
   using Fn = bool (*)(JSContext*);
-  if (!callVM<Fn, InterruptCheck>()) {
+  if (!callVM<Fn, InterruptCheck>(kind)) {
     return false;
   }
 
@@ -1269,7 +1282,7 @@ bool BaselineCompilerCodeGen::emitWarmUpCounterIncrement() {
   // if --ion-eager is used.
   JSScript* script = handler.script();
   jsbytecode* pc = handler.pc();
-  if (JSOp(*pc) == JSOP_LOOPENTRY) {
+  if (JSOp(*pc) == JSOP_LOOPHEAD) {
     uint32_t pcOffset = script->pcToOffset(pc);
     uint32_t nativeOffset = masm.currentOffset();
     if (!handler.osrEntries().emplaceBack(pcOffset, nativeOffset)) {
@@ -1296,15 +1309,15 @@ bool BaselineCompilerCodeGen::emitWarmUpCounterIncrement() {
   masm.add32(Imm32(1), countReg);
   masm.store32(countReg, warmUpCounterAddr);
 
-  if (JSOp(*pc) == JSOP_LOOPENTRY) {
+  if (JSOp(*pc) == JSOP_LOOPHEAD) {
     // If this is a loop inside a catch or finally block, increment the warmup
     // counter but don't attempt OSR (Ion only compiles the try block).
-    if (handler.analysis().info(pc).loopEntryInCatchOrFinally) {
+    if (handler.analysis().info(pc).loopHeadInCatchOrFinally) {
       return true;
     }
 
-    if (!LoopEntryCanIonOsr(pc)) {
-      // OSR into Ion not possible at this loop entry.
+    if (!LoopHeadCanIonOsr(pc)) {
+      // OSR into Ion not possible at this loop.
       return true;
     }
   }
@@ -1325,7 +1338,7 @@ bool BaselineCompilerCodeGen::emitWarmUpCounterIncrement() {
                  &done);
 
   // Try to compile and/or finish a compilation.
-  if (JSOp(*pc) == JSOP_LOOPENTRY) {
+  if (JSOp(*pc) == JSOP_LOOPHEAD) {
     // Try to OSR into Ion.
     computeFrameSize(R0.scratchReg());
 
@@ -1723,11 +1736,6 @@ bool BaselineCodeGen<Handler>::emit_JSOP_NOP_DESTRUCTURING() {
 
 template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_JSOP_TRY_DESTRUCTURING() {
-  return true;
-}
-
-template <typename Handler>
-bool BaselineCodeGen<Handler>::emit_JSOP_LABEL() {
   return true;
 }
 
@@ -2237,7 +2245,13 @@ bool BaselineCodeGen<Handler>::emit_JSOP_LOOPHEAD() {
   if (!emit_JSOP_JUMPTARGET()) {
     return false;
   }
-  return emitInterruptCheck();
+  if (!emitInterruptCheck()) {
+    return false;
+  }
+  if (!emitWarmUpCounterIncrement()) {
+    return false;
+  }
+  return emitIncExecutionProgressCounter(R0.scratchReg());
 }
 
 template <typename Handler>
@@ -2254,19 +2268,6 @@ bool BaselineCodeGen<Handler>::emitIncExecutionProgressCounter(
   };
   return emitTestScriptFlag(JSScript::MutableFlags::TrackRecordReplayProgress,
                             true, incCounter, scratch);
-}
-
-template <typename Handler>
-bool BaselineCodeGen<Handler>::emit_JSOP_LOOPENTRY() {
-  if (!emit_JSOP_JUMPTARGET()) {
-    return false;
-  }
-  frame.syncStack(0);
-  if (!emitWarmUpCounterIncrement()) {
-    return false;
-  }
-
-  return emitIncExecutionProgressCounter(R0.scratchReg());
 }
 
 template <typename Handler>
@@ -2948,11 +2949,6 @@ bool BaselineCodeGen<Handler>::emit_JSOP_STRICTNE() {
 }
 
 template <typename Handler>
-bool BaselineCodeGen<Handler>::emit_JSOP_CONDSWITCH() {
-  return true;
-}
-
-template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_JSOP_CASE() {
   frame.popRegsAndSync(1);
 
@@ -3059,18 +3055,21 @@ bool BaselineCodeGen<Handler>::emit_JSOP_INITELEM_ARRAY() {
 
 template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_JSOP_NEWOBJECT() {
-  frame.syncStack(0);
+  return emitNewObject();
+}
 
-  if (!emitNextIC()) {
-    return false;
-  }
-
-  frame.push(R0);
-  return true;
+template <typename Handler>
+bool BaselineCodeGen<Handler>::emit_JSOP_NEWOBJECT_WITHGROUP() {
+  return emitNewObject();
 }
 
 template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_JSOP_NEWINIT() {
+  return emitNewObject();
+}
+
+template <typename Handler>
+bool BaselineCodeGen<Handler>::emitNewObject() {
   frame.syncStack(0);
 
   if (!emitNextIC()) {
@@ -4951,7 +4950,7 @@ MOZ_MUST_USE bool BaselineInterpreterCodeGen::emitDebugInstrumentation(
   Label isNotDebuggee, done;
 
   CodeOffset toggleOffset = masm.toggledJump(&isNotDebuggee);
-  if (!handler.addDebugInstrumentationOffset(toggleOffset)) {
+  if (!handler.addDebugInstrumentationOffset(cx, toggleOffset)) {
     return false;
   }
 
@@ -5954,7 +5953,7 @@ bool BaselineInterpreterCodeGen::emitAfterYieldDebugInstrumentation(
   // If the current Realm is not a debuggee we're done.
   Label done;
   CodeOffset toggleOffset = masm.toggledJump(&done);
-  if (!handler.addDebugInstrumentationOffset(toggleOffset)) {
+  if (!handler.addDebugInstrumentationOffset(cx, toggleOffset)) {
     return false;
   }
   masm.loadPtr(AbsoluteAddress(cx->addressOfRealm()), scratch);
@@ -6932,7 +6931,10 @@ MethodStatus BaselineCompiler::emitBody() {
       case JSOP_FORCEINTERPRETER:
         // Caller must have checked script->hasForceInterpreterOp().
       case JSOP_UNUSED71:
+      case JSOP_UNUSED106:
+      case JSOP_UNUSED120:
       case JSOP_UNUSED149:
+      case JSOP_UNUSED227:
       case JSOP_LIMIT:
         MOZ_CRASH("Unexpected op");
 

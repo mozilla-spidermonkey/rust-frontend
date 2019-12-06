@@ -31,6 +31,7 @@
 #include "mozilla/RestyleManager.h"
 #include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/StaticPrefs_full_screen_api.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/StaticPrefs_network.h"
@@ -39,10 +40,12 @@
 #include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/StaticPrefs_security.h"
 #include "mozilla/StorageAccess.h"
+#include "mozilla/TextControlElement.h"
 #include "mozilla/TextEditor.h"
 #include "mozilla/URLDecorationStripper.h"
 #include "mozilla/URLExtraData.h"
 #include "mozilla/Base64.h"
+#include "mozilla/BasePrincipal.h"
 #include <algorithm>
 
 #include "mozilla/Logging.h"
@@ -64,7 +67,7 @@
 #include "nsIObserver.h"
 #include "nsIBaseWindow.h"
 #include "nsILayoutHistoryState.h"
-#include "nsLayoutStylesheetCache.h"
+#include "mozilla/GlobalStyleSheetCache.h"
 #include "mozilla/css/Loader.h"
 #include "mozilla/css/ImageLoader.h"
 #include "nsDocShell.h"
@@ -94,11 +97,14 @@
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/ContentChild.h"
+#include "mozilla/dom/CSSImportRule.h"
 #include "mozilla/dom/CSPDictionariesBinding.h"
+#include "mozilla/dom/DOMIntersectionObserver.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/FeaturePolicy.h"
 #include "mozilla/dom/FeaturePolicyUtils.h"
+#include "mozilla/dom/FramingChecker.h"
 #include "mozilla/dom/HTMLAllCollection.h"
 #include "mozilla/dom/HTMLMetaElement.h"
 #include "mozilla/dom/HTMLSharedElement.h"
@@ -133,7 +139,6 @@
 #include "mozilla/dom/PromiseNativeHandler.h"
 #include "mozilla/dom/TreeWalker.h"
 
-#include "nsIServiceManager.h"
 #include "mozilla/dom/ServiceWorkerManager.h"
 #include "imgLoader.h"
 
@@ -171,7 +176,6 @@
 
 #include "nsPIDOMWindow.h"
 #include "nsFocusManager.h"
-#include "nsICookiePermission.h"
 #include "nsICookieService.h"
 
 #include "nsBidiUtils.h"
@@ -193,7 +197,6 @@
 #include "nsDOMCID.h"
 
 #include "jsapi.h"
-#include "nsIXPConnect.h"
 #include "xpcpublic.h"
 #include "nsCCUncollectableMarker.h"
 #include "nsIContentPolicy.h"
@@ -206,8 +209,6 @@
 #include "nsIPrompt.h"
 #include "nsIPropertyBag2.h"
 #include "mozilla/dom/PageTransitionEvent.h"
-#include "mozilla/dom/StyleRuleChangeEvent.h"
-#include "mozilla/dom/StyleSheetChangeEvent.h"
 #include "mozilla/dom/StyleSheetApplicableStateChangeEvent.h"
 #include "nsJSUtils.h"
 #include "nsFrameLoader.h"
@@ -253,7 +254,6 @@
 
 #include "mozilla/Preferences.h"
 
-#include "imgILoader.h"
 #include "imgRequestProxy.h"
 #include "nsWrapperCacheInlines.h"
 #include "nsSandboxFlags.h"
@@ -283,7 +283,6 @@
 #include "nsDOMCaretPosition.h"
 #include "nsViewportInfo.h"
 #include "mozilla/StaticPtr.h"
-#include "nsITextControlElement.h"
 #include "nsIHttpChannelInternal.h"
 #include "nsISecurityConsoleMessage.h"
 #include "nsCharSeparatedTokenizer.h"
@@ -293,12 +292,10 @@
 #include "nsIDocumentEncoder.h"
 #include "nsIDocumentActivity.h"
 #include "nsIStructuredCloneContainer.h"
-#include "nsIMutableArray.h"
 #include "mozilla/dom/DOMStringList.h"
 #include "nsWindowSizes.h"
 #include "mozilla/dom/Location.h"
 #include "mozilla/dom/FontFaceSet.h"
-#include "nsISupportsPrimitives.h"
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
@@ -306,6 +303,7 @@
 #include "mozilla/dom/SVGSVGElement.h"
 #include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/TabGroup.h"
+#include "mozilla/dom/ChromeObserver.h"
 #ifdef MOZ_XUL
 #  include "mozilla/dom/XULBroadcastManager.h"
 #  include "mozilla/dom/XULPersist.h"
@@ -1196,7 +1194,7 @@ void Document::Shutdown() {
 
 Document::Document(const char* aContentType)
     : nsINode(nullptr),
-      DocumentOrShadowRoot(*this),
+      DocumentOrShadowRoot(this),
       mBlockAllMixedContent(false),
       mBlockAllMixedContentPreloads(false),
       mUpgradeInsecureRequests(false),
@@ -1343,8 +1341,6 @@ Document::Document(const char* aContentType)
       mFlashClassification(FlashClassification::Unknown),
       mScrollAnchorAdjustmentLength(0),
       mScrollAnchorAdjustmentCount(0),
-      mCurrentOrientationAngle(0),
-      mCurrentOrientationType(OrientationType::Portrait_primary),
       mServoRestyleRootDirtyBits(0),
       mThrowOnDynamicMarkupInsertionCounter(0),
       mIgnoreOpensDuringUnloadCounter(0),
@@ -1405,8 +1401,7 @@ bool Document::CallerIsTrustedAboutNetError(JSContext* aCx, JSObject* aObject) {
   return IsAboutErrorPage(win, "neterror");
 }
 
-void Document::GetNetErrorInfo(mozilla::dom::NetErrorInfo& aInfo,
-                               ErrorResult& aRv) {
+void Document::GetNetErrorInfo(NetErrorInfo& aInfo, ErrorResult& aRv) {
   nsCOMPtr<nsISupports> info;
   nsCOMPtr<nsITransportSecurityInfo> tsi;
   nsresult rv = NS_OK;
@@ -1441,8 +1436,8 @@ bool Document::CallerIsTrustedAboutCertError(JSContext* aCx,
   return IsAboutErrorPage(win, "certerror");
 }
 
-void Document::GetFailedCertSecurityInfo(
-    mozilla::dom::FailedCertSecurityInfo& aInfo, ErrorResult& aRv) {
+void Document::GetFailedCertSecurityInfo(FailedCertSecurityInfo& aInfo,
+                                         ErrorResult& aRv) {
   nsCOMPtr<nsISupports> info;
   nsCOMPtr<nsITransportSecurityInfo> tsi;
   nsresult rv = NS_OK;
@@ -1594,13 +1589,13 @@ void Document::GetFailedCertSecurityInfo(
     nsDependentCString derString(reinterpret_cast<char*>(certArray.Elements()),
                                  certArray.Length() - 1);
     nsAutoCString der64;
-    rv = mozilla::Base64Encode(derString, der64);
+    rv = Base64Encode(derString, der64);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       aRv.Throw(rv);
       return;
     }
     if (!certChainStrings.AppendElement(NS_ConvertUTF8toUTF16(der64),
-                                        mozilla::fallible)) {
+                                        fallible)) {
       aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
       return;
     }
@@ -1639,11 +1634,11 @@ void Document::GetFailedCertSecurityInfo(
   bool isPrivateBrowsing = nsContentUtils::IsInPrivateBrowsing(this);
   uint32_t flags =
       isPrivateBrowsing ? nsISocketProvider::NO_PERMANENT_STORAGE : 0;
-  mozilla::OriginAttributes attrs;
+  OriginAttributes attrs;
   attrs = nsContentUtils::GetOriginAttributes(this);
   nsCOMPtr<nsIURI> aURI;
   mFailedChannel->GetURI(getter_AddRefs(aURI));
-  mozilla::dom::ContentChild* cc = mozilla::dom::ContentChild::GetSingleton();
+  ContentChild* cc = ContentChild::GetSingleton();
   mozilla::ipc::URIParams uri;
   SerializeURI(aURI, uri);
   cc->SendIsSecureURI(nsISiteSecurityService::HEADER_HSTS, uri, flags, attrs,
@@ -1858,7 +1853,7 @@ NS_INTERFACE_TABLE_HEAD(Document)
     NS_INTERFACE_TABLE_ENTRY(Document, nsINode)
     NS_INTERFACE_TABLE_ENTRY(Document, Document)
     NS_INTERFACE_TABLE_ENTRY(Document, nsIScriptObjectPrincipal)
-    NS_INTERFACE_TABLE_ENTRY(Document, mozilla::dom::EventTarget)
+    NS_INTERFACE_TABLE_ENTRY(Document, EventTarget)
     NS_INTERFACE_TABLE_ENTRY(Document, nsISupportsWeakReference)
     NS_INTERFACE_TABLE_ENTRY(Document, nsIRadioGroupContainer)
     NS_INTERFACE_TABLE_ENTRY(Document, nsIMutationObserver)
@@ -2177,11 +2172,11 @@ nsresult Document::Init() {
       static_cast<nsIMutationObserver*>(this));
 
   mOnloadBlocker = new OnloadBlocker();
-  mCSSLoader = new mozilla::css::Loader(this);
+  mCSSLoader = new css::Loader(this);
   // Assume we're not quirky, until we know otherwise
   mCSSLoader->SetCompatibilityMode(eCompatibility_FullStandards);
 
-  mStyleImageLoader = new mozilla::css::ImageLoader(this);
+  mStyleImageLoader = new css::ImageLoader(this);
 
   mNodeInfoManager = new nsNodeInfoManager();
   nsresult rv = mNodeInfoManager->Init(this);
@@ -2209,7 +2204,7 @@ nsresult Document::Init() {
 
   // we need to create a policy here so getting the policy within
   // ::Policy() can *always* return a non null policy
-  mFeaturePolicy = new mozilla::dom::FeaturePolicy(this);
+  mFeaturePolicy = new dom::FeaturePolicy(this);
   mFeaturePolicy->SetDefaultOrigin(NodePrincipal());
 
   mStyleSet = MakeUnique<ServoStyleSet>(*this);
@@ -2390,7 +2385,7 @@ void Document::ResetToURI(nsIURI* aURI, nsILoadGroup* aLoadGroup,
       // Inform the associated request context about this load start so
       // any of its internal load progress flags gets reset.
       nsCOMPtr<nsIRequestContextService> rcsvc =
-          mozilla::net::RequestContextService::GetOrCreate();
+          net::RequestContextService::GetOrCreate();
       if (rcsvc) {
         nsCOMPtr<nsIRequestContext> rc;
         rcsvc->GetRequestContextFromLoadGroup(aLoadGroup, getter_AddRefs(rc));
@@ -2466,7 +2461,7 @@ already_AddRefed<nsIPrincipal> Document::MaybeDowngradePrincipal(
     return do_AddRef(expanded->AllowList().LastElement());
   }
 
-  if (nsContentUtils::IsSystemPrincipal(aPrincipal)) {
+  if (aPrincipal->IsSystemPrincipal()) {
     // We basically want the parent document here, but because this is very
     // early in the load, GetInProcessParentDocument() returns null, so we use
     // the docshell hierarchy to get this information instead.
@@ -2479,8 +2474,7 @@ already_AddRefed<nsIPrincipal> Document::MaybeDowngradePrincipal(
       if (parentDocShell) {
         nsCOMPtr<Document> parentDoc;
         parentDoc = parentDocShell->GetDocument();
-        if (!parentDoc ||
-            !nsContentUtils::IsSystemPrincipal(parentDoc->NodePrincipal())) {
+        if (!parentDoc || !parentDoc->NodePrincipal()->IsSystemPrincipal()) {
           nsCOMPtr<nsIPrincipal> nullPrincipal =
               do_CreateInstance("@mozilla.org/nullprincipal;1");
           return nullPrincipal.forget();
@@ -2616,7 +2610,7 @@ void Document::FillStyleSetUserAndUASheets() {
   // ordering.
 
   // The document will fill in the document sheets when we create the presshell
-  auto cache = nsLayoutStylesheetCache::Singleton();
+  auto* cache = GlobalStyleSheetCache::Singleton();
 
   nsStyleSheetService* sheetService = nsStyleSheetService::GetInstance();
   MOZ_ASSERT(sheetService,
@@ -2691,7 +2685,7 @@ void Document::FillStyleSet() {
 void Document::RemoveContentEditableStyleSheets() {
   MOZ_ASSERT(IsHTMLOrXHTML());
 
-  auto* cache = nsLayoutStylesheetCache::Singleton();
+  auto* cache = GlobalStyleSheetCache::Singleton();
   bool changed = false;
   if (mDesignModeSheetAdded) {
     mStyleSet->RemoveStyleSheet(StyleOrigin::UserAgent,
@@ -2716,7 +2710,7 @@ void Document::AddContentEditableStyleSheetsToStyleSet(bool aDesignMode) {
   MOZ_DIAGNOSTIC_ASSERT(mStyleSetFilled,
                         "Caller should ensure we're being rendered");
 
-  auto* cache = nsLayoutStylesheetCache::Singleton();
+  auto* cache = GlobalStyleSheetCache::Singleton();
   bool changed = false;
   if (!mContentEditableSheetAdded) {
     mStyleSet->AppendStyleSheet(StyleOrigin::UserAgent,
@@ -2779,7 +2773,7 @@ void Document::CompatibilityModeChanged() {
   if (mQuirkSheetAdded == NeedsQuirksSheet()) {
     return;
   }
-  auto cache = nsLayoutStylesheetCache::Singleton();
+  auto* cache = GlobalStyleSheetCache::Singleton();
   StyleSheet* sheet = cache->QuirkSheet();
   if (mQuirkSheetAdded) {
     mStyleSet->RemoveStyleSheet(StyleOrigin::UserAgent, sheet);
@@ -2812,20 +2806,23 @@ static void WarnIfSandboxIneffective(nsIDocShell* aDocShell,
   if (aSandboxFlags & SANDBOXED_NAVIGATION &&
       !(aSandboxFlags & SANDBOXED_SCRIPTS) &&
       !(aSandboxFlags & SANDBOXED_ORIGIN)) {
-    nsCOMPtr<nsIDocShellTreeItem> parentAsItem;
-    aDocShell->GetInProcessSameTypeParent(getter_AddRefs(parentAsItem));
-    nsCOMPtr<nsIDocShell> parentDocShell = do_QueryInterface(parentAsItem);
-    if (!parentDocShell) {
+    RefPtr<BrowsingContext> bc = aDocShell->GetBrowsingContext();
+    MOZ_ASSERT(bc->IsInProcess());
+
+    RefPtr<BrowsingContext> parentBC = bc->GetParent();
+    if (!parentBC || !parentBC->IsInProcess()) {
+      // If parent document is not in process, then by construction it
+      // cannot be same origin.
       return;
     }
 
     // Don't warn if our parent is not the top-level document.
-    nsCOMPtr<nsIDocShellTreeItem> grandParentAsItem;
-    parentDocShell->GetInProcessSameTypeParent(
-        getter_AddRefs(grandParentAsItem));
-    if (grandParentAsItem) {
+    if (!parentBC->IsTopContent()) {
       return;
     }
+
+    nsCOMPtr<nsIDocShell> parentDocShell = parentBC->GetDocShell();
+    MOZ_ASSERT(parentDocShell);
 
     nsCOMPtr<nsIChannel> parentChannel;
     parentDocShell->GetCurrentDocumentChannel(getter_AddRefs(parentChannel));
@@ -2856,7 +2853,7 @@ bool Document::IsSynthesized() {
 // static
 bool Document::IsCallerChromeOrAddon(JSContext* aCx, JSObject* aObject) {
   nsIPrincipal* principal = nsContentUtils::SubjectPrincipal(aCx);
-  return principal && (nsContentUtils::IsSystemPrincipal(principal) ||
+  return principal && (principal->IsSystemPrincipal() ||
                        principal->GetIsAddonOrExpandedAddonPrincipal());
 }
 
@@ -2987,6 +2984,45 @@ nsresult Document::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
 
   rv = InitCSP(aChannel);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  // Bug 1574372: Download should be fully done in the parent process.
+  // Unfortunately we currently can not determine whether a load will
+  // result in a download in the parent process. Hence, if running in
+  // non-fission-mode then we will have to enforce checks for
+  // frame-ancestors and x-frame-options here in the content process
+  // but if we run in fission-mode then we do those two security
+  // checks within DOMSecurityManager::Observe in the parent.
+  bool fissionEnabled = StaticPrefs::fission_autostart();
+  if (!fissionEnabled) {
+    nsContentPolicyType contentType = loadInfo->GetExternalContentPolicyType();
+    // frame-ancestor check only makes sense for subdocument and object loads,
+    // if this is not a load of such type, there is nothing to do here.
+    if (contentType == nsIContentPolicy::TYPE_SUBDOCUMENT ||
+        contentType == nsIContentPolicy::TYPE_OBJECT) {
+      // we only enforce frame-ancestors if the load is an actual http
+      // channel, otherwise we block dynamic iframes since about:blank
+      // inherits the CSP.
+      nsCOMPtr<nsIHttpChannel> httpChannel;
+      nsContentSecurityUtils::GetHttpChannelFromPotentialMultiPart(
+          aChannel, getter_AddRefs(httpChannel));
+      if (httpChannel && mCSP) {
+        bool safeAncestry = false;
+        // PermitsAncestry sends violation reports when necessary
+        rv = mCSP->PermitsAncestry(loadInfo, &safeAncestry);
+        if (NS_FAILED(rv) || !safeAncestry) {
+          // stop!  ERROR page!
+          aChannel->Cancel(NS_ERROR_CSP_FRAME_ANCESTOR_VIOLATION);
+        }
+      }
+    }
+
+    // the checks for type_subdoc or type_object happen within
+    // CheckFrameOptions.
+    if (!FramingChecker::CheckFrameOptions(aChannel, mCSP)) {
+      // stop!  ERROR page!
+      aChannel->Cancel(NS_ERROR_XFO_VIOLATION);
+    }
+  }
 
   // Initialize FeaturePolicy
   rv = InitFeaturePolicy(aChannel);
@@ -3214,8 +3250,7 @@ nsresult Document::InitCSP(nsIChannel* aChannel) {
   return NS_OK;
 }
 
-already_AddRefed<mozilla::dom::FeaturePolicy>
-Document::GetParentFeaturePolicy() {
+already_AddRefed<dom::FeaturePolicy> Document::GetParentFeaturePolicy() {
   if (!mDocumentContainer) {
     return nullptr;
   }
@@ -3230,7 +3265,7 @@ Document::GetParentFeaturePolicy() {
     return nullptr;
   }
 
-  RefPtr<mozilla::dom::FeaturePolicy> parentPolicy;
+  RefPtr<dom::FeaturePolicy> parentPolicy;
   if (context->IsContentSubframe() && !context->GetParent()->IsInProcess()) {
     // We are in cross process, so try to get feature policy from
     // container's BrowsingContext
@@ -4656,8 +4691,7 @@ bool Document::QueryCommandEnabled(const nsAString& aHTMLCommandName,
   }
 
   // Report false for restricted commands
-  if (commandData.IsPasteCommand() &&
-      !nsContentUtils::IsSystemPrincipal(&aSubjectPrincipal)) {
+  if (commandData.IsPasteCommand() && !aSubjectPrincipal.IsSystemPrincipal()) {
     return false;
   }
 
@@ -5008,14 +5042,12 @@ nsresult Document::TurnEditingOff() {
 
   // Editor resets selection since it is being destroyed.  But if focus is
   // still into editable control, we have to initialize selection again.
-  nsFocusManager* fm = nsFocusManager::GetFocusManager();
-  if (fm) {
-    Element* element = fm->GetFocusedElement();
-    nsCOMPtr<nsITextControlElement> txtCtrl = do_QueryInterface(element);
-    if (txtCtrl) {
-      RefPtr<TextEditor> textEditor = txtCtrl->GetTextEditor();
+  if (nsFocusManager* fm = nsFocusManager::GetFocusManager()) {
+    if (RefPtr<TextControlElement> textControlElement =
+            TextControlElement::FromNodeOrNull(fm->GetFocusedElement())) {
+      RefPtr<TextEditor> textEditor = textControlElement->GetTextEditor();
       if (textEditor) {
-        textEditor->ReinitializeSelection(*element);
+        textEditor->ReinitializeSelection(*textControlElement);
       }
     }
   }
@@ -5029,11 +5061,6 @@ static bool HasPresShell(nsPIDOMWindowOuter* aWindow) {
     return false;
   }
   return docShell->GetPresShell() != nullptr;
-}
-
-nsresult Document::SetEditingState(EditingState aState) {
-  mEditingState = aState;
-  return NS_OK;
 }
 
 nsresult Document::EditingStateChanged() {
@@ -5266,7 +5293,7 @@ nsresult Document::EditingStateChanged() {
 // Helper class, used below in ChangeContentEditableCount().
 class DeferredContentEditableCountChangeEvent : public Runnable {
  public:
-  DeferredContentEditableCountChangeEvent(Document* aDoc, nsIContent* aElement)
+  DeferredContentEditableCountChangeEvent(Document* aDoc, Element* aElement)
       : mozilla::Runnable("DeferredContentEditableCountChangeEvent"),
         mDoc(aDoc),
         mElement(aElement) {}
@@ -5280,11 +5307,10 @@ class DeferredContentEditableCountChangeEvent : public Runnable {
 
  private:
   RefPtr<Document> mDoc;
-  nsCOMPtr<nsIContent> mElement;
+  RefPtr<Element> mElement;
 };
 
-nsresult Document::ChangeContentEditableCount(nsIContent* aElement,
-                                              int32_t aChange) {
+void Document::ChangeContentEditableCount(Element* aElement, int32_t aChange) {
   NS_ASSERTION(int32_t(mContentEditableCount) + aChange >= 0,
                "Trying to decrement too much.");
 
@@ -5292,11 +5318,9 @@ nsresult Document::ChangeContentEditableCount(nsIContent* aElement,
 
   nsContentUtils::AddScriptRunner(
       new DeferredContentEditableCountChangeEvent(this, aElement));
-
-  return NS_OK;
 }
 
-void Document::DeferredContentEditableCountChange(nsIContent* aElement) {
+void Document::DeferredContentEditableCountChange(Element* aElement) {
   if (mParser ||
       (mUpdateNestLevel > 0 && (mContentEditableCount > 0) != IsEditingOn())) {
     return;
@@ -6297,39 +6321,6 @@ void Document::ApplicableStylesChanged() {
   pc->RestyleManager()->NextRestyleIsForCSSRuleChanges();
 }
 
-#define DO_STYLESHEET_NOTIFICATION(className, type, memberName, argName) \
-  do {                                                                   \
-    className##Init init;                                                \
-    init.mBubbles = true;                                                \
-    init.mCancelable = true;                                             \
-    init.mStylesheet = aSheet;                                           \
-    init.memberName = argName;                                           \
-                                                                         \
-    RefPtr<className> event =                                            \
-        className::Constructor(this, NS_LITERAL_STRING(type), init);     \
-    event->SetTrusted(true);                                             \
-    event->SetTarget(this);                                              \
-    RefPtr<AsyncEventDispatcher> asyncDispatcher =                       \
-        new AsyncEventDispatcher(this, event);                           \
-    asyncDispatcher->mOnlyChromeDispatch = ChromeOnlyDispatch::eYes;     \
-    asyncDispatcher->PostDOMEvent();                                     \
-  } while (0);
-
-void Document::NotifyStyleSheetAdded(StyleSheet* aSheet, bool aDocumentSheet) {
-  if (StyleSheetChangeEventsEnabled()) {
-    DO_STYLESHEET_NOTIFICATION(StyleSheetChangeEvent, "StyleSheetAdded",
-                               mDocumentSheet, aDocumentSheet);
-  }
-}
-
-void Document::NotifyStyleSheetRemoved(StyleSheet* aSheet,
-                                       bool aDocumentSheet) {
-  if (StyleSheetChangeEventsEnabled()) {
-    DO_STYLESHEET_NOTIFICATION(StyleSheetChangeEvent, "StyleSheetRemoved",
-                               mDocumentSheet, aDocumentSheet);
-  }
-}
-
 void Document::RemoveStyleSheetFromStyleSets(StyleSheet* aSheet) {
   if (mStyleSetFilled) {
     mStyleSet->RemoveDocStyleSheet(aSheet);
@@ -6346,12 +6337,8 @@ void Document::RemoveStyleSheet(StyleSheet* aSheet) {
     return;
   }
 
-  if (!mIsGoingAway) {
-    if (sheet->IsApplicable()) {
-      RemoveStyleSheetFromStyleSets(sheet);
-    }
-
-    NotifyStyleSheetRemoved(sheet, true);
+  if (!mIsGoingAway && sheet->IsApplicable()) {
+    RemoveStyleSheetFromStyleSets(sheet);
   }
 
   sheet->ClearAssociatedDocumentOrShadowRoot();
@@ -6363,27 +6350,35 @@ void Document::InsertSheetAt(size_t aIndex, StyleSheet& aSheet) {
   if (aSheet.IsApplicable()) {
     AddStyleSheetToStyleSets(&aSheet);
   }
-
-  NotifyStyleSheetAdded(&aSheet, true);
 }
 
-void Document::SetStyleSheetApplicableState(StyleSheet* aSheet,
+void Document::SetStyleSheetApplicableState(StyleSheet& aSheet,
                                             bool aApplicable) {
-  MOZ_ASSERT(aSheet, "null arg");
-
   // If we're actually in the document style sheet list
-  if (mStyleSheets.IndexOf(aSheet) != mStyleSheets.NoIndex) {
+  if (mStyleSheets.IndexOf(&aSheet) != mStyleSheets.NoIndex) {
     if (aApplicable) {
-      AddStyleSheetToStyleSets(aSheet);
+      AddStyleSheetToStyleSets(&aSheet);
     } else {
-      RemoveStyleSheetFromStyleSets(aSheet);
+      RemoveStyleSheetFromStyleSets(&aSheet);
     }
   }
 
   if (StyleSheetChangeEventsEnabled()) {
-    DO_STYLESHEET_NOTIFICATION(StyleSheetApplicableStateChangeEvent,
-                               "StyleSheetApplicableStateChanged", mApplicable,
-                               aApplicable);
+    StyleSheetApplicableStateChangeEventInit init;
+    init.mBubbles = true;
+    init.mCancelable = true;
+    init.mStylesheet = &aSheet;
+    init.mApplicable = aApplicable;
+
+    RefPtr<StyleSheetApplicableStateChangeEvent> event =
+        StyleSheetApplicableStateChangeEvent::Constructor(
+            this, NS_LITERAL_STRING("StyleSheetApplicableStateChanged"), init);
+    event->SetTrusted(true);
+    event->SetTarget(this);
+    RefPtr<AsyncEventDispatcher> asyncDispatcher =
+        new AsyncEventDispatcher(this, event);
+    asyncDispatcher->mOnlyChromeDispatch = ChromeOnlyDispatch::eYes;
+    asyncDispatcher->PostDOMEvent();
   }
 
   if (!mSSApplicableStateNotificationPending) {
@@ -6479,9 +6474,13 @@ nsresult Document::LoadAdditionalStyleSheet(additionalSheetType aType,
 
 nsresult Document::AddAdditionalStyleSheet(additionalSheetType aType,
                                            StyleSheet* aSheet) {
-  if (mAdditionalSheets[aType].Contains(aSheet)) return NS_ERROR_INVALID_ARG;
+  if (mAdditionalSheets[aType].Contains(aSheet)) {
+    return NS_ERROR_INVALID_ARG;
+  }
 
-  if (!aSheet->IsApplicable()) return NS_ERROR_INVALID_ARG;
+  if (!aSheet->IsApplicable()) {
+    return NS_ERROR_INVALID_ARG;
+  }
 
   mAdditionalSheets[aType].AppendElement(aSheet);
 
@@ -6489,10 +6488,6 @@ nsresult Document::AddAdditionalStyleSheet(additionalSheetType aType,
     mStyleSet->AppendStyleSheet(ConvertAdditionalSheetType(aType), aSheet);
     ApplicableStylesChanged();
   }
-
-  // Passing false, so documet.styleSheets.length will not be affected by
-  // these additional sheets.
-  NotifyStyleSheetAdded(aSheet, false);
   return NS_OK;
 }
 
@@ -6515,10 +6510,6 @@ void Document::RemoveAdditionalStyleSheet(additionalSheetType aType,
         ApplicableStylesChanged();
       }
     }
-
-    // Passing false, so documet.styleSheets.length will not be affected by
-    // these additional sheets.
-    NotifyStyleSheetRemoved(sheetRef, false);
     sheetRef->ClearAssociatedDocumentOrShadowRoot();
   }
 }
@@ -6994,7 +6985,7 @@ void Document::DispatchContentLoadedEvents() {
   if (os) {
     nsIPrincipal* principal = NodePrincipal();
     os->NotifyObservers(ToSupports(this),
-                        nsContentUtils::IsSystemPrincipal(principal)
+                        principal->IsSystemPrincipal()
                             ? "chrome-document-interactive"
                             : "content-document-interactive",
                         nullptr);
@@ -7212,40 +7203,33 @@ void Document::ContentStateChanged(nsIContent* aContent,
                                (this, aContent, aStateMask));
 }
 
-void Document::StyleRuleChanged(StyleSheet* aSheet, css::Rule* aStyleRule) {
-  ApplicableStylesChanged();
+void Document::RuleChanged(StyleSheet& aSheet, css::Rule* aRule) {
+  if (aSheet.IsApplicable()) {
+    ApplicableStylesChanged();
+  }
+}
 
-  if (!StyleSheetChangeEventsEnabled()) {
+void Document::RuleAdded(StyleSheet& aSheet, css::Rule& aRule) {
+  if (aRule.IsIncompleteImportRule()) {
     return;
   }
 
-  DO_STYLESHEET_NOTIFICATION(StyleRuleChangeEvent, "StyleRuleChanged", mRule,
-                             aStyleRule);
-}
-
-void Document::StyleRuleAdded(StyleSheet* aSheet, css::Rule* aStyleRule) {
-  ApplicableStylesChanged();
-
-  if (!StyleSheetChangeEventsEnabled()) {
-    return;
+  if (aSheet.IsApplicable()) {
+    ApplicableStylesChanged();
   }
-
-  DO_STYLESHEET_NOTIFICATION(StyleRuleChangeEvent, "StyleRuleAdded", mRule,
-                             aStyleRule);
 }
 
-void Document::StyleRuleRemoved(StyleSheet* aSheet, css::Rule* aStyleRule) {
-  ApplicableStylesChanged();
-
-  if (!StyleSheetChangeEventsEnabled()) {
-    return;
+void Document::ImportRuleLoaded(dom::CSSImportRule& aRule, StyleSheet& aSheet) {
+  if (aSheet.IsApplicable()) {
+    ApplicableStylesChanged();
   }
-
-  DO_STYLESHEET_NOTIFICATION(StyleRuleChangeEvent, "StyleRuleRemoved", mRule,
-                             aStyleRule);
 }
 
-#undef DO_STYLESHEET_NOTIFICATION
+void Document::RuleRemoved(StyleSheet& aSheet, css::Rule& aRule) {
+  if (aSheet.IsApplicable()) {
+    ApplicableStylesChanged();
+  }
+}
 
 static Element* GetCustomContentContainer(PresShell* aPresShell) {
   if (!aPresShell || !aPresShell->GetCanvasFrame()) {
@@ -8346,6 +8330,10 @@ void Document::SetPrototypeDocument(nsXULPrototypeDocument* aPrototype) {
   mSynchronousDOMContentLoaded = true;
 }
 
+nsIPermissionDelegateHandler* Document::PermDelegateHandler() {
+  return GetPermissionDelegateHandler();
+}
+
 Document* Document::RequestExternalResource(
     nsIURI* aURI, nsIReferrerInfo* aReferrerInfo, nsINode* aRequestingNode,
     ExternalResourceLoad** aPendingLoad) {
@@ -8787,35 +8775,6 @@ void Document::Close(ErrorResult& rv) {
   rv = (static_cast<nsHtml5Parser*>(mParser.get()))
            ->Parse(EmptyString(), nullptr, true);
   --mWriteLevel;
-
-  // Even if that Parse() call failed, do the rest of this method
-
-  // XXX Make sure that all the document.written content is
-  // reflowed.  We should remove this call once we change
-  // Document::OpenCommon() so that it completely destroys the
-  // earlier document's content and frame hierarchy.  Right now, it
-  // re-uses the earlier document's root content object and
-  // corresponding frame objects.  These re-used frame objects think
-  // that they have already been reflowed, so they drop initial
-  // reflows.  For certain cases of document.written content, like a
-  // frameset document, the dropping of the initial reflow means
-  // that we end up in document.close() without appended any reflow
-  // commands to the reflow queue and, consequently, without adding
-  // the dummy layout request to the load group.  Since the dummy
-  // layout request is not added to the load group, the onload
-  // handler of the frameset fires before the frames get reflowed
-  // and loaded.  That is the long explanation for why we need this
-  // one line of code here!
-  // XXXbz as far as I can tell this may not be needed anymore; all
-  // the testcases in bug 57636 pass without this line...  Leaving
-  // it be for now, though.  In any case, there's no reason to do
-  // this if we have no presshell, since in that case none of the
-  // above about reusing frames applies.
-  //
-  // XXXhsivonen keeping this around for bug 577508 / 253951 still :-(
-  if (GetPresShell()) {
-    FlushPendingNotifications(FlushType::Layout);
-  }
 }
 
 void Document::WriteCommon(const Sequence<nsString>& aText,
@@ -9818,18 +9777,27 @@ void Document::FlushPendingNotifications(mozilla::ChangesToFlush aFlush) {
   }
 
   // If we have a parent we must flush the parent too to ensure that our
-  // container is reflowed if its size was changed.  But if it's not safe to
-  // flush ourselves, then don't flush the parent, since that can cause things
-  // like resizes of our frame's widget, which we can't handle while flushing
-  // is unsafe.
-  // Since media queries mean that a size change of our container can
-  // affect style, we need to promote a style flush on ourself to a
-  // layout flush on our parent, since we need our container to be the
-  // correct size to determine the correct style.
+  // container is reflowed if its size was changed.
+  //
+  // We do it only if the subdocument and the parent can observe each other
+  // synchronously (that is, if we're not cross-origin), to avoid work that is
+  // not observable, and if the parent document has finished loading all its
+  // render-blocking stylesheets and may start laying out the document, to avoid
+  // unnecessary flashes of unstyled content on the parent document. Note that
+  // this last bit means that size-dependent media queries in this document may
+  // produce incorrect results temporarily.
+  //
+  // But if it's not safe to flush ourselves, then don't flush the parent, since
+  // that can cause things like resizes of our frame's widget, which we can't
+  // handle while flushing is unsafe.
   if (StyleOrLayoutObservablyDependsOnParentDocumentLayout() &&
-      IsSafeToFlush()) {
-    mozilla::ChangesToFlush parentFlush = aFlush;
+      mParentDocument->MayStartLayout() && IsSafeToFlush()) {
+    ChangesToFlush parentFlush = aFlush;
     if (flushType >= FlushType::Style) {
+      // Since media queries mean that a size change of our container can affect
+      // style, we need to promote a style flush on ourself to a layout flush on
+      // our parent, since we need our container to be the correct size to
+      // determine the correct style.
       parentFlush.mFlushType = std::max(FlushType::Layout, flushType);
     }
     mParentDocument->FlushPendingNotifications(parentFlush);
@@ -10365,6 +10333,11 @@ void Document::RemovedFromDocShell() {
        child = child->GetNextSibling()) {
     child->SaveSubtreeState();
   }
+
+  nsIDocShell* docShell = GetDocShell();
+  if (docShell) {
+    docShell->SynchronizeLayoutHistoryState();
+  }
 }
 
 already_AddRefed<nsILayoutHistoryState> Document::GetLayoutHistoryState()
@@ -10632,9 +10605,8 @@ void Document::OnPageShow(bool aPersisted, EventTarget* aDispatchStartTarget,
     if (os) {
       nsIPrincipal* principal = NodePrincipal();
       os->NotifyObservers(ToSupports(this),
-                          nsContentUtils::IsSystemPrincipal(principal)
-                              ? "chrome-page-shown"
-                              : "content-page-shown",
+                          principal->IsSystemPrincipal() ? "chrome-page-shown"
+                                                         : "content-page-shown",
                           nullptr);
     }
 
@@ -10726,7 +10698,7 @@ void Document::OnPageHide(bool aPersisted, EventTarget* aDispatchStartTarget,
     if (os) {
       nsIPrincipal* principal = NodePrincipal();
       os->NotifyObservers(ToSupports(this),
-                          nsContentUtils::IsSystemPrincipal(principal)
+                          principal->IsSystemPrincipal()
                               ? "chrome-page-hidden"
                               : "content-page-hidden",
                           nullptr);
@@ -11033,10 +11005,15 @@ void Document::SetReadyStateInternal(ReadyState aReadyState,
   }
   // At the time of loading start, we don't have timing object, record time.
 
-  if (READYSTATE_INTERACTIVE == aReadyState) {
-    if (!mXULPersist && nsContentUtils::IsSystemPrincipal(NodePrincipal())) {
+  if (READYSTATE_INTERACTIVE == aReadyState &&
+      NodePrincipal()->IsSystemPrincipal()) {
+    if (!mXULPersist) {
       mXULPersist = new XULPersist(this);
       mXULPersist->Init();
+    }
+    if (!mChromeObserver) {
+      mChromeObserver = new ChromeObserver(this);
+      mChromeObserver->Init();
     }
   }
 
@@ -11314,18 +11291,20 @@ NS_IMPL_ISUPPORTS(StubCSSLoaderObserver, nsICSSLoaderObserver)
 void Document::PreloadStyle(nsIURI* uri, const Encoding* aEncoding,
                             const nsAString& aCrossOriginAttr,
                             const enum ReferrerPolicy aReferrerPolicy,
-                            const nsAString& aIntegrity) {
+                            const nsAString& aIntegrity, bool aIsLinkPreload) {
   // The CSSLoader will retain this object after we return.
   nsCOMPtr<nsICSSLoaderObserver> obs = new StubCSSLoaderObserver();
 
   nsCOMPtr<nsIReferrerInfo> referrerInfo =
       ReferrerInfo::CreateFromDocumentAndPolicyOverride(this, aReferrerPolicy);
 
+  auto preloadType = aIsLinkPreload ? css::Loader::IsPreload::FromLink
+                                    : css::Loader::IsPreload::FromParser;
+
   // Charset names are always ASCII.
   Unused << CSSLoader()->LoadSheet(
-      uri, css::Loader::IsPreload::Yes, NodePrincipal(), aEncoding,
-      referrerInfo, obs, Element::StringToCORSMode(aCrossOriginAttr),
-      aIntegrity);
+      uri, preloadType, NodePrincipal(), aEncoding, referrerInfo, obs,
+      Element::StringToCORSMode(aCrossOriginAttr), aIntegrity);
 }
 
 RefPtr<StyleSheet> Document::LoadChromeSheetSync(nsIURI* uri) {
@@ -13244,19 +13223,17 @@ static bool IsInActiveTab(Document* aDoc) {
   return activeWindow == rootWin;
 }
 
-nsresult Document::RemoteFrameFullscreenChanged(Element* aFrameElement) {
+void Document::RemoteFrameFullscreenChanged(Element* aFrameElement) {
   // Ensure the frame element is the fullscreen element in this document.
   // If the frame element is already the fullscreen element in this document,
   // this has no effect.
   auto request = FullscreenRequest::CreateForRemote(aFrameElement);
   RequestFullscreen(std::move(request), XRE_IsContentProcess());
-  return NS_OK;
 }
 
-nsresult Document::RemoteFrameFullscreenReverted() {
+void Document::RemoteFrameFullscreenReverted() {
   UniquePtr<FullscreenExit> exit = FullscreenExit::CreateForRemote(this);
   RestorePreviousFullscreenState(std::move(exit));
-  return NS_OK;
 }
 
 /* static */
@@ -13601,12 +13578,6 @@ bool Document::SetOrientationPendingPromise(Promise* aPromise) {
 
   mOrientationPendingPromise = aPromise;
   return true;
-}
-
-void Document::SetRDMPaneOrientation(OrientationType aType, uint16_t aAngle) {
-  if (GetBrowsingContext()->InRDMPane()) {
-    SetCurrentOrientation(aType, aAngle);
-  }
 }
 
 static void DispatchPointerLockChange(Document* aTarget) {
@@ -13977,6 +13948,10 @@ void Document::DocAddSizeOfExcludingThis(nsWindowSizes& aWindowSizes) const {
   if (mCSSLoader) {
     aWindowSizes.mLayoutStyleSheetsSize +=
         mCSSLoader->SizeOfIncludingThis(aWindowSizes.mState.mMallocSizeOf);
+  }
+
+  if (mResizeObserverController) {
+    mResizeObserverController->AddSizeOfIncludingThis(aWindowSizes);
   }
 
   aWindowSizes.mDOMOtherSize += mAttrStyleSheet
@@ -14588,7 +14563,7 @@ Document::DocumentTheme Document::GetDocumentLWTheme() {
 }
 
 Document::DocumentTheme Document::ThreadSafeGetDocumentLWTheme() const {
-  if (!nsContentUtils::IsSystemPrincipal(NodePrincipal())) {
+  if (!NodePrincipal()->IsSystemPrincipal()) {
     return Doc_Theme_None;
   }
 
@@ -15081,9 +15056,14 @@ void Document::TraceProtos(JSTracer* aTrc) {
  * toolkit/components/url-classifier/flash-block-lists.rst
  */
 FlashClassification Document::DocumentFlashClassification() {
+  // Disable flash blocking when fission is enabled(See Bug 1584931).
+  const auto fnIsFlashBlockingEnabled = [] {
+    return StaticPrefs::plugins_flashBlock_enabled() &&
+           !StaticPrefs::fission_autostart();
+  };
+
   // If neither pref is on, skip the null-principal and principal URI checks.
-  if (!StaticPrefs::plugins_http_https_only() &&
-      !StaticPrefs::plugins_flashBlock_enabled()) {
+  if (!StaticPrefs::plugins_http_https_only() && !fnIsFlashBlockingEnabled()) {
     return FlashClassification::Unknown;
   }
 
@@ -15106,7 +15086,7 @@ FlashClassification Document::DocumentFlashClassification() {
 
   // If flash blocking is disabled, it is equivalent to all sites being
   // on neither list.
-  if (!StaticPrefs::plugins_flashBlock_enabled()) {
+  if (!fnIsFlashBlockingEnabled()) {
     return FlashClassification::Unknown;
   }
 
@@ -15342,8 +15322,7 @@ already_AddRefed<mozilla::dom::Promise> Document::HasStorageAccess(
   return promise.forget();
 }
 
-already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
-    mozilla::ErrorResult& aRv) {
+already_AddRefed<Promise> Document::RequestStorageAccess(ErrorResult& aRv) {
   nsIGlobalObject* global = GetScopeObject();
   if (!global) {
     aRv.Throw(NS_ERROR_NOT_AVAILABLE);

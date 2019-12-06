@@ -16,7 +16,6 @@
 #include "nsIPluginTag.h"
 #include "nsPluginsDir.h"
 #include "nsWeakReference.h"
-#include "nsIPrompt.h"
 #include "MainThreadUtils.h"
 #include "nsTArray.h"
 #include "nsINamed.h"
@@ -170,8 +169,8 @@ class nsPluginHost final : public nsIPluginHost,
 
   static nsresult PostPluginUnloadEvent(PRLibrary* aLibrary);
 
-  void PluginCrashed(nsNPAPIPlugin* plugin, const nsAString& pluginDumpID,
-                     const nsAString& browserDumpID);
+  void PluginCrashed(nsNPAPIPlugin* aPlugin, const nsAString& aPluginDumpID,
+                     const nsACString& aAdditionalMinidumps);
 
   nsNPAPIPluginInstance* FindInstance(const char* mimetype);
   nsNPAPIPluginInstance* FindOldestStoppedInstance();

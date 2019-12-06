@@ -39,7 +39,7 @@
 #include "builtin/Promise.h"
 #include "builtin/Stream.h"
 #include "builtin/Symbol.h"
-#ifdef ENABLE_TYPED_OBJECTS
+#ifdef JS_HAS_TYPED_OBJECTS
 #  include "builtin/TypedObject.h"
 #endif
 #include "frontend/BytecodeCompiler.h"
@@ -122,6 +122,14 @@ using JS::SourceText;
 #  define JS_ADDRESSOF_VA_LIST(ap) ((va_list*)(ap))
 #else
 #  define JS_ADDRESSOF_VA_LIST(ap) (&(ap))
+#endif
+
+// See preprocessor definition of JS_BITS_PER_WORD in jstypes.h; make sure
+// JS_64BIT (used internally) agrees with it
+#ifdef JS_64BIT
+static_assert(JS_BITS_PER_WORD == 64, "values must be in sync");
+#else
+static_assert(JS_BITS_PER_WORD == 32, "values must be in sync");
 #endif
 
 JS_PUBLIC_API void JS::CallArgs::reportMoreArgsNeeded(JSContext* cx,
@@ -382,6 +390,10 @@ JS_PUBLIC_API void JS_SetFutexCanWait(JSContext* cx) {
   cx->fx.setCanWait(true);
 }
 
+JS_PUBLIC_API bool JS_ContainsSharedArrayBuffer(JSContext* cx) {
+  return cx->runtime()->hasLiveSABs();
+}
+
 JS_PUBLIC_API JSRuntime* JS_GetParentRuntime(JSContext* cx) {
   return cx->runtime()->parentRuntime ? cx->runtime()->parentRuntime
                                       : cx->runtime();
@@ -391,6 +403,27 @@ JS_PUBLIC_API JSRuntime* JS_GetRuntime(JSContext* cx) { return cx->runtime(); }
 
 JS_PUBLIC_API JS::ContextOptions& JS::ContextOptionsRef(JSContext* cx) {
   return cx->options();
+}
+
+JS::ContextOptions& JS::ContextOptions::setWasmCranelift(bool flag) {
+#ifdef ENABLE_WASM_CRANELIFT
+  wasmCranelift_ = flag;
+#endif
+  return *this;
+}
+
+JS::ContextOptions& JS::ContextOptions::setWasmGc(bool flag) {
+#ifdef ENABLE_WASM_GC
+  wasmGc_ = flag;
+#endif
+  return *this;
+}
+
+JS::ContextOptions& JS::ContextOptions::setFuzzing(bool flag) {
+#ifdef FUZZING
+  fuzzing_ = flag;
+#endif
+  return *this;
 }
 
 JS_PUBLIC_API bool JS::InitSelfHostedCode(JSContext* cx) {
@@ -436,15 +469,20 @@ JS_PUBLIC_API void JS_SetSizeOfIncludingThisCompartmentCallback(
   cx->runtime()->sizeOfIncludingThisCompartmentCallback = callback;
 }
 
-#if defined(NIGHTLY_BUILD)
 JS_PUBLIC_API void JS_SetErrorInterceptorCallback(
     JSRuntime* rt, JSErrorInterceptor* callback) {
+#if defined(NIGHTLY_BUILD)
   rt->errorInterception.interceptor = callback;
+#endif  // defined(NIGHTLY_BUILD)
 }
 
 JS_PUBLIC_API JSErrorInterceptor* JS_GetErrorInterceptorCallback(
     JSRuntime* rt) {
+#if defined(NIGHTLY_BUILD)
   return rt->errorInterception.interceptor;
+#else   // !NIGHTLY_BUILD
+  return nullptr;
+#endif  // defined(NIGHTLY_BUILD)
 }
 
 JS_PUBLIC_API Maybe<JSExnType> JS_GetErrorType(const JS::Value& val) {
@@ -464,8 +502,6 @@ JS_PUBLIC_API Maybe<JSExnType> JS_GetErrorType(const JS::Value& val) {
   const js::ErrorObject& err = obj.as<js::ErrorObject>();
   return mozilla::Some(err.type());
 }
-
-#endif  // defined(NIGHTLY_BUILD)
 
 JS_PUBLIC_API void JS_SetWrapObjectCallbacks(
     JSContext* cx, const JSWrapObjectCallbacks* callbacks) {
@@ -1682,6 +1718,16 @@ bool JS::RealmCreationOptions::getSharedMemoryAndAtomicsEnabled() const {
 JS::RealmCreationOptions&
 JS::RealmCreationOptions::setSharedMemoryAndAtomicsEnabled(bool flag) {
   sharedMemoryAndAtomics_ = flag;
+  return *this;
+}
+
+bool JS::RealmCreationOptions::getCoopAndCoepEnabled() const {
+  return coopAndCoep_;
+}
+
+JS::RealmCreationOptions& JS::RealmCreationOptions::setCoopAndCoepEnabled(
+    bool flag) {
+  coopAndCoep_ = flag;
   return *this;
 }
 
@@ -3326,104 +3372,6 @@ JS_PUBLIC_API JSFunction* JS::NewFunctionFromSpec(JSContext* cx,
   return NewFunctionFromSpec(cx, fs, id);
 }
 
-static bool IsFunctionCloneable(HandleFunction fun) {
-  // If a function was compiled with non-global syntactic environments on
-  // the environment chain, we could have baked in EnvironmentCoordinates
-  // into the script. We cannot clone it without breaking the compiler's
-  // assumptions.
-  for (ScopeIter si(fun->nonLazyScript()->enclosingScope()); si; si++) {
-    if (si.scope()->is<GlobalScope>()) {
-      return true;
-    }
-    if (si.hasSyntacticEnvironment()) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-static JSObject* CloneFunctionObject(JSContext* cx, HandleObject funobj,
-                                     HandleObject env, HandleScope scope) {
-  AssertHeapIsIdle();
-  CHECK_THREAD(cx);
-  cx->check(env);
-  MOZ_ASSERT(env);
-  // Note that funobj can be in a different compartment.
-
-  if (!funobj->is<JSFunction>()) {
-    MOZ_RELEASE_ASSERT(!IsCrossCompartmentWrapper(funobj));
-    AutoRealm ar(cx, funobj);
-    RootedValue v(cx, ObjectValue(*funobj));
-    ReportIsNotFunction(cx, v);
-    return nullptr;
-  }
-
-  // Only allow cloning normal, interpreted functions.
-  RootedFunction fun(cx, &funobj->as<JSFunction>());
-  if (fun->isNative() || fun->isBoundFunction() ||
-      fun->kind() != FunctionFlags::NormalFunction || fun->isExtended() ||
-      fun->isSelfHostedBuiltin()) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_CANT_CLONE_OBJECT);
-    return nullptr;
-  }
-
-  if (fun->isInterpretedLazy()) {
-    AutoRealm ar(cx, fun);
-    if (!JSFunction::getOrCreateScript(cx, fun)) {
-      return nullptr;
-    }
-  }
-  RootedScript script(cx, fun->nonLazyScript());
-
-  if (!IsFunctionCloneable(fun)) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_BAD_CLONE_FUNOBJ_SCOPE);
-    return nullptr;
-  }
-
-  if (CanReuseScriptForClone(cx->realm(), fun, env)) {
-    return CloneFunctionReuseScript(cx, fun, env, fun->getAllocKind());
-  }
-
-  Rooted<ScriptSourceObject*> sourceObject(cx, script->sourceObject());
-  if (cx->compartment() != sourceObject->compartment()) {
-    sourceObject = ScriptSourceObject::clone(cx, sourceObject);
-    if (!sourceObject) {
-      return nullptr;
-    }
-  }
-
-  JSFunction* clone = CloneFunctionAndScript(cx, fun, env, scope, sourceObject,
-                                             fun->getAllocKind());
-
-#ifdef DEBUG
-  // The cloned function should itself be cloneable.
-  RootedFunction cloneRoot(cx, clone);
-  MOZ_ASSERT_IF(cloneRoot, IsFunctionCloneable(cloneRoot));
-#endif
-
-  return clone;
-}
-
-JS_PUBLIC_API JSObject* JS::CloneFunctionObject(JSContext* cx,
-                                                HandleObject funobj) {
-  RootedObject globalLexical(cx, &cx->global()->lexicalEnvironment());
-  RootedScope emptyGlobalScope(cx, &cx->global()->emptyGlobalScope());
-  return CloneFunctionObject(cx, funobj, globalLexical, emptyGlobalScope);
-}
-
-extern JS_PUBLIC_API JSObject* JS::CloneFunctionObject(
-    JSContext* cx, HandleObject funobj, HandleObjectVector envChain) {
-  RootedObject env(cx);
-  RootedScope scope(cx);
-  if (!CreateNonSyntacticEnvironmentChain(cx, envChain, &env, &scope)) {
-    return nullptr;
-  }
-  return CloneFunctionObject(cx, funobj, env, scope);
-}
-
 JS_PUBLIC_API JSObject* JS_GetFunctionObject(JSFunction* fun) { return fun; }
 
 JS_PUBLIC_API JSString* JS_GetFunctionId(JSFunction* fun) {
@@ -3657,28 +3605,38 @@ CompileOptions& CompileOptions::setIntroductionInfoToCaller(
   }
 }
 
-#if defined(JS_BUILD_BINAST)
-
 JSScript* JS::DecodeBinAST(JSContext* cx, const ReadOnlyCompileOptions& options,
-                           const uint8_t* buf, size_t length) {
+                           const uint8_t* buf, size_t length,
+                           JS::BinASTFormat format) {
+#if defined(JS_BUILD_BINAST)
   MOZ_ASSERT(!cx->zone()->isAtomsZone());
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
 
-  return frontend::CompileGlobalBinASTScript(cx, options, buf, length);
+  return frontend::CompileGlobalBinASTScript(cx, options, buf, length, format);
+#else   // !JS_BUILD_BINAST
+  JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                            JSMSG_SUPPORT_NOT_ENABLED, "BinAST");
+  return nullptr;
+#endif  // JS_BUILD_BINAST
 }
 
 JSScript* JS::DecodeBinAST(JSContext* cx, const ReadOnlyCompileOptions& options,
-                           FILE* file) {
+                           FILE* file, JS::BinASTFormat format) {
+#if defined(JS_BUILD_BINAST)
   FileContents fileContents(cx);
   if (!ReadCompleteFile(cx, file, fileContents)) {
     return nullptr;
   }
 
-  return DecodeBinAST(cx, options, fileContents.begin(), fileContents.length());
+  return DecodeBinAST(cx, options, fileContents.begin(), fileContents.length(),
+                      format);
+#else   // !JS_BUILD_BINAST
+  JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                            JSMSG_SUPPORT_NOT_ENABLED, "BinAST");
+  return nullptr;
+#endif  // JS_BUILD_BINAST
 }
-
-#endif
 
 JS_PUBLIC_API JSObject* JS_GetGlobalFromScript(JSScript* script) {
   return &script->global();
@@ -4581,7 +4539,7 @@ JS_PUBLIC_API bool JS_EncodeStringToBuffer(JSContext* cx, JSString* str,
   return true;
 }
 
-JS_PUBLIC_API mozilla::Maybe<mozilla::Tuple<size_t, size_t> >
+JS_PUBLIC_API mozilla::Maybe<mozilla::Tuple<size_t, size_t>>
 JS_EncodeStringToUTF8BufferPartial(JSContext* cx, JSString* str,
                                    mozilla::Span<char> buffer) {
   AssertHeapIsIdle();

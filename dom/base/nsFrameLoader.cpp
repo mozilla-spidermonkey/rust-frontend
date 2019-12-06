@@ -14,7 +14,6 @@
 #include "prenv.h"
 
 #include "nsDocShell.h"
-#include "nsIDOMMozBrowserFrame.h"
 #include "nsIContentInlines.h"
 #include "nsIContentViewer.h"
 #include "mozilla/dom/Document.h"
@@ -27,7 +26,6 @@
 #include "nsIBaseWindow.h"
 #include "nsIBrowser.h"
 #include "nsContentUtils.h"
-#include "nsIXPConnect.h"
 #include "nsUnicharUtils.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptSecurityManager.h"
@@ -38,10 +36,8 @@
 #include "nsIScrollableFrame.h"
 #include "nsSubDocumentFrame.h"
 #include "nsError.h"
-#include "nsISHistory.h"
 #include "nsIAppWindow.h"
 #include "nsIMozBrowserFrame.h"
-#include "nsISHistory.h"
 #include "nsIScriptError.h"
 #include "nsGlobalWindow.h"
 #include "nsHTMLDocument.h"
@@ -54,7 +50,6 @@
 #include "ReferrerInfo.h"
 
 #include "nsIURI.h"
-#include "nsIURL.h"
 #include "nsNetUtil.h"
 
 #include "nsGkAtoms.h"
@@ -102,7 +97,6 @@
 #include "mozilla/WebBrowserPersistLocalDocument.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/PromiseNativeHandler.h"
-#include "mozilla/dom/ParentSHistory.h"
 #include "mozilla/dom/ChildSHistory.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
 #include "mozilla/dom/ContentChild.h"
@@ -155,8 +149,7 @@ typedef ScrollableLayerGuid::ViewID ViewID;
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(nsFrameLoader, mBrowsingContext,
                                       mMessageManager, mChildMessageManager,
-                                      mParentSHistory, mRemoteBrowser,
-                                      mStaticCloneOf)
+                                      mRemoteBrowser, mStaticCloneOf)
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsFrameLoader)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsFrameLoader)
 
@@ -2088,15 +2081,12 @@ nsresult nsFrameLoader::MaybeCreateDocShell() {
     return NS_ERROR_FAILURE;
   }
 
-  // If we are an in-process browser, we want to set up our session history. We
-  // do this by creating both the child SHistory (which is in the nsDocShell),
-  // and creating the corresponding in-process ParentSHistory.
+  // If we are an in-process browser, we want to set up our session history.
   if (mIsTopLevelContent && mOwnerContent->IsXULElement(nsGkAtoms::browser) &&
       !mOwnerContent->HasAttr(kNameSpaceID_None, nsGkAtoms::disablehistory)) {
     // XXX(nika): Set this up more explicitly?
     nsresult rv = docShell->InitSessionHistory();
     NS_ENSURE_SUCCESS(rv, rv);
-    mParentSHistory = new ParentSHistory(this);
   }
 
   OriginAttributes attrs;
@@ -2111,8 +2101,7 @@ nsresult nsFrameLoader::MaybeCreateDocShell() {
   //
   // For example, firstPartyDomain is computed from top-level document, it
   // doesn't exist in the top-level docshell.
-  if (parentIsContent &&
-      !nsContentUtils::IsSystemPrincipal(doc->NodePrincipal()) &&
+  if (parentIsContent && !doc->NodePrincipal()->IsSystemPrincipal() &&
       !OwnerIsMozBrowserFrame()) {
     OriginAttributes oa = doc->NodePrincipal()->OriginAttributesRef();
 
@@ -2671,14 +2660,6 @@ bool nsFrameLoader::TryRemoteBrowserInternal() {
     nsCOMPtr<nsIBrowserDOMWindow> browserDOMWin;
     rootChromeWin->GetBrowserDOMWindow(getter_AddRefs(browserDOMWin));
     browserParent->SetBrowserDOMWindow(browserDOMWin);
-  }
-
-  // Set up a parent SHistory
-  if (XRE_IsParentProcess()) {
-    // XXX(nika): Once we get out of process iframes we won't want to
-    // unconditionally set this up. What do we do for iframes in a chrome loaded
-    // document for example?
-    mParentSHistory = new ParentSHistory(this);
   }
 
   // For xul:browsers, update some settings based on attributes:

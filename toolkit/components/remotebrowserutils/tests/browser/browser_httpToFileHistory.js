@@ -5,6 +5,7 @@ const { E10SUtils } = ChromeUtils.import(
 const RESPONSE_PROCESS_SELECTION_PREF =
   "browser.tabs.remote.useHTTPResponseProcessSelection";
 const DOCUMENT_CHANNEL_PREF = "browser.tabs.documentchannel";
+const FISSION_PREF = "fission.autostart";
 const HISTORY = [
   { url: httpURL("dummy_page.html") },
   { url: fileURL("dummy_page.html") },
@@ -122,10 +123,7 @@ async function runTest() {
 
 add_task(async function prefDisabled() {
   await SpecialPowers.pushPrefEnv({
-    set: [
-      [RESPONSE_PROCESS_SELECTION_PREF, false],
-      [DOCUMENT_CHANNEL_PREF, false],
-    ],
+    set: [[RESPONSE_PROCESS_SELECTION_PREF, false]],
   });
   await runTest();
 });

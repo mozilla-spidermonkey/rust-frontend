@@ -159,11 +159,11 @@ inline void AutoGCRooter::trace(JSTracer* trc) {
       frontend::TraceParser(trc, this);
       return;
 
-#if defined(JS_BUILD_BINAST)
     case Tag::BinASTParser:
+#if defined(JS_BUILD_BINAST)
       frontend::TraceBinASTParser(trc, this);
-      return;
 #endif  // defined(JS_BUILD_BINAST)
+      return;
 
     case Tag::ValueArray: {
       /*
@@ -384,7 +384,7 @@ void js::gc::GCRuntime::traceRuntimeCommon(JSTracer* trc,
   // Trace the self-hosting global compartment.
   rt->traceSelfHostingGlobal(trc);
 
-#ifdef ENABLE_INTL_API
+#ifdef JS_HAS_INTL_API
   // Trace the shared Intl data.
   rt->traceSharedIntlData(trc);
 #endif

@@ -51,7 +51,6 @@
 #include "FrameLayerBuilder.h"
 #include "nsSubDocumentFrame.h"
 #include "nsSVGOuterSVGFrame.h"
-#include "nsIObjectLoadingContent.h"
 #include "mozilla/Attributes.h"
 #include "ScrollbarActivity.h"
 #include "nsRefreshDriver.h"
@@ -60,7 +59,6 @@
 #include "nsIScrollPositionListener.h"
 #include "StickyScrollContainer.h"
 #include "nsIFrameInlines.h"
-#include "nsILayoutHistoryState.h"
 #include "gfxPlatform.h"
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_general.h"
@@ -6645,6 +6643,20 @@ uint32_t nsIScrollableFrame::GetAvailableScrollingDirections() const {
       GetScrolledFrame()->PresContext()->AppUnitsPerDevPixel();
   uint32_t directions = 0;
   nsRect scrollRange = GetScrollRange();
+  if (scrollRange.width >= oneDevPixel) {
+    directions |= HORIZONTAL;
+  }
+  if (scrollRange.height >= oneDevPixel) {
+    directions |= VERTICAL;
+  }
+  return directions;
+}
+
+uint32_t nsIScrollableFrame::GetAvailableVisualScrollingDirections() const {
+  nscoord oneDevPixel =
+      GetScrolledFrame()->PresContext()->AppUnitsPerDevPixel();
+  uint32_t directions = 0;
+  nsRect scrollRange = GetVisualScrollRange();
   if (scrollRange.width >= oneDevPixel) {
     directions |= HORIZONTAL;
   }

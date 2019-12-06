@@ -205,6 +205,8 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
 
   static bool UseWebRender();
 
+  static bool CanMigrateMacGPUs();
+
   /**
    * Create an offscreen surface of the given dimensions
    * and image format.
@@ -897,6 +899,9 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
   void InitGPUProcessPrefs();
   virtual void InitPlatformGPUProcessPrefs() {}
   void InitOMTPConfig();
+
+  // Gather telemetry data about the Gfx Platform and send it
+  static void ReportTelemetry();
 
   static bool IsDXInterop2Blocked();
   static bool IsDXNV12Blocked();

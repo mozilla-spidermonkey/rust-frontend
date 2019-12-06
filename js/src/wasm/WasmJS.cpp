@@ -35,6 +35,7 @@
 #include "js/PropertySpec.h"  // JS_{PS,FN}{,_END}
 #include "util/StringBuffer.h"
 #include "util/Text.h"
+#include "vm/ErrorObject.h"
 #include "vm/Interpreter.h"
 #include "vm/StringType.h"
 #include "wasm/WasmBaselineCompile.h"
@@ -97,6 +98,19 @@ bool wasm::HasMultiValueSupport(JSContext* cx) {
 #endif
 #ifdef ENABLE_WASM_MULTI_VALUE
   return true;
+#else
+  return false;
+#endif
+}
+
+bool wasm::HasI64BigIntSupport(JSContext* cx) {
+#ifdef ENABLE_WASM_CRANELIFT
+  if (cx->options().wasmCranelift()) {
+    return false;
+  }
+#endif
+#ifdef ENABLE_WASM_BIGINT
+  return cx->options().isWasmBigIntEnabled();
 #else
   return false;
 #endif

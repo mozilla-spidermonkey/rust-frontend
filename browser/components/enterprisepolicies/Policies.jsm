@@ -401,6 +401,7 @@ var Policies = {
         blockAboutPage(manager, "about:devtools");
         blockAboutPage(manager, "about:debugging");
         blockAboutPage(manager, "about:devtools-toolbox");
+        blockAboutPage(manager, "about:profiling");
       }
     },
   },
@@ -782,7 +783,7 @@ var Policies = {
           blockAboutPage(manager, "about:debugging");
         }
       }
-      let { addons } = await AddonManager.getActiveAddons();
+      let addons = await AddonManager.getAllAddons();
       let allowedExtensions = [];
       for (let extensionID in extensionSettings) {
         if (extensionID == "*") {

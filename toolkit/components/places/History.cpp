@@ -27,7 +27,6 @@
 #include "mozilla/Services.h"
 #include "nsThreadUtils.h"
 #include "nsNetUtil.h"
-#include "nsIFileURL.h"
 #include "nsIWidget.h"
 #include "nsIXPConnect.h"
 #include "nsIXULRuntime.h"
@@ -363,7 +362,7 @@ nsresult GetJSObjectFromArray(JSContext* aCtx, JS::Handle<JSObject*> aArray,
   return NS_OK;
 }
 
-} // namespace
+}  // namespace
 
 class VisitedQuery final : public AsyncStatementCallback {
  public:

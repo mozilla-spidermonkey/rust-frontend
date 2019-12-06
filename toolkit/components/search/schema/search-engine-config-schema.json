@@ -31,6 +31,9 @@
     },
     "params": {
       "$ref": "#/definitions/params"
+    },
+    "extraParams": {
+      "$ref": "#/definitions/extraParams"
     }
   },
   "definitions": {
@@ -97,6 +100,52 @@
         "no"
       ]
     },
+    "extraParams": {
+      "type": "array",
+      "title": "Extra Parameters",
+      "description": "Extra parameters for the search engine (aka MozParams)",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Name of the parameter that will be used in the search query"
+          },
+          "condition": {
+            "type": "string",
+            "title": "Condition",
+            "description": "The type of parameter (pref or purpose)",
+            "enum": [
+              "pref",
+              "purpose"
+            ]
+          },
+          "purpose": {
+            "type": "string",
+            "title": "Purpose",
+            "description": "The search purpose that triggers this parameter being appended.",
+            "enum": [
+              "searchbar",
+              "keyword",
+              "contextmenu",
+              "homepage",
+              "newtab"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "title": "Value",
+            "description": "If this is a purpose type, the value is used as the value of the parameter in the query"
+          },
+          "pref": {
+            "type": "string",
+            "title": "Preference name",
+            "description": "The preference name to get the value from (i.e. browser.search.param.<preference name>)."
+          }
+        }
+      }
+    },
     "orderHint": {
       "type": "number",
       "title": "Order Hint",
@@ -140,11 +189,23 @@
       }
     },
     "searchUrlCodes": {
-      "type": "object",
+      "type": "array",
       "title": "Codes",
-      "description": "A map of parameter name to the parameter value.",
-      "additionalProperties": {
-        "type": "string"
+      "description": "A array of objects - map of parameter name to the parameter value.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Name of the parameter that will be used in the query"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value",
+            "description": "The value of parameter (pref or purpose)"
+          }
+        }
       }
     },
     "params": {
@@ -308,6 +369,9 @@
         },
         "params": {
           "$ref": "#/definitions/params"
+        },
+        "extraParams": {
+          "$ref": "#/definitions/extraParams"
         }
       }
     }

@@ -23,6 +23,7 @@ import { syncBreakpoint } from "../breakpoints";
 import { loadSourceText } from "./loadSourceText";
 import { togglePrettyPrint } from "./prettyPrint";
 import { selectLocation, setBreakableLines } from "../sources";
+
 import {
   getRawSourceURL,
   isPrettyURL,
@@ -47,6 +48,7 @@ import { validateNavigateContext, ContextError } from "../../utils/context";
 
 import type {
   Source,
+  SourceActorId,
   Context,
   OriginalSourceData,
   GeneratedSourceData,
@@ -205,6 +207,7 @@ function checkPendingBreakpoints(cx: Context, sourceId: string) {
 
     // load the source text if there is a pending breakpoint for it
     await dispatch(loadSourceText({ cx, source }));
+
     await dispatch(setBreakableLines(cx, source.id));
 
     await Promise.all(
@@ -404,5 +407,17 @@ function checkNewSources(cx, sources: Source[]) {
     dispatch(restoreBlackBoxedSources(cx, sources));
 
     return sources;
+  };
+}
+
+export function ensureSourceActor(thread: string, sourceActor: SourceActorId) {
+  return async function({ getState, client }: ThunkArgs) {
+    await sourceQueue.flush();
+    if (hasSourceActor(getState(), sourceActor)) {
+      return Promise.resolve();
+    }
+
+    await client.waitForSourceActor(thread, sourceActor);
+    return sourceQueue.flush();
   };
 }

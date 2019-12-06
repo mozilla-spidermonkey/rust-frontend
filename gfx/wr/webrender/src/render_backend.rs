@@ -509,12 +509,12 @@ impl Document {
                     self.frame_is_valid = false;
                 }
             }
-            FrameMsg::SetIsTransformPinchZooming(is_zooming, animation_id) => {
+            FrameMsg::SetIsTransformAsyncZooming(is_zooming, animation_id) => {
                 let node = self.scene.clip_scroll_tree.spatial_nodes.iter_mut()
                     .find(|node| node.is_transform_bound_to_property(animation_id));
                 if let Some(node) = node {
-                    if node.is_pinch_zooming != is_zooming {
-                        node.is_pinch_zooming = is_zooming;
+                    if node.is_async_zooming != is_zooming {
+                        node.is_async_zooming = is_zooming;
                         self.frame_is_valid = false;
                     }
                 }
@@ -885,6 +885,13 @@ impl RenderBackend {
 
                         for mut txn in txns.drain(..) {
                             let has_built_scene = txn.built_scene.is_some();
+
+                            if has_built_scene {
+                                let scene_build_time =
+                                    txn.scene_build_end_time - txn.scene_build_start_time;
+                                profile_counters.scene_build_time.set(scene_build_time);
+                            }
+
                             if let Some(doc) = self.documents.get_mut(&txn.document_id) {
 
                                 doc.removed_pipelines.append(&mut txn.removed_pipelines);
@@ -1087,9 +1094,9 @@ impl RenderBackend {
 
                 self.gpu_cache.clear();
 
-                let pending_update = self.resource_cache.pending_updates();
+                let resource_updates = self.resource_cache.pending_updates();
                 let msg = ResultMsg::UpdateResources {
-                    updates: pending_update,
+                    resource_updates,
                     memory_pressure: true,
                 };
                 self.result_tx.send(msg).unwrap();
@@ -1422,7 +1429,6 @@ impl RenderBackend {
         }
 
         let requires_frame_build = self.requires_frame_build();
-        let use_multiple_documents = self.documents.len() > 1;
         let doc = self.documents.get_mut(&document_id).unwrap();
         doc.has_built_scene |= has_built_scene;
 
@@ -1441,6 +1447,17 @@ impl RenderBackend {
             scroll |= op.scroll;
         }
 
+        for update in &resource_updates {
+            if let ResourceUpdate::UpdateImage(..) = update {
+                doc.frame_is_valid = false;
+            }
+        }
+
+        self.resource_cache.post_scene_building_update(
+            resource_updates,
+            &mut profile_counters.resources,
+        );
+
         if doc.dynamic_properties.flush_pending_updates() {
             doc.frame_is_valid = false;
             doc.hit_tester_is_valid = false;
@@ -1452,35 +1469,6 @@ impl RenderBackend {
             // composition here and do it as soon as we receive the scene.
             render_frame = false;
         }
-
-        if doc.frame_is_valid {
-            // Invalidate WR frame if ResourceUpdate::UpdateImage exists except
-            // when image of ExternalImageType::TextureHandle is not used.
-            let resource_cache = &self.resource_cache;
-            if resource_updates.iter().any(|update| {
-                match update {
-                    ResourceUpdate::UpdateImage(update_image) => {
-                        // TODO is_image_active() does not have multiple documents support.
-                        if use_multiple_documents {
-                            return true;
-                        }
-                        if !resource_cache.is_image_active(update_image.key) {
-                            return false;
-                        }
-                        true
-                    }
-                    _ => { false }
-                }
-            })
-            {
-                doc.frame_is_valid = false;
-            }
-        }
-
-        self.resource_cache.post_scene_building_update(
-            resource_updates,
-            &mut profile_counters.resources,
-        );
 
         // Avoid re-building the frame if the current built frame is still valid.
         // However, if the resource_cache requires a frame build, _always_ do that, unless
@@ -1534,6 +1522,12 @@ impl RenderBackend {
                 let pending_update = self.resource_cache.pending_updates();
                 (pending_update, rendered_document)
             };
+
+            // If there are no texture cache updates to apply, and if the produced
+            // frame is a no-op, then we can skip compositing this frame completely.
+            if pending_update.is_nop() && rendered_document.frame.is_nop() {
+                doc.rendered_frame_is_valid = true;
+            }
 
             let msg = ResultMsg::PublishPipelineInfo(doc.updated_pipeline_info());
             self.result_tx.send(msg).unwrap();
@@ -1811,7 +1805,7 @@ impl RenderBackend {
 
         if config.bits.contains(CaptureBits::FRAME) {
             let msg_update_resources = ResultMsg::UpdateResources {
-                updates: self.resource_cache.pending_updates(),
+                resource_updates: self.resource_cache.pending_updates(),
                 memory_pressure: false,
             };
             self.result_tx.send(msg_update_resources).unwrap();

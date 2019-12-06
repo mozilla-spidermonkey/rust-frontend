@@ -20,28 +20,24 @@
 #include "nsHttpChannelAuthProvider.h"
 #include "nsHttpHandler.h"
 #include "nsString.h"
-#include "nsIApplicationCacheService.h"
 #include "nsIApplicationCacheContainer.h"
 #include "nsICacheStorageService.h"
 #include "nsICacheStorage.h"
 #include "nsICacheEntry.h"
-#include "nsICaptivePortalService.h"
-#include "nsICookieService.h"
 #include "nsICryptoHash.h"
+#include "nsIEffectiveTLDService.h"
+#include "nsIHttpHeaderVisitor.h"
 #include "nsINetworkInterceptController.h"
 #include "nsINSSErrorsService.h"
 #include "nsISecurityReporter.h"
 #include "nsIStringBundle.h"
 #include "nsIStreamListenerTee.h"
 #include "nsISeekableStream.h"
-#include "nsILoadGroupChild.h"
 #include "nsIProtocolProxyService2.h"
-#include "nsIURIClassifier.h"
 #include "nsMimeTypes.h"
 #include "nsNetCID.h"
 #include "nsNetUtil.h"
 #include "nsIURL.h"
-#include "nsIURIMutator.h"
 #include "nsIStreamTransportService.h"
 #include "prnetdb.h"
 #include "nsEscape.h"
@@ -50,7 +46,6 @@
 #include "nsDNSPrefetch.h"
 #include "nsChannelClassifier.h"
 #include "nsIRedirectResultListener.h"
-#include "mozIThirdPartyUtil.h"
 #include "mozilla/TimeStamp.h"
 #include "nsError.h"
 #include "nsPrintfCString.h"
@@ -61,6 +56,7 @@
 #include "nsIConsoleService.h"
 #include "mozilla/AntiTrackingCommon.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
@@ -69,12 +65,10 @@
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/StaticPrefs_security.h"
-#include "nsISSLSocketControl.h"
 #include "sslt.h"
 #include "nsContentUtils.h"
 #include "nsContentSecurityManager.h"
 #include "nsIClassOfService.h"
-#include "nsIPermissionManager.h"
 #include "nsIPrincipal.h"
 #include "nsIScriptError.h"
 #include "nsIScriptSecurityManager.h"
@@ -83,9 +77,7 @@
 #include "LoadContextInfo.h"
 #include "netCore.h"
 #include "nsHttpTransaction.h"
-#include "nsICacheEntryDescriptor.h"
 #include "nsICancelable.h"
-#include "nsIHttpChannelAuthProvider.h"
 #include "nsIHttpChannelInternal.h"
 #include "nsIPrompt.h"
 #include "nsInputStreamPump.h"
@@ -117,14 +109,12 @@
 #include "nsMixedContentBlocker.h"
 #include "CacheStorageService.h"
 #include "HttpChannelParent.h"
+#include "HttpTransactionParent.h"
 #include "ParentChannelListener.h"
 #include "InterceptedHttpChannel.h"
-#include "nsIBufferedStreams.h"
-#include "nsIFileStreams.h"
-#include "nsIMIMEInputStream.h"
-#include "nsIMultiplexInputStream.h"
 #include "../../cache2/CacheFileUtils.h"
 #include "../../cache2/CacheHashUtils.h"
+#include "nsIMultiplexInputStream.h"
 #include "nsINetworkLinkService.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/ServiceWorkerUtils.h"
@@ -132,10 +122,10 @@
 #include "mozilla/net/CookieSettings.h"
 #include "mozilla/net/NeckoChannelParams.h"
 #include "mozilla/net/UrlClassifierFeatureFactory.h"
-#include "nsIWebNavigation.h"
 #include "HttpTrafficAnalyzer.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
 #include "mozilla/dom/WindowGlobalParent.h"
+#include "mozilla/net/SocketProcessParent.h"
 #include "js/Conversions.h"
 
 #ifdef MOZ_TASK_TRACER
@@ -357,6 +347,7 @@ nsHttpChannel::nsHttpChannel()
       mRaceDelay(0),
       mIgnoreCacheEntry(false),
       mRCWNLock("nsHttpChannel.mRCWNLock"),
+      mProxyConnectResponseCode(0),
       mDidReval(false) {
   LOG(("Creating nsHttpChannel [this=%p]\n", this));
   mChannelCreationTime = PR_Now();
@@ -860,7 +851,7 @@ nsresult nsHttpChannel::DoConnect(HttpTransactionShell* aTransWithStickyConn) {
     return rv;
   }
 
-  rv = mTransactionPump->AsyncRead(this, nullptr);
+  rv = mTransaction->AsyncRead(this, getter_AddRefs(mTransactionPump));
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -1250,9 +1241,26 @@ nsresult nsHttpChannel::SetupTransaction() {
                                          getter_AddRefs(callbacks));
 
   // create the transaction object
-  mTransaction = new nsHttpTransaction();
-  LOG1(("nsHttpChannel %p created nsHttpTransaction %p\n", this,
-        mTransaction.get()));
+  if (gIOService->UseSocketProcess()) {
+    MOZ_ASSERT(gIOService->SocketProcessReady(),
+               "Socket process should be ready.");
+
+    RefPtr<HttpTransactionParent> transParent = new HttpTransactionParent();
+    LOG1(("nsHttpChannel %p created HttpTransactionParent %p\n", this,
+          transParent.get()));
+
+    SocketProcessParent* socketProcess = SocketProcessParent::GetSingleton();
+    if (socketProcess) {
+      Unused << socketProcess->SendPHttpTransactionConstructor(transParent);
+    }
+
+    mTransaction = transParent;
+  } else {
+    mTransaction = new nsHttpTransaction();
+    LOG1(("nsHttpChannel %p created nsHttpTransaction %p\n", this,
+          mTransaction.get()));
+  }
+
   mTransaction->SetTransactionObserver(mTransactionObserver);
   mTransactionObserver = nullptr;
 
@@ -1288,11 +1296,10 @@ nsresult nsHttpChannel::SetupTransaction() {
 
   HttpTrafficCategory category = CreateTrafficCategory();
 
-  nsCOMPtr<nsIAsyncInputStream> responseStream;
-  rv = mTransaction->Init(
-      mCaps, mConnectionInfo, &mRequestHead, mUploadStream, mReqContentLength,
-      mUploadStreamHasHeaders, GetCurrentThreadEventTarget(), callbacks, this,
-      mTopLevelOuterContentWindowId, category, getter_AddRefs(responseStream));
+  rv = mTransaction->Init(mCaps, mConnectionInfo, &mRequestHead, mUploadStream,
+                          mReqContentLength, mUploadStreamHasHeaders,
+                          GetCurrentThreadEventTarget(), callbacks, this,
+                          mTopLevelOuterContentWindowId, category);
   if (NS_FAILED(rv)) {
     mTransaction = nullptr;
     return rv;
@@ -1303,8 +1310,6 @@ nsresult nsHttpChannel::SetupTransaction() {
     mTransaction->SetRequestContext(mRequestContext);
   }
 
-  rv = nsInputStreamPump::Create(getter_AddRefs(mTransactionPump),
-                                 responseStream);
   return rv;
 }
 
@@ -1681,6 +1686,13 @@ void WarnWrongMIMEOfScript(nsHttpChannel* aChannel, nsIURI* aURI,
     return;
   }
 
+  bool succeeded;
+  MOZ_ALWAYS_SUCCEEDS(aChannel->GetRequestSucceeded(&succeeded));
+  if (!succeeded) {
+    // Do not warn for failed loads: HTTP error pages are usually in HTML.
+    return;
+  }
+
   nsAutoCString contentType;
   aResponseHead->ContentType(contentType);
   NS_ConvertUTF8toUTF16 typeString(contentType);
@@ -1813,7 +1825,10 @@ nsresult nsHttpChannel::CallOnStartRequest() {
     }
 
     if (!typeSniffersCalled && mTransactionPump) {
-      mTransactionPump->PeekStream(CallTypeSniffers, thisChannel);
+      RefPtr<nsInputStreamPump> pump = do_QueryObject(mTransactionPump);
+      if (pump) {
+        pump->PeekStream(CallTypeSniffers, thisChannel);
+      }
     }
   }
 
@@ -1837,6 +1852,36 @@ nsresult nsHttpChannel::CallOnStartRequest() {
         if (NS_SUCCEEDED(rv)) {
           mListener = converter;
           unknownDecoderStarted = true;
+        }
+      }
+    }
+  }
+
+  // If the content is multipart/x-mixed-replace, we'll insert a MIME decoder
+  // in the pipeline to handle the content and pass it along to our
+  // original listener. nsUnknownDecoder doesn't support detecting this type,
+  // so we only need to insert this using the response header's mime type.
+  // We only do this for document loads, since we might want to send parts
+  // to the external protocol handler without leaving the parent process.
+  nsCOMPtr<nsIParentChannel> parentChannel;
+  NS_QueryNotificationCallbacks(this, parentChannel);
+  RefPtr<DocumentLoadListener> docListener = do_QueryObject(parentChannel);
+  if (mResponseHead && docListener) {
+    nsAutoCString contentType;
+    mResponseHead->ContentType(contentType);
+
+    if (contentType.Equals(NS_LITERAL_CSTRING("multipart/x-mixed-replace"))) {
+      nsCOMPtr<nsIStreamConverterService> convServ(
+          do_GetService("@mozilla.org/streamConverters;1", &rv));
+      if (NS_SUCCEEDED(rv)) {
+        nsCOMPtr<nsIStreamListener> toListener(mListener);
+        nsCOMPtr<nsIStreamListener> fromListener;
+
+        rv = convServ->AsyncConvertData("multipart/x-mixed-replace", "*/*",
+                                        toListener, nullptr,
+                                        getter_AddRefs(fromListener));
+        if (NS_SUCCEEDED(rv)) {
+          mListener = fromListener;
         }
       }
     }
@@ -1884,6 +1929,7 @@ nsresult nsHttpChannel::CallOnStartRequest() {
     if (listener) {
       mListener = listener;
       mCompressListener = listener;
+      mHasAppliedConversion = true;
     }
   }
 
@@ -1924,6 +1970,18 @@ nsresult nsHttpChannel::CallOnStartRequest() {
   return NS_OK;
 }
 
+NS_IMETHODIMP nsHttpChannel::GetHttpProxyConnectResponseCode(
+    int32_t* aResponseCode) {
+  NS_ENSURE_ARG_POINTER(aResponseCode);
+
+  if (mConnectionInfo && mConnectionInfo->UsingConnect()) {
+    *aResponseCode = mProxyConnectResponseCode;
+  } else {
+    *aResponseCode = -1;
+  }
+  return NS_OK;
+}
+
 nsresult nsHttpChannel::ProcessFailedProxyConnect(uint32_t httpStatus) {
   // Failure to set up a proxy tunnel via CONNECT means one of the following:
   // 1) Proxy wants authorization, or forbids.
@@ -1938,67 +1996,7 @@ nsresult nsHttpChannel::ProcessFailedProxyConnect(uint32_t httpStatus) {
 
   MOZ_ASSERT(mConnectionInfo->UsingConnect(),
              "proxy connect failed but not using CONNECT?");
-  nsresult rv;
-  switch (httpStatus) {
-    case 300:
-    case 301:
-    case 302:
-    case 303:
-    case 307:
-    case 308:
-      // Bad redirect: not top-level, or it's a POST, bad/missing Location,
-      // or ProcessRedirect() failed for some other reason.  Legal
-      // redirects that fail because site not available, etc., are handled
-      // elsewhere, in the regular codepath.
-      rv = NS_ERROR_CONNECTION_REFUSED;
-      break;
-    case 403:  // HTTP/1.1: "Forbidden"
-    case 501:  // HTTP/1.1: "Not Implemented"
-      // user sees boilerplate Mozilla "Proxy Refused Connection" page.
-      rv = NS_ERROR_PROXY_CONNECTION_REFUSED;
-      break;
-    case 407:  // ProcessAuthentication() failed (e.g. no header)
-      rv = NS_ERROR_PROXY_AUTHENTICATION_FAILED;
-      break;
-    case 429:
-      rv = NS_ERROR_TOO_MANY_REQUESTS;
-      break;
-      // Squid sends 404 if DNS fails (regular 404 from target is tunneled)
-    case 404:  // HTTP/1.1: "Not Found"
-               // RFC 2616: "some deployed proxies are known to return 400 or
-               // 500 when DNS lookups time out."  (Squid uses 500 if it runs
-               // out of sockets: so we have a conflict here).
-    case 400:  // HTTP/1.1 "Bad Request"
-    case 500:  // HTTP/1.1: "Internal Server Error"
-      /* User sees: "Address Not Found: Firefox can't find the server at
-       * www.foo.com."
-       */
-      rv = NS_ERROR_UNKNOWN_HOST;
-      break;
-    case 502:  // HTTP/1.1: "Bad Gateway" (invalid resp from target server)
-      rv = NS_ERROR_PROXY_BAD_GATEWAY;
-      break;
-    case 503:  // HTTP/1.1: "Service Unavailable"
-      // Squid returns 503 if target request fails for anything but DNS.
-      /* User sees: "Failed to Connect:
-       *  Firefox can't establish a connection to the server at
-       *  www.foo.com.  Though the site seems valid, the browser
-       *  was unable to establish a connection."
-       */
-      rv = NS_ERROR_CONNECTION_REFUSED;
-      break;
-    // RFC 2616 uses 504 for both DNS and target timeout, so not clear what to
-    // do here: picking target timeout, as DNS covered by 400/404/500
-    case 504:  // HTTP/1.1: "Gateway Timeout"
-      // user sees: "Network Timeout: The server at www.foo.com
-      //              is taking too long to respond."
-      rv = NS_ERROR_PROXY_GATEWAY_TIMEOUT;
-      break;
-    // Confused proxy server or malicious response
-    default:
-      rv = NS_ERROR_PROXY_CONNECTION_REFUSED;
-      break;
-  }
+  nsresult rv = HttpProxyResponseToErrorCode(httpStatus);
   LOG(("Cancelling failed proxy CONNECT [this=%p httpStatus=%u]\n", this,
        httpStatus));
 
@@ -2605,7 +2603,7 @@ void nsHttpChannel::AssertNotDocumentChannel() {
 
   nsCOMPtr<nsIParentChannel> parentChannel;
   NS_QueryNotificationCallbacks(this, parentChannel);
-  RefPtr<DocumentChannelParent> documentChannelParent =
+  RefPtr<DocumentLoadListener> documentChannelParent =
       do_QueryObject(parentChannel);
   if (documentChannelParent) {
     // The load is using document channel.
@@ -3605,8 +3603,7 @@ nsresult nsHttpChannel::ProcessPartialContent(
   }
 
   // merge any new headers with the cached response headers
-  rv = mCachedResponseHead->UpdateHeaders(mResponseHead);
-  if (NS_FAILED(rv)) return rv;
+  mCachedResponseHead->UpdateHeaders(mResponseHead);
 
   // update the cached response head
   nsAutoCString head;
@@ -3749,8 +3746,7 @@ nsresult nsHttpChannel::ProcessNotModified(
   }
 
   // merge any new headers with the cached response headers
-  rv = mCachedResponseHead->UpdateHeaders(mResponseHead);
-  if (NS_FAILED(rv)) return rv;
+  mCachedResponseHead->UpdateHeaders(mResponseHead);
 
   // update the cached response head
   nsAutoCString head;
@@ -5113,12 +5109,11 @@ nsresult nsHttpChannel::OpenCacheInputStream(nsICacheEntry* cacheEntry,
   }
 
   nsCOMPtr<nsIInputStream> altData;
-  int64_t altDataSize;
+  int64_t altDataSize = -1;
   if (foundAltData) {
     rv = cacheEntry->OpenAlternativeInputStream(altDataType,
                                                 getter_AddRefs(altData));
     if (NS_SUCCEEDED(rv)) {
-      LOG(("Opened alt-data input stream type=%s", altDataType.get()));
       // We have succeeded.
       mAvailableCachedAltDataType = altDataType;
       mDeliveringAltData = deliverAltData;
@@ -5126,6 +5121,10 @@ nsresult nsHttpChannel::OpenCacheInputStream(nsICacheEntry* cacheEntry,
       // Set the correct data size on the channel.
       Unused << cacheEntry->GetAltDataSize(&altDataSize);
       mAltDataLength = altDataSize;
+
+      LOG(("Opened alt-data input stream [type=%s, size=%" PRId64
+           ", deliverAltData=%d]",
+           altDataType.get(), mAltDataLength, deliverAltData));
 
       if (deliverAltData) {
         stream = altData;
@@ -6381,7 +6380,8 @@ nsHttpChannel::AsyncOpen(nsIStreamListener* aListener) {
           mLoadInfo->GetInitialSecurityCheckDone() ||
           (mLoadInfo->GetSecurityMode() ==
                nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL &&
-           nsContentUtils::IsSystemPrincipal(mLoadInfo->LoadingPrincipal())),
+           mLoadInfo->LoadingPrincipal() &&
+           mLoadInfo->LoadingPrincipal()->IsSystemPrincipal()),
       "security flags in loadInfo but doContentSecurityCheck() not called");
 
   LOG(("nsHttpChannel::AsyncOpen [this=%p]\n", this));
@@ -6506,6 +6506,14 @@ nsHttpChannel::AsyncOpen(nsIStreamListener* aListener) {
   mWasOpened = true;
 
   mListener = listener;
+
+  if (gIOService->UseSocketProcess() &&
+      !gIOService->IsSocketProcessLaunchComplete()) {
+    RefPtr<nsHttpChannel> self = this;
+    gIOService->CallOrWaitForSocketProcess(
+        [self]() { self->AsyncOpenFinal(TimeStamp::Now()); });
+    return NS_OK;
+  }
 
   // PauseTask/DelayHttpChannel queuing
   if (!DelayHttpChannelQueue::AttemptQueueChannel(this)) {
@@ -6779,7 +6787,7 @@ nsresult nsHttpChannel::BeginConnect() {
   if (mLoadFlags & LOAD_FRESH_CONNECTION) {
     // just the initial document resets the whole pool
     if (mLoadFlags & LOAD_INITIAL_DOCUMENT_URI) {
-      gHttpHandler->ConnMgr()->ClearAltServiceMappings();
+      gHttpHandler->AltServiceCache()->ClearAltServiceMappings();
       rv = gHttpHandler->ConnMgr()->DoShiftReloadConnectionCleanup(
           mConnectionInfo);
       if (NS_FAILED(rv)) {
@@ -6902,7 +6910,7 @@ base::ProcessId nsHttpChannel::ProcessId() {
   if (RefPtr<HttpChannelParent> httpParent = do_QueryObject(parentChannel)) {
     return httpParent->OtherPid();
   }
-  if (RefPtr<DocumentChannelParent> docParent = do_QueryObject(parentChannel)) {
+  if (RefPtr<DocumentLoadListener> docParent = do_QueryObject(parentChannel)) {
     return docParent->OtherPid();
   }
   return base::GetCurrentProcId();
@@ -6917,8 +6925,8 @@ bool nsHttpChannel::AttachStreamFilter(
   if (RefPtr<HttpChannelParent> httpParent = do_QueryObject(parentChannel)) {
     return httpParent->SendAttachStreamFilter(std::move(aEndpoint));
   }
-  if (RefPtr<DocumentChannelParent> docParent = do_QueryObject(parentChannel)) {
-    return docParent->SendAttachStreamFilter(std::move(aEndpoint));
+  if (RefPtr<DocumentLoadListener> docParent = do_QueryObject(parentChannel)) {
+    return docParent->AttachStreamFilter(std::move(aEndpoint));
   }
 
   extensions::StreamFilterParent::Attach(this, std::move(aEndpoint));
@@ -7300,7 +7308,7 @@ NS_IMETHODIMP nsHttpChannel::SwitchProcessTo(
 
   nsCOMPtr<nsIParentChannel> parentChannel;
   NS_QueryNotificationCallbacks(this, parentChannel);
-  RefPtr<DocumentChannelParent> documentChannelParent =
+  RefPtr<DocumentLoadListener> documentChannelParent =
       do_QueryObject(parentChannel);
   // This is a temporary change as the DocumentChannelParent currently must go
   // through the nsHttpChannel to perform a process switch via SessionStore.
@@ -7403,11 +7411,18 @@ nsresult nsHttpChannel::ComputeCrossOriginOpenerPolicyMismatch() {
   nsHttpResponseHead* head =
       mResponseHead ? mResponseHead : mCachedResponseHead;
   if (!head) {
-    return NS_ERROR_NOT_AVAILABLE;
+    // Not having a response head is not a hard failure at the point where
+    // this method is called.
+    return NS_OK;
   }
 
   RefPtr<mozilla::dom::BrowsingContext> ctx;
   mLoadInfo->GetBrowsingContext(getter_AddRefs(ctx));
+
+  // In xpcshell-tests we don't always have a browsingContext
+  if (!ctx) {
+    return NS_OK;
+  }
 
   // Get the policy of the active document, and the policy for the result.
   nsILoadInfo::CrossOriginOpenerPolicy documentPolicy = ctx->GetOpenerPolicy();
@@ -7705,10 +7720,14 @@ nsHttpChannel::OnStartRequest(nsIRequest* request) {
   Telemetry::Accumulate(Telemetry::HTTP_ONSTART_SUSPEND_TOTAL_TIME,
                         mSuspendTotalTime);
 
-  if (!mSecurityInfo && !mCachePump && mTransaction) {
-    // grab the security info from the connection object; the transaction
-    // is guaranteed to own a reference to the connection.
-    mSecurityInfo = mTransaction->SecurityInfo();
+  if (mTransaction) {
+    mProxyConnectResponseCode = mTransaction->GetProxyConnectResponseCode();
+
+    if (!mSecurityInfo && !mCachePump) {
+      // grab the security info from the connection object; the transaction
+      // is guaranteed to own a reference to the connection.
+      mSecurityInfo = mTransaction->SecurityInfo();
+    }
   }
 
   // don't enter this block if we're reading from the cache...
@@ -7751,7 +7770,6 @@ nsHttpChannel::OnStartRequest(nsIRequest* request) {
   // new process.
   rv = NS_OK;
   if (!mCanceled) {
-    // notify "http-on-may-change-process" observers
     rv = ComputeCrossOriginOpenerPolicyMismatch();
 
     if (rv == NS_ERROR_BLOCKED_BY_POLICY) {
@@ -7818,7 +7836,10 @@ nsresult nsHttpChannel::ContinueOnStartRequest2(nsresult result) {
        mStatus == NS_ERROR_UNKNOWN_PROXY_HOST ||
        mStatus == NS_ERROR_NET_TIMEOUT)) {
     PushRedirectAsyncFunc(&nsHttpChannel::ContinueOnStartRequest3);
-    if (NS_SUCCEEDED(ProxyFailover())) return NS_OK;
+    if (NS_SUCCEEDED(ProxyFailover())) {
+      mProxyConnectResponseCode = 0;
+      return NS_OK;
+    }
     PopRedirectAsyncFunc(&nsHttpChannel::ContinueOnStartRequest3);
   }
 
@@ -8600,7 +8621,9 @@ nsHttpChannel::GetDeliveryTarget(nsIEventTarget** aEventTarget) {
     return mCachePump->GetDeliveryTarget(aEventTarget);
   }
   if (mTransactionPump) {
-    return mTransactionPump->GetDeliveryTarget(aEventTarget);
+    nsCOMPtr<nsIThreadRetargetableRequest> request =
+        do_QueryInterface(mTransactionPump);
+    return request->GetDeliveryTarget(aEventTarget);
   }
   return NS_ERROR_NOT_AVAILABLE;
 }
@@ -9665,7 +9688,7 @@ nsHttpChannel::ResumeInternal() {
       std::swap(callOnResume, mCallOnResume);
 
       RefPtr<nsHttpChannel> self(this);
-      RefPtr<nsInputStreamPump> transactionPump = mTransactionPump;
+      nsCOMPtr<nsIRequest> transactionPump = mTransactionPump;
       RefPtr<nsInputStreamPump> cachePump = mCachePump;
 
       nsresult rv = NS_DispatchToCurrentThread(NS_NewRunnableFunction(
@@ -9713,7 +9736,7 @@ nsHttpChannel::ResumeInternal() {
                    "pump %p, this=%p",
                    self->mTransactionPump.get(), self.get()));
 
-              RefPtr<nsInputStreamPump> pump = self->mTransactionPump;
+              nsCOMPtr<nsIRequest> pump = self->mTransactionPump;
               NS_DispatchToCurrentThread(NS_NewRunnableFunction(
                   "nsHttpChannel::CallOnResume new transaction",
                   [pump{std::move(pump)}]() { pump->Resume(); }));
@@ -9807,25 +9830,13 @@ void nsHttpChannel::SetOriginHeader() {
   nsAutoCString origin("null");
   nsContentUtils::GetASCIIOrigin(referrer, origin);
 
-  // Restrict Origin to same-origin loads if requested by user or leaving from
-  // .onion
+  // Restrict Origin to same-origin loads if requested by user
   if (sSendOriginHeader == 1) {
     nsAutoCString currentOrigin;
     nsContentUtils::GetASCIIOrigin(mURI, currentOrigin);
     if (!origin.EqualsIgnoreCase(currentOrigin.get())) {
       // Origin header suppressed by user setting
       return;
-    }
-  } else if (StaticPrefs::network_http_referer_hideOnionSource()) {
-    nsAutoCString host;
-    if (referrer && NS_SUCCEEDED(referrer->GetAsciiHost(host)) &&
-        StringEndsWith(host, NS_LITERAL_CSTRING(".onion"))) {
-      nsAutoCString currentOrigin;
-      nsContentUtils::GetASCIIOrigin(mURI, currentOrigin);
-      if (!origin.EqualsIgnoreCase(currentOrigin.get())) {
-        // Origin header is suppressed by .onion
-        return;
-      }
     }
   }
 

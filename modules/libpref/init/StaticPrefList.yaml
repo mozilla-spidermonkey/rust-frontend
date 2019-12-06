@@ -945,14 +945,14 @@
 # When this pref is enabled document loads with a mismatched
 # Cross-Origin-Embedder-Policy header will fail to load
 - name: browser.tabs.remote.useCrossOriginEmbedderPolicy
-  type: bool
+  type: RelaxedAtomicBool
   value: false
   mirror: always
 
 # When this pref is enabled top level loads with a mismatched
 # Cross-Origin-Opener-Policy header will be loaded in a separate process.
 - name: browser.tabs.remote.useCrossOriginOpenerPolicy
-  type: bool
+  type: RelaxedAtomicBool
   value: false
   mirror: always
 
@@ -1521,6 +1521,12 @@
   value: false
   mirror: always
 
+# Whether the form.requestSubmit API is enabled
+- name: dom.forms.requestsubmit.enabled
+  type: bool
+  value: @IS_NIGHTLY_BUILD@
+  mirror: always
+
 # Whether the Gamepad API is enabled
 - name: dom.gamepad.enabled
   type: bool
@@ -1615,6 +1621,11 @@
 - name: dom.ipc.plugins.unloadTimeoutSecs
   type: RelaxedAtomicUint32
   value: 30
+  mirror: always
+
+- name: dom.ipc.plugins.allow_dxgi_surface
+  type: bool
+  value: true
   mirror: always
 
 # Enable e10s hang monitoring (slow script checking and plugin hang detection).
@@ -1783,6 +1794,12 @@
 - name: dom.link.disabled_attribute.enabled
   type: bool
   value: true
+  mirror: always
+
+# Whether "W3C Web Manifest" processing is enabled
+- name: dom.manifest.enabled
+  type: bool
+  value: false
   mirror: always
 
 # Whether window.onappinstalled from "W3C Web Manifest" is enabled
@@ -2166,6 +2183,11 @@
 - name: dom.security.respect_document_nosniff
   type: RelaxedAtomicBool
   value: true
+  mirror: always
+
+- name: dom.security.featurePolicy.experimental.enabled
+  type: bool
+  value: false
   mirror: always
 
 # Expose the 'policy' attribute in document and HTMLIFrameElement
@@ -2848,6 +2870,12 @@
   value: false
   mirror: always
 
+# This pref enables/disables nsContentBlocker
+- name: extensions.contentblocker.enabled
+  type: bool
+  value: false
+  mirror: once
+
 #---------------------------------------------------------------------------
 # Prefs starting with "findbar."
 #---------------------------------------------------------------------------
@@ -3256,6 +3284,22 @@
   mirror: always
 
 - name: gfx.compositor.clearstate
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+# Whether GL contexts can be migrated to a different GPU (to match the one the
+# OS is using for composition).
+#
+# 0 = force disable migration
+# 1 = use migration where in safe configurations (the default)
+# 2 = force enable migration (for testing)
+- name: gfx.compositor.gpu-migration
+  type: RelaxedAtomicInt32
+  value: 1
+  mirror: always
+
+- name: gfx.core-animation.tint-opaque
   type: RelaxedAtomicBool
   value: false
   mirror: always
@@ -4140,6 +4184,12 @@
   value: false
   mirror: always
 
+# Whether we allow advanced layers with fission
+- name: layers.advanced.fission.enabled
+  type: bool
+  value: false
+  mirror: always
+
 # Whether we allow AMD switchable graphics.
 - name: layers.amd-switchable-gfx.enabled
   type: bool
@@ -4757,7 +4807,7 @@
 # Whether we get notified of history queries for visited even if unvisited.
 - name: layout.css.notify-of-unvisited
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
+  value: false
   mirror: always
 
 # Whether we always restyle / repaint as a result of a visited query
@@ -4769,7 +4819,7 @@
 # Make `zoom` a `transform` + `transform-origin` alias.
 - name: layout.css.zoom-transform-hack.enabled
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
+  value: false
   mirror: always
   rust: true
 
@@ -4807,6 +4857,12 @@
 - name: layout.css.text-underline-offset.enabled
   type: bool
   value: true
+  mirror: always
+
+# text underline position
+- name: layout.css.text-underline-position.enabled
+  type: bool
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 # text decoration thickness
@@ -4911,7 +4967,7 @@
 # Is support for CSS individual transform enabled?
 - name: layout.css.individual-transform.enabled
   type: bool
-  value: @IS_NOT_RELEASE_OR_BETA@
+  value: true
   mirror: always
 
 # Is support for CSS initial-letter property enabled?
@@ -4930,8 +4986,15 @@
 # Is support for motion-path enabled?
 - name: layout.css.motion-path.enabled
   type: bool
-  value: @IS_NOT_RELEASE_OR_BETA@
+  value: true
   mirror: always
+
+# Is support for motion-path ray() enabled?
+- name: layout.css.motion-path-ray.enabled
+  type: RelaxedAtomicBool
+  value: @IS_NIGHTLY_BUILD@
+  mirror: always
+  rust: true
 
 # Expose the media query -moz-touch-enabled to web content.
 - name: layout.css.moz-touch-enabled.enabled
@@ -5184,14 +5247,6 @@
   mirror: always
   rust: true
 
-# Pref to control whether display: -moz-box and display: -moz-inline-box are
-# "blockified" to "-moz-box" (rather than to "block")
-- name: layout.css.xul-box-display-values.survive-blockification.enabled
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-  rust: true
-
 # Pref to control whether XUL ::-tree-* pseudo-elements are parsed in content
 # pages.
 - name: layout.css.xul-tree-pseudos.content.enabled
@@ -5409,7 +5464,7 @@
 
 - name: layout.css.shadow-parts.enabled
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
   rust: true
 
@@ -5793,6 +5848,8 @@
   value: true
 #elif defined(XP_MACOSX)
   value: true
+#elif defined(XP_WIN) && !defined(_ARM64_)
+  value: true
 #else
   value: false
 #endif
@@ -5803,7 +5860,7 @@
 #if defined(XP_LINUX) && !defined(ANDROID)
   value: true
 #elif defined(XP_WIN) && !defined(_ARM64_)
-  value: false
+  value: true
 #elif defined(XP_MACOSX)
   value: true
 #else
@@ -5816,7 +5873,7 @@
 #if defined(XP_LINUX) && !defined(ANDROID)
   value: true
 #elif defined(XP_WIN) && !defined(_ARM64_)
-  value: false
+  value: true
 #elif defined(XP_MACOSX)
   value: true
 #else
@@ -6422,6 +6479,24 @@
   value: false
   mirror: always
 
+ # If true, then we require explicit approval from the embedding app (ex. Fenix)
+ # on GeckoView to know if we can allow audible, inaudible media or both kinds
+ # of media to autoplay.
+- name: media.geckoview.autoplay.request
+  type: bool
+  value: false
+  mirror: always
+
+ # This is used in testing only, in order to skip the prompting process. This
+ # pref works only when enabling the pref `media.geckoview.autoplay.request`.
+ # 0=prompt as normal, 1=allow all, 2=deny all, 3=allow audible request,
+ # 4=deny audible request, 5=allow inaudible request, 6=deny inaudible request.
+ # 7=leave all requests pending.
+- name: media.geckoview.autoplay.request.testing
+  type: uint32_t
+  value: 0
+  mirror: always
+
 #---------------------------------------------------------------------------
 # Prefs starting with "mousewheel."
 #---------------------------------------------------------------------------
@@ -6778,6 +6853,13 @@
   value: false
   mirror: always
 
+# Whether to use the new experimental preload code based on the speculative loader
+# inside the html5 parser.
+- name: network.preload-experimental
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 # Telemetry of traffic categories. Whether or not to enable HttpTrafficAnalyzer.
 - name: network.traffic_analyzer.enabled
   type: RelaxedAtomicBool
@@ -6827,6 +6909,32 @@
   value: false
   mirror: always
 
+# Whether to send the User-Agent header for TRR requests
+- name: network.trr.send_user-agent_headers
+  type: bool
+  value: false
+  mirror: always
+
+# This pref controls if TRR will still be enabled when a VPN is detected on
+# the system. Detection is not foolproof, and some VPNs may not be detected.
+# See bug 1565004 comment 3 for details.
+- name: network.trr.enable_when_vpn_detected
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+# This pref controls if TRR will still be enabled when a proxy is detected
+- name: network.trr.enable_when_proxy_detected
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+# This pref controls if TRR will still be enabled when NRPT rules are detected
+- name: network.trr.enable_when_nrpt_detected
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 # Allow the network changed event to get sent when a network topology or setup
 # change is noticed while running.
 - name: network.notify.changed
@@ -6849,6 +6957,28 @@
   type: RelaxedAtomicBool
   value: true
   mirror: always
+
+# Whether to check the registry for proxies on network changes that indicate
+# that TRR should not be used.
+- name: network.notify.checkForProxies
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
+# Whether to check the registry for NRPT rules on network changes that
+# indicate that TRR should not be used.
+- name: network.notify.checkForNRPT
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
+# Whether NotifyIpInterfaceChange should be called immediately after
+# registration in order to record the initial state of the network adapters.
+- name: network.notify.initial_call
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 
 #---------------------------------------------------------------------------
 # Prefs starting with "nglayout."
@@ -6882,7 +7012,7 @@
 # Prefs starting with "permissions."
 #---------------------------------------------------------------------------
 
-- name: permissions.delegation.enable
+- name: permissions.delegation.enabled
   type: bool
   value: @IS_NIGHTLY_BUILD@
   mirror: always
@@ -7168,6 +7298,18 @@
   value: true
   mirror: always
 
+# Enable the heuristic to allow storage access for windows opened using window.open() after user interaction
+- name: privacy.restrict3rdpartystorage.heuristic.opened_window_after_interaction
+  type: bool
+  value: true
+  mirror: always
+
+# Enable the heuristic to allow storage access for windows opened using window.open()
+- name: privacy.restrict3rdpartystorage.heuristic.window_open
+  type: bool
+  value: true
+  mirror: always
+
 # Anti-tracking user-interaction expiration.
 - name: privacy.userInteraction.expiration
   type: uint32_t
@@ -7240,6 +7382,13 @@
 - name: security.csp.reporting.script-sample.max-length
   type: int32_t
   value: 40
+  mirror: always
+
+# Allowed by default so it doesn't affect Thunderbird/SeaMonkey, but
+# not allowed for Firefox Desktop in firefox.js
+- name: security.allow_parent_unrestricted_js_loads
+  type: RelaxedAtomicBool
+  value: true
   mirror: always
 
 # Allowed by default so it doesn't affect Thunderbird/SeaMonkey, but
@@ -7381,6 +7530,12 @@
   value: false
   mirror: always
 
+# Is support for letter-spacing and word-spacing in SVG text enabled?
+- name: svg.text-spacing.enabled
+  type: bool
+  value: true
+  mirror: always
+
 #---------------------------------------------------------------------------
 # Prefs starting with "telemetry."
 #---------------------------------------------------------------------------
@@ -7391,6 +7546,11 @@
 - name: telemetry.origin_telemetry_test_mode.enabled
   type: RelaxedAtomicBool
   value: false
+  mirror: always
+
+- name: telemetry.number_of_site_origin.min_interval
+  type: uint32_t
+  value: 300000
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -7641,7 +7801,11 @@
 
 - name: webgl.dxgl.enabled
   type: RelaxedAtomicBool
+#ifdef XP_WIN
+  value: true
+#else
   value: false
+#endif
   mirror: always
 
 - name: webgl.dxgl.needs-finish

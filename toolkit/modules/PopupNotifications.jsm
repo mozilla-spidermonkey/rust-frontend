@@ -978,6 +978,9 @@ PopupNotifications.prototype = {
       if ("secondName" in desc && "secondEnd" in desc) {
         popupnotification.setAttribute("secondname", desc.secondName);
         popupnotification.setAttribute("secondendlabel", desc.secondEnd);
+      } else {
+        popupnotification.removeAttribute("secondname");
+        popupnotification.removeAttribute("secondendlabel");
       }
 
       popupnotification.setAttribute("id", popupnotificationID);
@@ -1214,7 +1217,7 @@ PopupNotifications.prototype = {
 
       if (isNullOrHidden(anchorElement)) {
         anchorElement = this.window.document.getElementById(
-          "urlbar-search-icon"
+          "urlbar-search-button"
         );
       }
 

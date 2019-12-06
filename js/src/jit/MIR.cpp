@@ -1732,7 +1732,6 @@ MTableSwitch* MTableSwitch::New(TempAllocator& alloc, MDefinition* ins,
 }
 
 MGoto* MGoto::New(TempAllocator& alloc, MBasicBlock* target) {
-  MOZ_ASSERT(target);
   return new (alloc) MGoto(target);
 }
 
@@ -5687,6 +5686,24 @@ MDefinition* MTypedArrayIndexToInt32::foldsTo(TempAllocator& alloc) {
     ival = -1;
   }
   return MConstant::New(alloc, Int32Value(ival));
+}
+
+MDefinition* MIsNullOrUndefined::foldsTo(TempAllocator& alloc) {
+  MDefinition* input = value();
+  if (input->isBox()) {
+    input = input->getOperand(0);
+  }
+
+  if (input->type() == MIRType::Null || input->type() == MIRType::Undefined) {
+    return MConstant::New(alloc, BooleanValue(true));
+  }
+
+  if (!input->mightBeType(MIRType::Null) &&
+      !input->mightBeType(MIRType::Undefined)) {
+    return MConstant::New(alloc, BooleanValue(false));
+  }
+
+  return this;
 }
 
 bool jit::ElementAccessIsDenseNative(CompilerConstraintList* constraints,

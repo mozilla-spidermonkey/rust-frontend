@@ -25,6 +25,7 @@
 #include "mozilla/dom/WorkletGlobalScope.h"
 #include "mozilla/dom/WorkletImpl.h"
 #include "mozilla/dom/WorkletThread.h"
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/StaticPrefs_devtools.h"
 #include "nsCycleCollectionParticipant.h"
@@ -44,7 +45,6 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsILoadContext.h"
 #include "nsISensitiveInfoHiddenURI.h"
-#include "nsIServiceManager.h"
 #include "nsISupportsPrimitives.h"
 #include "nsIWebNavigation.h"
 #include "nsIXPConnect.h"
@@ -1435,7 +1435,7 @@ void Console::MethodInternal(JSContext* aCx, MethodName aMethodName,
       callData->SetAddonId(principal);
 
 #ifdef DEBUG
-      if (!nsContentUtils::IsSystemPrincipal(principal)) {
+      if (!principal->IsSystemPrincipal()) {
         nsCOMPtr<nsIWebNavigation> webNav = do_GetInterface(mGlobal);
         if (webNav) {
           nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(webNav);
@@ -1872,6 +1872,9 @@ bool FlushOutput(JSContext* aCx, Sequence<JS::Value>& aSequence,
 bool Console::ProcessArguments(JSContext* aCx, const Sequence<JS::Value>& aData,
                                Sequence<JS::Value>& aSequence,
                                Sequence<nsString>& aStyles) const {
+  // This method processes the arguments as format strings (%d, %i, %s...)
+  // only if the first element of them is a valid and not-empty string.
+
   if (aData.IsEmpty()) {
     return true;
   }
@@ -1889,6 +1892,10 @@ bool Console::ProcessArguments(JSContext* aCx, const Sequence<JS::Value>& aData,
   nsAutoJSString string;
   if (NS_WARN_IF(!string.init(aCx, jsString))) {
     return false;
+  }
+
+  if (string.IsEmpty()) {
+    return ArgumentsToValueList(aData, aSequence);
   }
 
   nsString::const_iterator start, end;

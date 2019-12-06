@@ -514,7 +514,7 @@ class BaseRegAlloc {
   // not allocatable; if s0 and s1 are freed individually then d0 becomes
   // allocatable.
 
-  BaseCompilerInterface& bc;
+  BaseCompilerInterface* bc;
   AllocatableGeneralRegisterSet availGPR;
   AllocatableFloatRegisterSet availFPU;
 #ifdef DEBUG
@@ -639,8 +639,8 @@ class BaseRegAlloc {
   void freeFPU(FloatRegister r) { availFPU.add(r); }
 
  public:
-  explicit BaseRegAlloc(BaseCompilerInterface& bc)
-      : bc(bc),
+  explicit BaseRegAlloc()
+      : bc(nullptr),
         availGPR(GeneralRegisterSet::All()),
         availFPU(FloatRegisterSet::All())
 #ifdef DEBUG
@@ -690,6 +690,8 @@ class BaseRegAlloc {
 #endif
   }
 
+  void init(BaseCompilerInterface* bc) { this->bc = bc; }
+
   enum class ScratchKind { I32 = 1, F32 = 2, F64 = 4 };
 
 #ifdef DEBUG
@@ -731,42 +733,42 @@ class BaseRegAlloc {
 
   MOZ_MUST_USE RegI32 needI32() {
     if (!hasGPR()) {
-      bc.sync();
+      bc->sync();
     }
     return RegI32(allocGPR());
   }
 
   void needI32(RegI32 specific) {
     if (!isAvailableI32(specific)) {
-      bc.sync();
+      bc->sync();
     }
     allocGPR(specific);
   }
 
   MOZ_MUST_USE RegI64 needI64() {
     if (!hasGPR64()) {
-      bc.sync();
+      bc->sync();
     }
     return RegI64(allocInt64());
   }
 
   void needI64(RegI64 specific) {
     if (!isAvailableI64(specific)) {
-      bc.sync();
+      bc->sync();
     }
     allocInt64(specific);
   }
 
   MOZ_MUST_USE RegPtr needPtr() {
     if (!hasGPR()) {
-      bc.sync();
+      bc->sync();
     }
     return RegPtr(allocGPR());
   }
 
   void needPtr(RegPtr specific) {
     if (!isAvailablePtr(specific)) {
-      bc.sync();
+      bc->sync();
     }
     allocGPR(specific);
   }
@@ -779,7 +781,7 @@ class BaseRegAlloc {
       return RegPtr(allocGPR());
     }
     *saved = true;
-    bc.saveTempPtr(fallback);
+    bc->saveTempPtr(fallback);
     MOZ_ASSERT(isAvailablePtr(fallback));
     allocGPR(fallback);
     return RegPtr(fallback);
@@ -787,28 +789,28 @@ class BaseRegAlloc {
 
   MOZ_MUST_USE RegF32 needF32() {
     if (!hasFPU<MIRType::Float32>()) {
-      bc.sync();
+      bc->sync();
     }
     return RegF32(allocFPU<MIRType::Float32>());
   }
 
   void needF32(RegF32 specific) {
     if (!isAvailableF32(specific)) {
-      bc.sync();
+      bc->sync();
     }
     allocFPU(specific);
   }
 
   MOZ_MUST_USE RegF64 needF64() {
     if (!hasFPU<MIRType::Double>()) {
-      bc.sync();
+      bc->sync();
     }
     return RegF64(allocFPU<MIRType::Double>());
   }
 
   void needF64(RegF64 specific) {
     if (!isAvailableF64(specific)) {
-      bc.sync();
+      bc->sync();
     }
     allocFPU(specific);
   }
@@ -826,7 +828,7 @@ class BaseRegAlloc {
   void freeTempPtr(RegPtr r, bool saved) {
     freePtr(r);
     if (saved) {
-      bc.restoreTempPtr(r);
+      bc->restoreTempPtr(r);
       MOZ_ASSERT(!isAvailablePtr(r));
     }
   }
@@ -834,7 +836,7 @@ class BaseRegAlloc {
 #ifdef JS_CODEGEN_ARM
   MOZ_MUST_USE RegI64 needI64Pair() {
     if (!hasGPRPair()) {
-      bc.sync();
+      bc->sync();
     }
     Register low, high;
     allocGPRPair(&low, &high);
@@ -4400,6 +4402,13 @@ class BaseCompiler final : public BaseCompilerInterface {
   }
 
   void assertStackInvariants() const {
+    if (deadCode_) {
+      // Nonlocal control flow can pass values in stack locations in a way that
+      // isn't accounted for by the value stack.  In dead code, which occurs
+      // after unconditional non-local control flow, there is no invariant to
+      // assert.
+      return;
+    }
     size_t size = 0;
     for (const Stk& v : stk_) {
       switch (v.kind()) {
@@ -4423,13 +4432,7 @@ class BaseCompiler final : public BaseCompilerInterface {
           break;
       }
     }
-    if (deadCode_) {
-      // Some stack allocation may be used to pass values along control flow
-      // edges without being accounted for on the value stack.
-      MOZ_ASSERT(size <= fr.dynamicHeight());
-    } else {
-      MOZ_ASSERT(size == fr.dynamicHeight());
-    }
+    MOZ_ASSERT(size == fr.dynamicHeight());
   }
 
 #endif
@@ -9799,11 +9802,12 @@ RegI32 BaseCompiler::popMemoryAccess(MemoryAccessDesc* access,
 }
 
 void BaseCompiler::pushHeapBase() {
-#if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_ARM64)
+#if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_ARM64) || \
+    defined(JS_CODEGEN_MIPS64)
   RegI64 heapBase = needI64();
   moveI64(RegI64(Register64(HeapReg)), heapBase);
   pushI64(heapBase);
-#elif defined(JS_CODEGEN_ARM)
+#elif defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS32)
   RegI32 heapBase = needI32();
   moveI32(RegI32(HeapReg), heapBase);
   pushI32(heapBase);
@@ -10701,7 +10705,7 @@ bool BaseCompiler::emitMemCopy() {
 
   int32_t signedLength;
   if (MacroAssembler::SupportsFastUnalignedAccesses() &&
-      peekConstI32(&signedLength) &&
+      peekConstI32(&signedLength) && signedLength != 0 &&
       uint32_t(signedLength) <= MaxInlineMemoryCopyLength) {
     return emitMemCopyInline();
   }
@@ -10726,16 +10730,10 @@ bool BaseCompiler::emitMemCopyInline() {
   int32_t signedLength;
   MOZ_ALWAYS_TRUE(popConstI32(&signedLength));
   uint32_t length = signedLength;
+  MOZ_ASSERT(length != 0 && length <= MaxInlineMemoryCopyLength);
 
   RegI32 src = popI32();
   RegI32 dest = popI32();
-
-  // A zero length copy is a no-op and cannot trap
-  if (length == 0) {
-    freeI32(src);
-    freeI32(dest);
-    return true;
-  }
 
   // Compute the number of copies of each width we will need to do
   size_t remainder = length;
@@ -10978,7 +10976,7 @@ bool BaseCompiler::emitMemFill() {
   int32_t signedLength;
   int32_t signedValue;
   if (MacroAssembler::SupportsFastUnalignedAccesses() &&
-      peek2xI32(&signedLength, &signedValue) &&
+      peek2xI32(&signedLength, &signedValue) && signedLength != 0 &&
       uint32_t(signedLength) <= MaxInlineMemoryFillLength) {
     return emitMemFillInline();
   }
@@ -11001,14 +10999,9 @@ bool BaseCompiler::emitMemFillInline() {
   MOZ_ALWAYS_TRUE(popConstI32(&signedValue));
   uint32_t length = uint32_t(signedLength);
   uint32_t value = uint32_t(signedValue);
+  MOZ_ASSERT(length != 0 && length <= MaxInlineMemoryFillLength);
 
   RegI32 dest = popI32();
-
-  // A zero length copy is a no-op and cannot trap
-  if (length == 0) {
-    freeI32(dest);
-    return true;
-  }
 
   // Compute the number of copies of each width we will need to do
   size_t remainder = length;
@@ -12669,7 +12662,6 @@ BaseCompiler::BaseCompiler(const ModuleEnvironment& env,
       latentIntCmp_(Assembler::Equal),
       latentDoubleCmp_(Assembler::DoubleEqual),
       masm(*masm),
-      ra(*this),
       fr(*masm),
       stackMapGenerator_(stackMaps, trapExitLayout, trapExitLayoutNumWords,
                          *masm),
@@ -12696,6 +12688,8 @@ BaseCompiler::~BaseCompiler() {
 }
 
 bool BaseCompiler::init() {
+  ra.init(this);
+
   if (!SigD_.append(ValType::F64)) {
     return false;
   }

@@ -206,7 +206,9 @@ function transformConsoleAPICallPacket(packet) {
       if (
         !Array.isArray(parameters) ||
         parameters.length === 0 ||
-        !supportedClasses.includes(parameters[0].class)
+        !parameters[0] ||
+        !parameters[0].getGrip ||
+        !supportedClasses.includes(parameters[0].getGrip().class)
       ) {
         // If the class of the first parameter is not supported,
         // we handle the call as a simple console.log
@@ -428,6 +430,10 @@ function getRepeatId(message) {
     function(_, value) {
       if (typeof value === "bigint") {
         return value.toString() + "n";
+      }
+
+      if (value && value._grip) {
+        return value._grip;
       }
 
       return value;
@@ -689,9 +695,29 @@ function getArrayTypeNames() {
   ];
 }
 
+function getDescriptorValue(descriptor) {
+  if (!descriptor) {
+    return descriptor;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(descriptor, "safeGetterValues")) {
+    return descriptor.safeGetterValues;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(descriptor, "getterValue")) {
+    return descriptor.getterValue;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(descriptor, "value")) {
+    return descriptor.value;
+  }
+  return descriptor;
+}
+
 module.exports = {
   createWarningGroupMessage,
   getArrayTypeNames,
+  getDescriptorValue,
   getInitialMessageCountForViewport,
   getParentWarningGroupMessageId,
   getWarningGroupType,

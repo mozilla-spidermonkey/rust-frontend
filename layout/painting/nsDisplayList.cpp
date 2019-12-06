@@ -36,7 +36,6 @@
 #include "mozilla/StaticPrefs_layout.h"
 #include "nsCSSRendering.h"
 #include "nsCSSRenderingGradients.h"
-#include "nsISelectionController.h"
 #include "nsRegion.h"
 #include "nsStyleStructInlines.h"
 #include "nsStyleTransformMatrix.h"
@@ -3341,24 +3340,6 @@ void nsDisplayList::DeleteAll(nsDisplayListBuilder* aBuilder) {
   }
 }
 
-static bool GetMouseThrough(const nsIFrame* aFrame) {
-  if (!aFrame->IsXULBoxFrame()) {
-    return false;
-  }
-
-  const nsIFrame* frame = aFrame;
-  while (frame) {
-    if (frame->GetStateBits() & NS_FRAME_MOUSE_THROUGH_ALWAYS) {
-      return true;
-    }
-    if (frame->GetStateBits() & NS_FRAME_MOUSE_THROUGH_NEVER) {
-      return false;
-    }
-    frame = nsBox::GetParentXULBox(frame);
-  }
-  return false;
-}
-
 static bool IsFrameReceivingPointerEvents(nsIFrame* aFrame) {
   return NS_STYLE_POINTER_EVENTS_NONE !=
          aFrame->StyleUI()->GetEffectivePointerEvents(aFrame);
@@ -3493,7 +3474,7 @@ void nsDisplayList::HitTest(nsDisplayListBuilder* aBuilder, const nsRect& aRect,
         // For pointer tests, only pass through frames that are styled
         // to receive pointer events.
         if (aBuilder->HitTestIsForVisibility() ||
-            (!GetMouseThrough(f) && IsFrameReceivingPointerEvents(f))) {
+            IsFrameReceivingPointerEvents(f)) {
           writeFrames->AppendElement(f);
         }
       }
@@ -5581,8 +5562,12 @@ bool nsDisplayCompositorHitTestInfo::CreateWebRenderCommands(
         return ScrollableLayerGuid::NULL_SCROLL_ID;
       });
 
+  Maybe<SideBits> sideBits =
+      aBuilder.GetContainingFixedPosSideBits(GetActiveScrolledRoot());
+
   // Insert a transparent rectangle with the hit-test info
-  aBuilder.SetHitTestInfo(scrollId, HitTestFlags());
+  aBuilder.SetHitTestInfo(scrollId, HitTestFlags(),
+                          sideBits.valueOr(SideBits::eNone));
 
   const LayoutDeviceRect devRect =
       LayoutDeviceRect::FromAppUnits(HitTestArea(), mAppUnitsPerDevPixel);
@@ -6426,6 +6411,18 @@ nsDisplayOpacity::nsDisplayOpacity(
   mState.mOpacity = mOpacity;
 }
 
+void nsDisplayOpacity::HitTest(nsDisplayListBuilder* aBuilder,
+                               const nsRect& aRect,
+                               nsDisplayItem::HitTestState* aState,
+                               nsTArray<nsIFrame*>* aOutFrames) {
+  // TODO(emilio): special-casing zero is a bit arbitrary... Maybe we should
+  // only consider fully opaque items? Or make this configurable somehow?
+  if (aBuilder->HitTestIsForVisibility() && mOpacity == 0.0f) {
+    return;
+  }
+  nsDisplayWrapList::HitTest(aBuilder, aRect, aState, aOutFrames);
+}
+
 nsRegion nsDisplayOpacity::GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
                                            bool* aSnap) const {
   *aSnap = false;
@@ -6952,6 +6949,10 @@ bool nsDisplayOwnLayer::IsZoomingLayer() const {
   return GetType() == DisplayItemType::TYPE_ASYNC_ZOOM;
 }
 
+bool nsDisplayOwnLayer::IsFixedPositionLayer() const {
+  return GetType() == DisplayItemType::TYPE_FIXED_POSITION;
+}
+
 // nsDisplayOpacity uses layers for rendering
 already_AddRefed<Layer> nsDisplayOwnLayer::BuildLayer(
     nsDisplayListBuilder* aBuilder, LayerManager* aManager,
@@ -6977,8 +6978,10 @@ bool nsDisplayOwnLayer::CreateWebRenderCommands(
     const StackingContextHelper& aSc, RenderRootStateManager* aManager,
     nsDisplayListBuilder* aDisplayListBuilder) {
   Maybe<wr::WrAnimationProperty> prop;
-  bool needsProp = aManager->LayerManager()->AsyncPanZoomEnabled() &&
-                   (IsScrollThumbLayer() || IsZoomingLayer());
+  bool needsProp =
+      aManager->LayerManager()->AsyncPanZoomEnabled() &&
+      (IsScrollThumbLayer() || IsZoomingLayer() || IsFixedPositionLayer());
+
   if (needsProp) {
     // APZ is enabled and this is a scroll thumb or zooming layer, so we need
     // to create and set an animation id. That way APZ can adjust the position/
@@ -7017,8 +7020,8 @@ bool nsDisplayOwnLayer::CreateWebRenderCommands(
 bool nsDisplayOwnLayer::UpdateScrollData(
     mozilla::layers::WebRenderScrollData* aData,
     mozilla::layers::WebRenderLayerScrollData* aLayerData) {
-  bool isRelevantToApz =
-      (IsScrollThumbLayer() || IsScrollbarContainer() || IsZoomingLayer());
+  bool isRelevantToApz = (IsScrollThumbLayer() || IsScrollbarContainer() ||
+                          IsZoomingLayer() || IsFixedPositionLayer());
   if (!isRelevantToApz) {
     return false;
   }
@@ -7029,6 +7032,11 @@ bool nsDisplayOwnLayer::UpdateScrollData(
 
   if (IsZoomingLayer()) {
     aLayerData->SetZoomAnimationId(mWrAnimationId);
+    return true;
+  }
+
+  if (IsFixedPositionLayer()) {
+    aLayerData->SetFixedPositionAnimationId(mWrAnimationId);
     return true;
   }
 
@@ -7465,12 +7473,17 @@ bool nsDisplayFixedPosition::CreateWebRenderCommands(
     const StackingContextHelper& aSc,
     mozilla::layers::RenderRootStateManager* aManager,
     nsDisplayListBuilder* aDisplayListBuilder) {
+  SideBits sides = SideBits::eNone;
+  if (!mIsFixedBackground) {
+    sides = nsLayoutUtils::GetSideBitsForFixedPositionContent(mFrame);
+  }
+
   // We install this RAII scrolltarget tracker so that any
   // nsDisplayCompositorHitTestInfo items inside this fixed-pos item (and that
   // share the same ASR as this item) use the correct scroll target. That way
   // attempts to scroll on those items will scroll the root scroll frame.
   mozilla::wr::DisplayListBuilder::FixedPosScrollTargetTracker tracker(
-      aBuilder, GetActiveScrolledRoot(), GetScrollTargetId());
+      aBuilder, GetActiveScrolledRoot(), GetScrollTargetId(), sides);
   return nsDisplayOwnLayer::CreateWebRenderCommands(
       aBuilder, aResources, aSc, aManager, aDisplayListBuilder);
 }
@@ -7479,6 +7492,10 @@ bool nsDisplayFixedPosition::UpdateScrollData(
     mozilla::layers::WebRenderScrollData* aData,
     mozilla::layers::WebRenderLayerScrollData* aLayerData) {
   if (aLayerData) {
+    if (!mIsFixedBackground) {
+      aLayerData->SetFixedPositionSides(
+          nsLayoutUtils::GetSideBitsForFixedPositionContent(mFrame));
+    }
     aLayerData->SetFixedPositionScrollContainerId(GetScrollTargetId());
   }
   return nsDisplayOwnLayer::UpdateScrollData(aData, aLayerData) | true;

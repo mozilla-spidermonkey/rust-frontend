@@ -504,7 +504,7 @@
       }
 
       // Create an anchor for the popup
-      popupAnchor = document.createXULElement("hbox");
+      popupAnchor = document.createElement("div");
       popupAnchor.className = "popup-anchor";
       popupAnchor.hidden = true;
       stack.appendChild(popupAnchor);
@@ -1011,20 +1011,6 @@
 
     gotoIndex(aIndex) {
       this._wrapURIChangeCall(() => this.webNavigation.gotoIndex(aIndex));
-    }
-
-    /**
-     * Used by session restore to ensure that currentURI is set so
-     * that switch-to-tab works before the tab is fully
-     * restored. This function also invokes onLocationChanged
-     * listeners in tabbrowser.xml.
-     */
-    _setCurrentURI(aURI) {
-      if (this.isRemoteBrowser) {
-        this._remoteWebProgressManager.setCurrentURI(aURI);
-      } else {
-        this.docShell.setCurrentURI(aURI);
-      }
     }
 
     preserveLayers(preserve) {
@@ -1726,9 +1712,6 @@
     _createAutoScrollPopup() {
       var popup = document.createXULElement("panel");
       popup.className = "autoscroller";
-      // We set this attribute on the element so that mousemove
-      // events can be handled by browser-content.js.
-      popup.setAttribute("mousethrough", "always");
       popup.setAttribute("consumeoutsideclicks", "true");
       popup.setAttribute("rolluponmousewheel", "true");
       popup.setAttribute("hidden", "true");

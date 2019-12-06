@@ -15,10 +15,8 @@
 #include "MediaPlaybackDelayPolicy.h"
 #include "MediaPromiseDefs.h"
 #include "nsCycleCollectionParticipant.h"
-#include "nsIObserver.h"
 #include "mozilla/CORSMode.h"
 #include "DecoderTraits.h"
-#include "nsIAudioChannelAgent.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/StateWatching.h"
 #include "mozilla/WeakPtr.h"
@@ -123,6 +121,7 @@ class HTMLMediaElement : public nsGenericHTMLElement,
     ~OutputMediaStream();
 
     RefPtr<DOMMediaStream> mStream;
+    nsTArray<RefPtr<MediaStreamTrack>> mLiveTracks;
     const bool mCapturingAudioOnly;
     const bool mFinishWhenEnded;
     // If mFinishWhenEnded is true, this is the URI of the first resource
@@ -864,6 +863,19 @@ class HTMLMediaElement : public nsGenericHTMLElement,
    * and unmuting when playing the media element again.
    */
   void SetCapturedOutputStreamsEnabled(bool aEnabled);
+
+  /**
+   * Returns true if output tracks should be muted, based on the state of this
+   * media element.
+   */
+  enum class OutputMuteState { Muted, Unmuted };
+  OutputMuteState OutputTracksMuted();
+
+  /**
+   * Sets the muted state of all output track sources. They are muted when we're
+   * paused and unmuted otherwise.
+   */
+  void UpdateOutputTracksMuting();
 
   /**
    * Create a new MediaStreamTrack for the TrackSource corresponding to aTrack

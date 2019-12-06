@@ -14,7 +14,6 @@
 #define mozilla_dom_Element_h__
 
 #include "AttrArray.h"
-#include "DOMIntersectionObserver.h"
 #include "nsAttrValue.h"
 #include "nsAttrValueInlines.h"
 #include "nsChangeHint.h"
@@ -336,7 +335,7 @@ class Element : public FragmentOrElement {
    * notify the document's pres context, so that the style changes will be
    * noticed.
    */
-  nsresult SetSMILOverrideStyleDeclaration(DeclarationBlock* aDeclaration);
+  void SetSMILOverrideStyleDeclaration(DeclarationBlock&);
 
   /**
    * Returns a new SMILAttr that allows the caller to animate the given
@@ -1058,6 +1057,11 @@ class Element : public FragmentOrElement {
                     ErrorResult& aError) {
     SetAttribute(aName, aValue, nullptr, aError);
   }
+  void SetAttributeDevtools(const nsAString& aName, const nsAString& aValue,
+                            ErrorResult& aError);
+  void SetAttributeDevtoolsNS(const nsAString& aNamespaceURI,
+                              const nsAString& aLocalName,
+                              const nsAString& aValue, ErrorResult& aError);
 
   void RemoveAttribute(const nsAString& aName, ErrorResult& aError);
   void RemoveAttributeNS(const nsAString& aNamespaceURI,
@@ -1360,8 +1364,8 @@ class Element : public FragmentOrElement {
    * @param aValue the JS to attach
    * @param aDefer indicates if deferred execution is allowed
    */
-  nsresult SetEventHandler(nsAtom* aEventName, const nsAString& aValue,
-                           bool aDefer = true);
+  void SetEventHandler(nsAtom* aEventName, const nsAString& aValue,
+                       bool aDefer = true);
 
   /**
    * Do whatever needs to be done when the mouse leaves a link
@@ -1496,7 +1500,7 @@ class Element : public FragmentOrElement {
   /**
    * Locate a TextEditor rooted at this content node, if there is one.
    */
-  mozilla::TextEditor* GetTextEditorInternal();
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY mozilla::TextEditor* GetTextEditorInternal();
 
   /**
    * Gets value of boolean attribute. Only works for attributes in null

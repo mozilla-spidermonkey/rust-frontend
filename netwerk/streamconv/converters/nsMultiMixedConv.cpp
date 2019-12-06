@@ -13,7 +13,6 @@
 #include "nsIHttpChannelInternal.h"
 #include "nsURLHelper.h"
 #include "nsIStreamConverterService.h"
-#include "nsICacheInfoChannel.h"
 #include <algorithm>
 #include "nsContentSecurityManager.h"
 #include "nsHttp.h"
@@ -553,6 +552,12 @@ nsMultiMixedConv::OnStopRequest(nsIRequest* request, nsresult aStatus) {
 
     (void)mFinalListener->OnStartRequest(request);
     (void)mFinalListener->OnStopRequest(request, aStatus);
+  }
+
+  nsCOMPtr<nsIMultiPartChannelListener> multiListener =
+      do_QueryInterface(mFinalListener);
+  if (multiListener) {
+    multiListener->OnAfterLastPart(aStatus);
   }
 
   return NS_OK;

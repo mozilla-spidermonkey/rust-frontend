@@ -55,8 +55,8 @@ LoopControl::LoopControl(BytecodeEmitter* bce, StatementKind loopKind)
     // are on the stack.
     loopSlots = 3;
   } else if (loopKind == StatementKind::ForInLoop) {
-    // The iterator and the current value are on the stack.
-    loopSlots = 2;
+    // The iterator is on the stack.
+    loopSlots = 1;
   } else {
     // No additional loop values are on the stack.
     loopSlots = 0;
@@ -73,10 +73,9 @@ LoopControl::LoopControl(BytecodeEmitter* bce, StatementKind loopKind)
 }
 
 bool LoopControl::emitContinueTarget(BytecodeEmitter* bce) {
-  if (!bce->emitJumpTarget(&continueTarget_)) {
-    return false;
-  }
-  return true;
+  // Note: this is always called after emitting the loop body so we must have
+  // emitted all 'continues' by now.
+  return bce->emitJumpTargetAndPatch(continues);
 }
 
 bool LoopControl::emitSpecialBreakForDone(BytecodeEmitter* bce) {
@@ -85,20 +84,10 @@ bool LoopControl::emitSpecialBreakForDone(BytecodeEmitter* bce) {
   MOZ_ASSERT(bce->bytecodeSection().stackDepth() == stackDepth_);
   MOZ_ASSERT(bce->innermostNestableControl == this);
 
-  if (!bce->newSrcNote(SRC_BREAK)) {
-    return false;
-  }
   if (!bce->emitJump(JSOP_GOTO, &breaks)) {
     return false;
   }
 
-  return true;
-}
-
-bool LoopControl::emitEntryJump(BytecodeEmitter* bce) {
-  if (!bce->emitJump(JSOP_GOTO, &entryJump_)) {
-    return false;
-  }
   return true;
 }
 
@@ -110,34 +99,15 @@ bool LoopControl::emitLoopHead(BytecodeEmitter* bce,
     }
   }
 
+  MOZ_ASSERT(loopDepth_ > 0);
+
   head_ = {bce->bytecodeSection().offset()};
   BytecodeOffset off;
   if (!bce->emitJumpTargetOp(JSOP_LOOPHEAD, &off)) {
     return false;
   }
-
-  return true;
-}
-
-bool LoopControl::emitLoopEntry(BytecodeEmitter* bce,
-                                const Maybe<uint32_t>& nextPos) {
-  if (nextPos) {
-    if (!bce->updateSourceCoordNotes(*nextPos)) {
-      return false;
-    }
-  }
-
-  JumpTarget entry = {bce->bytecodeSection().offset()};
-  bce->patchJumpsToTarget(entryJump_, entry);
-
-  MOZ_ASSERT(loopDepth_ > 0);
-
-  BytecodeOffset off;
-  if (!bce->emitJumpTargetOp(JSOP_LOOPENTRY, &off)) {
-    return false;
-  }
-  SetLoopEntryDepthHintAndFlags(bce->bytecodeSection().code(off), loopDepth_,
-                                canIonOsr_);
+  SetLoopHeadDepthHintAndFlags(bce->bytecodeSection().code(off), loopDepth_,
+                               canIonOsr_);
 
   return true;
 }
@@ -150,15 +120,6 @@ bool LoopControl::emitLoopEnd(BytecodeEmitter* bce, JSOp op) {
 
   loopEndOffset_ = beq.offset;
 
-  return true;
-}
-
-bool LoopControl::patchBreaksAndContinues(BytecodeEmitter* bce) {
-  MOZ_ASSERT(continueTarget_.offset.valid());
-  if (!patchBreaks(bce)) {
-    return false;
-  }
-  bce->patchJumpsToTarget(continues, continueTarget_);
   return true;
 }
 

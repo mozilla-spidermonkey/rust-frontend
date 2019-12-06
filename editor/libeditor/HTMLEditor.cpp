@@ -29,14 +29,12 @@
 #include "nsHTMLDocument.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "nsISelectionController.h"
-#include "nsIInlineSpellChecker.h"
 #include "nsIPrincipal.h"
 
 #include "mozilla/css/Loader.h"
 
 #include "nsIContent.h"
 #include "nsContentUtils.h"
-#include "nsIDocumentEncoder.h"
 #include "nsGenericHTMLElement.h"
 #include "nsPresContext.h"
 #include "nsFocusManager.h"
@@ -3386,7 +3384,8 @@ bool HTMLEditor::IsInObservedSubtree(nsIContent* aChild) {
     // To be super safe here, check both ChromeOnlyAccess and NAC / Shadow DOM.
     // That catches (also unbound) native anonymous content and ShadowDOM.
     if (root->ChromeOnlyAccess() != aChild->ChromeOnlyAccess() ||
-        root->IsInNativeAnonymousSubtree() != aChild->IsInNativeAnonymousSubtree() ||
+        root->IsInNativeAnonymousSubtree() !=
+            aChild->IsInNativeAnonymousSubtree() ||
         root->IsInShadowTree() != aChild->IsInShadowTree()) {
       return false;
     }
@@ -3814,7 +3813,8 @@ nsresult HTMLEditor::RemoveBlockContainerWithTransaction(Element& aElement) {
   return NS_OK;
 }
 
-nsIContent* HTMLEditor::GetPriorHTMLSibling(nsINode* aNode, SkipWhitespace aSkipWS) {
+nsIContent* HTMLEditor::GetPriorHTMLSibling(nsINode* aNode,
+                                            SkipWhitespace aSkipWS) {
   MOZ_ASSERT(aNode);
 
   nsIContent* node = aNode->GetPreviousSibling();
@@ -3825,7 +3825,8 @@ nsIContent* HTMLEditor::GetPriorHTMLSibling(nsINode* aNode, SkipWhitespace aSkip
   return node;
 }
 
-nsIContent* HTMLEditor::GetNextHTMLSibling(nsINode* aNode, SkipWhitespace aSkipWS) {
+nsIContent* HTMLEditor::GetNextHTMLSibling(nsINode* aNode,
+                                           SkipWhitespace aSkipWS) {
   MOZ_ASSERT(aNode);
 
   nsIContent* node = aNode->GetNextSibling();

@@ -73,44 +73,12 @@ const CookieCleaner = {
   },
 
   deleteByRange(aFrom, aTo) {
-    let cookies = Services.cookies.cookies;
-    return this._deleteInternal(
-      cookies,
-      aCookie => aCookie.creationTime > aFrom
-    );
+    return Services.cookies.removeAllSince(aFrom);
   },
 
   deleteAll() {
     return new Promise(aResolve => {
       Services.cookies.removeAll();
-      aResolve();
-    });
-  },
-
-  _deleteInternal(aCookies, aCb) {
-    // A number of iterations after which to yield time back to the system.
-    const YIELD_PERIOD = 10;
-
-    return new Promise((aResolve, aReject) => {
-      let count = 0;
-      for (let cookie of aCookies) {
-        if (aCb(cookie)) {
-          Services.cookies.remove(
-            cookie.host,
-            cookie.name,
-            cookie.path,
-            cookie.originAttributes
-          );
-          // We don't want to block the main-thread.
-          if (++count % YIELD_PERIOD == 0) {
-            setTimeout(() => {
-              this._deleteInternal(aCookies, aCb).then(aResolve, aReject);
-            }, 0);
-            return;
-          }
-        }
-      }
-
       aResolve();
     });
   },

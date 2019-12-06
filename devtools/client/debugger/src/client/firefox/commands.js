@@ -4,7 +4,7 @@
 
 // @flow
 
-import { prepareSourcePayload, createThread } from "./create";
+import { prepareSourcePayload, createThread, createFrame } from "./create";
 import { updateTargets } from "./targets";
 import { clientEvents } from "./events";
 
@@ -32,6 +32,7 @@ import type {
   Grip,
   ThreadFront,
   ObjectFront,
+  ExpressionResult,
   SourcesPacket,
 } from "./types";
 
@@ -48,6 +49,8 @@ let sourceActors: { [ActorId]: SourceId };
 let breakpoints: { [string]: Object };
 let eventBreakpoints: ?EventListenerActiveList;
 
+const CALL_STACK_PAGE_SIZE = 1000;
+
 type Dependencies = {
   threadFront: ThreadFront,
   tabTarget: Target,
@@ -63,12 +66,12 @@ function setupCommands(dependencies: Dependencies) {
   breakpoints = {};
 }
 
-function createObjectFront(grip: Grip) {
+function createObjectFront(grip: Grip): ObjectFront {
   if (!grip.actor) {
     throw new Error("Actor is missing");
   }
 
-  return debuggerClient.createObjectFront(grip);
+  return debuggerClient.createObjectFront(grip, currentThreadFront);
 }
 
 async function loadObjectProperties(root: Node) {
@@ -204,7 +207,6 @@ async function removeWatchpoint(object: Grip, property: string) {
   if (currentTarget.traits.watchpoints) {
     const objectFront = createObjectFront(object);
     await objectFront.removeWatchpoint(property);
-    objectFront.release().catch(() => {});
   }
 }
 
@@ -260,7 +262,10 @@ function removeBreakpoint(location: PendingLocation) {
   return forEachThread(thread => thread.removeBreakpoint(location));
 }
 
-async function evaluateInFrame(script: Script, options: EvaluateParam) {
+function evaluateInFrame(
+  script: Script,
+  options: EvaluateParam
+): Promise<{ result: ExpressionResult }> {
   return evaluate(script, options);
 }
 
@@ -273,19 +278,19 @@ type EvaluateParam = { thread: string, frameId: ?FrameId };
 function evaluate(
   script: ?Script,
   { thread, frameId }: EvaluateParam = {}
-): Promise<{ result: Grip | null }> {
+): Promise<{ result: ExpressionResult }> {
   const params = { thread, frameActor: frameId };
   if (!currentTarget || !script) {
     return Promise.resolve({ result: null });
   }
 
   const target = thread ? lookupTarget(thread) : currentTarget;
-  const console = target.activeConsole;
-  if (!console) {
+  const consoleFront = target.activeConsole;
+  if (!consoleFront) {
     return Promise.resolve({ result: null });
   }
 
-  return console.evaluateJSAsync(script, params);
+  return consoleFront.evaluateJSAsync(script, params);
 }
 
 function autocomplete(
@@ -325,6 +330,14 @@ function getProperties(thread: string, grip: Grip): Promise<*> {
     }
     return resp;
   });
+}
+
+async function getFrames(thread: string) {
+  const threadFront = lookupThreadFront(thread);
+  const response = await threadFront.getFrames(0, CALL_STACK_PAGE_SIZE);
+  return response.frames.map<?Frame>((frame, i) =>
+    createFrame(thread, frame, i)
+  );
 }
 
 async function getFrameScopes(frame: Frame): Promise<*> {
@@ -530,6 +543,23 @@ function fetchAncestorFramePositions(index: number) {
   currentThreadFront.fetchAncestorFramePositions(index);
 }
 
+function waitForSourceActor(
+  thread: string,
+  sourceActor: string
+): Promise<void> {
+  return new Promise(resolve => {
+    const listener = ({ source }) => {
+      if (source.actor == sourceActor) {
+        threadFront.off("newSource", listener);
+        resolve();
+      }
+    };
+
+    const threadFront = lookupThreadFront(thread);
+    threadFront.on("newSource", listener);
+  });
+}
+
 const clientCommands = {
   autocomplete,
   blackBox,
@@ -563,6 +593,7 @@ const clientCommands = {
   reload,
   getProperties,
   getFrameScopes,
+  getFrames,
   pauseOnExceptions,
   toggleEventLogging,
   fetchSources,
@@ -579,6 +610,7 @@ const clientCommands = {
   getFrontByID,
   timeWarp,
   fetchAncestorFramePositions,
+  waitForSourceActor,
 };
 
 export { setupCommands, clientCommands };

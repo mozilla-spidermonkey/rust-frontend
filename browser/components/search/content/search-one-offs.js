@@ -18,7 +18,7 @@ class SearchOneOffs {
     this.container.appendChild(
       MozXULElement.parseXULToFragment(
         `
-      <hbox class="search-panel-one-offs-header search-panel-header search-panel-current-input">
+      <hbox class="search-panel-one-offs-header search-panel-header">
         <label class="search-panel-one-offs-header-label" data-l10n-id="search-one-offs-with-title"/>
       </hbox>
       <box class="search-panel-one-offs-container">
@@ -212,9 +212,11 @@ class SearchOneOffs {
   set popup(val) {
     if (this._popup) {
       this._popup.removeEventListener("popupshowing", this);
+      this._popup.removeEventListener("popuphidden", this);
     }
     if (val) {
       val.addEventListener("popupshowing", this);
+      val.addEventListener("popuphidden", this);
     }
     this._popup = val;
 
@@ -438,9 +440,6 @@ class SearchOneOffs {
    * Builds all the UI.
    */
   async __rebuild() {
-    this.selectedButton = null;
-    this._contextEngine = null;
-
     // Handle opensearch items. This needs to be done before building the
     // list of one off providers, as that code will return early if all the
     // alternative engines are hidden.
@@ -1271,11 +1270,20 @@ class SearchOneOffs {
   }
 
   _on_popupshowing() {
-    this._rebuild();
+    this.onViewOpen();
+  }
+
+  _on_popuphidden() {
+    this.onViewClose();
   }
 
   onViewOpen() {
     this._rebuild();
+  }
+
+  onViewClose() {
+    this.selectedButton = null;
+    this._contextEngine = null;
   }
 }
 

@@ -9,7 +9,6 @@
 #include "nsXULElement.h"
 
 #include "nsAutoPtr.h"
-#include "nsIServiceManager.h"
 #include "nsMathUtils.h"
 #include "SVGImageContext.h"
 
@@ -109,7 +108,6 @@
 #include "mozilla/dom/SVGMatrix.h"
 #include "mozilla/FloatingPoint.h"
 #include "nsGlobalWindow.h"
-#include "nsIScreenManager.h"
 #include "nsFilterInstance.h"
 #include "nsDeviceContext.h"
 #include "nsFontMetrics.h"
@@ -3493,9 +3491,10 @@ struct MOZ_STACK_CLASS CanvasBidiProcessor
     } else {
       flags &= ~gfx::ShapedTextFlags::TEXT_IS_RTL;
     }
-    mTextRun =
-        mFontgrp->MakeTextRun(aText, aLength, mDrawTarget, mAppUnitsPerDevPixel,
-                              flags, nsTextFrameUtils::Flags(), mMissingFonts);
+    mTextRun = mFontgrp->MakeTextRun(
+        aText, aLength, mDrawTarget, mAppUnitsPerDevPixel, flags,
+        nsTextFrameUtils::Flags::DontSkipDrawingForPendingUserFonts,
+        mMissingFonts);
   }
 
   virtual nscoord GetWidth() override {

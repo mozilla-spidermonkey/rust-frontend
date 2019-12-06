@@ -19,13 +19,8 @@
 #include "nsNetUtil.h"
 #include "nsThreadUtils.h"
 
-#include "nsIMemoryInfoDumper.h"
-#include "nsIMemoryReporter.h"
 #include "nsIObserverService.h"
-#include "nsIBrowserChild.h"
 #include "nsIDebug2.h"
-#include "nsIDocShell.h"
-#include "nsIRunnable.h"
 #include "nsPIDOMWindow.h"
 #include "nsPrintfCString.h"
 #include "mozilla/Preferences.h"
@@ -63,7 +58,6 @@
 #include "nsAboutProtocolUtils.h"
 
 #include "GeckoProfiler.h"
-#include "nsIInputStream.h"
 #include "nsIXULRuntime.h"
 #include "nsJSPrincipals.h"
 #include "ExpandedPrincipal.h"
@@ -771,6 +765,9 @@ static mozilla::Atomic<bool> sAwaitFixEnabled(false);
 void xpc::SetPrefableRealmOptions(JS::RealmOptions& options) {
   options.creationOptions()
       .setSharedMemoryAndAtomicsEnabled(sSharedMemoryEnabled)
+      .setCoopAndCoepEnabled(
+          StaticPrefs::browser_tabs_remote_useCrossOriginOpenerPolicy() &&
+          StaticPrefs::browser_tabs_remote_useCrossOriginEmbedderPolicy())
       .setStreamsEnabled(sStreamsEnabled)
       .setWritableStreamsEnabled(
           StaticPrefs::javascript_options_writable_streams())
@@ -1261,6 +1258,10 @@ nsresult XPCJSContext::Initialize() {
 #ifdef FUZZING
   Preferences::RegisterCallback(ReloadPrefsCallback, "fuzzing.enabled", this);
 #endif
+
+  MOZ_RELEASE_ASSERT(JS::InitSelfHostedCode(cx), "InitSelfHostedCode failed");
+  MOZ_RELEASE_ASSERT(Runtime()->InitializeStrings(cx),
+                     "InitializeStrings failed");
 
   return NS_OK;
 }

@@ -43,11 +43,6 @@ using mozilla::dom::ContentParent;
 #include "AndroidGraphics.h"
 #include "JavaExceptions.h"
 
-#include "nsIBaseWindow.h"
-#include "nsIBrowserDOMWindow.h"
-#include "nsIDOMChromeWindow.h"
-#include "nsIObserverService.h"
-#include "nsISupportsPrimitives.h"
 #include "nsIWidgetListener.h"
 #include "nsIWindowWatcher.h"
 #include "nsIAppWindow.h"
@@ -91,10 +86,7 @@ using mozilla::dom::ContentParent;
 #include "MotionEvent.h"
 #include "ScreenHelperAndroid.h"
 
-#include "imgIEncoder.h"
-
 #include "GeckoProfiler.h"  // For AUTO_PROFILER_LABEL
-#include "nsIXULRuntime.h"
 #include "nsPrintfCString.h"
 #include "nsString.h"
 
@@ -1090,11 +1082,18 @@ class nsWindow::LayerViewSupport final
   }
 
   void SetFixedBottomOffset(int32_t aOffset) {
-    MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
+    if (mWindow) {
+      mWindow->UpdateDynamicToolbarOffset(ScreenIntCoord(aOffset));
+    }
 
-    if (RefPtr<UiCompositorControllerChild> child =
-            GetUiCompositorControllerChild()) {
-      child->SetFixedBottomOffset(aOffset);
+    if (RefPtr<nsThread> uiThread = GetAndroidUiThread()) {
+      uiThread->Dispatch(NS_NewRunnableFunction(
+          "LayerViewSupport::SetFixedBottomOffset", [this, offset = aOffset] {
+            if (RefPtr<UiCompositorControllerChild> child =
+                    GetUiCompositorControllerChild()) {
+              child->SetFixedBottomOffset(offset);
+            }
+          }));
     }
   }
 
@@ -2323,6 +2322,16 @@ void nsWindow::UpdateDynamicToolbarMaxHeight(ScreenIntCoord aHeight) {
 
   if (mAttachedWidgetListener) {
     mAttachedWidgetListener->DynamicToolbarMaxHeightChanged(aHeight);
+  }
+}
+
+void nsWindow::UpdateDynamicToolbarOffset(ScreenIntCoord aOffset) {
+  if (mWidgetListener) {
+    mWidgetListener->DynamicToolbarOffsetChanged(aOffset);
+  }
+
+  if (mAttachedWidgetListener) {
+    mAttachedWidgetListener->DynamicToolbarOffsetChanged(aOffset);
   }
 }
 

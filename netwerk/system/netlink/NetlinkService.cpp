@@ -17,6 +17,7 @@
 #include "nsPrintfCString.h"
 #include "mozilla/Logging.h"
 #include "../../base/IPv6Utils.h"
+#include "../NetworkLinkServiceDefines.h"
 
 #include "mozilla/Base64.h"
 #include "mozilla/FileUtils.h"
@@ -40,13 +41,6 @@ namespace net {
 // period during which to absorb subsequent network change events, in
 // milliseconds
 static const unsigned int kNetworkChangeCoalescingPeriod = 1000;
-
-// IP addresses that are used to check the route for public traffic. They are
-// used just to check routing rules, no packets are sent to those hosts.
-// Initially, addresses of host detectportal.firefox.com were used but they
-// don't necessarily need to be updated when addresses of this host change.
-#define NETLINK_ROUTE_CHECK_IPV4 "23.219.91.27"
-#define NETLINK_ROUTE_CHECK_IPV6 "2a02:26f0:40::17db:5b1b"
 
 static LazyLogModule gNlSvcLog("NetlinkService");
 #define LOG(args) MOZ_LOG(gNlSvcLog, mozilla::LogLevel::Debug, args)
@@ -78,6 +72,10 @@ class NetlinkAddress {
   uint8_t GetPrefixLen() const { return mIfam.ifa_prefixlen; }
   bool ScopeIsUniverse() const { return mIfam.ifa_scope == RT_SCOPE_UNIVERSE; }
   const in_common_addr* GetAddrPtr() const { return &mAddr; }
+
+  bool MsgEquals(const NetlinkAddress* aOther) const {
+    return !memcmp(&mIfam, &(aOther->mIfam), sizeof(mIfam));
+  }
 
   bool Equals(const NetlinkAddress* aOther) const {
     if (mIfam.ifa_family != aOther->mIfam.ifa_family) {
@@ -627,7 +625,8 @@ NetlinkService::NetlinkService()
       mInitialScanFinished(false),
       mMsgId(0),
       mLinkUp(true),
-      mRecalculateNetworkId(false) {
+      mRecalculateNetworkId(false),
+      mSendNetworkChangeEvent(false) {
   mPid = getpid();
   mShutdownPipe[0] = -1;
   mShutdownPipe[1] = -1;
@@ -829,6 +828,14 @@ void NetlinkService::OnAddrMessage(struct nlmsghdr* aNlh) {
   // be different. Remove existing equal address in case of RTM_DELADDR as well
   // as RTM_NEWADDR message and add a new one in the latter case.
   for (uint32_t i = 0; i < linkInfo->mAddresses.Length(); ++i) {
+    if (aNlh->nlmsg_type == RTM_NEWADDR &&
+        linkInfo->mAddresses[i]->MsgEquals(address)) {
+      // If the new address is exactly the same, there is nothing to do.
+      LOG(("Exactly the same address already exists [ifIdx=%u, addr=%s/%u",
+           ifIdx, addrStr.get(), address->GetPrefixLen()));
+      return;
+    }
+
     if (linkInfo->mAddresses[i]->Equals(address)) {
       LOG(("Removing address [ifIdx=%u, addr=%s/%u]", ifIdx, addrStr.get(),
            address->GetPrefixLen()));
@@ -876,7 +883,12 @@ void NetlinkService::OnAddrMessage(struct nlmsghdr* aNlh) {
     }
   }
 
-  TriggerNetworkIDCalculation();
+  // Don't treat address changes during initial scan as a network change
+  if (mInitialScanFinished) {
+    // Send network event change regardless of whether the ID has changed or not
+    mSendNetworkChangeEvent = true;
+    TriggerNetworkIDCalculation();
+  }
 }
 
 void NetlinkService::OnRouteMessage(struct nlmsghdr* aNlh) {
@@ -1234,17 +1246,15 @@ nsresult NetlinkService::Init(NetlinkServiceListener* aListener) {
 
   mListener = aListener;
 
-  if (inet_pton(AF_INET, NETLINK_ROUTE_CHECK_IPV4, &mRouteCheckIPv4) != 1) {
-    LOG(("Cannot parse address " NETLINK_ROUTE_CHECK_IPV4));
-    MOZ_DIAGNOSTIC_ASSERT(false,
-                          "Cannot parse address " NETLINK_ROUTE_CHECK_IPV4);
+  if (inet_pton(AF_INET, ROUTE_CHECK_IPV4, &mRouteCheckIPv4) != 1) {
+    LOG(("Cannot parse address " ROUTE_CHECK_IPV4));
+    MOZ_DIAGNOSTIC_ASSERT(false, "Cannot parse address " ROUTE_CHECK_IPV4);
     return NS_ERROR_UNEXPECTED;
   }
 
-  if (inet_pton(AF_INET6, NETLINK_ROUTE_CHECK_IPV6, &mRouteCheckIPv6) != 1) {
-    LOG(("Cannot parse address " NETLINK_ROUTE_CHECK_IPV6));
-    MOZ_DIAGNOSTIC_ASSERT(false,
-                          "Cannot parse address " NETLINK_ROUTE_CHECK_IPV6);
+  if (inet_pton(AF_INET6, ROUTE_CHECK_IPV6, &mRouteCheckIPv6) != 1) {
+    LOG(("Cannot parse address " ROUTE_CHECK_IPV6));
+    MOZ_DIAGNOSTIC_ASSERT(false, "Cannot parse address " ROUTE_CHECK_IPV6);
     return NS_ERROR_UNEXPECTED;
   }
 
@@ -1666,8 +1676,8 @@ bool NetlinkService::CalculateIDForFamily(uint8_t aFamily, SHA1Sum* aSHA1) {
 
 void NetlinkService::ComputeDNSSuffixList() {
   MOZ_ASSERT(!NS_IsMainThread(), "Must not be called on the main thread");
-#if defined(HAVE_RES_NINIT)
   nsTArray<nsCString> suffixList;
+#if defined(HAVE_RES_NINIT)
   struct __res_state res;
   if (res_ninit(&res) == 0) {
     for (int i = 0; i < MAXDNSRCH; i++) {
@@ -1678,10 +1688,16 @@ void NetlinkService::ComputeDNSSuffixList() {
     }
     res_nclose(&res);
   }
-
-  MutexAutoLock lock(mMutex);
-  mDNSSuffixList = std::move(suffixList);
 #endif
+  RefPtr<NetlinkServiceListener> listener;
+  {
+    MutexAutoLock lock(mMutex);
+    listener = mListener;
+    mDNSSuffixList = std::move(suffixList);
+  }
+  if (listener) {
+    listener->OnDnsSuffixListUpdated();
+  }
 }
 
 void NetlinkService::UpdateLinkStatus() {
@@ -1690,8 +1706,7 @@ void NetlinkService::UpdateLinkStatus() {
   MOZ_ASSERT(!mRecalculateNetworkId);
   MOZ_ASSERT(mInitialScanFinished);
 
-  // Link is up when we have a route for NETLINK_ROUTE_CHECK_IPV4 or
-  // NETLINK_ROUTE_CHECK_IPV6
+  // Link is up when we have a route for ROUTE_CHECK_IPV4 or ROUTE_CHECK_IPV6
   bool newLinkUp = mIPv4RouteCheckResult || mIPv6RouteCheckResult;
 
   if (mLinkUp == newLinkUp) {
@@ -1780,19 +1795,23 @@ void NetlinkService::CalculateNetworkID() {
   // correct ID. The network hasn't really changed.
   static bool initialIDCalculation = true;
 
-  if (idChanged && !initialIDCalculation) {
-    RefPtr<NetlinkServiceListener> listener;
-    {
-      MutexAutoLock lock(mMutex);
-      listener = mListener;
-    }
-    if (listener) {
-      listener->OnNetworkIDChanged();
-      listener->OnNetworkChanged();
-    }
+  RefPtr<NetlinkServiceListener> listener;
+  {
+    MutexAutoLock lock(mMutex);
+    listener = mListener;
+  }
+
+  if (!initialIDCalculation && idChanged && listener) {
+    listener->OnNetworkIDChanged();
+    mSendNetworkChangeEvent = true;
+  }
+
+  if (mSendNetworkChangeEvent && listener) {
+    listener->OnNetworkChanged();
   }
 
   initialIDCalculation = false;
+  mSendNetworkChangeEvent = false;
 }
 
 void NetlinkService::GetNetworkID(nsACString& aNetworkID) {

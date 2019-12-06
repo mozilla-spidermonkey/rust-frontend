@@ -30,8 +30,6 @@
 #include "nsClientAuthRemember.h"
 #include "nsContentUtils.h"
 #include "nsIClientAuthDialogs.h"
-#include "nsIConsoleService.h"
-#include "nsIPrefService.h"
 #include "nsISocketProvider.h"
 #include "nsIWebProgressListener.h"
 #include "nsNSSCertHelper.h"
@@ -203,6 +201,17 @@ void nsNSSSocketInfo::NoteTimeUntilReady() {
   }
   MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
           ("[%p] nsNSSSocketInfo::NoteTimeUntilReady\n", mFd));
+}
+
+void nsNSSSocketInfo::NoteSessionResumptionTime(bool aUsingExternalCache) {
+  // This will include TCP and proxy tunnel wait time
+  Telemetry::AccumulateTimeDelta(
+      aUsingExternalCache
+          ? Telemetry::
+                SESSION_RESUMPTION_WITH_EXTERNAL_CACHE_TIME_UNTIL_READY_MS
+          : Telemetry::
+                SESSION_RESUMPTION_WITH_INTERNAL_CACHE_TIME_UNTIL_READY_MS,
+      mSocketCreationTimestamp, TimeStamp::Now());
 }
 
 void nsNSSSocketInfo::SetHandshakeCompleted() {

@@ -65,8 +65,6 @@ XPCOMUtils.defineLazyGetter(this, "passwordMgrBundle", () => {
 function loginSort(formHostPort, a, b) {
   let maybeHostPortA = LoginHelper.maybeGetHostPortForURL(a.origin);
   let maybeHostPortB = LoginHelper.maybeGetHostPortForURL(b.origin);
-
-  // Exact hostPort matches should appear first.
   if (formHostPort == maybeHostPortA && formHostPort != maybeHostPortB) {
     return -1;
   }
@@ -84,8 +82,18 @@ function loginSort(formHostPort, a, b) {
     }
   }
 
-  // Finally sort by username.
-  return a.username.localeCompare(b.username);
+  let userA = a.username.toLowerCase();
+  let userB = b.username.toLowerCase();
+
+  if (userA < userB) {
+    return -1;
+  }
+
+  if (userA > userB) {
+    return 1;
+  }
+
+  return 0;
 }
 
 function findDuplicates(loginList) {
@@ -188,9 +196,14 @@ class LoginAutocompleteItem extends AutocompleteItem {
 }
 
 class GeneratedPasswordAutocompleteItem extends AutocompleteItem {
-  constructor(generatedPassword) {
+  constructor(generatedPassword, willAutoSaveGeneratedPassword) {
     super("generatedPassword");
-    this.comment = generatedPassword;
+    XPCOMUtils.defineLazyGetter(this, "comment", () => {
+      return JSON.stringify({
+        generatedPassword,
+        willAutoSaveGeneratedPassword,
+      });
+    });
     this.value = generatedPassword;
 
     XPCOMUtils.defineLazyGetter(this, "label", () => {
@@ -215,7 +228,14 @@ function LoginAutoCompleteResult(
   aSearchString,
   matchingLogins,
   formOrigin,
-  { generatedPassword, isSecure, actor, isPasswordField, hostname }
+  {
+    generatedPassword,
+    willAutoSaveGeneratedPassword,
+    isSecure,
+    actor,
+    isPasswordField,
+    hostname,
+  }
 ) {
   let hidingFooterOnPWFieldAutoOpened = false;
   function isFooterEnabled() {
@@ -227,7 +247,7 @@ function LoginAutoCompleteResult(
 
     // Don't show the footer on non-empty password fields as it's not providing
     // value and only adding noise since a password was already filled.
-    if (isPasswordField && aSearchString) {
+    if (isPasswordField && aSearchString && !generatedPassword) {
       log.debug("Hiding footer: non-empty password field");
       return false;
     }
@@ -283,7 +303,12 @@ function LoginAutoCompleteResult(
   // The footer comes last if it's enabled
   if (isFooterEnabled()) {
     if (generatedPassword) {
-      this._rows.push(new GeneratedPasswordAutocompleteItem(generatedPassword));
+      this._rows.push(
+        new GeneratedPasswordAutocompleteItem(
+          generatedPassword,
+          willAutoSaveGeneratedPassword
+        )
+      );
     }
     this._rows.push(new LoginsFooterAutocompleteItem(hostname));
   }
@@ -409,6 +434,7 @@ LoginAutoComplete.prototype = {
       // Don't show autocomplete results for about: pages.
       return;
     }
+
     // Show the insecure login warning in the passwords field on null principal documents.
     let isSecure = !isNullPrincipal;
     // Avoid loading InsecurePasswordUtils.jsm in a sandboxed document (e.g. an ad. frame) if we
@@ -434,7 +460,7 @@ LoginAutoComplete.prototype = {
 
     let completeSearch = (
       autoCompleteLookupPromise,
-      { generatedPassword, logins }
+      { generatedPassword, logins, willAutoSaveGeneratedPassword }
     ) => {
       // If the search was canceled before we got our
       // results, don't bother reporting them.
@@ -451,6 +477,7 @@ LoginAutoComplete.prototype = {
         formOrigin,
         {
           generatedPassword,
+          willAutoSaveGeneratedPassword,
           actor: loginManagerActor,
           isSecure,
           isPasswordField,
@@ -470,8 +497,13 @@ LoginAutoComplete.prototype = {
       return;
     }
 
-    if (isPasswordField && aSearchString) {
-      // Return empty result on password fields with password already filled.
+    if (
+      isPasswordField &&
+      aSearchString &&
+      !loginManagerActor.isPasswordGenerationForcedOn(aElement)
+    ) {
+      // Return empty result on password fields with password already filled,
+      // unless password generation was forced.
       let acLookupPromise = (this._autoCompleteLookupPromise = Promise.resolve({
         logins: [],
       }));

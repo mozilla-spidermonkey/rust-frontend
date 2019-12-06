@@ -40,6 +40,12 @@
                     "title": "Subtest name",
                     "type": "string"
                 },
+                "publicName": {
+                    "title": "Public subtest name",
+                    "description": "Allows renaming test's name, without breaking existing performance data series",
+                    "maxLength": 30,
+                    "type": "string"
+                },
                 "value": {
                     "description": "Summary value for subtest",
                     "title": "Subtest value",
@@ -103,6 +109,23 @@
                 "name": {
                     "title": "Suite name",
                     "type": "string"
+                },
+                "publicName": {
+                    "title": "Public suite name",
+                    "description": "Allows renaming suite's name, without breaking existing performance data series",
+                    "maxLength": 30,
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "title": "Free form tags, which ease the grouping & searching of performance tests",
+                    "description": "Similar to extraOptions, except it does not break existing performance data series",
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z0-9]{1,24}$"
+                    },
+                    "uniqueItems": true,
+                    "maxItems": 14
                 },
                 "extraOptions": {
                     "type": "array",

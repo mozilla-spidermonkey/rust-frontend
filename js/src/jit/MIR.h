@@ -1696,6 +1696,11 @@ class MControlInstruction : public MInstruction {
   virtual MBasicBlock* getSuccessor(size_t i) const = 0;
   virtual void replaceSuccessor(size_t i, MBasicBlock* successor) = 0;
 
+  void initSuccessor(size_t i, MBasicBlock* successor) {
+    MOZ_ASSERT(!getSuccessor(i));
+    replaceSuccessor(i, successor);
+  }
+
   bool isControlInstruction() const override { return true; }
 
 #ifdef JS_JITSPEW
@@ -7373,29 +7378,6 @@ class MTypedObjectElements : public MUnaryInstruction,
   }
 };
 
-// Inlined version of the js::SetTypedObjectOffset() intrinsic.
-class MSetTypedObjectOffset : public MBinaryInstruction,
-                              public NoTypePolicy::Data {
- private:
-  MSetTypedObjectOffset(MDefinition* object, MDefinition* offset)
-      : MBinaryInstruction(classOpcode, object, offset) {
-    MOZ_ASSERT(object->type() == MIRType::Object);
-    MOZ_ASSERT(offset->type() == MIRType::Int32);
-    setResultType(MIRType::None);
-  }
-
- public:
-  INSTRUCTION_HEADER(SetTypedObjectOffset)
-  TRIVIAL_NEW_WRAPPERS
-  NAMED_OPERANDS((0, object), (1, offset))
-
-  AliasSet getAliasSet() const override {
-    // This affects the result of MTypedObjectElements,
-    // which is described as a load of ObjectFields.
-    return AliasSet::Store(AliasSet::ObjectFields);
-  }
-};
-
 class MKeepAliveObject : public MUnaryInstruction,
                          public SingleObjectPolicy::Data {
   explicit MKeepAliveObject(MDefinition* object)
@@ -10771,6 +10753,8 @@ class MIsNullOrUndefined : public MUnaryInstruction,
   INSTRUCTION_HEADER(IsNullOrUndefined)
   TRIVIAL_NEW_WRAPPERS
   NAMED_OPERANDS((0, value))
+
+  MDefinition* foldsTo(TempAllocator& alloc) override;
 
   bool congruentTo(const MDefinition* ins) const override {
     return congruentIfOperandsEqual(ins);

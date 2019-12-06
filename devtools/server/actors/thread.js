@@ -114,6 +114,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
 
     this._options = {
       autoBlackBox: false,
+      skipBreakpoints: false,
     };
 
     this.breakpointActorMap = new BreakpointActorMap(this);
@@ -197,7 +198,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
 
   get threadLifetimePool() {
     if (!this._threadLifetimePool) {
-      this._threadLifetimePool = new ActorPool(this.conn);
+      this._threadLifetimePool = new ActorPool(this.conn, "thread");
       this.conn.addActorPool(this._threadLifetimePool);
       this._threadLifetimePool.objectActors = new WeakMap();
     }
@@ -285,6 +286,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
       this.doResume();
     }
 
+    this.removeAllWatchpoints();
     this._xhrBreakpoints = [];
     this._updateNetworkObserver();
 
@@ -353,7 +355,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
 
     this._debuggerSourcesSeen = new WeakSet();
 
-    Object.assign(this._options, options || {});
+    this._options = { ...this._options, ...options };
     this.sources.setOptions(this._options);
     this.sources.on("newSource", this.onNewSourceEvent);
 
@@ -685,7 +687,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
       }
     }
 
-    Object.assign(this._options, options);
+    this._options = { ...this._options, ...options };
 
     // Update the global source store
     this.sources.setOptions(options);
@@ -1146,7 +1148,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
       this.dbg.replayClearSteppingHooks();
     } else {
       let frame = this.youngestFrame;
-      if (frame && frame.live) {
+      if (frame && frame.onStack) {
         while (frame) {
           frame.onStep = undefined;
           frame.onPop = undefined;
@@ -1498,7 +1500,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     // Create the actor pool that will hold the pause actor and its
     // children.
     assert(!this._pausePool, "No pause pool should exist yet");
-    this._pausePool = new ActorPool(this.conn);
+    this._pausePool = new ActorPool(this.conn, "pause");
     this.conn.addActorPool(this._pausePool);
 
     // Give children of the pause pool a quick link back to the
@@ -1590,12 +1592,12 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     const popped = [];
 
     // Create the actor pool that will hold the still-living frames.
-    const framePool = new ActorPool(this.conn);
+    const framesPool = new ActorPool(this.conn, "frames");
     const frameList = [];
 
     for (const frameActor of this._frameActors) {
-      if (frameActor.frame.live) {
-        framePool.addActor(frameActor);
+      if (frameActor.frame.onStack) {
+        framesPool.addActor(frameActor);
         frameList.push(frameActor);
       } else {
         popped.push(frameActor.actorID);
@@ -1604,13 +1606,13 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
 
     // Remove the old frame actor pool, this will expire
     // any actors that weren't added to the new pool.
-    if (this._framePool) {
-      this.conn.removeActorPool(this._framePool);
+    if (this._framesPool) {
+      this.conn.removeActorPool(this._framesPool);
     }
 
     this._frameActors = frameList;
-    this._framePool = framePool;
-    this.conn.addActorPool(framePool);
+    this._framesPool = framesPool;
+    this.conn.addActorPool(framesPool);
 
     return popped;
   },
@@ -1622,7 +1624,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
 
     const actor = new FrameActor(frame, this, depth);
     this._frameActors.push(actor);
-    this._framePool.addActor(actor);
+    this._framesPool.addActor(actor);
     frame.actor = actor;
 
     return actor;
@@ -1723,11 +1725,23 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
    *        The object actor.
    */
   threadObjectGrip: function(actor) {
-    // We want to reuse the existing actor ID, so we just remove it from the
-    // current pool's weak map and then let pool.addActor do the rest.
-    actor.registeredPool.objectActors.delete(actor.obj);
+    // Save the reference for when we need to demote the object
+    // back to its original registered pool
+    actor.originalRegisteredPool = actor.registeredPool;
+
     this.threadLifetimePool.addActor(actor);
     this.threadLifetimePool.objectActors.set(actor.obj, actor);
+  },
+
+  demoteObjectGrip: function(actor) {
+    // We want to reuse the existing actor ID, so we just remove it from the
+    // current pool's weak map and then let ActorPool.addActor do the rest.
+    actor.registeredPool.objectActors.delete(actor.obj);
+
+    actor.originalRegisteredPool.addActor(actor);
+    actor.originalRegisteredPool.objectActors.set(actor.obj, actor);
+
+    delete actor.originalRegisteredPool;
   },
 
   _onWindowReady: function({ isTopLevel, isBFCache, window }) {
@@ -1867,7 +1881,11 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
   },
 
   onPauseOnExceptions: function({ pauseOnExceptions, ignoreCaughtExceptions }) {
-    Object.assign(this._options, { pauseOnExceptions, ignoreCaughtExceptions });
+    this._options = {
+      ...this._options,
+      pauseOnExceptions,
+      ignoreCaughtExceptions,
+    };
     this.maybePauseOnExceptions();
     return {};
   },

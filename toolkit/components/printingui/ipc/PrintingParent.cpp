@@ -11,9 +11,7 @@
 #include "nsIContent.h"
 #include "mozilla/dom/Document.h"
 #include "nsIPrintingPromptService.h"
-#include "nsIPrintProgressParams.h"
 #include "nsIPrintSettingsService.h"
-#include "nsIServiceManager.h"
 #include "nsServiceManagerUtils.h"
 #include "nsIWebProgressListener.h"
 #include "PrintingParent.h"
@@ -47,7 +45,7 @@ mozilla::ipc::IPCResult PrintingParent::RecvShowProgress(
   nsresult rv = NS_ERROR_INVALID_ARG;
   if (parentWin && pps) {
     rv = pps->ShowPrintProgressDialog(
-        parentWin, nullptr, nullptr, observer, isForPrinting,
+        parentWin, nullptr, observer, isForPrinting,
         getter_AddRefs(printProgressListener),
         getter_AddRefs(printProgressParams), &notifyOnOpen);
   }
@@ -105,7 +103,8 @@ nsresult PrintingParent::ShowPrintDialog(PBrowserParent* aParent,
   // The initSettings we got can be wrapped using
   // PrintDataUtils' MockWebBrowserPrint, which implements enough of
   // nsIWebBrowserPrint to keep the dialogs happy.
-  nsCOMPtr<nsIWebBrowserPrint> wbp = new MockWebBrowserPrint(aData);
+  nsCOMPtr<nsIWebBrowserPrint> wbp = new MockWebBrowserPrint(
+      aData.printJobName(), aData.isIFrameSelected(), aData.isRangeSelection());
 
   // Use the existing RemotePrintJob and its settings, if we have one, to make
   // sure they stay current.

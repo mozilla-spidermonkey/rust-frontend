@@ -22,7 +22,7 @@
 #include <setjmp.h>
 
 #include "builtin/AtomicsObject.h"
-#ifdef ENABLE_INTL_API
+#ifdef JS_HAS_INTL_API
 #  include "builtin/intl/SharedIntlData.h"
 #endif
 #include "builtin/Promise.h"
@@ -684,7 +684,7 @@ struct JSRuntime {
     return defaultFreeOp_;
   }
 
-#if !ENABLE_INTL_API
+#if !JS_HAS_INTL_API
   /* Number localization, used by jsnum.cpp. */
   js::WriteOnceData<const char*> thousandsSeparator;
   js::WriteOnceData<const char*> decimalSeparator;
@@ -804,7 +804,7 @@ struct JSRuntime {
   // these are shared with the parentRuntime, if any.
   js::WriteOnceData<js::WellKnownSymbols*> wellKnownSymbols;
 
-#ifdef ENABLE_INTL_API
+#ifdef JS_HAS_INTL_API
   /* Shared Intl data for this runtime. */
   js::MainThreadData<js::intl::SharedIntlData> sharedIntlData;
 
@@ -839,6 +839,24 @@ struct JSRuntime {
   bool init(JSContext* cx, uint32_t maxbytes);
 
   JSRuntime* thisFromCtor() { return this; }
+
+ private:
+  // Number of live SharedArrayBuffer objects, including those in Wasm shared
+  // memories.  uint64_t to avoid any risk of overflow.
+  js::MainThreadData<uint64_t> liveSABs;
+
+ public:
+  void incSABCount() {
+    MOZ_RELEASE_ASSERT(liveSABs != UINT64_MAX);
+    liveSABs++;
+  }
+
+  void decSABCount() {
+    MOZ_RELEASE_ASSERT(liveSABs > 0);
+    liveSABs--;
+  }
+
+  bool hasLiveSABs() const { return liveSABs > 0; }
 
  public:
   void reportAllocationOverflow() { js::ReportAllocationOverflow(nullptr); }

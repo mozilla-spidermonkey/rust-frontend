@@ -28,8 +28,10 @@
 #include <iprtrmib.h>
 #include "plstr.h"
 #include "mozilla/Logging.h"
+#include "nsComponentManagerUtils.h"
 #include "nsThreadUtils.h"
 #include "nsIObserverService.h"
+#include "nsIWindowsRegKey.h"
 #include "nsServiceManagerUtils.h"
 #include "nsNotifyAddrListener.h"
 #include "nsString.h"
@@ -65,6 +67,7 @@ nsNotifyAddrListener::nsNotifyAddrListener()
       mMutex("nsNotifyAddrListener::mMutex"),
       mCheckEvent(nullptr),
       mShutdown(false),
+      mPlatformDNSIndications(NONE_DETECTED),
       mIPInterfaceChecksum(0),
       mCoalescingActive(false) {}
 
@@ -110,6 +113,13 @@ nsNotifyAddrListener::GetDnsSuffixList(nsTArray<nsCString>& aDnsSuffixList) {
   aDnsSuffixList.Clear();
   MutexAutoLock lock(mMutex);
   aDnsSuffixList.AppendElements(mDnsSuffixList);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsNotifyAddrListener::GetPlatformDNSIndications(
+    uint32_t* aPlatformDNSIndications) {
+  *aPlatformDNSIndications = mPlatformDNSIndications;
   return NS_OK;
 }
 
@@ -285,8 +295,8 @@ nsNotifyAddrListener::Run() {
       StaticPrefs::network_notify_IPv6() ? AF_UNSPEC
                                          : AF_INET,  // IPv4 and IPv6
       (PIPINTERFACE_CHANGE_CALLBACK)OnInterfaceChange,
-      this,   // pass to callback
-      false,  // no initial notification
+      this,                                        // pass to callback
+      StaticPrefs::network_notify_initial_call(),  // initial notification
       &interfacechange);
 
   if (ret == NO_ERROR) {
@@ -407,6 +417,7 @@ nsresult nsNotifyAddrListener::NotifyObservers(const char* aTopic,
 
 DWORD
 nsNotifyAddrListener::CheckAdaptersAddresses(void) {
+  MOZ_ASSERT(!NS_IsMainThread(), "Don't call this on the main thread");
   ULONG len = 16384;
 
   PIP_ADAPTER_ADDRESSES adapterList = (PIP_ADAPTER_ADDRESSES)moz_xmalloc(len);
@@ -437,7 +448,7 @@ nsNotifyAddrListener::CheckAdaptersAddresses(void) {
   ULONG sumAll = 0;
 
   nsTArray<nsCString> dnsSuffixList;
-
+  uint32_t platformDNSIndications = NONE_DETECTED;
   if (ret == ERROR_SUCCESS) {
     bool linkUp = false;
     ULONG sum = 0;
@@ -448,6 +459,11 @@ nsNotifyAddrListener::CheckAdaptersAddresses(void) {
           !adapter->FirstUnicastAddress ||
           adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
         continue;
+      }
+
+      if (adapter->IfType == IF_TYPE_PPP) {
+        LOG(("VPN connection found"));
+        platformDNSIndications |= VPN_DETECTED;
       }
 
       sum <<= 2;
@@ -489,9 +505,98 @@ nsNotifyAddrListener::CheckAdaptersAddresses(void) {
   CoUninitialize();
 
   if (StaticPrefs::network_notify_dnsSuffixList()) {
+    // It seems that the only way to retrieve non-connection specific DNS
+    // suffixes is via the Windows registry.
+
+    auto checkRegistry = [&dnsSuffixList] {
+      nsresult rv;
+      nsCOMPtr<nsIWindowsRegKey> regKey =
+          do_CreateInstance("@mozilla.org/windows-registry-key;1", &rv);
+      if (NS_FAILED(rv)) {
+        LOG(("  creating nsIWindowsRegKey failed\n"));
+        return;
+      }
+      rv = regKey->Open(
+          nsIWindowsRegKey::ROOT_KEY_LOCAL_MACHINE,
+          NS_LITERAL_STRING(
+              "SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters"),
+          nsIWindowsRegKey::ACCESS_READ);
+      if (NS_FAILED(rv)) {
+        LOG(("  opening registry key failed\n"));
+        return;
+      }
+      nsAutoString wideSuffixString;
+      rv = regKey->ReadStringValue(NS_LITERAL_STRING("SearchList"),
+                                   wideSuffixString);
+      if (NS_FAILED(rv)) {
+        LOG(("  reading registry string value failed\n"));
+        return;
+      }
+
+      nsAutoCString list = NS_ConvertUTF16toUTF8(wideSuffixString);
+      for (const nsACString& suffix : list.Split(',')) {
+        LOG(("  appending DNS suffix from registry: %s\n",
+             suffix.BeginReading()));
+        dnsSuffixList.AppendElement(suffix);
+      }
+    };
+
+    checkRegistry();
+  }
+
+  auto registryChildCount = [](const nsAString& aRegPath) -> uint32_t {
+    nsresult rv;
+    nsCOMPtr<nsIWindowsRegKey> regKey =
+        do_CreateInstance("@mozilla.org/windows-registry-key;1", &rv);
+    if (NS_FAILED(rv)) {
+      LOG(("  creating nsIWindowsRegKey failed\n"));
+      return 0;
+    }
+    rv = regKey->Open(nsIWindowsRegKey::ROOT_KEY_LOCAL_MACHINE, aRegPath,
+                      nsIWindowsRegKey::ACCESS_READ);
+    if (NS_FAILED(rv)) {
+      LOG(("  opening registry key failed\n"));
+      return 0;
+    }
+
+    uint32_t count = 0;
+    rv = regKey->GetChildCount(&count);
+    if (NS_FAILED(rv)) {
+      return 0;
+    }
+
+    return count;
+  };
+
+  if (StaticPrefs::network_notify_checkForProxies()) {
+    if (registryChildCount(
+            NS_LITERAL_STRING("SYSTEM\\CurrentControlSet\\Services\\Dnscache\\"
+                              "Parameters\\DnsConnections")) > 0 ||
+        registryChildCount(
+            NS_LITERAL_STRING("SYSTEM\\CurrentControlSet\\Services\\Dnscache\\"
+                              "Parameters\\DnsConnectionsProxies")) > 0) {
+      platformDNSIndications |= PROXY_DETECTED;
+    }
+  }
+
+  if (StaticPrefs::network_notify_checkForNRPT()) {
+    if (registryChildCount(
+            NS_LITERAL_STRING("SYSTEM\\CurrentControlSet\\Services\\Dnscache\\"
+                              "Parameters\\DnsPolicyConfig")) > 0 ||
+        registryChildCount(
+            NS_LITERAL_STRING("SOFTWARE\\Policies\\Microsoft\\Windows NT\\"
+                              "DNSClient\\DnsPolicyConfig")) > 0) {
+      platformDNSIndications |= NRPT_DETECTED;
+    }
+  }
+
+  {
     MutexAutoLock lock(mMutex);
     mDnsSuffixList.SwapElements(dnsSuffixList);
+    mPlatformDNSIndications = platformDNSIndications;
   }
+
+  NotifyObservers(NS_DNS_SUFFIX_LIST_UPDATED_TOPIC, nullptr);
 
   calculateNetworkId();
 

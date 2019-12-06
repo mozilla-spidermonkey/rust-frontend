@@ -924,15 +924,27 @@ add_old_configure_assignment('FT2_CFLAGS',
                              ft2_info.cflags)
 
 
-# Remote agent (part of CDP based remote protocol)
+# Remote agent
+# (partial implementation of Chromium Remote Debugging Protocol)
 # ==============================================================
 #
 # See https://firefox-source-docs.mozilla.org/remote/ for more.
 # The source code lives under ../remote.
 
-@depends(target, milestone)
-def remote_default(target, milestone):
-    return target.os != 'Android' and milestone.is_nightly
+@depends(target, build_project, milestone)
+def remote_default(target, project, milestone):
+    # no support for Android
+    if target.os == 'Android':
+        return False
+
+    # winapi 0.2.8 does not work on AArch64
+    # TODO(ato): https://bugzil.la/1598286
+    if target.os == 'WINNT' and target.cpu == 'aarch64':
+        return False
+
+    # enable on Firefox Nightly channel only
+    # TODO(ato): https://bugzil.la/1544393
+    return project == 'browser' and milestone.is_nightly
 
 option('--disable-cdp', default=remote_default,
        help='{Enable|Disable} remote agent')
@@ -1836,20 +1848,25 @@ def wasm_cxx_with_flags(wasm_cxx, provided_wasm_cxx, wasi_sysroot):
 set_config('WASM_CXX', wasm_cxx_with_flags, when=requires_wasm_sandboxing)
 
 
+wasm_compile_flags = dependable(['-fno-exceptions', '-fno-strict-aliasing', '-Qunused-arguments'])
 option(env='WASM_CFLAGS', nargs=1, help='Options to pass to WASM_CC',
        when=requires_wasm_sandboxing)
-@depends('WASM_CFLAGS', when=requires_wasm_sandboxing)
-def wasm_cflags(value):
+@depends('WASM_CFLAGS', wasm_compile_flags, when=requires_wasm_sandboxing)
+def wasm_cflags(value, wasm_compile_flags):
     if value:
-        return value
+        return wasm_compile_flags + value
+    else:
+        return wasm_compile_flags
 set_config('WASM_CFLAGS', wasm_cflags, when=requires_wasm_sandboxing)
 
 option(env='WASM_CXXFLAGS', nargs=1, help='Options to pass to WASM_CXX',
        when=requires_wasm_sandboxing)
-@depends('WASM_CXXFLAGS', when=requires_wasm_sandboxing)
-def wasm_cxxflags(value):
+@depends('WASM_CXXFLAGS', wasm_compile_flags, when=requires_wasm_sandboxing)
+def wasm_cxxflags(value, wasm_compile_flags):
     if value:
-        return value
+        return wasm_compile_flags + value
+    else:
+        return wasm_compile_flags
 set_config('WASM_CXXFLAGS', wasm_cxxflags, when=requires_wasm_sandboxing)
 
 option(env='WASM_LDFLAGS', nargs=1,
@@ -1906,3 +1923,15 @@ def new_notification_store(milestone):
 
 set_config('MOZ_NEW_NOTIFICATION_STORE', True, when=new_notification_store)
 set_define('MOZ_NEW_NOTIFICATION_STORE', True, when=new_notification_store)
+
+
+# FOGotype prototype Glean SDK Integration Crate
+# ==============================================================
+
+@depends(milestone)
+def fogotype(milestone):
+    if milestone.is_nightly:
+        return True
+
+set_config('MOZ_FOGOTYPE', True, when=fogotype)
+set_define('MOZ_FOGOTYPE', True, when=fogotype)

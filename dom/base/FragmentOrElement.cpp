@@ -39,7 +39,6 @@
 #include "nsIDocumentEncoder.h"
 #include "nsFocusManager.h"
 #include "nsIScriptGlobalObject.h"
-#include "nsIURL.h"
 #include "nsNetUtil.h"
 #include "nsIFrame.h"
 #include "nsIAnonymousContentCreator.h"
@@ -48,14 +47,12 @@
 #include "nsString.h"
 #include "nsUnicharUtils.h"
 #include "nsDOMCID.h"
-#include "nsIServiceManager.h"
 #include "nsDOMCSSAttrDeclaration.h"
 #include "nsNameSpaceManager.h"
 #include "nsContentList.h"
 #include "nsDOMTokenList.h"
 #include "nsError.h"
 #include "nsDOMString.h"
-#include "nsIScriptSecurityManager.h"
 #include "mozilla/InternalMutationEvent.h"
 #include "mozilla/MouseEvents.h"
 #include "nsAttrValueOrString.h"
@@ -78,16 +75,11 @@
 #include "nsContentCID.h"
 #include "nsWindowSizes.h"
 
-#include "nsIDOMEventListener.h"
-#include "nsIWebNavigation.h"
-#include "nsIBaseWindow.h"
 #include "nsIWidget.h"
 
 #include "nsNodeInfoManager.h"
-#include "nsICategoryManager.h"
 #include "nsGenericHTMLElement.h"
 #include "nsContentCreatorFunctions.h"
-#include "nsIControllers.h"
 #include "nsView.h"
 #include "nsViewManager.h"
 #include "nsIScrollableFrame.h"
@@ -104,7 +96,6 @@
 #include "nsWrapperCacheInlines.h"
 #include "nsCycleCollector.h"
 #include "xpcpublic.h"
-#include "nsIScriptError.h"
 #include "mozilla/Telemetry.h"
 
 #include "mozilla/CORSMode.h"
@@ -1961,16 +1952,17 @@ void FragmentOrElement::SetInnerHTMLInternal(const nsAString& aInnerHTML,
 
   nsAutoScriptLoaderDisabler sld(doc);
 
-  nsAtom* contextLocalName = NodeInfo()->NameAtom();
-  int32_t contextNameSpaceID = GetNameSpaceID();
-
+  FragmentOrElement* parseContext = this;
   if (ShadowRoot* shadowRoot = ShadowRoot::FromNode(this)) {
-    // Fix up the context to be the host of the ShadowRoot.
-    contextLocalName = shadowRoot->GetHost()->NodeInfo()->NameAtom();
-    contextNameSpaceID = shadowRoot->GetHost()->GetNameSpaceID();
+    // Fix up the context to be the host of the ShadowRoot.  See
+    // https://w3c.github.io/DOM-Parsing/#dom-innerhtml-innerhtml setter step 1.
+    parseContext = shadowRoot->GetHost();
   }
 
   if (doc->IsHTMLDocument()) {
+    nsAtom* contextLocalName = parseContext->NodeInfo()->NameAtom();
+    int32_t contextNameSpaceID = parseContext->GetNameSpaceID();
+
     int32_t oldChildCount = target->GetChildCount();
     aError = nsContentUtils::ParseFragmentHTML(
         aInnerHTML, target, contextLocalName, contextNameSpaceID,
@@ -1981,14 +1973,14 @@ void FragmentOrElement::SetInnerHTMLInternal(const nsAString& aInnerHTML,
                                                        oldChildCount);
   } else {
     RefPtr<DocumentFragment> df = nsContentUtils::CreateContextualFragment(
-        target, aInnerHTML, true, aError);
+        parseContext, aInnerHTML, true, aError);
     if (!aError.Failed()) {
       // Suppress assertion about node removal mutation events that can't have
       // listeners anyway, because no one has had the chance to register
       // mutation listeners on the fragment that comes from the parser.
       nsAutoScriptBlockerSuppressNodeRemoved scriptBlocker;
 
-      static_cast<nsINode*>(target)->AppendChild(*df, aError);
+      target->AppendChild(*df, aError);
       mb.NodesAdded();
     }
   }

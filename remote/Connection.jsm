@@ -11,6 +11,10 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
+const { UnknownMethodError } = ChromeUtils.import(
+  "chrome://remote/content/Error.jsm"
+);
+
 XPCOMUtils.defineLazyGetter(this, "log", Log.get);
 XPCOMUtils.defineLazyServiceGetter(
   this,
@@ -102,16 +106,18 @@ class Connection {
     // session. `Target.attachToTarget` creates the secondary session and
     // returns the session ID.
     if (sessionId) {
-      this.sendEvent("Target.receivedMessageFromTarget", {
-        sessionId,
-        // receivedMessageFromTarget is expected to send a raw CDP packet
-        // in the `message` property and it to be already serialized to a
-        // string
-        message: JSON.stringify({
-          id,
-          result,
-        }),
-      });
+      // Temporarily disabled due to spamming of the console (bug 1598468).
+      // Event should only be sent on protocol messages (eg. attachedToTarget)
+      // this.sendEvent("Target.receivedMessageFromTarget", {
+      //   sessionId,
+      //   // receivedMessageFromTarget is expected to send a raw CDP packet
+      //   // in the `message` property and it to be already serialized to a
+      //   // string
+      //   message: JSON.stringify({
+      //     id,
+      //     result,
+      //   }),
+      // });
     }
   }
 
@@ -146,13 +152,15 @@ class Connection {
     // session. `Target.attachToTarget` creates the secondary session and
     // returns the session ID.
     if (sessionId) {
-      this.sendEvent("Target.receivedMessageFromTarget", {
-        sessionId,
-        message: JSON.stringify({
-          method,
-          params,
-        }),
-      });
+      // Temporarily disabled due to spamming of the console (bug 1598468).
+      // Event should only be sent on protocol messages (eg. attachedToTarget)
+      // this.sendEvent("Target.receivedMessageFromTarget", {
+      //   sessionId,
+      //   message: JSON.stringify({
+      //     method,
+      //     params,
+      //   }),
+      // });
     }
   }
 
@@ -204,6 +212,11 @@ class Connection {
         if (!session) {
           throw new Error(`Session '${sessionId}' doesn't exists.`);
         }
+      }
+
+      // Bug 1600317 - Workaround to deny internal methods to be called
+      if (command.startsWith("_")) {
+        throw new UnknownMethodError(command);
       }
 
       // Finally, instruct the targeted session to execute the command

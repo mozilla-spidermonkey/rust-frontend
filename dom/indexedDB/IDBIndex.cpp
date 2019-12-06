@@ -132,13 +132,13 @@ void IDBIndex::SetName(const nsAString& aName, ErrorResult& aRv) {
 
   IDBTransaction* const transaction = mObjectStore->Transaction();
 
-  if (transaction->GetMode() != IDBTransaction::VERSION_CHANGE ||
+  if (transaction->GetMode() != IDBTransaction::Mode::VersionChange ||
       mDeletedMetadata) {
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
   }
 
-  if (!transaction->IsOpen()) {
+  if (!transaction->CanAcceptRequests()) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR);
     return;
   }
@@ -271,7 +271,7 @@ already_AddRefed<IDBRequest> IDBIndex::GetInternal(bool aKeyOnly,
   }
 
   IDBTransaction* transaction = mObjectStore->Transaction();
-  if (!transaction->IsOpen()) {
+  if (!transaction->CanAcceptRequests()) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR);
     return nullptr;
   }
@@ -346,7 +346,7 @@ already_AddRefed<IDBRequest> IDBIndex::GetAllInternal(
   }
 
   IDBTransaction* transaction = mObjectStore->Transaction();
-  if (!transaction->IsOpen()) {
+  if (!transaction->CanAcceptRequests()) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR);
     return nullptr;
   }
@@ -421,7 +421,7 @@ already_AddRefed<IDBRequest> IDBIndex::OpenCursorInternal(
   }
 
   IDBTransaction* transaction = mObjectStore->Transaction();
-  if (!transaction->IsOpen()) {
+  if (!transaction->CanAcceptRequests()) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR);
     return nullptr;
   }
@@ -503,7 +503,7 @@ already_AddRefed<IDBRequest> IDBIndex::Count(JSContext* aCx,
   }
 
   IDBTransaction* const transaction = mObjectStore->Transaction();
-  if (!transaction->IsOpen()) {
+  if (!transaction->CanAcceptRequests()) {
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR);
     return nullptr;
   }

@@ -59,8 +59,6 @@
 #include "nsIDocShellTreeOwner.h"
 #include "nsIDocumentLoader.h"
 #include "nsIInterfaceRequestorUtils.h"
-#include "nsIPermission.h"
-#include "nsIPermissionManager.h"
 #include "nsIScriptContext.h"
 #include "nsIController.h"
 #include "nsISlowScriptDebug.h"
@@ -113,7 +111,6 @@
 #include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/TabGroup.h"
 #include "mozilla/StaticPrefs_dom.h"
-#include "mozilla/StaticPrefs_page_load.h"
 #include "PaintWorkletImpl.h"
 
 // Interfaces Needed
@@ -128,34 +125,22 @@
 #include "mozilla/dom/Document.h"
 #include "Crypto.h"
 #include "nsDOMString.h"
-#include "nsIEmbeddingSiteWindow.h"
 #include "nsThreadUtils.h"
 #include "nsILoadContext.h"
 #include "nsIScrollableFrame.h"
 #include "nsView.h"
 #include "nsViewManager.h"
-#include "nsISelectionController.h"
 #include "nsIPrompt.h"
-#include "nsIPromptService.h"
-#include "nsIPromptFactory.h"
 #include "nsIAddonPolicyService.h"
-#include "nsIWritablePropertyBag2.h"
 #include "nsIWebNavigation.h"
 #include "nsIWebBrowserChrome.h"
-#include "nsIWebBrowserFind.h"  // For window.find()
-#include "nsIWindowMediator.h"  // For window.find()
 #include "nsDOMCID.h"
 #include "nsDOMWindowUtils.h"
-#include "nsIWindowWatcher.h"
-#include "nsPIWindowWatcher.h"
-#include "nsIContentViewer.h"
-#include "nsIScriptError.h"
 #include "nsIControllers.h"
 #include "nsGlobalWindowCommands.h"
 #include "nsQueryObject.h"
 #include "nsContentUtils.h"
 #include "nsCSSProps.h"
-#include "nsIURIFixup.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/EventStateManager.h"
 #include "nsIObserverService.h"
@@ -167,9 +152,7 @@
 #  include "nsMenuPopupFrame.h"
 #endif
 #include "mozilla/dom/CustomEvent.h"
-#include "nsIJARChannel.h"
 #include "nsIScreenManager.h"
-#include "nsIEffectiveTLDService.h"
 #include "nsICSSDeclaration.h"
 
 #include "xpcprivate.h"
@@ -188,7 +171,6 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Selection.h"
 #include "nsFrameLoader.h"
-#include "nsISupportsPrimitives.h"
 #include "nsXPCOMCID.h"
 #include "mozilla/Logging.h"
 #include "prenv.h"
@@ -348,6 +330,11 @@ static nsGlobalWindowOuter* GetOuterWindowForForwarding(
 #define MAX_REPORT_RECORDS 100
 
 static LazyLogModule gDOMLeakPRLogInner("DOMLeakInner");
+
+#ifdef DEBUG
+static LazyLogModule gDocShellAndDOMWindowLeakLogging(
+    "DocShellAndDOMWindowLeak");
+#endif
 
 static FILE* gDumpFile = nullptr;
 
@@ -920,13 +907,11 @@ nsGlobalWindowInner::nsGlobalWindowInner(nsGlobalWindowOuter* aOuterWindow,
 #ifdef DEBUG
   mSerial = nsContentUtils::InnerOrOuterWindowCreated();
 
-  if (!PR_GetEnv("MOZ_QUIET")) {
-    printf_stderr(
-        "++DOMWINDOW == %d (%p) [pid = %d] [serial = %d] [outer = %p]\n",
-        nsContentUtils::GetCurrentInnerOrOuterWindowCount(),
-        static_cast<void*>(ToCanonicalSupports(this)), getpid(), mSerial,
-        static_cast<void*>(ToCanonicalSupports(aOuterWindow)));
-  }
+  MOZ_LOG(gDocShellAndDOMWindowLeakLogging, LogLevel::Info,
+          ("++DOMWINDOW == %d (%p) [pid = %d] [serial = %d] [outer = %p]\n",
+           nsContentUtils::GetCurrentInnerOrOuterWindowCount(),
+           static_cast<void*>(ToCanonicalSupports(this)), getpid(), mSerial,
+           static_cast<void*>(ToCanonicalSupports(aOuterWindow))));
 #endif
 
   MOZ_LOG(gDOMLeakPRLogInner, LogLevel::Debug,
@@ -992,7 +977,7 @@ nsGlobalWindowInner::~nsGlobalWindowInner() {
   nsContentUtils::InnerOrOuterWindowDestroyed();
 
 #ifdef DEBUG
-  if (!PR_GetEnv("MOZ_QUIET")) {
+  if (MOZ_LOG_TEST(gDocShellAndDOMWindowLeakLogging, LogLevel::Info)) {
     nsAutoCString url;
     if (mLastOpenedURI) {
       url = mLastOpenedURI->GetSpecOrDefault();
@@ -1005,15 +990,15 @@ nsGlobalWindowInner::~nsGlobalWindowInner() {
     }
 
     nsGlobalWindowOuter* outer = nsGlobalWindowOuter::Cast(mOuterWindow);
-    printf_stderr(
-        "--DOMWINDOW == %d (%p) [pid = %d] [serial = %d] [outer = %p] [url = "
-        "%s]\n",
-        nsContentUtils::GetCurrentInnerOrOuterWindowCount(),
-        static_cast<void*>(ToCanonicalSupports(this)), getpid(), mSerial,
-        static_cast<void*>(ToCanonicalSupports(outer)), url.get());
+    MOZ_LOG(
+        gDocShellAndDOMWindowLeakLogging, LogLevel::Info,
+        ("--DOMWINDOW == %d (%p) [pid = %d] [serial = %d] [outer = %p] [url = "
+         "%s]\n",
+         nsContentUtils::GetCurrentInnerOrOuterWindowCount(),
+         static_cast<void*>(ToCanonicalSupports(this)), getpid(), mSerial,
+         static_cast<void*>(ToCanonicalSupports(outer)), url.get()));
   }
 #endif
-
   MOZ_LOG(gDOMLeakPRLogInner, LogLevel::Debug,
           ("DOMWINDOW %p destroyed", this));
 
@@ -1038,8 +1023,6 @@ nsGlobalWindowInner::~nsGlobalWindowInner() {
 
   nsCOMPtr<nsIDeviceSensors> ac = do_GetService(NS_DEVICE_SENSORS_CONTRACTID);
   if (ac) ac->RemoveWindowAsListener(this);
-
-  mDeprioritizedLoadRunner.clear();
 
   nsLayoutStatics::Release();
 }
@@ -1576,6 +1559,16 @@ void nsGlobalWindowInner::InnerSetNewDocument(JSContext* aCx,
   if (mWindowGlobalChild && GetBrowsingContext()) {
     GetBrowsingContext()->NotifyResetUserGestureActivation();
   }
+
+#if defined(MOZ_WIDGET_ANDROID)
+  // When we insert the new document to the window in the top-level browsing
+  // context, we should reset the status of the request which is used for the
+  // previous document.
+  if (mWindowGlobalChild && GetBrowsingContext() &&
+      !GetBrowsingContext()->GetParent()) {
+    GetBrowsingContext()->ResetGVAutoplayRequestStatus();
+  }
+#endif
 
 #ifdef DEBUG
   mLastOpenedURI = aDocument->GetDocumentURI();
@@ -2553,51 +2546,13 @@ void nsPIDOMWindowInner::SetAudioCapture(bool aCapture) {
 }
 
 void nsGlobalWindowInner::SetActiveLoadingState(bool aIsLoading) {
-  if (StaticPrefs::dom_separate_event_queue_for_post_message_enabled()) {
-    if (!aIsLoading) {
-      Document* doc = GetExtantDoc();
-      if (doc) {
-        if (doc->IsTopLevelContentDocument()) {
-          mozilla::dom::TabGroup* tabGroup = doc->GetDocGroup()->GetTabGroup();
-          tabGroup->FlushPostMessageEvents();
-        }
-      }
-    }
+  if (GetBrowsingContext()) {
+    GetBrowsingContext()->SetLoading(aIsLoading);
   }
 
   if (!nsGlobalWindowInner::Cast(this)->IsChromeWindow()) {
     mTimeoutManager->SetLoading(aIsLoading);
   }
-
-  if (!aIsLoading) {
-    while (!mDeprioritizedLoadRunner.isEmpty()) {
-      nsCOMPtr<nsIRunnable> runner = mDeprioritizedLoadRunner.popFirst();
-      NS_DispatchToCurrentThread(runner.forget());
-    }
-  }
-}
-
-nsPIDOMWindowInner* nsPIDOMWindowInner::GetWindowForDeprioritizedLoadRunner() {
-  Document* doc = GetExtantDoc();
-  if (!doc) {
-    return nullptr;
-  }
-  doc = doc->GetTopLevelContentDocument();
-  if (!doc || (doc->GetReadyStateEnum() <= Document::READYSTATE_UNINITIALIZED ||
-               doc->GetReadyStateEnum() >= Document::READYSTATE_COMPLETE)) {
-    return nullptr;
-  }
-
-  return doc->GetInnerWindow();
-}
-
-void nsGlobalWindowInner::AddDeprioritizedLoadRunner(nsIRunnable* aRunner) {
-  MOZ_ASSERT(GetWindowForDeprioritizedLoadRunner() == this);
-  RefPtr<DeprioritizedLoadRunner> runner = new DeprioritizedLoadRunner(aRunner);
-  mDeprioritizedLoadRunner.insertBack(runner);
-  NS_DispatchToCurrentThreadQueue(
-      runner.forget(), StaticPrefs::page_load_deprioritization_period(),
-      EventQueuePriority::Idle);
 }
 
 // nsISpeechSynthesisGetter
@@ -2863,8 +2818,7 @@ bool nsGlobalWindowInner::DoResolve(
        aId == XPCJSRuntime::Get()->GetStringID(
                   XPCJSContext::IDX_CONTROLLERS_CLASS)) &&
       !xpc::IsXrayWrapper(aObj) &&
-      !nsContentUtils::IsSystemPrincipal(
-          nsContentUtils::ObjectPrincipal(aObj))) {
+      !nsContentUtils::ObjectPrincipal(aObj)->IsSystemPrincipal()) {
     if (GetExtantDoc()) {
       GetExtantDoc()->WarnOnceAbout(Document::eWindow_Cc_ontrollers);
     }

@@ -8,12 +8,13 @@
 #include "nsArray.h"
 #include "nsString.h"
 #include "plstr.h"
+#include "nsComponentManagerUtils.h"
 #include "nsCOMPtr.h"
 #include "nsIWindowWatcher.h"
-#include "nsIServiceManager.h"
 #include "nsISupportsPrimitives.h"
 #include "nsICommandLine.h"
 #include "nsIURI.h"
+#include "nsServiceManagerUtils.h"
 
 nsLayoutDebugCLH::nsLayoutDebugCLH() {}
 
@@ -164,8 +165,9 @@ nsLayoutDebugCLH::Handle(nsICommandLine* aCmdLine) {
   NS_ENSURE_TRUE(wwatch, NS_ERROR_FAILURE);
 
   nsCOMPtr<mozIDOMWindowProxy> opened;
-  wwatch->OpenWindow(nullptr, "chrome://layoutdebug/content/", "_blank",
-                     "chrome,dialog=no,all", argsArray, getter_AddRefs(opened));
+  wwatch->OpenWindow(nullptr, "chrome://layoutdebug/content/layoutdebug.xhtml",
+                     "_blank", "chrome,dialog=no,all", argsArray,
+                     getter_AddRefs(opened));
   aCmdLine->SetPreventDefault(true);
   return NS_OK;
 }

@@ -308,17 +308,6 @@ static void AssertAnonymousFlexOrGridItemParent(const nsIFrame* aChild,
 #  define AssertAnonymousFlexOrGridItemParent(x, y) PR_BEGIN_MACRO PR_END_MACRO
 #endif
 
-static inline nsContainerFrame* GetFieldSetBlockFrame(
-    nsIFrame* aFieldsetFrame) {
-  // Depends on the fieldset child frame order - see ConstructFieldSetFrame()
-  // below.
-  nsIFrame* firstChild = aFieldsetFrame->PrincipalChildList().FirstChild();
-  nsIFrame* inner = firstChild && firstChild->GetNextSibling()
-                        ? firstChild->GetNextSibling()
-                        : firstChild;
-  return inner ? inner->GetContentInsertionFrame() : nullptr;
-}
-
 #define FCDATA_DECL(_flags, _func) \
   { _flags, {(FrameCreationFunc)_func}, nullptr, PseudoStyleType::NotPseudo }
 #define FCDATA_WITH_WRAPPING_BLOCK(_flags, _func, _anon_box) \
@@ -977,8 +966,8 @@ nsContainerFrame* nsFrameConstructorState::GetGeometricParent(
     return mFloatedList.containingBlock;
   }
 
-  if (aStyleDisplay.mTopLayer != NS_STYLE_TOP_LAYER_NONE) {
-    MOZ_ASSERT(aStyleDisplay.mTopLayer == NS_STYLE_TOP_LAYER_TOP,
+  if (aStyleDisplay.mTopLayer != StyleTopLayer::None) {
+    MOZ_ASSERT(aStyleDisplay.mTopLayer == StyleTopLayer::Top,
                "-moz-top-layer should be either none or top");
     MOZ_ASSERT(aStyleDisplay.IsAbsolutelyPositionedStyle(),
                "Top layer items should always be absolutely positioned");
@@ -1057,7 +1046,7 @@ AbsoluteFrameList* nsFrameConstructorState::GetOutOfFlowFrameList(
 
   if (aCanBePositioned) {
     const nsStyleDisplay* disp = aNewFrame->StyleDisplay();
-    if (disp->mTopLayer != NS_STYLE_TOP_LAYER_NONE) {
+    if (disp->mTopLayer != StyleTopLayer::None) {
       *aPlaceholderType = PLACEHOLDER_FOR_TOPLAYER;
       if (disp->mPosition == NS_STYLE_POSITION_FIXED) {
         *aPlaceholderType |= PLACEHOLDER_FOR_FIXEDPOS;
@@ -1080,7 +1069,7 @@ AbsoluteFrameList* nsFrameConstructorState::GetOutOfFlowFrameList(
 
 void nsFrameConstructorState::ConstructBackdropFrameFor(nsIContent* aContent,
                                                         nsIFrame* aFrame) {
-  MOZ_ASSERT(aFrame->StyleDisplay()->mTopLayer == NS_STYLE_TOP_LAYER_TOP);
+  MOZ_ASSERT(aFrame->StyleDisplay()->mTopLayer == StyleTopLayer::Top);
   nsContainerFrame* frame = do_QueryFrame(aFrame);
   if (!frame) {
     NS_WARNING("Cannot create backdrop frame for non-container frame");
@@ -1091,7 +1080,7 @@ void nsFrameConstructorState::ConstructBackdropFrameFor(nsIContent* aContent,
       mPresShell->StyleSet()->ResolvePseudoElementStyle(
           *aContent->AsElement(), PseudoStyleType::backdrop,
           /* aParentStyle */ nullptr);
-  MOZ_ASSERT(style->StyleDisplay()->mTopLayer == NS_STYLE_TOP_LAYER_TOP);
+  MOZ_ASSERT(style->StyleDisplay()->mTopLayer == StyleTopLayer::Top);
   nsContainerFrame* parentFrame =
       GetGeometricParent(*style->StyleDisplay(), nullptr);
 
@@ -6201,12 +6190,14 @@ static nsContainerFrame* GetAdjustedParentFrame(nsContainerFrame* aParentFrame,
   MOZ_ASSERT(!aParentFrame->IsTableWrapperFrame(), "Shouldn't be happening!");
 
   nsContainerFrame* newParent = nullptr;
-
   if (aParentFrame->IsFieldSetFrame()) {
     // If the parent is a fieldSet, use the fieldSet's area frame as the
     // parent unless the new content is a legend.
     if (!aChildContent->IsHTMLElement(nsGkAtoms::legend)) {
-      newParent = GetFieldSetBlockFrame(aParentFrame);
+      newParent = static_cast<nsFieldSetFrame*>(aParentFrame)->GetInner();
+      if (newParent) {
+        newParent = newParent->GetContentInsertionFrame();
+      }
     }
   }
   return newParent ? newParent : aParentFrame;
@@ -8080,23 +8071,8 @@ nsIFrame* nsCSSFrameConstructor::CreateContinuingFrame(
     newFrame = NS_NewImageControlFrame(presShell, computedStyle);
     newFrame->Init(content, aParentFrame, aFrame);
   } else if (LayoutFrameType::FieldSet == frameType) {
-    nsContainerFrame* fieldset = NS_NewFieldSetFrame(presShell, computedStyle);
-
-    fieldset->Init(content, aParentFrame, aFrame);
-
-    // Create a continuing area frame
-    // XXXbz we really shouldn't have to do this by hand!
-    nsContainerFrame* blockFrame = GetFieldSetBlockFrame(aFrame);
-    if (blockFrame) {
-      nsIFrame* continuingBlockFrame =
-          CreateContinuingFrame(aPresContext, blockFrame, fieldset);
-      // Set the fieldset's initial child list
-      SetInitialSingleChild(fieldset, continuingBlockFrame);
-    } else {
-      MOZ_ASSERT(aFrame->GetStateBits() & NS_FRAME_IS_OVERFLOW_CONTAINER,
-                 "FieldSet block may only be null for overflow containers");
-    }
-    newFrame = fieldset;
+    newFrame = NS_NewFieldSetFrame(presShell, computedStyle);
+    newFrame->Init(content, aParentFrame, aFrame);
   } else if (LayoutFrameType::Legend == frameType) {
     newFrame = NS_NewLegendFrame(presShell, computedStyle);
     newFrame->Init(content, aParentFrame, aFrame);

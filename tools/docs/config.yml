@@ -7,13 +7,15 @@ categories:
         - browser
         - dom
         - gfx
+        - devtools
         - toolkit
+        - js
+        - mobile/android/geckoview
         - dom/bindings/webidl
         - modules/libpref
         - remote
         - services/common/services
         - uriloader
-        - js
     build_doc:
         - mach
         - tools/try
@@ -23,11 +25,13 @@ categories:
     testing_doc:
         - testing/marionette
         - testing/geckodriver
+        - web-platform
     code_quality_doc:
         - tools/lint
+        - tools/static-analysis
     l10n_doc:
         - intl
-        - tools/compare-locales
+        - l10n
     python_doc:
         - mozbase
         - python
@@ -38,6 +42,7 @@ redirects:
     browser/browser: browser
     dom/dom: dom
     gfx/gfx: gfx
+    intl/l10n/l10n: l10n
     modules/libpref/libpref: modules/libpref
     python/mach: mach
     python/python: python
@@ -45,3 +50,4 @@ redirects:
     testing/geckodriver/geckodriver: testing/geckodriver
     testing/marionette/marionette: testing/marionette
     toolkit/components/telemetry/telemetry: toolkit/components/telemetry
+    tools/compare-locales/index.html: build/buildsystem/locales.html

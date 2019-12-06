@@ -31,7 +31,7 @@
 #include "nsGlobalWindow.h"
 #include "nsGkAtoms.h"
 #include "nsImageFrame.h"
-#include "nsLayoutStylesheetCache.h"
+#include "mozilla/GlobalStyleSheetCache.h"
 #include "nsRange.h"
 #include "nsRegion.h"
 #include "nsRepeatService.h"
@@ -161,7 +161,6 @@ nsresult nsLayoutStatics::Initialize() {
 #endif
 
   StartupJSEnvironment();
-  nsJSContext::EnsureStatics();
 
   nsGlobalWindowInner::Init();
   nsGlobalWindowOuter::Init();
@@ -173,11 +172,7 @@ nsresult nsLayoutStatics::Initialize() {
     return rv;
   }
 
-  rv = nsAttrValue::Init();
-  if (NS_FAILED(rv)) {
-    NS_ERROR("Could not initialize nsAttrValue");
-    return rv;
-  }
+  nsAttrValue::Init();
 
   rv = nsTextFragment::Init();
   if (NS_FAILED(rv)) {
@@ -377,7 +372,7 @@ void nsLayoutStatics::Shutdown() {
 
   nsAttrValue::Shutdown();
   nsContentUtils::Shutdown();
-  nsLayoutStylesheetCache::Shutdown();
+  GlobalStyleSheetCache::Shutdown();
 
   ShutdownJSEnvironment();
   nsGlobalWindowInner::ShutDown();

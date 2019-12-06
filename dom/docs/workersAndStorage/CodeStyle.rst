@@ -126,10 +126,10 @@ Rationale
    Optimally, test names should be structured hierarchically to allow
    easy selection of groups of tests for execution. However, gtest has some
    restrictions that do not allow that completely. The guidelines try to
-   accomodate for these as far as possible. Note that gtest recommends not to
+   accommodate for these as far as possible. Note that gtest recommends not to
    use underscores in test names in general, because this may lead to reserved
    names and naming conflicts, but the rules stated here should avoid that.
-   In case of any problems arising, we can evolve the rules to accomodate
+   In case of any problems arising, we can evolve the rules to accommodate
    for that.
 
 Specifying types
@@ -164,8 +164,11 @@ We extend this by some more encouragements and discouragements:
    which will make the type information available in searchfox. In consequence,
    the guidelines might be amended to promote a more widespread use of ``auto``.
 
+Pointer types
+-------------
+
 Plain pointers
---------------
+~~~~~~~~~~~~~~
 
 The use of plain pointers is error-prone. Avoid using owning plain pointers. In
 particular, avoid using literal, non-placement new. There are various kinds
@@ -185,6 +188,26 @@ factory functions:
 +------------------------+-------------------------+------------------------+
 | ``std::shared_ptr``    | ``std::make_shared``    | ``<memory>``           |
 +------------------------+-------------------------+------------------------+
+
+Also, to create an ``already_AddRefed<>`` to pass as a parameter or return from
+a function without the need to dereference it, use ``MakeAndAddRef`` instead of
+creating a dereferenceable ``RefPtr`` (or similar) first and then using
+``.forget()``.
+
+Smart pointers
+~~~~~~~~~~~~~~
+
+In function signatures, prefer accepting or returning ``RefPtr`` instead of
+``already_AddRefed`` in conjunction with regular ``std::move`` rather than
+``.forget()``. This improves readability and code generation. Prevailing
+legimitate uses of ``already_AddRefed`` are described in its
+`documentation <https://searchfox.org/mozilla-central/rev/4df8821c1b824db5f40f381f48432f219d99ae36/mfbt/AlreadyAddRefed.h#31>`_.
+
+Enums
+-----
+
+Use scoped resp. strongly typed enums (``enum struct``) rather than non-scoped
+enums. Use PascalCase for naming the values of scoped enums.
 
 Evolution Process
 =================

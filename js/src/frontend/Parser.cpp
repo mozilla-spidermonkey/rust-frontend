@@ -1840,7 +1840,7 @@ static bool EmitLazyScript(JSContext* cx, FunctionBox* funbox,
   MOZ_ASSERT(function);
   LazyScript* lazy = LazyScript::Create(
       cx, function, sourceObject, data.closedOverBindings,
-      data.innerFunctionBoxes, funbox->bufStart, funbox->bufEnd,
+      data.innerFunctionBoxes, funbox->sourceStart, funbox->sourceEnd,
       funbox->toStringStart, funbox->toStringEnd, funbox->startLine,
       funbox->startColumn, parseGoal);
   if (!lazy) {
@@ -2624,14 +2624,11 @@ bool Parser<FullParseHandler, Unit>::skipLazyInnerFunction(
     return false;
   }
 
-  BaseScript* base = fun->baseScript();
-  if (base->needsHomeObject()) {
-    funbox->setNeedsHomeObject();
-  }
+  funbox->initFromLazyFunction(fun);
 
-  PropagateTransitiveParseFlags(base, pc_->sc());
+  PropagateTransitiveParseFlags(funbox, pc_->sc());
 
-  if (!tokenStream.advance(base->sourceEnd())) {
+  if (!tokenStream.advance(funbox->sourceEnd)) {
     return false;
   }
 
@@ -7219,8 +7216,7 @@ bool GeneralParser<ParseHandler, Unit>::finishClassConstructor(
       }
     } else {
       // There should not be any non-lazy script yet.
-      MOZ_ASSERT_IF(ctorbox->hasObject(),
-                    ctorbox->function()->hasUncompletedScript());
+      MOZ_ASSERT_IF(ctorbox->hasObject(), ctorbox->function()->isIncomplete());
     }
 
     if (numFields == 0) {

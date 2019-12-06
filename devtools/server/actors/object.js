@@ -191,10 +191,12 @@ const proto = {
     const { dbgDesc } = this._originalDescriptors.get(property);
     this._originalDescriptors.delete(property);
     this.obj.defineProperty(property, dbgDesc);
+
+    this.thread.demoteObjectGrip(this);
   },
 
   removeWatchpoints() {
-    this._originalDescriptors.forEach(property =>
+    this._originalDescriptors.forEach((_, property) =>
       this.removeWatchpoint(property)
     );
   },
