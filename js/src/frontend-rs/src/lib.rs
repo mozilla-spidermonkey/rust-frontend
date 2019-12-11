@@ -73,7 +73,10 @@ pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize) -> Jspa
 
 #[no_mangle]
 pub unsafe extern "C" fn test_parse_script(text: *const u8, text_len: usize) -> bool {
-    let text = str::from_utf8(slice::from_raw_parts(text, text_len)).expect("Invalid UTF8");
+    let text = match str::from_utf8(slice::from_raw_parts(text, text_len)) {
+        Ok(text) => text,
+        Err(_) => return false, // .expect("Invalid UTF8")
+    };
     let allocator = bumpalo::Bump::new();
     match parse_script(&allocator, text) {
         Ok(_) => true,
@@ -84,7 +87,10 @@ pub unsafe extern "C" fn test_parse_script(text: *const u8, text_len: usize) -> 
 
 #[no_mangle]
 pub unsafe extern "C" fn test_parse_module(text: *const u8, text_len: usize) -> bool {
-    let text = str::from_utf8(slice::from_raw_parts(text, text_len)).expect("Invalid UTF8");
+    let text = match str::from_utf8(slice::from_raw_parts(text, text_len)) {
+        Ok(text) => text,
+        Err(_) => return false, // .expect("Invalid UTF8")
+    };
     let allocator = bumpalo::Bump::new();
     match parse_module(&allocator, text) {
         Ok(_) => true,
