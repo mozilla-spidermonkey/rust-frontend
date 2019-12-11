@@ -158,9 +158,12 @@ bool IsInterestingCoverageFile(const std::string &FileName) {
   return true;
 }
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-result"
 void RawPrint(const char *Str) {
   write(2, Str, strlen(Str));
 }
+#pragma clang diagnostic pop
 
 void MkDir(const std::string &Path) {
   mkdir(Path.c_str(), 0700);
