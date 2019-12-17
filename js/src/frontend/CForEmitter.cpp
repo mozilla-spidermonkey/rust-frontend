@@ -57,7 +57,7 @@ bool CForEmitter::emitCond(const Maybe<uint32_t>& condPos) {
     // one. If that scope has closed-over bindings inducing an
     // environment, recreate the current environment.
     MOZ_ASSERT(headLexicalEmitterScopeForLet_ == bce_->innermostEmitterScope());
-    MOZ_ASSERT(headLexicalEmitterScopeForLet_->scope(bce_)->kind() ==
+    MOZ_ASSERT(headLexicalEmitterScopeForLet_->scope(bce_).kind() ==
                ScopeKind::Lexical);
 
     if (headLexicalEmitterScopeForLet_->hasEnvironment()) {
@@ -65,10 +65,6 @@ bool CForEmitter::emitCond(const Maybe<uint32_t>& condPos) {
         return false;
       }
     }
-  }
-
-  if (!bce_->newSrcNote(SRC_FOR)) {
-    return false;
   }
 
   if (!loopInfo_->emitLoopHead(bce_, condPos)) {
@@ -115,7 +111,7 @@ bool CForEmitter::emitUpdate(Update update, const Maybe<uint32_t>& updatePos) {
   // ES 13.7.4.8 step 3.e. The per-iteration freshening.
   if (headLexicalEmitterScopeForLet_) {
     MOZ_ASSERT(headLexicalEmitterScopeForLet_ == bce_->innermostEmitterScope());
-    MOZ_ASSERT(headLexicalEmitterScopeForLet_->scope(bce_)->kind() ==
+    MOZ_ASSERT(headLexicalEmitterScopeForLet_->scope(bce_).kind() ==
                ScopeKind::Lexical);
 
     if (headLexicalEmitterScopeForLet_->hasEnvironment()) {
@@ -170,18 +166,7 @@ bool CForEmitter::emitEnd(const Maybe<uint32_t>& forPos) {
   }
 
   // Emit the loop-closing jump.
-  if (!loopInfo_->emitLoopEnd(bce_, JSOP_GOTO)) {
-    //              [stack]
-    return false;
-  }
-
-  if (!bce_->addTryNote(JSTRY_LOOP, bce_->bytecodeSection().stackDepth(),
-                        loopInfo_->headOffset(),
-                        loopInfo_->breakTargetOffset())) {
-    return false;
-  }
-
-  if (!loopInfo_->patchBreaks(bce_)) {
+  if (!loopInfo_->emitLoopEnd(bce_, JSOP_GOTO, JSTRY_LOOP)) {
     //              [stack]
     return false;
   }

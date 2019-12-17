@@ -235,20 +235,6 @@ class UrlbarInput {
   }
 
   /**
-   * Shortens the given value, usually by removing http:// and trailing slashes,
-   * such that calling nsIURIFixup::createFixupURI with the result will produce
-   * the same URI.
-   *
-   * @param {string} val
-   *   The string to be trimmed if it appears to be URI
-   * @returns {string}
-   *   The trimmed string
-   */
-  trimValue(val) {
-    return UrlbarPrefs.get("trimURLs") ? BrowserUtils.trimURL(val) : val;
-  }
-
-  /**
    * Applies styling to the text in the urlbar input, depending on the text.
    */
   formatValue() {
@@ -1084,7 +1070,7 @@ class UrlbarInput {
       val = originalUrl.displaySpec;
     }
 
-    val = allowTrim ? this.trimValue(val) : val;
+    val = allowTrim ? this._trimValue(val) : val;
 
     this.valueIsTyped = false;
     this._resultForCurrentValue = null;
@@ -1173,20 +1159,33 @@ class UrlbarInput {
     return allowAutofill;
   }
 
+  _checkForRtlText(value) {
+    let directionality = this.window.windowUtils.getDirectionFromText(value);
+    if (directionality == this.window.windowUtils.DIRECTION_RTL) {
+      this.setAttribute("rtltext", "true");
+      return true;
+    }
+    this.removeAttribute("rtltext");
+    return false;
+  }
+
   _updateTextOverflow() {
     if (!this._overflowing) {
       this.removeAttribute("textoverflow");
       return;
     }
 
+    let isRTL = this._checkForRtlText(this.value);
+
     this.window.promiseDocumentFlushed(() => {
       // Check overflow again to ensure it didn't change in the meantime.
       let input = this.inputField;
       if (input && this._overflowing) {
-        let side =
-          input.scrollLeft && input.scrollLeft == input.scrollLeftMax
-            ? "start"
-            : "end";
+        let side = isRTL ? "left" : "right";
+        if (input.scrollLeft == input.scrollLeftMax) {
+          side = isRTL == !input.scrollLeft ? "left" : "right";
+        }
+
         this.window.requestAnimationFrame(() => {
           // And check once again, since we might have stopped overflowing
           // since the promiseDocumentFlushed callback fired.
@@ -1267,10 +1266,10 @@ class UrlbarInput {
     // Just the beginning of the URL is selected, or we want a decoded
     // url. First check for a trimmed value.
     let spec = uri.displaySpec;
-    let trimmedSpec = this.trimValue(spec);
+    let trimmedSpec = this._trimValue(spec);
     if (spec != trimmedSpec) {
-      // Prepend the portion that trimValue removed from the beginning.
-      // This assumes trimValue will only truncate the URL at
+      // Prepend the portion that _trimValue removed from the beginning.
+      // This assumes _trimValue will only truncate the URL at
       // the beginning or end (or both).
       let trimmedSegments = spec.split(trimmedSpec);
       selectedVal = trimmedSegments[0] + selectedVal;
@@ -1345,6 +1344,20 @@ class UrlbarInput {
       "urlbar",
       details
     );
+  }
+
+  /**
+   * Shortens the given value, usually by removing http:// and trailing slashes,
+   * such that calling nsIURIFixup::createFixupURI with the result will produce
+   * the same URI.
+   *
+   * @param {string} val
+   *   The string to be trimmed if it appears to be URI
+   * @returns {string}
+   *   The trimmed string
+   */
+  _trimValue(val) {
+    return UrlbarPrefs.get("trimURLs") ? BrowserUtils.trimURL(val) : val;
   }
 
   /**
@@ -1663,7 +1676,7 @@ class UrlbarInput {
     // We cannot count every blur events after a missed engagement as abandoment
     // because the user may have clicked on some view element that executes
     // a command causing a focus change. For example opening preferences from
-    // the oneoff settings button, or from a contextual tip button.
+    // the oneoff settings button.
     // For now we detect that case by discarding the event on command, but we
     // may want to figure out a more robust way to detect abandonment.
     this.controller.engagementEvent.record(event, {
@@ -1866,6 +1879,7 @@ class UrlbarInput {
 
     if (value) {
       this.setAttribute("usertyping", "true");
+      this._checkForRtlText(value);
     } else {
       this.removeAttribute("usertyping");
     }

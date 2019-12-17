@@ -509,9 +509,7 @@ class ContentParent final
       const IPC::Principal& aPrincipal,
       const IPC::Principal& aTopLevelPrincipal,
       const bool& aIsHandlingUserInput,
-      const bool& aMaybeUnsafePermissionDelegate,
-      const bool& aDocumentHasUserInput, const DOMTimeStamp& aPageLoadTimestamp,
-      const TabId& aTabId);
+      const bool& aMaybeUnsafePermissionDelegate, const TabId& aTabId);
 
   bool DeallocPContentPermissionRequestParent(
       PContentPermissionRequestParent* actor);
@@ -1207,6 +1205,15 @@ class ContentParent final
 
   mozilla::ipc::IPCResult RecvNotifyMediaAudibleChanged(
       BrowsingContext* aContext, bool aAudible);
+
+  mozilla::ipc::IPCResult RecvGetModulesTrust(
+      ModulePaths&& aModPaths, bool aRunAtNormalPriority,
+      GetModulesTrustResolver&& aResolver);
+
+  mozilla::ipc::IPCResult RecvSessionStorageData(
+      BrowsingContext* aTop, const nsACString& aOriginAttrs,
+      const nsACString& aOriginKey, const nsTArray<KeyValuePair>& aDefaultData,
+      const nsTArray<KeyValuePair>& aSessionData);
 
   // Notify the ContentChild to enable the input event prioritization when
   // initializing.

@@ -11,18 +11,28 @@ job-defaults:
     suite: raptor
     workdir: /home/cltbld
     run-on-projects:
-        by-test-platform:
-            windows10-64-ref-hw-2017/opt: ['try', 'mozilla-central']
-            windows10-aarch64/opt: ['try']
-            (?:windows10-64|windows7-32|linux64)(?:-qr)?/opt: ['mozilla-central', 'try', 'ash']
-            macosx.*64(?:-qr)?/opt: ['mozilla-central', 'try']
-            default: ['try', 'trunk', 'mozilla-beta']
+        by-test-name:
+            raptor-tp6-.*-cold:
+                by-test-platform:
+                    windows10-64-ref-hw-2017/opt: ['try', 'mozilla-central']
+                    windows10-aarch64/opt: ['try']
+                    (?:windows10-64|windows7-32|linux64)(?:-qr)?/opt: ['mozilla-central', 'try', 'ash']
+                    macosx.*64(?:-qr)?/opt: ['mozilla-central', 'try']
+                    default: ['try', 'trunk', 'mozilla-beta']
+            default:
+                by-test-platform:
+                    windows10-64-ref-hw-2017/opt: ['try', 'mozilla-central']
+                    windows10-aarch64/opt: ['try']
+                    (?:windows10-64|windows7-32|linux64)(?:-qr)?/opt: ['mozilla-central', 'try', 'ash']
+                    macosx.*64(?:-qr)?/opt: ['mozilla-central', 'try']
+                    default: ['try', 'mozilla-beta']
     tier:
         by-test-platform:
             windows10-aarch64/.*: 2
             windows10-64-ccov/.*: 3
             linux64-ccov/.*: 3
             default: 1
+    fission-tier: 2
     virtualization:
         by-test-platform:
             windows10-64-ccov/.*: virtual
@@ -47,7 +57,6 @@ raptor-tp6-1-firefox:
     variants: ["fission"]
     try-name: raptor-tp6-1-firefox
     treeherder-symbol: Rap(tp6-1)
-    condprof: True
     mozharness:
         extra-options:
             - --test=raptor-tp6-1
@@ -687,7 +696,6 @@ raptor-tp6-1-firefox-cold:
     description: "Raptor tp6-1 cold page-load on Firefox"
     try-name: raptor-tp6-1-firefox-cold
     treeherder-symbol: Rap(tp6-c-1)
-    condprof: True
     mozharness:
         extra-options:
             - --test=raptor-tp6-1-cold
@@ -1009,7 +1017,6 @@ browsertime-tp6:
     treeherder-symbol: Btime(tp6)
     max-run-time: 4000
     tier: 3
-    condprof: True
     run-visual-metrics:
         by-app:
             chrome: false
@@ -1029,3 +1036,21 @@ browsertime-speedometer:
     mozharness:
         extra-options:
             - --browsertime
+
+browsertime-tp6-1-profiling:
+    description: "Raptor (browsertime) tp6-1 with Gecko Profiling"
+    raptor-test: raptor-tp6-1
+    run-on-projects: ['integration', 'try']
+    apps: ["firefox"]
+    variants: ["fission"]
+    cold:
+        by-app:
+            firefox: true
+            default: false
+    treeherder-symbol: Btime-Prof(tp6-1-p)
+    max-run-time: 3000
+    tier: 3
+    mozharness:
+        extra-options:
+            - --browsertime
+            - --gecko-profile

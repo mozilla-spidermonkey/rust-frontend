@@ -110,8 +110,10 @@ class BasePrincipal : public nsJSPrincipals {
                                        bool* _retval) final;
   NS_IMETHOD SubsumesConsideringDomainIgnoringFPD(nsIPrincipal* other,
                                                   bool* _retval) final;
-  NS_IMETHOD CheckMayLoad(nsIURI* uri, bool report,
-                          bool allowIfInheritsPrincipal) final;
+  NS_IMETHOD CheckMayLoad(nsIURI* uri, bool allowIfInheritsPrincipal) final;
+  NS_IMETHOD CheckMayLoadWithReporting(nsIURI* uri,
+                                       bool allowIfInheritsPrincipal,
+                                       uint64_t innerWindowID) final;
   NS_IMETHOD GetAddonPolicy(nsISupports** aResult) final;
   NS_IMETHOD GetIsNullPrincipal(bool* aResult) override;
   NS_IMETHOD GetIsContentPrincipal(bool* aResult) override;
@@ -134,6 +136,8 @@ class BasePrincipal : public nsJSPrincipals {
   NS_IMETHOD IsThirdPartyURI(nsIURI* uri, bool* aRes) override;
   NS_IMETHOD IsThirdPartyPrincipal(nsIPrincipal* uri, bool* aRes) override;
   NS_IMETHOD GetIsOriginPotentiallyTrustworthy(bool* aResult) override;
+  NS_IMETHOD IsSameOrigin(nsIURI* aURI, bool aIsPrivateWin,
+                          bool* aRes) override;
 
   nsresult ToJSON(nsACString& aJSON);
   static already_AddRefed<BasePrincipal> FromJSON(const nsACString& aJSON);
@@ -149,8 +153,16 @@ class BasePrincipal : public nsJSPrincipals {
     return static_cast<BasePrincipal*>(aPrin);
   }
 
+  static BasePrincipal& Cast(nsIPrincipal& aPrin) {
+    return *static_cast<BasePrincipal*>(&aPrin);
+  }
+
   static const BasePrincipal* Cast(const nsIPrincipal* aPrin) {
     return static_cast<const BasePrincipal*>(aPrin);
+  }
+
+  static const BasePrincipal& Cast(const nsIPrincipal& aPrin) {
+    return *static_cast<const BasePrincipal*>(&aPrin);
   }
 
   static already_AddRefed<BasePrincipal> CreateContentPrincipal(
@@ -247,6 +259,10 @@ class BasePrincipal : public nsJSPrincipals {
   virtual bool MayLoadInternal(nsIURI* aURI) = 0;
   friend class ::ExpandedPrincipal;
 
+  // Helper for implementing CheckMayLoad and CheckMayLoadWithReporting.
+  nsresult CheckMayLoadHelper(nsIURI* aURI, bool aAllowIfInheritsPrincipal,
+                              bool aReport, uint64_t aInnerWindowID);
+
   void SetHasExplicitDomain() { mHasExplicitDomain = true; }
 
   // Either of these functions should be called as the last step of the
@@ -259,10 +275,10 @@ class BasePrincipal : public nsJSPrincipals {
 
   // KeyValT holds a principal subtype-specific key value and the associated
   // parsed value after JSON parsing.
-  template<typename SerializedKey>
-  struct KeyValT
-  {
-    static_assert(sizeof(SerializedKey) == 1, "SerializedKey should be a uint8_t");
+  template <typename SerializedKey>
+  struct KeyValT {
+    static_assert(sizeof(SerializedKey) == 1,
+                  "SerializedKey should be a uint8_t");
     SerializedKey key;
     bool valueWasSerialized;
     nsCString value;

@@ -29,7 +29,6 @@
 #include "nsUnicharUtils.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptSecurityManager.h"
-#include "nsIScrollable.h"
 #include "nsFrameLoader.h"
 #include "nsFrameLoaderOwner.h"
 #include "nsIFrame.h"
@@ -693,7 +692,8 @@ nsresult nsFrameLoader::CheckURILoad(nsIURI* aURI,
 
   // Check if we are allowed to load absURL
   nsresult rv = secMan->CheckLoadURIWithPrincipal(
-      principal, aURI, nsIScriptSecurityManager::STANDARD);
+      principal, aURI, nsIScriptSecurityManager::STANDARD,
+      mOwnerContent->OwnerDoc()->InnerWindowID());
   if (NS_FAILED(rv)) {
     return rv;  // We're not
   }
@@ -851,7 +851,7 @@ void nsFrameLoader::MaybeShowFrame() {
 }
 
 bool nsFrameLoader::Show(int32_t marginWidth, int32_t marginHeight,
-                         int32_t scrollbarPrefX, int32_t scrollbarPrefY,
+                         ScrollbarPreference aScrollbarPref,
                          nsSubDocumentFrame* frame) {
   if (mInShow) {
     return false;
@@ -878,11 +878,7 @@ bool nsFrameLoader::Show(int32_t marginWidth, int32_t marginHeight,
 
   GetDocShell()->SetMarginWidth(marginWidth);
   GetDocShell()->SetMarginHeight(marginHeight);
-
-  GetDocShell()->SetDefaultScrollbarPreferences(
-      nsIScrollable::ScrollOrientation_X, scrollbarPrefX);
-  GetDocShell()->SetDefaultScrollbarPreferences(
-      nsIScrollable::ScrollOrientation_Y, scrollbarPrefY);
+  GetDocShell()->SetScrollbarPreference(aScrollbarPref);
 
   if (PresShell* presShell = GetDocShell()->GetPresShell()) {
     // Ensure root scroll frame is reflowed in case scroll preferences or
@@ -2552,7 +2548,7 @@ bool nsFrameLoader::TryRemoteBrowserInternal() {
             specIgnoringRef.EqualsLiteral(
                 "chrome://mozapps/content/extensions/aboutaddons.html") ||
             specIgnoringRef.EqualsLiteral(
-                "chrome://browser/content/webext-panels.xul"))) {
+                "chrome://browser/content/webext-panels.xhtml"))) {
         return false;
       }
     }

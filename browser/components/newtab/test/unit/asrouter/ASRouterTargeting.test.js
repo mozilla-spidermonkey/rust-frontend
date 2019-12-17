@@ -2,6 +2,7 @@ import {
   ASRouterTargeting,
   CachedTargetingGetter,
   getSortedMessages,
+  QueryCache,
 } from "lib/ASRouterTargeting.jsm";
 import { OnboardingMessageProvider } from "lib/OnboardingMessageProvider.jsm";
 import { ASRouterPreferences } from "lib/ASRouterPreferences.jsm";
@@ -201,24 +202,60 @@ describe("#CachedTargetingGetter", () => {
           },
         }
       );
-      assert.propertyVal(joined, "foo", "foo");
-      assert.propertyVal(joined, "bar", "bar");
+      const proxy = new Proxy({}, joined);
+
+      assert.equal(proxy.foo, "foo");
+      assert.equal(proxy.bar, "bar");
     });
-    it("should warn when properties overlap", () => {
-      ASRouterTargeting.combineContexts(
-        {
-          get foo() {
-            return "foo";
-          },
-        },
-        {
-          get foo() {
-            return "bar";
-          },
-        }
-      );
-      assert.calledOnce(global.Cu.reportError);
-    });
+  });
+});
+describe("#CacheListAttachedOAuthClients", () => {
+  const twoHours = 2 * 60 * 60 * 1000;
+  let sandbox;
+  let clock;
+  let fakeFxAccount;
+  let authClientsCache;
+  let globals;
+
+  beforeEach(() => {
+    globals = new GlobalOverrider();
+    sandbox = sinon.createSandbox();
+    clock = sinon.useFakeTimers();
+    fakeFxAccount = {
+      listAttachedOAuthClients: () => {},
+    };
+    globals.set("fxAccounts", fakeFxAccount);
+    authClientsCache = QueryCache.queries.ListAttachedOAuthClients;
+    sandbox
+      .stub(fxAccounts, "listAttachedOAuthClients")
+      .returns(Promise.resolve({}));
+  });
+
+  afterEach(() => {
+    authClientsCache.expire();
+    sandbox.restore();
+    clock.restore();
+  });
+
+  it("should only make additional request every 2 hours", async () => {
+    clock.tick(twoHours);
+
+    await authClientsCache.get();
+    assert.calledOnce(fxAccounts.listAttachedOAuthClients);
+
+    clock.tick(twoHours);
+    await authClientsCache.get();
+    assert.calledTwice(fxAccounts.listAttachedOAuthClients);
+  });
+
+  it("should not make additional request before 2 hours", async () => {
+    clock.tick(twoHours);
+
+    await authClientsCache.get();
+    assert.calledOnce(fxAccounts.listAttachedOAuthClients);
+
+    await authClientsCache.get();
+    assert.calledOnce(fxAccounts.listAttachedOAuthClients);
   });
 });
 describe("ASRouterTargeting", () => {
@@ -298,7 +335,7 @@ describe("ASRouterTargeting", () => {
       sandbox.stub(),
       true
     );
-    clock.tick(60 * 1000 + 1);
+    clock.tick(5 * 60 * 1000 + 1);
     await ASRouterTargeting.checkMessageTargeting(
       { targeting: "jexl" },
       {},

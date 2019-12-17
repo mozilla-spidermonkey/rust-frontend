@@ -390,11 +390,9 @@ impl Display {
                 Display::from3(DisplayOutside::Block, inside, self.is_list_item())
             },
             #[cfg(feature = "gecko")]
-            DisplayOutside::XUL => {
-                match self.inside() {
-                    DisplayInside::MozInlineBox | DisplayInside::MozBox => Display::MozBox,
-                    _ => Display::Block,
-                }
+            DisplayOutside::XUL => match self.inside() {
+                DisplayInside::MozInlineBox | DisplayInside::MozBox => Display::MozBox,
+                _ => Display::Block,
             },
             DisplayOutside::Block | DisplayOutside::None => *self,
             #[cfg(any(feature = "servo-layout-2013", feature = "gecko"))]
@@ -445,10 +443,11 @@ impl ToCss for Display {
     where
         W: fmt::Write,
     {
+        #[cfg(any(feature = "servo-layout-2013", feature = "gecko"))]
         debug_assert_ne!(
             self.inside(),
             DisplayInside::Flow,
-            "`flow` never appears in `display` computed value"
+            "`flow` fears in `display` computed value"
         );
         let outside = self.outside();
         let inside = match self.inside() {

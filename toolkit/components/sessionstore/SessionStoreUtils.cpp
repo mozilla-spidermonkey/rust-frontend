@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "js/Array.h"  // JS::GetArrayLength, JS::IsArrayObject
 #include "js/JSON.h"
 #include "jsapi.h"
 #include "mozilla/PresShell.h"
@@ -903,13 +904,13 @@ static void SetElementAsObject(JSContext* aCx, Element* aElement,
 
     // For Multiple Selects Element
     bool isArray = false;
-    JS_IsArrayObject(aCx, aObject, &isArray);
+    JS::IsArrayObject(aCx, aObject, &isArray);
     if (!isArray) {
       return;
     }
     JS::Rooted<JSObject*> arrayObj(aCx, &aObject.toObject());
     uint32_t arrayLength = 0;
-    if (!JS_GetArrayLength(aCx, arrayObj, &arrayLength)) {
+    if (!JS::GetArrayLength(aCx, arrayObj, &arrayLength)) {
       JS_ClearPendingException(aCx);
       return;
     }
@@ -1080,8 +1081,8 @@ static void ReadAllEntriesFromStorage(nsPIDOMWindowOuter* aWindow,
                                       nsTArray<nsCString>& aOrigins,
                                       nsTArray<nsString>& aKeys,
                                       nsTArray<nsString>& aValues) {
-  nsCOMPtr<nsIDocShell> docShell = aWindow->GetDocShell();
-  if (!docShell) {
+  BrowsingContext* const browsingContext = aWindow->GetBrowsingContext();
+  if (!browsingContext) {
     return;
   }
 
@@ -1108,7 +1109,8 @@ static void ReadAllEntriesFromStorage(nsPIDOMWindowOuter* aWindow,
   }
 
   /* Completed checking for recursion and is about to read storage*/
-  nsCOMPtr<nsIDOMStorageManager> storageManager = do_QueryInterface(docShell);
+  const RefPtr<SessionStorageManager> storageManager =
+      browsingContext->GetSessionStorageManager();
   if (!storageManager) {
     return;
   }
@@ -1209,10 +1211,14 @@ void SessionStoreUtils::RestoreSessionStorage(
     int32_t pos = entry.mKey.RFindChar('^');
     nsCOMPtr<nsIPrincipal> principal = BasePrincipal::CreateContentPrincipal(
         NS_ConvertUTF16toUTF8(Substring(entry.mKey, 0, pos)));
-    nsresult rv;
-    nsCOMPtr<nsIDOMStorageManager> storageManager =
-        do_QueryInterface(aDocShell, &rv);
-    if (NS_FAILED(rv)) {
+    BrowsingContext* const browsingContext =
+        nsDocShell::Cast(aDocShell)->GetBrowsingContext();
+    if (!browsingContext) {
+      return;
+    }
+    const RefPtr<SessionStorageManager> storageManager =
+        browsingContext->GetSessionStorageManager();
+    if (!storageManager) {
       return;
     }
     RefPtr<Storage> storage;

@@ -6848,13 +6848,20 @@ class DSPrivacyModal extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureCo
   constructor(props) {
     super(props);
     this.closeModal = this.closeModal.bind(this);
-    this.onLinkClick = this.onLinkClick.bind(this);
+    this.onLearnLinkClick = this.onLearnLinkClick.bind(this);
+    this.onManageLinkClick = this.onManageLinkClick.bind(this);
   }
 
-  onLinkClick(event) {
+  onLearnLinkClick(event) {
     this.props.dispatch(common_Actions_jsm__WEBPACK_IMPORTED_MODULE_1__["actionCreators"].UserEvent({
       event: "CLICK_PRIVACY_INFO",
       source: "DS_PRIVACY_MODAL"
+    }));
+  }
+
+  onManageLinkClick(event) {
+    this.props.dispatch(common_Actions_jsm__WEBPACK_IMPORTED_MODULE_1__["actionCreators"].OnlyToMain({
+      type: common_Actions_jsm__WEBPACK_IMPORTED_MODULE_1__["actionTypes"].SETTINGS_OPEN
     }));
   }
 
@@ -6876,10 +6883,14 @@ class DSPrivacyModal extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureCo
     }), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("p", {
       "data-l10n-id": "newtab-privacy-modal-paragraph"
     }), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("a", {
+      className: "modal-link modal-link-privacy",
       "data-l10n-id": "newtab-privacy-modal-link",
-      onClick: this.onLinkClick,
+      onClick: this.onLearnLinkClick,
       href: "https://www.mozilla.org/en-US/privacy/firefox/"
-    })), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("section", {
+    }), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("button", {
+      className: "modal-link modal-link-manage",
+      onClick: this.onManageLinkClick
+    }, "Manage sponsored content settings")), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("section", {
       className: "actions"
     }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("button", {
       className: "done",
@@ -11895,7 +11906,7 @@ class SubmitFormSnippet_SubmitFormSnippet extends external_React_default.a.PureC
     });
     this.props.sendUserActionTelemetry({
       event: "CLICK_BUTTON",
-      value: "conversion-subscribe-activation",
+      event_context: "conversion-subscribe-activation",
       id: "NEWTAB_FOOTER_BAR_CONTENT"
     });
 
@@ -11942,7 +11953,7 @@ class SubmitFormSnippet_SubmitFormSnippet extends external_React_default.a.PureC
 
       this.props.sendUserActionTelemetry({
         event: "CLICK_BUTTON",
-        value: "subscribe-success",
+        event_context: "subscribe-success",
         id: "NEWTAB_FOOTER_BAR_CONTENT"
       });
     } else {
@@ -11954,7 +11965,7 @@ class SubmitFormSnippet_SubmitFormSnippet extends external_React_default.a.PureC
       });
       this.props.sendUserActionTelemetry({
         event: "CLICK_BUTTON",
-        value: "subscribe-error",
+        event_context: "subscribe-error",
         id: "NEWTAB_FOOTER_BAR_CONTENT"
       });
     }
@@ -11967,7 +11978,7 @@ class SubmitFormSnippet_SubmitFormSnippet extends external_React_default.a.PureC
   expandSnippet() {
     this.props.sendUserActionTelemetry({
       event: "CLICK_BUTTON",
-      value: "scene1-button-learn-more",
+      event_context: "scene1-button-learn-more",
       id: this.props.UISurface
     });
     this.setState({

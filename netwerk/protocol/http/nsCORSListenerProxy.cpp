@@ -904,19 +904,19 @@ nsresult nsCORSListenerProxy::UpdateChannel(nsIChannel* aChannel,
   // Check that the uri is ok to load
   uint32_t flags = loadInfo->CheckLoadURIFlags();
   rv = nsContentUtils::GetSecurityManager()->CheckLoadURIWithPrincipal(
-      mRequestingPrincipal, uri, flags);
+      mRequestingPrincipal, uri, flags, loadInfo->GetInnerWindowID());
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (originalURI != uri) {
     rv = nsContentUtils::GetSecurityManager()->CheckLoadURIWithPrincipal(
-        mRequestingPrincipal, originalURI, flags);
+        mRequestingPrincipal, originalURI, flags, loadInfo->GetInnerWindowID());
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
   if (!mHasBeenCrossSite &&
-      NS_SUCCEEDED(mRequestingPrincipal->CheckMayLoad(uri, false, false)) &&
-      (originalURI == uri || NS_SUCCEEDED(mRequestingPrincipal->CheckMayLoad(
-                                 originalURI, false, false)))) {
+      NS_SUCCEEDED(mRequestingPrincipal->CheckMayLoad(uri, false)) &&
+      (originalURI == uri ||
+       NS_SUCCEEDED(mRequestingPrincipal->CheckMayLoad(originalURI, false)))) {
     return NS_OK;
   }
 
@@ -1583,7 +1583,7 @@ void nsCORSListenerProxy::LogBlockedCORSRequest(uint64_t aInnerWindowID,
                                               EmptyString(),  // sourceLine
                                               0,              // lineNumber
                                               0,              // columnNumber
-                                              nsIScriptError::warningFlag,
+                                              nsIScriptError::errorFlag,
                                               aCategory, aInnerWindowID);
   } else {
     nsCString category = PromiseFlatCString(aCategory);
@@ -1592,7 +1592,7 @@ void nsCORSListenerProxy::LogBlockedCORSRequest(uint64_t aInnerWindowID,
                            EmptyString(),  // sourceLine
                            0,              // lineNumber
                            0,              // columnNumber
-                           nsIScriptError::warningFlag, category.get(),
+                           nsIScriptError::errorFlag, category.get(),
                            aPrivateBrowsing,
                            aFromChromeContext);  // From chrome context
   }

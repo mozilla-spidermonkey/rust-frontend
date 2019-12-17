@@ -567,41 +567,41 @@ static void WebRenderDebugPrefChangeCallback(const char* aPrefName, void*) {
     flags |= (bit);                                        \
   }
 
-  GFX_WEBRENDER_DEBUG(".profiler", wr::DebugFlags_PROFILER_DBG)
-  GFX_WEBRENDER_DEBUG(".render-targets", wr::DebugFlags_RENDER_TARGET_DBG)
-  GFX_WEBRENDER_DEBUG(".texture-cache", wr::DebugFlags_TEXTURE_CACHE_DBG)
-  GFX_WEBRENDER_DEBUG(".gpu-time-queries", wr::DebugFlags_GPU_TIME_QUERIES)
-  GFX_WEBRENDER_DEBUG(".gpu-sample-queries", wr::DebugFlags_GPU_SAMPLE_QUERIES)
-  GFX_WEBRENDER_DEBUG(".disable-batching", wr::DebugFlags_DISABLE_BATCHING)
-  GFX_WEBRENDER_DEBUG(".epochs", wr::DebugFlags_EPOCHS)
-  GFX_WEBRENDER_DEBUG(".compact-profiler", wr::DebugFlags_COMPACT_PROFILER)
-  GFX_WEBRENDER_DEBUG(".smart-profiler", wr::DebugFlags_SMART_PROFILER)
+  GFX_WEBRENDER_DEBUG(".profiler", wr::DebugFlags::PROFILER_DBG)
+  GFX_WEBRENDER_DEBUG(".render-targets", wr::DebugFlags::RENDER_TARGET_DBG)
+  GFX_WEBRENDER_DEBUG(".texture-cache", wr::DebugFlags::TEXTURE_CACHE_DBG)
+  GFX_WEBRENDER_DEBUG(".gpu-time-queries", wr::DebugFlags::GPU_TIME_QUERIES)
+  GFX_WEBRENDER_DEBUG(".gpu-sample-queries", wr::DebugFlags::GPU_SAMPLE_QUERIES)
+  GFX_WEBRENDER_DEBUG(".disable-batching", wr::DebugFlags::DISABLE_BATCHING)
+  GFX_WEBRENDER_DEBUG(".epochs", wr::DebugFlags::EPOCHS)
+  GFX_WEBRENDER_DEBUG(".compact-profiler", wr::DebugFlags::COMPACT_PROFILER)
+  GFX_WEBRENDER_DEBUG(".smart-profiler", wr::DebugFlags::SMART_PROFILER)
   GFX_WEBRENDER_DEBUG(".echo-driver-messages",
-                      wr::DebugFlags_ECHO_DRIVER_MESSAGES)
+                      wr::DebugFlags::ECHO_DRIVER_MESSAGES)
   GFX_WEBRENDER_DEBUG(".new-frame-indicator",
-                      wr::DebugFlags_NEW_FRAME_INDICATOR)
+                      wr::DebugFlags::NEW_FRAME_INDICATOR)
   GFX_WEBRENDER_DEBUG(".new-scene-indicator",
-                      wr::DebugFlags_NEW_SCENE_INDICATOR)
-  GFX_WEBRENDER_DEBUG(".show-overdraw", wr::DebugFlags_SHOW_OVERDRAW)
-  GFX_WEBRENDER_DEBUG(".gpu-cache", wr::DebugFlags_GPU_CACHE_DBG)
+                      wr::DebugFlags::NEW_SCENE_INDICATOR)
+  GFX_WEBRENDER_DEBUG(".show-overdraw", wr::DebugFlags::SHOW_OVERDRAW)
+  GFX_WEBRENDER_DEBUG(".gpu-cache", wr::DebugFlags::GPU_CACHE_DBG)
   GFX_WEBRENDER_DEBUG(".slow-frame-indicator",
-                      wr::DebugFlags_SLOW_FRAME_INDICATOR)
+                      wr::DebugFlags::SLOW_FRAME_INDICATOR)
   GFX_WEBRENDER_DEBUG(".texture-cache.clear-evicted",
-                      wr::DebugFlags_TEXTURE_CACHE_DBG_CLEAR_EVICTED)
-  GFX_WEBRENDER_DEBUG(".picture-caching", wr::DebugFlags_PICTURE_CACHING_DBG)
-  GFX_WEBRENDER_DEBUG(".primitives", wr::DebugFlags_PRIMITIVE_DBG)
+                      wr::DebugFlags::TEXTURE_CACHE_DBG_CLEAR_EVICTED)
+  GFX_WEBRENDER_DEBUG(".picture-caching", wr::DebugFlags::PICTURE_CACHING_DBG)
+  GFX_WEBRENDER_DEBUG(".primitives", wr::DebugFlags::PRIMITIVE_DBG)
   // Bit 18 is for the zoom display, which requires the mouse position and thus
   // currently only works in wrench.
-  GFX_WEBRENDER_DEBUG(".small-screen", wr::DebugFlags_SMALL_SCREEN)
+  GFX_WEBRENDER_DEBUG(".small-screen", wr::DebugFlags::SMALL_SCREEN)
   GFX_WEBRENDER_DEBUG(".disable-opaque-pass",
-                      wr::DebugFlags_DISABLE_OPAQUE_PASS)
-  GFX_WEBRENDER_DEBUG(".disable-alpha-pass", wr::DebugFlags_DISABLE_ALPHA_PASS)
-  GFX_WEBRENDER_DEBUG(".disable-clip-masks", wr::DebugFlags_DISABLE_CLIP_MASKS)
-  GFX_WEBRENDER_DEBUG(".disable-text-prims", wr::DebugFlags_DISABLE_TEXT_PRIMS)
+                      wr::DebugFlags::DISABLE_OPAQUE_PASS)
+  GFX_WEBRENDER_DEBUG(".disable-alpha-pass", wr::DebugFlags::DISABLE_ALPHA_PASS)
+  GFX_WEBRENDER_DEBUG(".disable-clip-masks", wr::DebugFlags::DISABLE_CLIP_MASKS)
+  GFX_WEBRENDER_DEBUG(".disable-text-prims", wr::DebugFlags::DISABLE_TEXT_PRIMS)
   GFX_WEBRENDER_DEBUG(".disable-gradient-prims",
-                      wr::DebugFlags_DISABLE_GRADIENT_PRIMS)
-  GFX_WEBRENDER_DEBUG(".obscure-images", wr::DebugFlags_OBSCURE_IMAGES)
-  GFX_WEBRENDER_DEBUG(".glyph-flashing", wr::DebugFlags_GLYPH_FLASHING)
+                      wr::DebugFlags::DISABLE_GRADIENT_PRIMS)
+  GFX_WEBRENDER_DEBUG(".obscure-images", wr::DebugFlags::OBSCURE_IMAGES)
+  GFX_WEBRENDER_DEBUG(".glyph-flashing", wr::DebugFlags::GLYPH_FLASHING)
 #undef GFX_WEBRENDER_DEBUG
 
   gfx::gfxVars::SetWebRenderDebugFlags(flags.bits);
@@ -1149,6 +1149,10 @@ void gfxPlatform::ReportTelemetry() {
   gfxInfo->GetAdapterDeviceID(adapterDeviceId);
   Telemetry::ScalarSet(Telemetry::ScalarID::GFX_ADAPTER_DEVICE_ID,
                        adapterDeviceId);
+  // Temporary workaround for bug 1601091, should be removed once telemetry
+  // issue is fixed.
+  Telemetry::ScalarSet(Telemetry::ScalarID::GFX_ADAPTER_DEVICE_ID_LAST_SEEN,
+                       adapterDeviceId);
 
   nsString adapterSubsystemId;
   gfxInfo->GetAdapterSubsysID(adapterSubsystemId);
@@ -1270,7 +1274,6 @@ bool gfxPlatform::CanMigrateMacGPUs() {
 
   return forceEnable || (!forceDisable && !blocked);
 }
-
 
 static bool sLayersIPCIsUp = false;
 
@@ -3140,13 +3143,6 @@ static FeatureState& WebRenderHardwareQualificationStatus(
     MOZ_ASSERT(*aOutGuardedByQualifiedPref);
     return featureWebRenderQualified;
   }
-#else  // !MOZ_WIDGET_ANDROID
-#  ifndef NIGHTLY_BUILD
-  featureWebRenderQualified.Disable(
-      FeatureStatus::BlockedReleaseChannelAndroid,
-      "Release channel and Android",
-      NS_LITERAL_CSTRING("FEATURE_FAILURE_RELEASE_CHANNEL_ANDROID"));
-#  endif
 #endif
   return featureWebRenderQualified;
 }
@@ -3315,6 +3311,57 @@ void gfxPlatform::InitWebRenderConfig() {
   }
 #endif
 
+  // Initialize WebRender native compositor usage
+  FeatureState& featureComp =
+      gfxConfig::GetFeature(Feature::WEBRENDER_COMPOSITOR);
+  featureComp.SetDefaultFromPref("gfx.webrender.compositor", true, false);
+  if (!StaticPrefs::gfx_webrender_picture_caching()) {
+    featureComp.ForceDisable(
+        FeatureStatus::Unavailable, "Picture caching is disabled",
+        NS_LITERAL_CSTRING("FEATURE_FAILURE_PICTURE_CACHING_DISABLED"));
+  }
+
+  if (!IsFeatureSupported(nsIGfxInfo::FEATURE_WEBRENDER_COMPOSITOR, false)) {
+    featureComp.ForceDisable(FeatureStatus::Blacklisted, "Blacklisted",
+                             NS_LITERAL_CSTRING("FEATURE_FAILURE_BLACKLIST"));
+  }
+
+#ifdef XP_WIN
+  if (!gfxVars::UseWebRenderDCompWin()) {
+    featureComp.ForceDisable(
+        FeatureStatus::Unavailable, "No DirectComposition usage",
+        NS_LITERAL_CSTRING("FEATURE_FAILURE_NO_DIRECTCOMPOSITION"));
+  }
+#endif
+
+  if (gfx::gfxConfig::IsEnabled(gfx::Feature::WEBRENDER_COMPOSITOR)) {
+    gfxVars::SetUseWebRenderCompositor(true);
+    // Call UserEnable() only for reporting to Decision Log.
+    // If feature is enabled by default. It is not reported to Decision Log.
+    featureComp.UserEnable("Enabled");
+  }
+
+  // Initialize WebRender partial present config.
+  // Partial present is used only when WebRender compositor is not used.
+  if (StaticPrefs::gfx_webrender_max_partial_present_rects_AtStartup() > 0) {
+    if (UseWebRender()) {
+      FeatureState& featurePartial =
+          gfxConfig::GetFeature(Feature::WEBRENDER_PARTIAL);
+      featurePartial.EnableByDefault();
+      if (StaticPrefs::gfx_webrender_picture_caching()) {
+        gfxVars::SetWebRenderMaxPartialPresentRects(
+            StaticPrefs::gfx_webrender_max_partial_present_rects_AtStartup());
+        // Call UserEnable() only for reporting to Decision Log.
+        // If feature is enabled by default. It is not reported to Decision Log.
+        featurePartial.UserEnable("Enabled");
+      } else {
+        featurePartial.ForceDisable(
+            FeatureStatus::Unavailable, "Picture caching is disabled",
+            NS_LITERAL_CSTRING("FEATURE_FAILURE_PICTURE_CACHING_DISABLED"));
+      }
+    }
+  }
+
   // Set features that affect WR's RendererOptions
   gfxVars::SetUseGLSwizzle(
       IsFeatureSupported(nsIGfxInfo::FEATURE_GL_SWIZZLE, true));
@@ -3326,7 +3373,7 @@ void gfxPlatform::InitWebRenderConfig() {
 
 void gfxPlatform::InitWebGPUConfig() {
   FeatureState& feature = gfxConfig::GetFeature(Feature::WEBGPU);
-  feature.SetDefaultFromPref("dom.webgpu.enable", true, false);
+  feature.SetDefaultFromPref("dom.webgpu.enabled", true, false);
 }
 
 void gfxPlatform::InitOMTPConfig() {
@@ -3765,6 +3812,12 @@ void gfxPlatform::NotifyCompositorCreated(LayersBackend aBackend) {
   if (XRE_IsParentProcess()) {
     Telemetry::ScalarSet(
         Telemetry::ScalarID::GFX_COMPOSITOR,
+        NS_ConvertUTF8toUTF16(GetLayersBackendName(mCompositorBackend)));
+
+    // Temporary workaround for bug 1601091, should be removed once telemetry
+    // issue is fixed.
+    Telemetry::ScalarSet(
+        Telemetry::ScalarID::GFX_COMPOSITOR_LAST_SEEN,
         NS_ConvertUTF8toUTF16(GetLayersBackendName(mCompositorBackend)));
   }
 

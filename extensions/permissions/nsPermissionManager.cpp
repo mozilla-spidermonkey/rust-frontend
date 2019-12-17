@@ -979,7 +979,6 @@ nsresult nsPermissionManager::Init() {
     observerService->AddObserver(this, "profile-do-change", true);
     observerService->AddObserver(this, "testonly-reload-permissions-from-disk",
                                  true);
-    observerService->AddObserver(this, "clear-origin-attributes-data", true);
   }
 
   // ignore failure here, since it's non-fatal (we can run fine without
@@ -1698,6 +1697,18 @@ nsresult nsPermissionManager::AddInternal(
   nsAutoCString origin;
   nsresult rv = GetOriginFromPrincipal(aPrincipal, origin);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  // For private browsing only store permissions for the session
+  if (aExpireType != EXPIRE_SESSION) {
+    uint32_t privateBrowsingId =
+        nsScriptSecurityManager::DEFAULT_PRIVATE_BROWSING_ID;
+    nsresult rv = aPrincipal->GetPrivateBrowsingId(&privateBrowsingId);
+    if (NS_SUCCEEDED(rv) &&
+        privateBrowsingId !=
+            nsScriptSecurityManager::DEFAULT_PRIVATE_BROWSING_ID) {
+      aExpireType = EXPIRE_SESSION;
+    }
+  }
 
   if (!IsChildProcess()) {
     IPC::Permission permission(origin, aType, aPermission, aExpireType,
@@ -2543,8 +2554,6 @@ NS_IMETHODIMP nsPermissionManager::Observe(nsISupports* aSubject,
     RemoveAllFromMemory();
     CloseDB(false);
     InitDB(false);
-  } else if (!nsCRT::strcmp(aTopic, "clear-origin-attributes-data")) {
-    return RemovePermissionsWithAttributes(nsDependentString(someData));
   }
 
   return NS_OK;
@@ -2560,7 +2569,8 @@ nsresult nsPermissionManager::RemoveAllModifiedSince(
       });
 }
 
-nsresult nsPermissionManager::RemovePermissionsWithAttributes(
+NS_IMETHODIMP
+nsPermissionManager::RemovePermissionsWithAttributes(
     const nsAString& aPattern) {
   ENSURE_NOT_CHILD_PROCESS;
   mozilla::OriginAttributesPattern pattern;

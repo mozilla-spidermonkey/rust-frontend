@@ -779,6 +779,11 @@ var Policies = {
           blockAllExtensions = true;
           // Turn off discovery pane in about:addons
           setAndLockPref("extensions.getAddons.showPane", false);
+          // Turn off recommendations
+          setAndLockPref(
+            "extensions.htmlaboutaddons.recommendations.enable",
+            false
+          );
           // Block about:debugging
           blockAboutPage(manager, "about:debugging");
         }
@@ -1085,7 +1090,7 @@ var Policies = {
     onBeforeUIStartup(manager, param) {
       if (!param) {
         blockAboutPage(manager, "about:logins", true);
-        gBlockedChromePages.push("passwordManager.xul");
+        gBlockedChromePages.push("passwordManager.xhtml");
         setAndLockPref("pref.privacy.disable_button.view_passwords", true);
       }
       setAndLockPref("signon.rememberSignons", param);
@@ -1774,7 +1779,7 @@ function blockAboutPage(manager, feature, neededOnContentProcess = false) {
   gBlockedChromePages.push(fileName);
   if (feature == "about:config") {
     // Hide old page until it is removed
-    gBlockedChromePages.push("config.xul");
+    gBlockedChromePages.push("config.xhtml");
   }
 }
 

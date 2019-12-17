@@ -86,6 +86,7 @@
 #include "jit/JitcodeMap.h"
 #include "jit/JitRealm.h"
 #include "jit/shared/CodeGenerator-shared.h"
+#include "js/Array.h"        // JS::NewArrayObject
 #include "js/ArrayBuffer.h"  // JS::{CreateMappedArrayBufferContents,NewMappedArrayBufferWithContents,IsArrayBufferObject,GetArrayBufferLengthAndData}
 #include "js/BuildId.h"      // JS::BuildIdCharVector, JS::SetProcessBuildIdOp
 #include "js/CharacterEncoding.h"
@@ -494,6 +495,7 @@ bool shell::enableStreams = false;
 bool shell::enableReadableByteStreams = false;
 bool shell::enableBYOBStreamReaders = false;
 bool shell::enableWritableStreams = false;
+bool shell::enableReadableStreamPipeTo = false;
 bool shell::enableFields = false;
 bool shell::enableAwaitFix = false;
 bool shell::enableWeakRefs = false;
@@ -1029,12 +1031,15 @@ static void ShellCleanupFinalizationGroupCallback(JSObject* group, void* data) {
   }
 }
 
-static void MaybeRunFinalizationGroupCleanupTasks(JSContext* cx) {
+// Run any FinalizationGroup cleanup tasks and return whether any ran.
+static bool MaybeRunFinalizationGroupCleanupTasks(JSContext* cx) {
   ShellContext* sc = GetShellContext(cx);
   MOZ_ASSERT(!sc->quitting);
 
   Rooted<ShellContext::ObjectVector> groups(cx);
   std::swap(groups.get(), sc->finalizationGroupsToCleanUp.get());
+
+  bool ranTasks = false;
 
   RootedObject group(cx);
   for (const auto& g : groups) {
@@ -1047,10 +1052,14 @@ static void MaybeRunFinalizationGroupCleanupTasks(JSContext* cx) {
       mozilla::Unused << JS::CleanupQueuedFinalizationGroup(cx, group);
     }
 
+    ranTasks = true;
+
     if (sc->quitting) {
       break;
     }
   }
+
+  return ranTasks;
 }
 
 static bool EnqueueJob(JSContext* cx, unsigned argc, Value* vp) {
@@ -1073,14 +1082,19 @@ static void RunShellJobs(JSContext* cx) {
     return;
   }
 
-  // Run microtasks.
-  js::RunJobs(cx);
-  if (sc->quitting) {
-    return;
-  }
+  while (true) {
+    // Run microtasks.
+    js::RunJobs(cx);
+    if (sc->quitting) {
+      return;
+    }
 
-  // Run tasks (only finalization group clean tasks are possible).
-  MaybeRunFinalizationGroupCleanupTasks(cx);
+    // Run tasks (only finalization group clean tasks are possible).
+    bool ranTasks = MaybeRunFinalizationGroupCleanupTasks(cx);
+    if (!ranTasks) {
+      break;
+    }
+  }
 }
 
 static bool DrainJobQueue(JSContext* cx, unsigned argc, Value* vp) {
@@ -2742,6 +2756,14 @@ static bool CpuNow(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool ClearKeptObjects(JSContext* cx, unsigned argc, Value* vp) {
+  for (ZonesIter zone(cx->runtime(), WithAtoms); !zone.done(); zone.next()) {
+    zone->clearKeptObjects();
+  }
+
+  return true;
+}
+
 static bool PrintInternal(JSContext* cx, const CallArgs& args, RCFile* file) {
   if (!file->isOpen()) {
     JS_ReportErrorASCII(cx, "output file is closed");
@@ -3028,11 +3050,6 @@ static MOZ_MUST_USE bool SrcNotes(JSContext* cx, HandleScript script,
       case SRC_BREAKPOINT:
       case SRC_STEP_SEP:
       case SRC_XDELTA:
-      case SRC_FOR:
-      case SRC_DO_WHILE:
-      case SRC_WHILE:
-      case SRC_FOR_IN:
-      case SRC_FOR_OF:
         break;
 
       case SRC_COLSPAN:
@@ -3062,15 +3079,6 @@ static MOZ_MUST_USE bool SrcNotes(JSContext* cx, HandleScript script,
           return false;
         }
         break;
-
-      case SRC_CLASS_SPAN: {
-        unsigned startOffset = GetSrcNoteOffset(sn, 0);
-        unsigned endOffset = GetSrcNoteOffset(sn, 1);
-        if (!sp->jsprintf(" %u %u", startOffset, endOffset)) {
-          return false;
-        }
-        break;
-      }
 
       default:
         MOZ_ASSERT_UNREACHABLE("unrecognized srcnote");
@@ -3707,6 +3715,7 @@ static void SetStandardRealmOptions(JS::RealmOptions& options) {
       .setReadableByteStreamsEnabled(enableReadableByteStreams)
       .setBYOBStreamReadersEnabled(enableBYOBStreamReaders)
       .setWritableStreamsEnabled(enableWritableStreams)
+      .setReadableStreamPipeToEnabled(enableReadableStreamPipeTo)
       .setFieldsEnabled(enableFields)
       .setAwaitFixEnabled(enableAwaitFix)
       .setWeakRefsEnabled(enableWeakRefs);
@@ -3916,8 +3925,6 @@ static void WorkerMain(WorkerInput* input) {
   if (!cx) {
     return;
   }
-
-  JS_SetGCParameter(cx, JSGC_MAX_NURSERY_BYTES, 2L * 1024L * 1024L);
 
   ShellContext* sc = js_new<ShellContext>(cx);
   if (!sc) {
@@ -4703,6 +4710,135 @@ static bool ParseModule(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   args.rval().setObject(*module);
+  return true;
+}
+
+// A JSObject that holds XDRBuffer.
+class XDRBufferObject : public NativeObject {
+  static const size_t VECTOR_SLOT = 0;
+  static const unsigned RESERVED_SLOTS = 1;
+
+ public:
+  static const JSClassOps classOps_;
+  static const JSClass class_;
+
+  inline static MOZ_MUST_USE XDRBufferObject* create(JSContext* cx,
+                                                     JS::TranscodeBuffer* buf);
+
+  JS::TranscodeBuffer* data() const {
+    Value value = getReservedSlot(VECTOR_SLOT);
+    auto buf = static_cast<JS::TranscodeBuffer*>(value.toPrivate());
+    MOZ_ASSERT(buf);
+    return buf;
+  }
+
+  bool hasData() const {
+    // Data may not be present if we hit OOM in initialization.
+    return !getReservedSlot(VECTOR_SLOT).isUndefined();
+  }
+
+  static void finalize(JSFreeOp* fop, JSObject* obj);
+};
+
+/*static */ const JSClassOps XDRBufferObject::classOps_ = {
+    nullptr, /* addProperty */
+    nullptr, /* delProperty */
+    nullptr, /* enumerate   */
+    nullptr, /* newEnumerate */
+    nullptr, /* resolve     */
+    nullptr, /* mayResolve  */
+    XDRBufferObject::finalize};
+
+/*static */ const JSClass XDRBufferObject::class_ = {
+    "XDRBufferObject",
+    JSCLASS_HAS_RESERVED_SLOTS(XDRBufferObject::RESERVED_SLOTS) |
+        JSCLASS_BACKGROUND_FINALIZE,
+    &XDRBufferObject::classOps_};
+
+XDRBufferObject* XDRBufferObject::create(JSContext* cx,
+                                         JS::TranscodeBuffer* buf) {
+  XDRBufferObject* bufObj = NewObjectWithNullTaggedProto<XDRBufferObject>(cx);
+  if (!bufObj) {
+    return nullptr;
+  }
+
+  auto heapBuf = cx->make_unique<JS::TranscodeBuffer>();
+  if (!heapBuf) {
+    return nullptr;
+  }
+
+  if (!heapBuf->appendAll(*buf)) {
+    return nullptr;
+  }
+
+  size_t len = heapBuf->length();
+  InitReservedSlot(bufObj, VECTOR_SLOT, heapBuf.release(), len,
+                   MemoryUse::XDRBufferElements);
+
+  return bufObj;
+}
+
+void XDRBufferObject::finalize(JSFreeOp* fop, JSObject* obj) {
+  XDRBufferObject* buf = &obj->as<XDRBufferObject>();
+  if (buf->hasData()) {
+    fop->delete_(buf, buf->data(), buf->data()->length(),
+                 MemoryUse::XDRBufferElements);
+  }
+}
+
+static bool CodeModule(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  if (!args.requireAtLeast(cx, "codeModule", 1)) {
+    return false;
+  }
+
+  if (!args[0].isObject() || !args[0].toObject().is<ModuleObject>()) {
+    const char* typeName = InformalValueTypeName(args[0]);
+    JS_ReportErrorASCII(cx, "expected module object, got %s", typeName);
+    return false;
+  }
+
+  RootedModuleObject modObject(cx, &args[0].toObject().as<ModuleObject>());
+  JS::TranscodeBuffer buf;
+  XDREncoder xdrEncoder_(cx, buf);
+  XDRResult res = xdrEncoder_.codeModuleObject(&modObject);
+  if (res.isErr()) {
+    return false;
+  }
+
+  XDRBufferObject* xdrBuf = XDRBufferObject::create(cx, &buf);
+  if (!xdrBuf) {
+    return false;
+  }
+  args.rval().setObject(*xdrBuf);
+  return true;
+}
+
+static bool DecodeModule(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  if (!args.requireAtLeast(cx, "decodeModule", 1)) {
+    return false;
+  }
+
+  if (!args[0].isObject() || !args[0].toObject().is<XDRBufferObject>()) {
+    const char* typeName = InformalValueTypeName(args[0]);
+    JS_ReportErrorASCII(cx, "expected XDRBufferObject to compile, got %s",
+                        typeName);
+    return false;
+  }
+
+  XDRDecoder xdrDecoder_(cx, *args[0].toObject().as<XDRBufferObject>().data());
+  RootedModuleObject modObject(cx, nullptr);
+  XDRResult res = xdrDecoder_.codeModuleObject(&modObject);
+  if (res.isErr()) {
+    return false;
+  }
+
+  if (!ModuleObject::Freeze(cx, modObject)) {
+    return false;
+  }
+
+  args.rval().setObject(*modObject);
   return true;
 }
 
@@ -6145,6 +6281,13 @@ static bool NewGlobal(JSContext* cx, unsigned argc, Value* vp) {
       creationOptions.setWritableStreamsEnabled(v.toBoolean());
     }
 
+    if (!JS_GetProperty(cx, opts, "enableReadableStreamPipeTo", &v)) {
+      return false;
+    }
+    if (v.isBoolean()) {
+      creationOptions.setReadableStreamPipeToEnabled(v.toBoolean());
+    }
+
     if (!JS_GetProperty(cx, opts, "systemPrincipal", &v)) {
       return false;
     }
@@ -6567,7 +6710,7 @@ static bool DisableSingleStepProfiling(JSContext* cx, unsigned argc,
     }
   }
 
-  JSObject* array = JS_NewArrayObject(cx, elems);
+  JSObject* array = JS::NewArrayObject(cx, elems);
   if (!array) {
     return false;
   }
@@ -7824,7 +7967,7 @@ class ShellAutoEntryMonitor : JS::dbg::AutoEntryMonitor {
       return false;
     }
 
-    RootedObject result(cx, JS_NewArrayObject(cx, log.length()));
+    RootedObject result(cx, JS::NewArrayObject(cx, log.length()));
     if (!result) {
       return false;
     }
@@ -8580,6 +8723,14 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 "parseModule(code)",
 "  Parses source text as a module and returns a Module object."),
 
+    JS_FN_HELP("codeModule", CodeModule, 1, 0,
+"codeModule(module)",
+"   Takes an uninstantiated ModuleObject and returns a XDR bytecode representation of that ModuleObject."),
+
+    JS_FN_HELP("decodeModule", DecodeModule, 1, 0,
+"decodeModule(code)",
+"   Takes a XDR bytecode representation of an uninstantiated ModuleObject and returns a ModuleObject."),
+
     JS_FN_HELP("setModuleLoadHook", SetModuleLoadHook, 1, 0,
 "setModuleLoadHook(function(path))",
 "  Set the shell specific module load hook to |function|.\n"
@@ -9025,6 +9176,11 @@ JS_FN_HELP("parseBin", BinParse, 1, 0,
 " Returns the approximate processor time used by the process since an arbitrary epoch, in seconds.\n"
 " Only the difference between two calls to `cpuNow()` is meaningful."),
 
+   JS_FN_HELP("clearKeptObjects", ClearKeptObjects, 0, 0,
+"clearKeptObjects()",
+"Clear the kept alive objects for JS WeakRef, this is used in shell to test \n"
+"WeakRef bahavior when a synchronous sequence of ECMAScript execution completes"
+".\n"),
 
     JS_FS_HELP_END
 };
@@ -9958,7 +10114,7 @@ static bool BindScriptArgs(JSContext* cx, OptionParser* op) {
 
   MultiStringRange msr = op->getMultiStringArg("scriptArgs");
   RootedObject scriptArgs(cx);
-  scriptArgs = JS_NewArrayObject(cx, 0);
+  scriptArgs = JS::NewArrayObject(cx, 0);
   if (!scriptArgs) {
     return false;
   }
@@ -10203,6 +10359,7 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
   enableReadableByteStreams = op.getBoolOption("enable-readable-byte-streams");
   enableBYOBStreamReaders = op.getBoolOption("enable-byob-stream-readers");
   enableWritableStreams = op.getBoolOption("enable-writable-streams");
+  enableReadableStreamPipeTo = op.getBoolOption("enable-readablestream-pipeto");
 #ifdef ENABLE_WASM_BIGINT
   enableWasmBigInt = op.getBoolOption("wasm-bigint");
 #endif
@@ -10992,6 +11149,9 @@ int main(int argc, char** argv, char** envp) {
                         "ReadableStreams of type \"bytes\"") ||
       !op.addBoolOption('\0', "enable-writable-streams",
                         "Enable support for WHATWG WritableStreams") ||
+      !op.addBoolOption('\0', "enable-readablestream-pipeto",
+                        "Enable support for "
+                        "WHATWG ReadableStream.prototype.pipeTo") ||
       !op.addBoolOption('\0', "disable-experimental-fields",
                         "Disable public fields in classes") ||
       !op.addBoolOption('\0', "enable-experimental-await-fix",

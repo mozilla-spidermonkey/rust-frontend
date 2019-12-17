@@ -44,12 +44,6 @@ XPCOMUtils.defineLazyPreferenceGetter(
 );
 XPCOMUtils.defineLazyPreferenceGetter(
   this,
-  "isFxABadgeEnabled",
-  "browser.messaging-system.fxatoolbarbadge.enabled",
-  true
-);
-XPCOMUtils.defineLazyPreferenceGetter(
-  this,
   "hasAccessedFxAPanel",
   "identity.fxaccounts.toolbar.accessed",
   false
@@ -114,12 +108,13 @@ const MOZ_JEXL_FILEPATH = "mozjexl";
 
 const { activityStreamProvider: asProvider } = NewTabUtils;
 
+const FXA_ATTACHED_CLIENTS_UPDATE_INTERVAL = 2 * 60 * 60 * 1000; // Two hours
 const FRECENT_SITES_UPDATE_INTERVAL = 6 * 60 * 60 * 1000; // Six hours
 const FRECENT_SITES_IGNORE_BLOCKED = false;
 const FRECENT_SITES_NUM_ITEMS = 25;
 const FRECENT_SITES_MIN_FRECENCY = 100;
 
-const CACHE_EXPIRATION = 60 * 1000;
+const CACHE_EXPIRATION = 5 * 60 * 1000;
 const jexlEvaluationCache = new Map();
 
 /**
@@ -145,6 +140,32 @@ function CachedTargetingGetter(
       const now = Date.now();
       if (now - this._lastUpdated >= updateInterval) {
         this._value = await asProvider[property](options);
+        this._lastUpdated = now;
+      }
+      return this._value;
+    },
+  };
+}
+
+function CacheListAttachedOAuthClients() {
+  return {
+    _lastUpdated: 0,
+    _value: null,
+    expire() {
+      this._lastUpdated = 0;
+      this._value = null;
+    },
+    get() {
+      const now = Date.now();
+      if (now - this._lastUpdated >= FXA_ATTACHED_CLIENTS_UPDATE_INTERVAL) {
+        this._value = new Promise(resolve => {
+          fxAccounts
+            .listAttachedOAuthClients()
+            .then(clients => {
+              resolve(clients);
+            })
+            .catch(() => resolve([]));
+        });
         this._lastUpdated = now;
       }
       return this._value;
@@ -216,6 +237,7 @@ const QueryCache = {
     TotalBookmarksCount: new CachedTargetingGetter("getTotalBookmarksCount"),
     CheckBrowserNeedsUpdate: new CheckBrowserNeedsUpdate(),
     RecentBookmarks: new CachedTargetingGetter("getRecentBookmarks"),
+    ListAttachedOAuthClients: new CacheListAttachedOAuthClients(),
   },
 };
 
@@ -483,7 +505,8 @@ const TargetingGetters = {
     return isWhatsNewPanelEnabled;
   },
   get isFxABadgeEnabled() {
-    return isFxABadgeEnabled;
+    // Requires cleanup and update of remote messages. See Bug 1601965.
+    return true;
   },
   get userPrefs() {
     return {
@@ -523,17 +546,8 @@ const TargetingGetters = {
     );
   },
   get attachedFxAOAuthClients() {
-    // Explicitly catch error objects e.g.  NO_ACCOUNT triggered when
-    // setting FXA_USERNAME_PREF from tests
     return this.usesFirefoxSync
-      ? new Promise(resolve => {
-          fxAccounts
-            .listAttachedOAuthClients()
-            .then(clients => {
-              resolve(clients);
-            })
-            .catch(() => resolve([]));
-        })
+      ? QueryCache.queries.ListAttachedOAuthClients.get()
       : [];
   },
   get platformName() {
@@ -552,37 +566,32 @@ this.ASRouterTargeting = {
 
   ERROR_TYPES: {
     MALFORMED_EXPRESSION: "MALFORMED_EXPRESSION",
+    ATTRIBUTE_ERROR: "JEXL_ATTRIBUTE_GETTER_ERROR",
     OTHER_ERROR: "OTHER_ERROR",
   },
 
   // Combines the getter properties of two objects without evaluating them
-  combineContexts(contextA = {}, contextB = {}) {
-    const sameProperty = Object.keys(contextA).find(p =>
-      Object.keys(contextB).includes(p)
-    );
-    if (sameProperty) {
-      Cu.reportError(
-        `Property ${sameProperty} exists in both contexts and is overwritten.`
-      );
-    }
+  combineContexts(contextA = {}, contextB = {}, onError) {
+    return {
+      get: (obj, prop) => {
+        try {
+          return contextA[prop] || contextB[prop];
+        } catch (error) {
+          onError(this.ERROR_TYPES.ATTRIBUTE_ERROR, error, prop);
+        }
 
-    const context = {};
-    Object.defineProperties(
-      context,
-      Object.getOwnPropertyDescriptors(contextA)
-    );
-    Object.defineProperties(
-      context,
-      Object.getOwnPropertyDescriptors(contextB)
-    );
-
-    return context;
+        return null;
+      },
+    };
   },
 
-  isMatch(filterExpression, customContext) {
+  isMatch(filterExpression, customContext, onError) {
     return FilterExpressions.eval(
       filterExpression,
-      this.combineContexts(this.Environment, customContext)
+      new Proxy(
+        {},
+        this.combineContexts(customContext, this.Environment, onError)
+      )
     );
   },
 
@@ -657,7 +666,7 @@ this.ASRouterTargeting = {
           return result.value;
         }
       }
-      result = await this.isMatch(message.targeting, context);
+      result = await this.isMatch(message.targeting, context, onError);
       if (shouldCache) {
         jexlEvaluationCache.set(message.targeting, {
           timestamp: Date.now(),
@@ -675,11 +684,6 @@ this.ASRouterTargeting = {
       result = false;
     }
     return result;
-  },
-
-  _getCombinedContext(trigger, context) {
-    const triggerContext = trigger ? trigger.context : {};
-    return this.combineContexts(context, triggerContext);
   },
 
   _isMessageMatch(message, trigger, context, onError, shouldCache = false) {
@@ -717,7 +721,10 @@ this.ASRouterTargeting = {
     returnAll = false,
   }) {
     const sortedMessages = getSortedMessages(messages, { ordered });
-    const combinedContext = this._getCombinedContext(trigger, context);
+    const combinedContext = new Proxy(
+      {},
+      this.combineContexts(trigger && trigger.context, context, onError)
+    );
     const matching = returnAll ? [] : null;
 
     const isMatch = candidate =>

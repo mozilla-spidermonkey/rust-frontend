@@ -870,7 +870,7 @@ nscoord nsTableRowGroupFrame::CollapseRowGroupIfNecessary(nscoord aBTotalOffset,
   nsTableFrame* tableFrame = GetTableFrame();
   nsSize containerSize = tableFrame->GetSize();
   const nsStyleVisibility* groupVis = StyleVisibility();
-  bool collapseGroup = (NS_STYLE_VISIBILITY_COLLAPSE == groupVis->mVisible);
+  bool collapseGroup = StyleVisibility::Collapse == groupVis->mVisible;
   if (collapseGroup) {
     tableFrame->SetNeedToCollapse(true);
   }
@@ -1237,22 +1237,15 @@ nsresult nsTableRowGroupFrame::SplitRowGroup(nsPresContext* aPresContext,
         NS_ASSERTION(!contRow,
                      "We should not have created a continuation if none of "
                      "this row fits");
-        if (!aRowForcedPageBreak && ShouldAvoidBreakInside(aReflowInput)) {
+        if (!prevRowFrame ||
+            (!aRowForcedPageBreak && ShouldAvoidBreakInside(aReflowInput))) {
           aStatus.SetInlineLineBreakBeforeAndReset();
           break;
         }
-        if (prevRowFrame) {
-          spanningRowBottom = prevRowFrame->GetNormalRect().YMost();
-          lastRowThisPage = prevRowFrame;
-          aStatus.Reset();
-          aStatus.SetIncomplete();
-        } else {
-          // We can't push children, so let our parent reflow us again with more
-          // space
-          aDesiredSize.Height() = rowRect.YMost();
-          aStatus.Reset();
-          break;
-        }
+        spanningRowBottom = prevRowFrame->GetNormalRect().YMost();
+        lastRowThisPage = prevRowFrame;
+        aStatus.Reset();
+        aStatus.SetIncomplete();
       }
       // reflow the cells with rowspan >1 that occur on the page
 
@@ -1386,7 +1379,7 @@ void nsTableRowGroupFrame::Reflow(nsPresContext* aPresContext,
   nsTableFrame* tableFrame = GetTableFrame();
   TableRowGroupReflowInput state(aReflowInput, tableFrame);
   const nsStyleVisibility* groupVis = StyleVisibility();
-  bool collapseGroup = (NS_STYLE_VISIBILITY_COLLAPSE == groupVis->mVisible);
+  bool collapseGroup = StyleVisibility::Collapse == groupVis->mVisible;
   if (collapseGroup) {
     tableFrame->SetNeedToCollapse(true);
   }

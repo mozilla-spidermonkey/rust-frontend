@@ -42,7 +42,6 @@
 #include "nsURIHashKey.h"
 #include "mozilla/UseCounter.h"
 #include "mozilla/WeakPtr.h"
-#include "mozilla/StaticPresData.h"
 #include "Units.h"
 #include "nsContentListDeclarations.h"
 #include "nsExpirationTracker.h"
@@ -58,7 +57,6 @@
 #include "mozilla/LinkedList.h"
 #include "mozilla/NotNull.h"
 #include "mozilla/SegmentedVector.h"
-#include "mozilla/ServoBindingTypes.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtr.h"
@@ -290,7 +288,7 @@ class DocHeaderData {
 };
 
 class ExternalResourceMap {
-  typedef bool (*SubDocEnumFunc)(Document* aDocument, void* aData);
+  typedef bool (*SubDocEnumFunc)(Document& aDocument, void* aData);
 
  public:
   /**
@@ -1996,10 +1994,6 @@ class Document : public nsINode,
    * Style sheets are ordered, most significant last.
    */
 
-  StyleSheetList* StyleSheets() {
-    return &DocumentOrShadowRoot::EnsureDOMStyleSheets();
-  }
-
   void InsertSheetAt(size_t aIndex, StyleSheet&);
 
   /**
@@ -2181,7 +2175,7 @@ class Document : public nsINode,
   // Do the "fullscreen element ready check" from the fullscreen spec.
   // It returns true if the given element is allowed to go into fullscreen.
   // It is responsive to dispatch "fullscreenerror" event when necessary.
-  bool FullscreenElementReadyCheck(const FullscreenRequest&);
+  bool FullscreenElementReadyCheck(FullscreenRequest&);
 
   // This is called asynchronously by Document::AsyncRequestFullscreen()
   // to move this document into fullscreen mode if allowed.
@@ -2335,9 +2329,7 @@ class Document : public nsINode,
   void SetReadyStateInternal(ReadyState, bool aUpdateTimingInformation = true);
   ReadyState GetReadyStateEnum() { return mReadyState; }
 
-  void SetAncestorLoading(bool aAncestorIsLoading);
-  void NotifyLoading(const bool& aCurrentParentIsLoading,
-                     bool aNewParentIsLoading, const ReadyState& aCurrentState,
+  void NotifyLoading(bool aNewParentIsLoading, const ReadyState& aCurrentState,
                      ReadyState aNewState);
 
   // notify that a content node changed state.  This must happen under
@@ -2581,7 +2573,7 @@ class Document : public nsINode,
    * The enumerator callback should return true to continue enumerating, or
    * false to stop.  This will never get passed a null aDocument.
    */
-  typedef bool (*SubDocEnumFunc)(Document* aDocument, void* aData);
+  typedef bool (*SubDocEnumFunc)(Document&, void* aData);
   void EnumerateSubDocuments(SubDocEnumFunc aCallback, void* aData);
 
   /**
@@ -3661,7 +3653,6 @@ class Document : public nsINode,
 
   mozilla::dom::HTMLAllCollection* All();
 
-  static bool IsUnprefixedFullscreenEnabled(JSContext* aCx, JSObject* aObject);
   static bool DocumentSupportsL10n(JSContext* aCx, JSObject* aObject);
   static bool IsWebAnimationsEnabled(JSContext* aCx, JSObject* aObject);
   static bool IsWebAnimationsEnabled(CallerType aCallerType);
@@ -5286,13 +5277,6 @@ class Document : public nsINode,
   // attributes in Servo mode. This list contains all elements which need lazy
   // resolution.
   nsTHashtable<nsPtrHashKey<SVGElement>> mLazySVGPresElements;
-
-  // Most documents will only use one (or very few) language groups. Rather
-  // than have the overhead of a hash lookup, we simply look along what will
-  // typically be a very short (usually of length 1) linked list. There are 31
-  // language groups, so in the worst case scenario we'll need to traverse 31
-  // link items.
-  LangGroupFontPrefs mLangGroupFontPrefs;
 
   nsTHashtable<nsRefPtrHashKey<nsAtom>> mLanguagesUsed;
 

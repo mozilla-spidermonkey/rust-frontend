@@ -26,13 +26,11 @@ const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { TestUtils } = ChromeUtils.import(
   "resource://testing-common/TestUtils.jsm"
 );
-const { ContentTask } = ChromeUtils.import(
-  "resource://testing-common/ContentTask.jsm"
-);
 const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
+  ContentTask: "resource://testing-common/ContentTask.jsm",
   E10SUtils: "resource://gre/modules/E10SUtils.jsm",
 });
 
@@ -855,7 +853,7 @@ var BrowserTestUtils = {
 
     // We cannot use the regular BrowserTestUtils helper for waiting here, since that
     // would try to insert the preloaded browser, which would only break things.
-    await ContentTask.spawn(gBrowser.preloadedBrowser, null, async () => {
+    await ContentTask.spawn(gBrowser.preloadedBrowser, [], async () => {
       await ContentTaskUtils.waitForCondition(() => {
         return (
           this.content.document &&
@@ -2053,7 +2051,7 @@ var BrowserTestUtils = {
    */
   async promiseAlertDialogOpen(
     buttonAction,
-    uri = "chrome://global/content/commonDialog.xul",
+    uri = "chrome://global/content/commonDialog.xhtml",
     func
   ) {
     let win = await this.domWindowOpened(null, async win => {
@@ -2070,8 +2068,8 @@ var BrowserTestUtils = {
       return win;
     }
 
-    let doc = win.document.documentElement;
-    doc.getButton(buttonAction).click();
+    let dialog = win.document.querySelector("dialog");
+    dialog.getButton(buttonAction).click();
 
     return win;
   },
@@ -2091,7 +2089,7 @@ var BrowserTestUtils = {
    */
   async promiseAlertDialog(
     buttonAction,
-    uri = "chrome://global/content/commonDialog.xul",
+    uri = "chrome://global/content/commonDialog.xhtml",
     func
   ) {
     let win = await this.promiseAlertDialogOpen(buttonAction, uri, func);

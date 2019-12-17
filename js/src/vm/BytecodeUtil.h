@@ -62,6 +62,7 @@ enum {
   JOF_ICINDEX = 19,      /* uint32_t IC index */
   JOF_LOOPHEAD = 20,     /* JSOP_LOOPHEAD, combines JOF_ICINDEX and JOF_UINT8 */
   JOF_BIGINT = 21,       /* uint32_t index for BigInt value */
+  JOF_CLASS_CTOR = 22,   /* uint32_t atom index, sourceStart, sourceEnd */
   JOF_TYPEMASK = 0x001f, /* mask for above immediate types */
 
   JOF_NAME = 1 << 5,     /* name operation */
@@ -125,7 +126,7 @@ static const int32_t JUMP_OFFSET_MIN = INT32_MIN;
 static const int32_t JUMP_OFFSET_MAX = INT32_MAX;
 
 static MOZ_ALWAYS_INLINE uint32_t GET_UINT24(const jsbytecode* pc) {
-#if MOZ_LITTLE_ENDIAN
+#if MOZ_LITTLE_ENDIAN()
   // Do a single 32-bit load (for opcode and operand), then shift off the
   // opcode.
   uint32_t result;
@@ -139,7 +140,7 @@ static MOZ_ALWAYS_INLINE uint32_t GET_UINT24(const jsbytecode* pc) {
 static MOZ_ALWAYS_INLINE void SET_UINT24(jsbytecode* pc, uint32_t i) {
   MOZ_ASSERT(i < (1 << 24));
 
-#if MOZ_LITTLE_ENDIAN
+#if MOZ_LITTLE_ENDIAN()
   memcpy(pc + 1, &i, 3);
 #else
   pc[1] = jsbytecode(i);
@@ -254,19 +255,12 @@ static inline void SET_ICINDEX(jsbytecode* pc, uint32_t icIndex) {
 
 static inline unsigned LoopHeadDepthHint(jsbytecode* pc) {
   MOZ_ASSERT(*pc == JSOP_LOOPHEAD);
-  return GET_UINT8(pc + 4) & 0x7f;
+  return GET_UINT8(pc + 4);
 }
 
-static inline bool LoopHeadCanIonOsr(jsbytecode* pc) {
+static inline void SetLoopHeadDepthHint(jsbytecode* pc, unsigned loopDepth) {
   MOZ_ASSERT(*pc == JSOP_LOOPHEAD);
-  return GET_UINT8(pc + 4) & 0x80;
-}
-
-static inline void SetLoopHeadDepthHintAndFlags(jsbytecode* pc,
-                                                unsigned loopDepth,
-                                                bool canIonOsr) {
-  MOZ_ASSERT(*pc == JSOP_LOOPHEAD);
-  uint8_t data = std::min(loopDepth, unsigned(0x7f)) | (canIonOsr ? 0x80 : 0);
+  uint8_t data = std::min(loopDepth, unsigned(UINT8_MAX));
   SET_UINT8(pc + 4, data);
 }
 
@@ -283,6 +277,26 @@ static inline bool IsBackedgePC(jsbytecode* pc) {
 static inline bool IsBackedgeForLoopHead(jsbytecode* pc, jsbytecode* loopHead) {
   MOZ_ASSERT(JSOp(*loopHead) == JSOP_LOOPHEAD);
   return IsBackedgePC(pc) && pc + GET_JUMP_OFFSET(pc) == loopHead;
+}
+
+static inline void SetClassConstructorOperands(jsbytecode* pc,
+                                               uint32_t atomIndex,
+                                               uint32_t sourceStart,
+                                               uint32_t sourceEnd) {
+  MOZ_ASSERT(*pc == JSOP_CLASSCONSTRUCTOR || *pc == JSOP_DERIVEDCONSTRUCTOR);
+  SET_UINT32(pc, atomIndex);
+  SET_UINT32(pc + 4, sourceStart);
+  SET_UINT32(pc + 8, sourceEnd);
+}
+
+static inline void GetClassConstructorOperands(jsbytecode* pc,
+                                               uint32_t* atomIndex,
+                                               uint32_t* sourceStart,
+                                               uint32_t* sourceEnd) {
+  MOZ_ASSERT(*pc == JSOP_CLASSCONSTRUCTOR || *pc == JSOP_DERIVEDCONSTRUCTOR);
+  *atomIndex = GET_UINT32(pc);
+  *sourceStart = GET_UINT32(pc + 4);
+  *sourceEnd = GET_UINT32(pc + 8);
 }
 
 /*

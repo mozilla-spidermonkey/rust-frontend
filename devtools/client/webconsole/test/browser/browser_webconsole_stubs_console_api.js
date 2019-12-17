@@ -65,8 +65,8 @@ async function generateConsoleApiStubs() {
   const stubs = new Map();
 
   const hud = await openNewTabAndConsole(TEST_URI);
-
   const target = hud.currentTarget;
+  const webConsoleFront = await target.getFront("console");
 
   for (const { keys, code } of getCommands()) {
     const received = new Promise(resolve => {
@@ -77,14 +77,16 @@ async function generateConsoleApiStubs() {
         stubs.set(callKey, getCleanedPacket(callKey, res));
 
         if (++i === keys.length) {
-          target.activeConsole.off("consoleAPICall", listener);
+          webConsoleFront.off("consoleAPICall", listener);
           resolve();
         }
       };
-      target.activeConsole.on("consoleAPICall", listener);
+      webConsoleFront.on("consoleAPICall", listener);
     });
 
-    await ContentTask.spawn(gBrowser.selectedBrowser, code, function(subCode) {
+    await SpecialPowers.spawn(gBrowser.selectedBrowser, [code], function(
+      subCode
+    ) {
       const script = content.document.createElement("script");
       script.append(
         content.document.createTextNode(`function triggerPacket() {${subCode}}`)

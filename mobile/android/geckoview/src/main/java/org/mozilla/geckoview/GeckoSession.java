@@ -141,7 +141,7 @@ public class GeckoSession implements Parcelable {
     private int mWidth;
     private int mHeight; // Height of the surface (including toolbar);
     private int mClientHeight; // Height of the client area (i.e. excluding toolbar);
-    private int mFixedBottomOffset; // The margin for fixed elements attached to the bottom of the viewport.
+    private int mFixedBottomOffset = 0; // The margin for fixed elements attached to the bottom of the viewport.
     private int mDynamicToolbarMaxHeight = 0; // The maximum height of the dynamic toolbar
     private float mViewportLeft;
     private float mViewportTop;
@@ -792,6 +792,8 @@ public class GeckoSession implements Parcelable {
                         type = PermissionDelegate.PERMISSION_DESKTOP_NOTIFICATION;
                     } else if ("persistent-storage".equals(typeString)) {
                         type = PermissionDelegate.PERMISSION_PERSISTENT_STORAGE;
+                    } else if ("xr".equals(typeString)) {
+                        type = PermissionDelegate.PERMISSION_XR;
                     } else if ("midi".equals(typeString)) {
                         // We can get this from WPT and presumably other content, but Gecko
                         // doesn't support Web MIDI.
@@ -4960,6 +4962,12 @@ public class GeckoSession implements Parcelable {
         int PERMISSION_PERSISTENT_STORAGE = 2;
 
         /**
+         * Permission for using the WebXR API.
+         * See: https://www.w3.org/TR/webxr
+         */
+        int PERMISSION_XR = 3;
+
+        /**
          * Callback interface for notifying the result of a permission request.
          */
         interface Callback {
@@ -5010,6 +5018,7 @@ public class GeckoSession implements Parcelable {
          *             PERMISSION_GEOLOCATION
          *             PERMISSION_DESKTOP_NOTIFICATION
          *             PERMISSION_PERSISTENT_STORAGE
+         *             PERMISSION_XR
          * @param callback Callback interface.
          */
         @UiThread
@@ -5207,7 +5216,8 @@ public class GeckoSession implements Parcelable {
 
     @Retention(RetentionPolicy.SOURCE)
     @IntDef({PermissionDelegate.PERMISSION_GEOLOCATION,
-            PermissionDelegate.PERMISSION_DESKTOP_NOTIFICATION})
+            PermissionDelegate.PERMISSION_DESKTOP_NOTIFICATION,
+            PermissionDelegate.PERMISSION_XR})
     /* package */ @interface Permission {}
 
     /**
@@ -5512,7 +5522,9 @@ public class GeckoSession implements Parcelable {
             mToolbar.onCompositorReady();
         }
 
-        mCompositor.setFixedBottomOffset(mFixedBottomOffset);
+        if (mFixedBottomOffset != 0) {
+            mCompositor.setFixedBottomOffset(mFixedBottomOffset);
+        }
     }
 
     /* package */ void updateOverscrollVelocity(final float x, final float y) {

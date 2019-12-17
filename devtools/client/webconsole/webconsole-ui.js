@@ -346,7 +346,7 @@ class WebConsoleUI {
    *        to an URL which has to be loaded in a distinct process.
    *        A new top level target is created.
    */
-  async _onTargetAvailable(type, targetFront, isTopLevel) {
+  async _onTargetAvailable({ type, targetFront, isTopLevel }) {
     // This is a top level target. It may update on process switches
     // when navigating to another domain.
     if (isTopLevel) {
@@ -379,7 +379,7 @@ class WebConsoleUI {
    * @private
    * See _onTargetAvailable for param's description.
    */
-  _onTargetDestroyed(type, targetFront, isTopLevel) {
+  _onTargetDestroyed({ type, targetFront, isTopLevel }) {
     if (isTopLevel) {
       this.proxy.disconnect();
       this.proxy = null;
@@ -559,7 +559,7 @@ class WebConsoleUI {
    *         (or the selected frame if it exists), null if no frame was found.
    *         webConsoleFront is the front for the thread the frame is associated with.
    */
-  getFrameActor() {
+  async getFrameActor() {
     const state = this.hud.getDebuggerFrames();
     if (!state) {
       return { frameActor: null, webConsoleFront: this.webConsoleFront };
@@ -571,9 +571,11 @@ class WebConsoleUI {
       return { frameActor: null, webConsoleFront: this.webConsoleFront };
     }
 
+    const webConsoleFront = await state.target.getFront("console");
+
     return {
       frameActor: grip.actor,
-      webConsoleFront: state.target.activeConsole,
+      webConsoleFront,
     };
   }
 

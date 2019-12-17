@@ -381,9 +381,6 @@
       };
       let browser = this.createBrowser(createOptions);
       browser.setAttribute("primary", "true");
-      if (!tabArgument) {
-        browser.setAttribute("blank", "true");
-      }
       if (gBrowserAllowScriptsToCloseInitialTabs) {
         browser.setAttribute("allowscriptstoclose", "true");
       }
@@ -2601,6 +2598,9 @@
         (relatedToCurrent && this.selectedTab);
 
       var t = document.createXULElement("tab", { is: "tabbrowser-tab" });
+      // Tag the tab as being created so extension code can ignore events
+      // prior to TabOpen.
+      t.initializingTab = true;
       t.openerTab = openerTab;
 
       aURI = aURI || "about:blank";
@@ -2864,6 +2864,7 @@
       // Dispatch a new tab notification.  We do this once we're
       // entirely done, so that things are in a consistent state
       // even if the event listener opens or closes tabs.
+      delete t.initializingTab;
       let evt = new CustomEvent("TabOpen", {
         bubbles: true,
         detail: eventDetail || {},
@@ -3156,7 +3157,10 @@
       this.removeTab(this.selectedTab, aParams);
     },
 
-    removeTab(aTab, { animate, byMouse, skipPermitUnload } = {}) {
+    removeTab(
+      aTab,
+      { animate, byMouse, skipPermitUnload, closeWindowWithLastTab } = {}
+    ) {
       // Telemetry stopwatches may already be running if removeTab gets
       // called again for an already closing tab.
       if (
@@ -3188,6 +3192,7 @@
         !this._beginRemoveTab(aTab, {
           closeWindowFastpath: true,
           skipPermitUnload,
+          closeWindowWithLastTab,
         })
       ) {
         TelemetryStopwatch.cancel("FX_TAB_CLOSE_TIME_ANIM_MS", aTab);

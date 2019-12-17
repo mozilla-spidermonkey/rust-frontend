@@ -34,10 +34,6 @@ bool DoWhileEmitter::emitBody(const Maybe<uint32_t>& doPos,
     return false;
   }
 
-  if (!bce_->newSrcNote(SRC_DO_WHILE)) {
-    return false;
-  }
-
   loopInfo_.emplace(bce_, StatementKind::DoLoop);
 
   if (!loopInfo_->emitLoopHead(bce_, bodyPos)) {
@@ -66,17 +62,7 @@ bool DoWhileEmitter::emitCond() {
 bool DoWhileEmitter::emitEnd() {
   MOZ_ASSERT(state_ == State::Cond);
 
-  if (!loopInfo_->emitLoopEnd(bce_, JSOP_IFNE)) {
-    return false;
-  }
-
-  if (!bce_->addTryNote(JSTRY_LOOP, bce_->bytecodeSection().stackDepth(),
-                        loopInfo_->headOffset(),
-                        loopInfo_->breakTargetOffset())) {
-    return false;
-  }
-
-  if (!loopInfo_->patchBreaks(bce_)) {
+  if (!loopInfo_->emitLoopEnd(bce_, JSOP_IFNE, JSTRY_LOOP)) {
     return false;
   }
 

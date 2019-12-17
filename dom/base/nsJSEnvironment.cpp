@@ -40,6 +40,7 @@
 #include "xpcpublic.h"
 
 #include "jsapi.h"
+#include "js/Array.h"  // JS::NewArrayObject
 #include "js/PropertySpec.h"
 #include "js/SliceBudget.h"
 #include "js/Wrapper.h"
@@ -728,7 +729,7 @@ nsresult nsJSContext::SetProperty(JS::Handle<JSObject*> aTarget,
     }
   }
 
-  JS::Rooted<JSObject*> array(cx, ::JS_NewArrayObject(cx, args));
+  JS::Rooted<JSObject*> array(cx, JS::NewArrayObject(cx, args));
   if (!array) {
     return NS_ERROR_FAILURE;
   }
@@ -1884,10 +1885,12 @@ static bool CCRunnerFired(TimeStamp aDeadline) {
       MOZ_FALLTHROUGH;
 
     case CCRunnerState::LateTimer:
-      if (!ShouldTriggerCC(suspected) && ShouldFireForgetSkippable(suspected)) {
-        FireForgetSkippable(suspected, /* aRemoveChildless = */ false,
-                            aDeadline);
-        didDoWork = true;
+      if (!ShouldTriggerCC(suspected)) {
+        if (ShouldFireForgetSkippable(suspected)) {
+          FireForgetSkippable(suspected, /* aRemoveChildless = */ false,
+                              aDeadline);
+          didDoWork = true;
+        }
         finished = true;
         break;
       }
@@ -1916,10 +1919,12 @@ static bool CCRunnerFired(TimeStamp aDeadline) {
       break;
 
     case CCRunnerState::FinalTimer:
-      if (!ShouldTriggerCC(suspected) && ShouldFireForgetSkippable(suspected)) {
-        FireForgetSkippable(suspected, /* aRemoveChildless = */ false,
-                            aDeadline);
-        didDoWork = true;
+      if (!ShouldTriggerCC(suspected)) {
+        if (ShouldFireForgetSkippable(suspected)) {
+          FireForgetSkippable(suspected, /* aRemoveChildless = */ false,
+                              aDeadline);
+          didDoWork = true;
+        }
         finished = true;
         break;
       }

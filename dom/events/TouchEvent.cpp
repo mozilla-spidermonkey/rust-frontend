@@ -207,7 +207,8 @@ bool TouchEvent::PlatformSupportsTouch() {
   // On Windows and GTK3 we auto-detect based on device support.
   if (!sDidCheckTouchDeviceSupport) {
     sDidCheckTouchDeviceSupport = true;
-    sIsTouchDeviceSupportPresent = WidgetUtils::IsTouchDeviceSupportPresent();
+    sIsTouchDeviceSupportPresent =
+        widget::WidgetUtils::IsTouchDeviceSupportPresent();
     // But touch events are only actually supported if APZ is enabled. If
     // APZ is disabled globally, we can check that once and incorporate that
     // into the cached state. If APZ is enabled, we need to further check
@@ -222,18 +223,11 @@ bool TouchEvent::PlatformSupportsTouch() {
 
 // static
 bool TouchEvent::PrefEnabled(nsIDocShell* aDocShell) {
-  static bool sPrefCached = false;
-  static int32_t sPrefCacheValue = 0;
+  MOZ_DIAGNOSTIC_ASSERT(NS_IsMainThread());
 
   auto touchEventsOverride = nsIDocShell::TOUCHEVENTS_OVERRIDE_NONE;
   if (aDocShell) {
     touchEventsOverride = aDocShell->GetTouchEventsOverride();
-  }
-
-  if (!sPrefCached) {
-    sPrefCached = true;
-    Preferences::AddIntVarCache(&sPrefCacheValue,
-                                "dom.w3c_touch_events.enabled");
   }
 
   bool enabled = false;
@@ -243,7 +237,8 @@ bool TouchEvent::PrefEnabled(nsIDocShell* aDocShell) {
              nsIDocShell::TOUCHEVENTS_OVERRIDE_DISABLED) {
     enabled = false;
   } else {
-    if (sPrefCacheValue == 2) {
+    const int32_t prefValue = StaticPrefs::dom_w3c_touch_events_enabled();
+    if (prefValue == 2) {
       enabled = PlatformSupportsTouch();
 
       static bool firstTime = true;
@@ -266,7 +261,7 @@ bool TouchEvent::PrefEnabled(nsIDocShell* aDocShell) {
       }
 #endif
     } else {
-      enabled = !!sPrefCacheValue;
+      enabled = !!prefValue;
     }
   }
 

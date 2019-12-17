@@ -22,12 +22,17 @@ from .protocol import (BaseProtocolPart,
                        ActionSequenceProtocolPart,
                        TestDriverProtocolPart,
                        GenerateTestReportProtocolPart,
+                       SetPermissionProtocolPart,
                        VirtualAuthenticatorProtocolPart)
 from ..testrunner import Stop
 
 import webdriver as client
 
 here = os.path.join(os.path.split(__file__)[0])
+
+
+class WebDriverCallbackHandler(CallbackHandler):
+    unimplemented_exc = (NotImplementedError, client.UnknownCommandException)
 
 
 class WebDriverBaseProtocolPart(BaseProtocolPart):
@@ -202,6 +207,21 @@ class WebDriverGenerateTestReportProtocolPart(GenerateTestReportProtocolPart):
         json_message = {"message": message}
         self.webdriver.send_session_command("POST", "reporting/generate_test_report", json_message)
 
+
+class WebDriverSetPermissionProtocolPart(SetPermissionProtocolPart):
+    def setup(self):
+        self.webdriver = self.parent.webdriver
+
+    def set_permission(self, descriptor, state, one_realm):
+        permission_params_dict = {
+            "descriptor": descriptor,
+            "state": state,
+        }
+        if one_realm is not None:
+            permission_params_dict["oneRealm"] = one_realm
+        self.webdriver.send_session_command("POST", "permissions", permission_params_dict)
+
+
 class WebDriverVirtualAuthenticatorProtocolPart(VirtualAuthenticatorProtocolPart):
     def setup(self):
         self.webdriver = self.parent.webdriver
@@ -237,6 +257,7 @@ class WebDriverProtocol(Protocol):
                   WebDriverActionSequenceProtocolPart,
                   WebDriverTestDriverProtocolPart,
                   WebDriverGenerateTestReportProtocolPart,
+                  WebDriverSetPermissionProtocolPart,
                   WebDriverVirtualAuthenticatorProtocolPart]
 
     def __init__(self, executor, browser, capabilities, **kwargs):
@@ -359,7 +380,7 @@ class WebDriverTestharnessExecutor(TestharnessExecutor):
                                                            parent_window,
                                                            timeout=5*self.timeout_multiplier)
         self.protocol.base.set_window(test_window)
-        handler = CallbackHandler(self.logger, protocol, test_window)
+        handler = WebDriverCallbackHandler(self.logger, protocol, test_window)
         protocol.webdriver.url = url
 
         if not self.supports_eager_pageload:

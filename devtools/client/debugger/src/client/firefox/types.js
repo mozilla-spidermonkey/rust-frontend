@@ -178,7 +178,37 @@ export type TabPayload = {
   webExtensionInspectedWindowActor: ActorId,
 };
 
-type ConsoleClient = {
+/**
+ * Tab Target gives access to the browser tabs
+ * @memberof firefox
+ * @static
+ */
+export type Target = {
+  on: (string, Function) => void,
+  emit: (string, any) => void,
+  getFront: string => Promise<ConsoleFront>,
+  form: { consoleActor: any },
+  root: any,
+  navigateTo: ({ url: string }) => Promise<*>,
+  listWorkers: () => Promise<*>,
+  reload: () => Promise<*>,
+  destroy: () => void,
+  threadFront: ThreadFront,
+  name: string,
+  isBrowsingContext: boolean,
+  isContentProcess: boolean,
+  isWorkerTarget: boolean,
+  traits: Object,
+  chrome: Boolean,
+  url: string,
+  isAddon: Boolean,
+  isServiceWorker: boolean,
+
+  // Property installed by the debugger itself.
+  debuggerServiceWorkerStatus: string,
+};
+
+type ConsoleFront = {
   evaluateJSAsync: (
     script: Script,
     func: Function,
@@ -191,33 +221,6 @@ type ConsoleClient = {
     frameId: ?string
   ) => void,
   emit: (string, any) => void,
-};
-
-/**
- * Tab Target gives access to the browser tabs
- * @memberof firefox
- * @static
- */
-export type Target = {
-  on: (string, Function) => void,
-  emit: (string, any) => void,
-  form: { consoleActor: any },
-  root: any,
-  navigateTo: ({ url: string }) => Promise<*>,
-  listWorkers: () => Promise<*>,
-  reload: () => Promise<*>,
-  destroy: () => void,
-  threadFront: ThreadFront,
-  activeConsole: ConsoleClient,
-
-  name: string,
-  isBrowsingContext: boolean,
-  isContentProcess: boolean,
-  isWorkerTarget: boolean,
-  traits: Object,
-  chrome: Boolean,
-  url: string,
-  isAddon: Boolean,
 };
 
 /**
@@ -240,7 +243,8 @@ export type DebuggerClient = {
     traits: any,
     getFront: string => Promise<*>,
     listProcesses: () => Promise<{ processes: ProcessDescriptor }>,
-    listAllWorkers: () => Promise<*>,
+    listAllWorkerTargets: () => Promise<*>,
+    listServiceWorkerRegistrations: () => Promise<*>,
     getWorker: any => Promise<*>,
     on: (string, Function) => void,
   },
@@ -359,6 +363,7 @@ export type ExpressionResult =
  */
 export type ThreadFront = {
   actorID: string,
+  parentFront: Target,
   getFrames: (number, number) => Promise<{| frames: FrameFront[] |}>,
   resume: Function => Promise<*>,
   stepIn: Function => Promise<*>,

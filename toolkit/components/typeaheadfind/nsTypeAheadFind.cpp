@@ -79,7 +79,8 @@ nsTypeAheadFind::nsTypeAheadFind()
       mLastFindLength(0),
       mIsSoundInitialized(false),
       mCaseSensitive(false),
-      mEntireWord(false) {}
+      mEntireWord(false),
+      mMatchDiacritics(false) {}
 
 nsTypeAheadFind::~nsTypeAheadFind() {
   nsCOMPtr<nsIPrefBranch> prefInternal(
@@ -200,6 +201,24 @@ nsTypeAheadFind::SetEntireWord(bool isEntireWord) {
 NS_IMETHODIMP
 nsTypeAheadFind::GetEntireWord(bool* isEntireWord) {
   *isEntireWord = mEntireWord;
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsTypeAheadFind::SetMatchDiacritics(bool matchDiacritics) {
+  mMatchDiacritics = matchDiacritics;
+
+  if (mFind) {
+    mFind->SetMatchDiacritics(mMatchDiacritics);
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsTypeAheadFind::GetMatchDiacritics(bool* matchDiacritics) {
+  *matchDiacritics = mMatchDiacritics;
 
   return NS_OK;
 }
@@ -548,9 +567,11 @@ nsresult nsTypeAheadFind::FindItNow(uint32_t aMode, bool aIsLinksOnly,
         nsCOMPtr<nsINode> node = returnRange->GetStartContainer();
         while (node) {
           nsCOMPtr<nsIEditor> editor;
-          if (auto input = HTMLInputElement::FromNode(node)) {
+          if (RefPtr<HTMLInputElement> input =
+                  HTMLInputElement::FromNode(node)) {
             editor = input->GetEditor();
-          } else if (auto textarea = HTMLTextAreaElement::FromNode(node)) {
+          } else if (RefPtr<HTMLTextAreaElement> textarea =
+                         HTMLTextAreaElement::FromNode(node)) {
             editor = textarea->GetEditor();
           } else {
             node = node->GetParentNode();

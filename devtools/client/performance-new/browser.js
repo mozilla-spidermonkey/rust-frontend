@@ -159,10 +159,26 @@ function receiveProfile(profile, getSymbolTableCallback) {
  * function always returns a valid array of strings.
  * @param {PreferenceFront} preferenceFront
  * @param {string} prefName
+ * @param {string[]} defaultValue Default value of the preference. We don't need
+ *   this value since Firefox 72, but we keep it to support older Firefox versions.
  */
-async function _getArrayOfStringsPref(preferenceFront, prefName) {
-  const text = await preferenceFront.getCharPref(prefName);
-  return JSON.parse(text);
+async function _getArrayOfStringsPref(preferenceFront, prefName, defaultValue) {
+  let array;
+  try {
+    const text = await preferenceFront.getCharPref(prefName);
+    array = JSON.parse(text);
+  } catch (error) {
+    return defaultValue;
+  }
+
+  if (
+    Array.isArray(array) &&
+    array.every(feature => typeof feature === "string")
+  ) {
+    return array;
+  }
+
+  return defaultValue;
 }
 
 /**
@@ -172,12 +188,30 @@ async function _getArrayOfStringsPref(preferenceFront, prefName) {
  * even exists. Gracefully handle malformed data or missing data. Ensure that this
  * function always returns a valid array of strings.
  * @param {string} prefName
+ * @param {string[]} defaultValue Default value of the preference. We don't need
+ *   this value since Firefox 72, but we keep it to support older Firefox versions.
  */
-async function _getArrayOfStringsHostPref(prefName) {
+async function _getArrayOfStringsHostPref(prefName, defaultValue) {
   const { Services } = lazyServices();
-  const text = Services.prefs.getStringPref(prefName);
+  let array;
+  try {
+    const text = Services.prefs.getStringPref(
+      prefName,
+      JSON.stringify(defaultValue)
+    );
+    array = JSON.parse(text);
+  } catch (error) {
+    return defaultValue;
+  }
 
-  return JSON.parse(text);
+  if (
+    Array.isArray(array) &&
+    array.every(feature => typeof feature === "string")
+  ) {
+    return array;
+  }
+
+  return defaultValue;
 }
 
 /**
@@ -185,9 +219,15 @@ async function _getArrayOfStringsHostPref(prefName) {
  *
  * @param {PreferenceFront} preferenceFront
  * @param {string} prefName
+ * @param {number} defaultValue Default value of the preference. We don't need
+ *   this value since Firefox 72, but we keep it to support older Firefox versions.
  */
-async function _getIntPref(preferenceFront, prefName) {
-  return preferenceFront.getIntPref(prefName);
+async function _getIntPref(preferenceFront, prefName, defaultValue) {
+  try {
+    return await preferenceFront.getIntPref(prefName);
+  } catch (error) {
+    return defaultValue;
+  }
 }
 
 /**
@@ -197,14 +237,24 @@ async function _getIntPref(preferenceFront, prefName) {
  * different features or configurations.
  *
  * @param {PreferenceFront} preferenceFront
+ * @param {RecordingStateFromPreferences} defaultPrefs Default preference values.
+ *   We don't need this value since Firefox 72, but we keep it to support older
+ *   Firefox versions.
  */
-async function getRecordingPreferencesFromDebuggee(preferenceFront) {
+async function getRecordingPreferencesFromDebuggee(
+  preferenceFront,
+  defaultPrefs
+) {
   const [entries, interval, features, threads, objdirs] = await Promise.all([
-    _getIntPref(preferenceFront, ENTRIES_PREF),
-    _getIntPref(preferenceFront, INTERVAL_PREF),
-    _getArrayOfStringsPref(preferenceFront, FEATURES_PREF),
-    _getArrayOfStringsPref(preferenceFront, THREADS_PREF),
-    _getArrayOfStringsHostPref(OBJDIRS_PREF),
+    _getIntPref(preferenceFront, ENTRIES_PREF, defaultPrefs.entries),
+    _getIntPref(preferenceFront, INTERVAL_PREF, defaultPrefs.interval),
+    _getArrayOfStringsPref(
+      preferenceFront,
+      FEATURES_PREF,
+      defaultPrefs.features
+    ),
+    _getArrayOfStringsPref(preferenceFront, THREADS_PREF, defaultPrefs.threads),
+    _getArrayOfStringsHostPref(OBJDIRS_PREF, defaultPrefs.objdirs),
   ]);
 
   return { entries, interval, features, threads, objdirs };
@@ -489,33 +539,6 @@ function openFilePickerForObjdir(window, objdirs, changeObjdirs) {
   });
 }
 
-/**
- * Gets the ID of active BrowsingContext from the browser.
- *
- * @type {GetActiveBrowsingContextID}
- */
-function getActiveBrowsingContextID() {
-  const { Services } = lazyServices();
-  const win = Services.wm.getMostRecentWindow("navigator:browser");
-
-  if (
-    win &&
-    win.gBrowser &&
-    win.gBrowser.selectedBrowser &&
-    win.gBrowser.selectedBrowser.browsingContext &&
-    win.gBrowser.selectedBrowser.browsingContext.id
-  ) {
-    return win.gBrowser.selectedBrowser.browsingContext.id;
-  }
-
-  console.error(
-    "Failed to get the active BrowsingContext ID while starting the profiler."
-  );
-  // `0` mean that we failed to ge the active BrowsingContext ID, and it's
-  // treated as null value in the platform.
-  return 0;
-}
-
 module.exports = {
   receiveProfile,
   getRecordingPreferencesFromDebuggee,
@@ -524,5 +547,4 @@ module.exports = {
   restartBrowserWithEnvironmentVariable,
   getEnvironmentVariable,
   openFilePickerForObjdir,
-  getActiveBrowsingContextID,
 };

@@ -414,6 +414,7 @@ nsWindow::nsWindow() {
   mRetryPointerGrab = false;
   mWindowType = eWindowType_child;
   mSizeState = nsSizeMode_Normal;
+  mBoundsNeedSizeUpdate = false;
   mAspectRatio = 0.0f;
   mLastSizeMode = nsSizeMode_Normal;
   mSizeConstraints.mMaxSize = GetSafeWindowSize(mSizeConstraints.mMaxSize);
@@ -986,6 +987,10 @@ void nsWindow::SetSizeConstraints(const SizeConstraints& aConstraints) {
   mSizeConstraints.mMinSize = GetSafeWindowSize(aConstraints.mMinSize);
   mSizeConstraints.mMaxSize = GetSafeWindowSize(aConstraints.mMaxSize);
 
+  ApplySizeConstraints();
+}
+
+void nsWindow::ApplySizeConstraints(void) {
   if (mShell) {
     GdkGeometry geometry;
     geometry.min_width =
@@ -997,21 +1002,16 @@ void nsWindow::SetSizeConstraints(const SizeConstraints& aConstraints) {
     geometry.max_height =
         DevicePixelsToGdkCoordRoundDown(mSizeConstraints.mMaxSize.height);
 
-    LOG(("    min width %d min height %d\n", geometry.min_width,
-         geometry.min_height));
-    LOG(("    max width %d max height %d\n", geometry.max_width,
-         geometry.max_height));
-
     uint32_t hints = 0;
-    if (aConstraints.mMinSize != LayoutDeviceIntSize(0, 0)) {
+    if (mSizeConstraints.mMinSize != LayoutDeviceIntSize(0, 0)) {
       hints |= GDK_HINT_MIN_SIZE;
     }
-    if (aConstraints.mMaxSize != LayoutDeviceIntSize(NS_MAXSIZE, NS_MAXSIZE)) {
+    if (mSizeConstraints.mMaxSize !=
+        LayoutDeviceIntSize(NS_MAXSIZE, NS_MAXSIZE)) {
       hints |= GDK_HINT_MAX_SIZE;
     }
 
     if (mAspectRatio != 0.0f) {
-      LOG(("    aspect %f\n", mAspectRatio));
       geometry.min_aspect = mAspectRatio;
       geometry.max_aspect = mAspectRatio;
       hints |= GDK_HINT_ASPECT;
@@ -1071,8 +1071,16 @@ void nsWindow::Resize(double aWidth, double aHeight, bool aRepaint) {
   // For top-level windows, aWidth and aHeight should possibly be
   // interpreted as frame bounds, but NativeResize treats these as window
   // bounds (Bug 581866).
-
   mBounds.SizeTo(width, height);
+
+  // We set correct mBounds in advance here. Actual mShell size is going to be
+  // confirmed set later at OnSizeAllocate().
+  mBoundsNeedSizeUpdate = false;
+
+  // Recalculate aspect ratio when resized from DOM
+  if (mAspectRatio != 0.0) {
+    LockAspectRatio(true);
+  }
 
   if (!mCreated) return;
 
@@ -2533,9 +2541,6 @@ gboolean nsWindow::OnConfigureEvent(GtkWidget* aWidget,
     }
   }
 
-  // This event indicates that the window position may have changed.
-  // mBounds.Size() is updated in OnSizeAllocate().
-
   NS_ASSERTION(GTK_IS_WINDOW(aWidget),
                "Configure event on widget that is not a GtkWindow");
   if (gtk_window_get_window_type(GTK_WINDOW(aWidget)) == GTK_WINDOW_POPUP) {
@@ -2560,6 +2565,27 @@ gboolean nsWindow::OnConfigureEvent(GtkWidget* aWidget,
   // complete.  wtf?
   NotifyWindowMoved(mBounds.x, mBounds.y);
 
+  // A GTK app would usually update its client area size in response to
+  // a "size-allocate" signal.
+  // However, we need to set mBounds in advance at Resize()
+  // as JS code expects immediate window size change.
+  // If Gecko requests a resize from GTK, but subsequently,
+  // before a corresponding "size-allocate" signal is emitted, the window is
+  // resized to its former size via other means, such as maximizing,
+  // then there is no "size-allocate" signal from which to update
+  // the value of mBounds. Similarly, if Gecko's resize request is refused
+  // by the window manager, then there will be no "size-allocate" signal.
+  // In the refused request case, the window manager is required to dispatch
+  // a ConfigureNotify event. mBounds can then be updated here.
+  // This seems to also be sufficient to update mBounds when Gecko resizes
+  // the window from maximized size and then immediately maximizes again.
+  if (mBoundsNeedSizeUpdate) {
+    mBoundsNeedSizeUpdate = false;
+    GtkAllocation allocation = {-1, -1, 0, 0};
+    gtk_window_get_size(GTK_WINDOW(mShell), &allocation.width,
+                        &allocation.height);
+    OnSizeAllocate(&allocation);
+  }
   return FALSE;
 }
 
@@ -2582,8 +2608,10 @@ void nsWindow::OnSizeAllocate(GtkAllocation* aAllocation) {
        aAllocation->height));
 
   LayoutDeviceIntSize size = GdkRectToDevicePixels(*aAllocation).Size();
-
-  if (mBounds.Size() == size) return;
+  if (mBounds.Size() == size) {
+    // We were already resized at nsWindow::OnConfigureEvent() so skip it.
+    return;
+  }
 
   // Invalidate the new part of the window now for the pending paint to
   // minimize background flashes (GDK does not do this for external resizes
@@ -3433,6 +3461,10 @@ void nsWindow::OnWindowStateEvent(GtkWidget* aWidget,
     mIsTiled = false;
   }
 
+  // Request mBounds update from configure event as we may not get
+  // OnSizeAllocate for size state changes (Bug 1489463).
+  mBoundsNeedSizeUpdate = true;
+
   if (mWidgetListener) {
     mWidgetListener->SizeModeChanged(mSizeState);
     if (aEvent->changed_mask & GDK_WINDOW_STATE_FULLSCREEN) {
@@ -3441,8 +3473,17 @@ void nsWindow::OnWindowStateEvent(GtkWidget* aWidget,
     }
   }
 
-  if (mDrawInTitlebar && mCSDSupportLevel == CSD_SUPPORT_CLIENT) {
-    UpdateClientOffsetForCSDWindow();
+  if (mDrawInTitlebar) {
+    if (mCSDSupportLevel == CSD_SUPPORT_CLIENT) {
+      UpdateClientOffsetForCSDWindow();
+    }
+    if (mTransparencyBitmapForTitlebar) {
+      if (mSizeState == nsSizeMode_Normal && !mIsTiled) {
+        UpdateTitlebarTransparencyBitmap();
+      } else {
+        ClearTransparencyBitmap();
+      }
+    }
   }
 }
 
@@ -4423,23 +4464,25 @@ void nsWindow::HideWaylandWindow() {
           g_list_delete_link(gVisibleWaylandPopupWindows, foundWindow);
     }
   }
-  if (mContainer && moz_container_has_wl_egl_window(mContainer)) {
-    // Because wl_egl_window is destroyed on moz_container_unmap(),
-    // the current compositor cannot use it anymore. To avoid crash,
-    // pause the compositor and destroy EGLSurface & resume the compositor
-    // and re-create EGLSurface on next expose event.
-    MOZ_ASSERT(GetRemoteRenderer());
-    if (CompositorBridgeChild* remoteRenderer = GetRemoteRenderer()) {
-      // XXX slow sync IPC
-      remoteRenderer->SendPause();
-      // Re-request initial draw callback
-      RefPtr<nsWindow> self(this);
-      moz_container_add_initial_draw_callback(mContainer, [self]() -> void {
-        self->mNeedsCompositorResume = true;
-        self->MaybeResumeCompositor();
-      });
-    } else {
-      DestroyLayerManager();
+  if (!mIsDestroyed) {
+    if (mContainer && moz_container_has_wl_egl_window(mContainer)) {
+      // Because wl_egl_window is destroyed on moz_container_unmap(),
+      // the current compositor cannot use it anymore. To avoid crash,
+      // pause the compositor and destroy EGLSurface & resume the compositor
+      // and re-create EGLSurface on next expose event.
+      MOZ_ASSERT(GetRemoteRenderer());
+      if (CompositorBridgeChild* remoteRenderer = GetRemoteRenderer()) {
+        // XXX slow sync IPC
+        remoteRenderer->SendPause();
+        // Re-request initial draw callback
+        RefPtr<nsWindow> self(this);
+        moz_container_add_initial_draw_callback(mContainer, [self]() -> void {
+          self->mNeedsCompositorResume = true;
+          self->MaybeResumeCompositor();
+        });
+      } else {
+        DestroyLayerManager();
+      }
     }
   }
 #endif
@@ -4728,14 +4771,42 @@ void nsWindow::UpdateWindowDraggingRegion(
   }
 }
 
-void nsWindow::UpdateOpaqueRegion(const LayoutDeviceIntRegion& aOpaqueRegion) {
+#ifdef MOZ_WAYLAND
+void nsWindow::UpdateOpaqueRegionWayland(cairo_region_t* aRegion) {
+  wl_surface* surface = moz_gtk_widget_get_wl_surface(GTK_WIDGET(mShell));
+  if (!surface) {
+    return;
+  }
+
+  GdkDisplay* display = gtk_widget_get_display(GTK_WIDGET(mShell));
+  nsWaylandDisplay* waylandDisplay = WaylandDisplayGet(display);
+
+  wl_region* wl_region = nullptr;
+  if (aRegion) {
+    struct wl_compositor* compositor = waylandDisplay->GetCompositor();
+    wl_region = wl_compositor_create_region(compositor);
+    int n_rects = cairo_region_num_rectangles(aRegion);
+    for (int i = 0; i < n_rects; i++) {
+      cairo_rectangle_int_t rect;
+      cairo_region_get_rectangle(aRegion, i, &rect);
+      wl_region_add(wl_region, rect.x, rect.y, rect.width, rect.height);
+    }
+  }
+
+  wl_surface_set_opaque_region(surface, wl_region);
+  if (wl_region) {
+    wl_region_destroy(wl_region);
+  }
+}
+#endif
+
+void nsWindow::UpdateOpaqueRegionGtk(cairo_region_t* aRegion) {
   // Available as of GTK 3.10+
   static auto sGdkWindowSetOpaqueRegion =
       (void (*)(GdkWindow*, cairo_region_t*))dlsym(
           RTLD_DEFAULT, "gdk_window_set_opaque_region");
 
-  LOG(("nsWindow::UpdateOpaqueRegion [%p]\n", (void*)this));
-  if (!sGdkWindowSetOpaqueRegion) {
+  if (MOZ_UNLIKELY(!sGdkWindowSetOpaqueRegion)) {
     LOG(("    gdk_window_set_opaque_region is not available!\n"));
     return;
   }
@@ -4743,62 +4814,55 @@ void nsWindow::UpdateOpaqueRegion(const LayoutDeviceIntRegion& aOpaqueRegion) {
   GdkWindow* window = (mCSDSupportLevel == CSD_SUPPORT_CLIENT)
                           ? gtk_widget_get_window(mShell)
                           : mGdkWindow;
+  if (gdk_window_get_window_type(window) == GDK_WINDOW_TOPLEVEL) {
+    (*sGdkWindowSetOpaqueRegion)(window, aRegion);
+  }
+}
 
-  // gdk_window_set_opaque_region() work for toplevel Gdk windows only.
+void nsWindow::UpdateOpaqueRegion(const LayoutDeviceIntRegion& aOpaqueRegion) {
   // Also don't set shape mask if we use transparency bitmap.
-  if (gdk_window_get_window_type(window) != GDK_WINDOW_TOPLEVEL ||
-      mTransparencyBitmapForTitlebar) {
-    LOG(("    disabled due to %s\n", mTransparencyBitmapForTitlebar
-                                         ? "transparency bitmap"
-                                         : "non-toplevel window"));
+  if (mTransparencyBitmapForTitlebar) {
     return;
   }
+
+  cairo_region_t* region = nullptr;
 
   // We don't tweak opaque regions for non-toplevel windows (popup, panels etc.)
   // as they can be transparent by gecko.
   if (mWindowType != eWindowType_toplevel) {
-    LOG(("    setting for non-toplevel window\n"));
-    if (aOpaqueRegion.IsEmpty()) {
-      (*sGdkWindowSetOpaqueRegion)(mGdkWindow, nullptr);
-    } else {
-      cairo_region_t* region = cairo_region_create();
+    if (!aOpaqueRegion.IsEmpty()) {
+      region = cairo_region_create();
       for (auto iter = aOpaqueRegion.RectIter(); !iter.Done(); iter.Next()) {
         const LayoutDeviceIntRect& r = iter.Get();
         cairo_rectangle_int_t rect = {r.x, r.y, r.width, r.height};
         cairo_region_union_rectangle(region, &rect);
       }
-      (*sGdkWindowSetOpaqueRegion)(window, region);
-      cairo_region_destroy(region);
     }
   } else {
     // Gecko does not use transparent toplevel windows (see Bug 1469716),
     // however we need to make it transparent to draw round corners of
     // Gtk titlebar.
-    cairo_region_t* region = cairo_region_create();
+    region = cairo_region_create();
 
     GtkBorder decorationSize = {0, 0, 0, 0};
     if (mCSDSupportLevel == CSD_SUPPORT_CLIENT &&
         mSizeState == nsSizeMode_Normal) {
-      GetCSDDecorationSize(GTK_WINDOW(mShell), &decorationSize);
+      decorationSize = GetCSDDecorationSize(
+          gtk_window_get_window_type(GTK_WINDOW(mShell)) == GTK_WINDOW_POPUP);
     }
 
-    int scale = GdkScaleFactor();
-    int width = mBounds.width / scale;
-    int height = mBounds.height / scale;
+    int width = DevicePixelsToGdkCoordRoundDown(mBounds.width);
+    int height = DevicePixelsToGdkCoordRoundDown(mBounds.height);
 
     cairo_rectangle_int_t rect = {decorationSize.left, decorationSize.top,
                                   width, height};
     cairo_region_union_rectangle(region, &rect);
-
-    LOG(("    setting for toplevel window %d,%d -> %d x %d\n", rect.x, rect.y,
-         rect.width, rect.height));
 
     // Subtract transparent corners which are used by
     // various Gtk themes for toplevel windows when titlebar
     // is rendered by gecko.
     if (mDrawInTitlebar && !mIsPIPWindow && mSizeState == nsSizeMode_Normal &&
         !mIsTiled) {
-      LOG(("    substracted corners for titlebar decoration\n"));
       cairo_rectangle_int_t rect = {decorationSize.left, decorationSize.top,
                                     TITLEBAR_SHAPE_MASK_HEIGHT,
                                     TITLEBAR_SHAPE_MASK_HEIGHT};
@@ -4811,7 +4875,18 @@ void nsWindow::UpdateOpaqueRegion(const LayoutDeviceIntRegion& aOpaqueRegion) {
       };
       cairo_region_subtract_rectangle(region, &rect);
     }
-    (*sGdkWindowSetOpaqueRegion)(window, region);
+  }
+
+  if (mIsX11Display) {
+    UpdateOpaqueRegionGtk(region);
+  }
+#ifdef MOZ_WAYLAND
+  else {
+    UpdateOpaqueRegionWayland(region);
+  }
+#endif
+
+  if (region) {
     cairo_region_destroy(region);
   }
 }
@@ -6773,9 +6848,10 @@ void nsWindow::UpdateClientOffsetForCSDWindow() {
   // so we need to read offset between mContainer and toplevel mShell
   // window.
   if (mSizeState == nsSizeMode_Normal) {
-    GtkBorder decorationSize;
-    GetCSDDecorationSize(GTK_WINDOW(mShell), &decorationSize);
-    mClientOffset = nsIntPoint(decorationSize.left, decorationSize.top);
+    GtkBorder decorationSize = GetCSDDecorationSize(
+        gtk_window_get_window_type(GTK_WINDOW(mShell)) == GTK_WINDOW_POPUP);
+    mClientOffset = nsIntPoint(GdkCoordToDevicePixels(decorationSize.left),
+                               GdkCoordToDevicePixels(decorationSize.top));
   } else {
     mClientOffset = nsIntPoint(0, 0);
   }
@@ -6881,7 +6957,7 @@ void nsWindow::SetDrawsInTitlebar(bool aState) {
   mDrawInTitlebar = aState;
 
   if (mTransparencyBitmapForTitlebar) {
-    if (mDrawInTitlebar && mSizeState == nsSizeMode_Normal) {
+    if (mDrawInTitlebar && mSizeState == nsSizeMode_Normal && !mIsTiled) {
       UpdateTitlebarTransparencyBitmap();
     } else {
       ClearTransparencyBitmap();
@@ -7596,13 +7672,12 @@ GtkTextDirection nsWindow::GetTextDirection() {
 
 void nsWindow::LockAspectRatio(bool aShouldLock) {
   if (aShouldLock) {
-    gint scale = GdkScaleFactor();
-    float width = (float)mBounds.Width() / scale;
-    float height = (float)mBounds.Height() / scale;
+    float width = (float)DevicePixelsToGdkCoordRoundDown(mBounds.width);
+    float height = (float)DevicePixelsToGdkCoordRoundDown(mBounds.height);
 
     if (mCSDSupportLevel == CSD_SUPPORT_CLIENT) {
-      GtkBorder decorationSize;
-      GetCSDDecorationSize(GTK_WINDOW(mShell), &decorationSize);
+      GtkBorder decorationSize = GetCSDDecorationSize(
+          gtk_window_get_window_type(GTK_WINDOW(mShell)) == GTK_WINDOW_POPUP);
       width += decorationSize.left + decorationSize.right;
       height += decorationSize.top + decorationSize.bottom;
     }
@@ -7615,6 +7690,8 @@ void nsWindow::LockAspectRatio(bool aShouldLock) {
     LOG(("nsWindow::LockAspectRatio() [%p] removed aspect ratio\n",
          (void*)this));
   }
+
+  ApplySizeConstraints();
 }
 
 #ifdef MOZ_WAYLAND

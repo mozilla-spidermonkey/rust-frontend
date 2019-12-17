@@ -480,6 +480,11 @@ class nsWindow final : public nsBaseWidget {
   void ClearCachedResources();
   nsIWidgetListener* GetListener();
 
+#ifdef MOZ_WAYLAND
+  void UpdateOpaqueRegionWayland(cairo_region_t* aRegion);
+#endif
+  void UpdateOpaqueRegionGtk(cairo_region_t* aRegion);
+
   void UpdateClientOffsetForCSDWindow();
 
   nsWindow* GetTransientForWindowIfPopup();
@@ -622,6 +627,10 @@ class nsWindow final : public nsBaseWidget {
   // Remember the last sizemode so that we can restore it when
   // leaving fullscreen
   nsSizeMode mLastSizeMode;
+  // We can't detect size state changes correctly so set this flag
+  // to force update mBounds after a size state change from a configure
+  // event.
+  bool mBoundsNeedSizeUpdate;
 
   static bool DragInProgress(void);
 
@@ -644,6 +653,8 @@ class nsWindow final : public nsBaseWidget {
   void ForceTitlebarRedraw();
 
   void SetPopupWindowDecoration(bool aShowOnTaskbar);
+
+  void ApplySizeConstraints(void);
 
   bool IsMainMenuWindow();
   GtkWidget* ConfigureWaylandPopupWindows();

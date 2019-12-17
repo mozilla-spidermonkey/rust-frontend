@@ -19,6 +19,7 @@
 #include "IDBTransaction.h"
 #include "IndexedDatabase.h"
 #include "IndexedDatabaseInlines.h"
+#include "js/Array.h"  // JS::NewArrayObject, JS::SetArrayLength
 #include <mozIIPCBlobInputStream.h>
 #include "mozilla/BasicEvents.h"
 #include "mozilla/CycleCollectedJSRuntime.h"
@@ -401,7 +402,7 @@ class MOZ_STACK_CLASS ResultHelper final : public IDBRequest::ResultCallback {
   nsresult GetResult(JSContext* aCx,
                      const nsTArray<StructuredCloneReadInfo>* aCloneInfos,
                      JS::MutableHandle<JS::Value> aResult) {
-    JS::Rooted<JSObject*> array(aCx, JS_NewArrayObject(aCx, 0));
+    JS::Rooted<JSObject*> array(aCx, JS::NewArrayObject(aCx, 0));
     if (NS_WARN_IF(!array)) {
       IDB_REPORT_INTERNAL_ERR();
       return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
@@ -410,7 +411,7 @@ class MOZ_STACK_CLASS ResultHelper final : public IDBRequest::ResultCallback {
     if (!aCloneInfos->IsEmpty()) {
       const uint32_t count = aCloneInfos->Length();
 
-      if (NS_WARN_IF(!JS_SetArrayLength(aCx, array, count))) {
+      if (NS_WARN_IF(!JS::SetArrayLength(aCx, array, count))) {
         IDB_REPORT_INTERNAL_ERR();
         return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
       }
@@ -449,7 +450,7 @@ class MOZ_STACK_CLASS ResultHelper final : public IDBRequest::ResultCallback {
 
   nsresult GetResult(JSContext* aCx, const nsTArray<Key>* aKeys,
                      JS::MutableHandle<JS::Value> aResult) {
-    JS::Rooted<JSObject*> array(aCx, JS_NewArrayObject(aCx, 0));
+    JS::Rooted<JSObject*> array(aCx, JS::NewArrayObject(aCx, 0));
     if (NS_WARN_IF(!array)) {
       IDB_REPORT_INTERNAL_ERR();
       return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
@@ -458,7 +459,7 @@ class MOZ_STACK_CLASS ResultHelper final : public IDBRequest::ResultCallback {
     if (!aKeys->IsEmpty()) {
       const uint32_t count = aKeys->Length();
 
-      if (NS_WARN_IF(!JS_SetArrayLength(aCx, array, count))) {
+      if (NS_WARN_IF(!JS::SetArrayLength(aCx, array, count))) {
         IDB_REPORT_INTERNAL_ERR();
         return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
       }
@@ -1208,7 +1209,7 @@ class MOZ_STACK_CLASS FileHandleResultHelper final
   }
 };
 
-already_AddRefed<File> ConvertActorToFile(
+MOZ_MUST_USE RefPtr<File> ConvertActorToFile(
     IDBFileHandle* aFileHandle, const FileRequestGetFileResponse& aResponse) {
   auto* const actor = static_cast<PendingIPCBlobChild*>(aResponse.fileChild());
 
@@ -1231,9 +1232,7 @@ already_AddRefed<File> ConvertActorToFile(
   const RefPtr<BlobImpl> blobImplSnapshot =
       new BlobImplSnapshot(blobImpl, static_cast<IDBFileHandle*>(aFileHandle));
 
-  RefPtr<File> file =
-      File::Create(mutableFile->GetOwnerGlobal(), blobImplSnapshot);
-  return file.forget();
+  return File::Create(mutableFile->GetOwnerGlobal(), blobImplSnapshot);
 }
 
 void DispatchFileHandleErrorEvent(IDBFileRequest* aFileRequest,
@@ -2967,7 +2966,7 @@ nsresult BackgroundRequestChild::PreprocessHelper::Init(
   // We use a TaskQueue here in order to be sure that the events are dispatched
   // in the correct order. This is not guaranteed in case we use the I/O thread
   // directly.
-  mTaskQueue = new TaskQueue(target.forget());
+  mTaskQueue = MakeRefPtr<TaskQueue>(target.forget());
   mTaskQueueEventTarget = mTaskQueue->WrapAsEventTarget();
 
   ErrorResult errorResult;
@@ -3437,10 +3436,9 @@ void BackgroundCursorChild::SendContinueInternal(
     // This is accompanied by invalidating cached entries at proper locations to
     // make it correct. To avoid this, further changes are necessary, see Bug
     // 1580499.
-    nsCOMPtr<nsIRunnable> continueRunnable = new DelayedActionRunnable(
-        this, &BackgroundCursorChild::CompleteContinueRequestFromCache);
-    MOZ_ALWAYS_TRUE(
-        NS_SUCCEEDED(NS_DispatchToCurrentThread(continueRunnable.forget())));
+    MOZ_ALWAYS_SUCCEEDS(
+        NS_DispatchToCurrentThread(MakeAndAddRef<DelayedActionRunnable>(
+            this, &BackgroundCursorChild::CompleteContinueRequestFromCache)));
 
     // TODO: Could we preload further entries in the background when the size of
     // mCachedResponses falls under some threshold? Or does the response
@@ -3587,10 +3585,10 @@ void BackgroundCursorChild::HandleResponse(const void_t& aResponse) {
   DispatchSuccessEvent(&helper);
 
   if (!mCursor) {
-    nsCOMPtr<nsIRunnable> deleteRunnable = new DelayedActionRunnable(
-        this, &BackgroundCursorChild::SendDeleteMeInternal);
     MOZ_ALWAYS_SUCCEEDS(this->GetActorEventTarget()->Dispatch(
-        deleteRunnable.forget(), NS_DISPATCH_NORMAL));
+        MakeAndAddRef<DelayedActionRunnable>(
+            this, &BackgroundCursorChild::SendDeleteMeInternal),
+        NS_DISPATCH_NORMAL));
   }
 }
 

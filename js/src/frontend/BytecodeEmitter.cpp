@@ -26,7 +26,8 @@
 #include "jsnum.h"    // NumberToAtom
 #include "jstypes.h"  // JS_BIT
 
-#include "ds/Nestable.h"                         // Nestable
+#include "ds/Nestable.h"  // Nestable
+#include "frontend/AbstractScope.h"
 #include "frontend/BytecodeControlStructures.h"  // NestableControl, BreakableControl, LabelControl, LoopControl, TryFinallyControl
 #include "frontend/CallOrNewEmitter.h"           // CallOrNewEmitter
 #include "frontend/CForEmitter.h"                // CForEmitter
@@ -180,7 +181,7 @@ Maybe<NameLocation> BytecodeEmitter::locationOfNameBoundInScope(
 Maybe<NameLocation> BytecodeEmitter::locationOfNameBoundInFunctionScope(
     JSAtom* name, EmitterScope* source) {
   EmitterScope* funScope = source;
-  while (!funScope->scope(this)->is<FunctionScope>()) {
+  while (!funScope->scope(this).is<FunctionScope>()) {
     funScope = funScope->enclosingInFrame();
   }
   return source->locationBoundInScope(name, funScope);
@@ -406,22 +407,6 @@ bool BytecodeEmitter::emitJump(JSOp op, JumpList* jump) {
     if (!emitJumpTarget(&fallthrough)) {
       return false;
     }
-  }
-  return true;
-}
-
-bool BytecodeEmitter::emitBackwardJump(JSOp op, JumpTarget target,
-                                       JumpList* jump,
-                                       JumpTarget* fallthrough) {
-  if (!emitJumpNoFallthrough(op, jump)) {
-    return false;
-  }
-  patchJumpsToTarget(*jump, target);
-
-  // Unconditionally create a fallthrough for closing iterators, and as a
-  // target for break statements.
-  if (!emitJumpTarget(fallthrough)) {
-    return false;
   }
   return true;
 }
@@ -806,10 +791,6 @@ bool NonLocalExitControl::prepareForNonLocalJump(NestableControl* target) {
         }
 
         // The iterator and the current value are on the stack.
-        if (!bce_->emit1(JSOP_POP)) {
-          //        [stack] ... ITER
-          return false;
-        }
         if (!bce_->emit1(JSOP_ENDITER)) {
           //        [stack] ...
           return false;
@@ -873,7 +854,7 @@ bool BytecodeEmitter::emitGoto(NestableControl* target, JumpList* jumplist,
   return emitJump(JSOP_GOTO, jumplist);
 }
 
-Scope* BytecodeEmitter::innermostScope() const {
+AbstractScope BytecodeEmitter::innermostScope() const {
   return innermostEmitterScope()->scope(this);
 }
 
@@ -1566,7 +1547,7 @@ bool BytecodeEmitter::needsImplicitThis() {
   // Otherwise see if the current point is under a 'with'.
   for (EmitterScope* es = innermostEmitterScope(); es;
        es = es->enclosingInFrame()) {
-    if (es->scope(this)->kind() == ScopeKind::With) {
+    if (es->scope(this).kind() == ScopeKind::With) {
       return true;
     }
   }
@@ -1584,14 +1565,14 @@ bool BytecodeEmitter::emitThisEnvironmentCallee() {
 
   // We have to load the callee from the environment chain.
   unsigned numHops = 0;
-  for (ScopeIter si(innermostScope()); si; si++) {
-    if (si.hasSyntacticEnvironment() && si.scope()->is<FunctionScope>()) {
-      JSFunction* fun = si.scope()->as<FunctionScope>().canonicalFunction();
-      if (!fun->isArrow()) {
+  for (AbstractScopeIter si(innermostScope()); si; si++) {
+    if (si.hasSyntacticEnvironment() &&
+        si.abstractScope().is<FunctionScope>()) {
+      if (!si.abstractScope().isArrow()) {
         break;
       }
     }
-    if (si.scope()->hasEnvironment()) {
+    if (si.abstractScope().hasEnvironment()) {
       numHops++;
     }
   }
@@ -5178,10 +5159,6 @@ bool BytecodeEmitter::emitAsyncIterator() {
 bool BytecodeEmitter::emitSpread(bool allowSelfHosted) {
   LoopControl loopInfo(this, StatementKind::Spread);
 
-  if (!newSrcNote(SRC_FOR_OF)) {
-    return false;
-  }
-
   if (!loopInfo.emitLoopHead(this, Nothing())) {
     //              [stack] NEXT ITER ARR I
     return false;
@@ -5226,7 +5203,7 @@ bool BytecodeEmitter::emitSpread(bool allowSelfHosted) {
       return false;
     }
 
-    if (!loopInfo.emitLoopEnd(this, JSOP_GOTO)) {
+    if (!loopInfo.emitLoopEnd(this, JSOP_GOTO, JSTRY_FOR_OF)) {
       //            [stack] NEXT ITER ARR (I+1)
       return false;
     }
@@ -5241,15 +5218,6 @@ bool BytecodeEmitter::emitSpread(bool allowSelfHosted) {
 
   // No continues should occur in spreads.
   MOZ_ASSERT(!loopInfo.continues.offset.valid());
-
-  if (!loopInfo.patchBreaks(this)) {
-    return false;
-  }
-
-  if (!addTryNote(JSTRY_FOR_OF, bytecodeSection().stackDepth(),
-                  loopInfo.headOffset(), loopInfo.breakTargetOffset())) {
-    return false;
-  }
 
   if (!emit2(JSOP_PICK, 4)) {
     //              [stack] ITER ARR FINAL_INDEX RESULT NEXT
@@ -5691,8 +5659,13 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitFunction(
       }
 
       if (classContentsIfConstructor) {
-        funbox->setFieldInitializers(
-            setupFieldInitializers(classContentsIfConstructor));
+        mozilla::Maybe<FieldInitializers> fieldInitializers =
+            setupFieldInitializers(classContentsIfConstructor);
+        if (!fieldInitializers) {
+          ReportAllocationOverflow(cx);
+          return false;
+        }
+        funbox->setFieldInitializers(*fieldInitializers);
       }
 
       return true;
@@ -5715,7 +5688,8 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitFunction(
     RootedScript innerScript(
         cx, JSScript::Create(cx, fun, options, sourceObject,
                              funbox->sourceStart, funbox->sourceEnd,
-                             funbox->toStringStart, funbox->toStringEnd));
+                             funbox->toStringStart, funbox->toStringEnd,
+                             funbox->startLine, funbox->startColumn));
     if (!innerScript) {
       return false;
     }
@@ -5726,15 +5700,22 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitFunction(
       nestedMode = BytecodeEmitter::Normal;
     }
 
-    FieldInitializers fieldInitializers = FieldInitializers::Invalid();
+    mozilla::Maybe<FieldInitializers> fieldInitializers;
     if (classContentsIfConstructor) {
       fieldInitializers = setupFieldInitializers(classContentsIfConstructor);
+      if (!fieldInitializers) {
+        ReportAllocationOverflow(cx);
+        return false;
+      }
+    } else {
+      // The BCE requires passing some value even if not used.
+      fieldInitializers = Some(FieldInitializers::Invalid());
     }
 
     BytecodeEmitter bce2(this, parser, funbox, innerScript,
                          /* lazyScript = */ nullptr, funbox->startLine,
                          funbox->startColumn, parseInfo, nestedMode,
-                         fieldInitializers);
+                         *fieldInitializers);
     if (!bce2.init(funNode->pn_pos)) {
       return false;
     }
@@ -5747,7 +5728,7 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitFunction(
     // fieldInitializers are copied to the JSScript inside BytecodeEmitter
 
     if (funbox->isLikelyConstructorWrapper()) {
-      innerScript->setLikelyConstructorWrapper();
+      innerScript->setIsLikelyConstructorWrapper();
     }
 
     if (!fe.emitNonLazyEnd()) {
@@ -6258,8 +6239,9 @@ bool BytecodeEmitter::emitYieldStar(ParseNode* iter) {
     return false;
   }
 
-  JumpTarget tryStart;
-  if (!emitJumpTarget(&tryStart)) {
+  LoopControl loopInfo(this, StatementKind::YieldStar);
+
+  if (!loopInfo.emitLoopHead(this, Nothing())) {
     //              [stack] NEXT ITER RESULT
     return false;
   }
@@ -6561,15 +6543,11 @@ bool BytecodeEmitter::emitYieldStar(ParseNode* iter) {
     //              [stack] NEXT ITER RESULT
     return false;
   }
-  {
-    // goto tryStart;
-    JumpList beq;
-    JumpTarget breakTarget;
-    if (!emitBackwardJump(JSOP_GOTO, tryStart, &beq, &breakTarget)) {
-      //            [stack] NEXT ITER RESULT
-      return false;
-    }
+  if (!emitJump(JSOP_GOTO, &loopInfo.continues)) {
+    //              [stack] NEXT ITER RESULT
+    return false;
   }
+
   bytecodeSection().setStackDepth(savedDepthTemp);
   if (!ifReturnDone.emitEnd()) {
     return false;
@@ -6657,7 +6635,7 @@ bool BytecodeEmitter::emitYieldStar(ParseNode* iter) {
 
   //                [stack] NEXT ITER RESULT
 
-  // if (!result.done) goto tryStart;
+  // if (result.done) break;
   if (!emit1(JSOP_DUP)) {
     //              [stack] NEXT ITER RESULT RESULT
     return false;
@@ -6666,14 +6644,19 @@ bool BytecodeEmitter::emitYieldStar(ParseNode* iter) {
     //              [stack] NEXT ITER RESULT DONE
     return false;
   }
-  // if (!DONE) goto tryStart;
-  {
-    JumpList beq;
-    JumpTarget breakTarget;
-    if (!emitBackwardJump(JSOP_IFEQ, tryStart, &beq, &breakTarget)) {
-      //            [stack] NEXT ITER RESULT
-      return false;
-    }
+  if (!emitJump(JSOP_IFNE, &loopInfo.breaks)) {
+    //              [stack] NEXT ITER RESULT
+    return false;
+  }
+
+  if (!loopInfo.emitContinueTarget(this)) {
+    //              [stack] NEXT ITER RESULT
+    return false;
+  }
+
+  if (!loopInfo.emitLoopEnd(this, JSOP_GOTO, JSTRY_LOOP)) {
+    //              [stack] NEXT ITER RESULT
+    return false;
   }
 
   // result.value
@@ -7934,8 +7917,6 @@ bool BytecodeEmitter::emitPropertyList(ListNode* obj, PropertyEmitter& pe,
 
       if (propVal->is<FunctionNode>() &&
           propVal->as<FunctionNode>().funbox()->needsHomeObject()) {
-        MOZ_ASSERT(propVal->as<FunctionNode>().funbox()->allowSuperProperty());
-
         if (!pe.emitInitHomeObject()) {
           //        [stack] CTOR? OBJ CTOR? KEY? FUN
           return false;
@@ -8240,7 +8221,7 @@ bool BytecodeEmitter::emitObjLiteralValue(ObjLiteralCreationData* data,
   return true;
 }
 
-FieldInitializers BytecodeEmitter::setupFieldInitializers(
+mozilla::Maybe<FieldInitializers> BytecodeEmitter::setupFieldInitializers(
     ListNode* classMembers) {
   size_t numFields = 0;
   for (ParseNode* propdef : classMembers->contents()) {
@@ -8252,7 +8233,11 @@ FieldInitializers BytecodeEmitter::setupFieldInitializers(
       }
     }
   }
-  return FieldInitializers(numFields);
+  // If there are more initializers than can be represented, return invalid.
+  if (numFields > FieldInitializers::MaxInitializers) {
+    return Nothing();
+  }
+  return Some(FieldInitializers(numFields));
 }
 
 // Purpose of .fieldKeys:
@@ -8321,9 +8306,13 @@ bool BytecodeEmitter::emitCreateFieldKeys(ListNode* obj) {
 bool BytecodeEmitter::emitCreateFieldInitializers(ClassEmitter& ce,
                                                   ListNode* obj) {
   //          [stack] HOMEOBJ HERITAGE?
-  FieldInitializers fieldInitializers = setupFieldInitializers(obj);
-  MOZ_ASSERT(fieldInitializers.valid);
-  size_t numFields = fieldInitializers.numFieldInitializers;
+  mozilla::Maybe<FieldInitializers> fieldInitializers =
+      setupFieldInitializers(obj);
+  if (!fieldInitializers) {
+    ReportAllocationOverflow(cx);
+    return false;
+  }
+  size_t numFields = fieldInitializers->numFieldInitializers;
 
   if (numFields == 0) {
     return true;
@@ -8377,14 +8366,12 @@ const FieldInitializers& BytecodeEmitter::findFieldInitializersForCall() {
     }
   }
 
-  for (ScopeIter si(innermostScope()); si; si++) {
-    if (si.scope()->is<FunctionScope>()) {
-      JSFunction* fun = si.scope()->as<FunctionScope>().canonicalFunction();
+  for (AbstractScopeIter si(innermostScope()); si; si++) {
+    if (si.abstractScope().is<FunctionScope>()) {
+      JSFunction* fun = si.abstractScope().canonicalFunction();
       if (fun->kind() == FunctionFlags::FunctionKind::ClassConstructor) {
         const FieldInitializers& fieldInitializers =
-            fun->isInterpretedLazy()
-                ? fun->lazyScript()->getFieldInitializers()
-                : fun->nonLazyScript()->getFieldInitializers();
+            fun->baseScript()->getFieldInitializers();
         MOZ_ASSERT(fieldInitializers.valid);
         return fieldInitializers;
       }
@@ -9145,8 +9132,8 @@ bool BytecodeEmitter::emitClass(
       return false;
     }
   } else {
-    if (!ce.emitInitDefaultConstructor(Some(classNode->pn_pos.begin),
-                                       Some(classNode->pn_pos.end))) {
+    if (!ce.emitInitDefaultConstructor(classNode->pn_pos.begin,
+                                       classNode->pn_pos.end)) {
       //            [stack] CTOR HOMEOBJ
       return false;
     }

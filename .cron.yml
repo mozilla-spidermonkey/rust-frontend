@@ -14,11 +14,11 @@ jobs:
           - mozilla-beta
       when:
           by-project:
-              mozilla-beta:
-                - {weekday: 'Monday', hour: 4, minute: 0}
-                - {weekday: 'Wednesday', hour: 4, minute: 0}
-                - {weekday: 'Friday', hour: 4, minute: 0}
               # No default
+              mozilla-beta:
+                  - {weekday: 'Monday', hour: 4, minute: 0}
+                  - {weekday: 'Wednesday', hour: 4, minute: 0}
+                  - {weekday: 'Friday', hour: 4, minute: 0}
 
     - name: nightly-desktop
       job:
@@ -253,3 +253,13 @@ jobs:
           - mozilla-esr68
       when:
           - {minute: 45}
+
+    - name: system-symbols
+      job:
+          type: decision-task
+          treeherder-symbol: system-symbols
+          target-tasks-method: system_symbols
+      run-on-projects:
+          - mozilla-central
+      when:
+          - {hour: 0, minute: 0}

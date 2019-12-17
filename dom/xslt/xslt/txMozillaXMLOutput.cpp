@@ -6,6 +6,7 @@
 #include "txMozillaXMLOutput.h"
 
 #include "mozilla/dom/Document.h"
+#include "nsIDocShell.h"
 #include "nsIScriptElement.h"
 #include "nsCharsetSource.h"
 #include "nsIRefreshURI.h"
@@ -218,9 +219,9 @@ nsresult txMozillaXMLOutput::endDocument(nsresult aResult) {
     if (win) {
       nsCOMPtr<nsIRefreshURI> refURI = do_QueryInterface(win->GetDocShell());
       if (refURI) {
-        refURI->SetupRefreshURIFromHeader(mDocument->GetDocBaseURI(),
-                                          mDocument->NodePrincipal(),
-                                          mRefreshString);
+        refURI->SetupRefreshURIFromHeader(
+            mDocument->GetDocBaseURI(), mDocument->NodePrincipal(),
+            mDocument->InnerWindowID(), mRefreshString);
       }
     }
   }

@@ -57,7 +57,7 @@ function waitForCondition(condition, nextTest, errorMsg) {
  *        The name of the field to write to.
  */
 let typeInSearchField = async function(browser, text, fieldName) {
-  await ContentTask.spawn(browser, [fieldName, text], async function([
+  await SpecialPowers.spawn(browser, [[fieldName, text]], async function([
     contentFieldName,
     contentText,
   ]) {
@@ -88,9 +88,7 @@ function makeMockPermissionRequest(browser) {
   let principal = browser.contentPrincipal;
   let result = {
     types,
-    documentDOMContentLoadedTimestamp: 0,
     isHandlingUserInput: false,
-    userHadInteractedWithDocument: false,
     principal,
     topLevelPrincipal: principal,
     requester: null,

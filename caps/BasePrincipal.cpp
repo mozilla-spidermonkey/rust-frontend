@@ -349,9 +349,26 @@ BasePrincipal::SubsumesConsideringDomainIgnoringFPD(nsIPrincipal* aOther,
 }
 
 NS_IMETHODIMP
-BasePrincipal::CheckMayLoad(nsIURI* aURI, bool aReport,
-                            bool aAllowIfInheritsPrincipal) {
+BasePrincipal::CheckMayLoad(nsIURI* aURI, bool aAllowIfInheritsPrincipal) {
+  return CheckMayLoadHelper(aURI, aAllowIfInheritsPrincipal, false, 0);
+}
+
+NS_IMETHODIMP
+BasePrincipal::CheckMayLoadWithReporting(nsIURI* aURI,
+                                         bool aAllowIfInheritsPrincipal,
+                                         uint64_t aInnerWindowID) {
+  return CheckMayLoadHelper(aURI, aAllowIfInheritsPrincipal, true,
+                            aInnerWindowID);
+}
+
+nsresult BasePrincipal::CheckMayLoadHelper(nsIURI* aURI,
+                                           bool aAllowIfInheritsPrincipal,
+                                           bool aReport,
+                                           uint64_t aInnerWindowID) {
   NS_ENSURE_ARG_POINTER(aURI);
+  MOZ_ASSERT(
+      aReport || aInnerWindowID == 0,
+      "Why do we have an inner window id if we're not supposed to report?");
 
   // Check the internal method first, which allows us to quickly approve loads
   // for the System Principal.
@@ -385,7 +402,7 @@ BasePrincipal::CheckMayLoad(nsIURI* aURI, bool aReport,
     if (NS_SUCCEEDED(rv) && prinURI) {
       nsScriptSecurityManager::ReportError(
           "CheckSameOriginError", prinURI, aURI,
-          mOriginAttributes.mPrivateBrowsingId > 0);
+          mOriginAttributes.mPrivateBrowsingId > 0, aInnerWindowID);
     }
   }
 
@@ -414,6 +431,24 @@ BasePrincipal::IsThirdPartyPrincipal(nsIPrincipal* aPrin, bool* aRes) {
     return NS_OK;
   }
   return aPrin->IsThirdPartyURI(prinURI, aRes);
+}
+
+NS_IMETHODIMP
+BasePrincipal::IsSameOrigin(nsIURI* aURI, bool aIsPrivateWin, bool* aRes) {
+  *aRes = false;
+  nsCOMPtr<nsIURI> prinURI;
+  nsresult rv = GetURI(getter_AddRefs(prinURI));
+  if (NS_FAILED(rv) || !prinURI) {
+    return NS_OK;
+  }
+  nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
+  if (!ssm) {
+    return NS_ERROR_UNEXPECTED;
+    ;
+  }
+  *aRes = NS_SUCCEEDED(
+      ssm->CheckSameOriginURI(prinURI, aURI, false, aIsPrivateWin));
+  return NS_OK;
 }
 
 NS_IMETHODIMP

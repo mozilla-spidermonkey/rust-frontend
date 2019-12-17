@@ -43,10 +43,6 @@ bool ForInEmitter::emitInitialize() {
 
   loopInfo_.emplace(bce_, StatementKind::ForInLoop);
 
-  if (!bce_->newSrcNote(SRC_FOR_IN)) {
-    return false;
-  }
-
   if (!loopInfo_->emitLoopHead(bce_, Nothing())) {
     //              [stack] ITER
     return false;
@@ -75,7 +71,7 @@ bool ForInEmitter::emitInitialize() {
     // closed-over bindings inducing an environment, recreate the
     // current environment.
     MOZ_ASSERT(headLexicalEmitterScope_ == bce_->innermostEmitterScope());
-    MOZ_ASSERT(headLexicalEmitterScope_->scope(bce_)->kind() ==
+    MOZ_ASSERT(headLexicalEmitterScope_->scope(bce_).kind() ==
                ScopeKind::Lexical);
 
     if (headLexicalEmitterScope_->hasEnvironment()) {
@@ -138,7 +134,7 @@ bool ForInEmitter::emitEnd(const Maybe<uint32_t>& forPos) {
     //              [stack] ITER
     return false;
   }
-  if (!loopInfo_->emitLoopEnd(bce_, JSOP_GOTO)) {
+  if (!loopInfo_->emitLoopEnd(bce_, JSOP_GOTO, JSTRY_FOR_IN)) {
     //              [stack] ITER
     return false;
   }
@@ -149,23 +145,9 @@ bool ForInEmitter::emitEnd(const Maybe<uint32_t>& forPos) {
   MOZ_ASSERT(stackDepth == loopDepth_);
   bce_->bytecodeSection().setStackDepth(stackDepth);
 
-  if (!loopInfo_->patchBreaks(bce_)) {
-    //              [stack] ITER ITERVAL
-    return false;
-  }
+  //                [stack] ITER ITERVAL
 
-  // Pop the enumeration value.
-  if (!bce_->emit1(JSOP_POP)) {
-    //              [stack] ITER
-    return false;
-  }
-
-  if (!bce_->addTryNote(JSTRY_FOR_IN, bce_->bytecodeSection().stackDepth(),
-                        loopInfo_->headOffset(),
-                        bce_->bytecodeSection().offset())) {
-    return false;
-  }
-
+  // Pop the value and iterator and close the iterator.
   if (!bce_->emit1(JSOP_ENDITER)) {
     //              [stack]
     return false;

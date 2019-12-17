@@ -36,10 +36,10 @@ class JS_PUBLIC_API ContextOptions {
         dumpStackOnDebuggeeWouldRun_(false),
         werror_(false),
         strictMode_(false),
+        tryRustFrontend_(false),
         extraWarnings_(false),
-        tryRustFrontend_(false)
-        extraWarnings_(false),
-        fuzzing_(false) {}
+        fuzzing_(false) {
+  }
 
   bool asmJS() const { return asmJS_; }
   ContextOptions& setAsmJS(bool flag) {

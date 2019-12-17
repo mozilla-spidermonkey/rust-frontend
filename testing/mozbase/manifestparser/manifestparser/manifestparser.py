@@ -4,7 +4,6 @@
 
 from __future__ import absolute_import, print_function
 
-from io import BytesIO
 import json
 import fnmatch
 import os
@@ -12,7 +11,7 @@ import shutil
 import sys
 import types
 
-from six import string_types
+from six import string_types, StringIO
 
 from .ini import read_ini
 from .filters import (
@@ -334,7 +333,7 @@ class ManifestParser(object):
                 return not tags.intersection(test.keys())
 
             def dict_query(test):
-                for key, value in kwargs.items():
+                for key, value in list(kwargs.items()):
                     if test.get(key) == value:
                         return False
                 return True
@@ -343,7 +342,7 @@ class ManifestParser(object):
                 return tags.issubset(test.keys())
 
             def dict_query(test):
-                for key, value in kwargs.items():
+                for key, value in list(kwargs.items()):
                     if test.get(key) != value:
                         return False
                 return True
@@ -367,7 +366,7 @@ class ManifestParser(object):
         if tests is None:
             manifests = []
             # Make sure to return all the manifests, even ones without tests.
-            for manifest in self.manifest_defaults.keys():
+            for manifest in list(self.manifest_defaults.keys()):
                 if isinstance(manifest, tuple):
                     parentmanifest, manifest = manifest
                 if manifest not in manifests:
@@ -484,7 +483,7 @@ class ManifestParser(object):
             print('[DEFAULT]', file=fp)
             for tag in global_tags:
                 print('%s =' % tag, file=fp)
-            for key, value in global_kwargs.items():
+            for key, value in list(global_kwargs.items()):
                 print('%s = %s' % (key, value), file=fp)
             print(file=fp)
 
@@ -524,7 +523,7 @@ class ManifestParser(object):
             fp.close()
 
     def __str__(self):
-        fp = BytesIO()
+        fp = StringIO()
         self.write(fp=fp)
         value = fp.getvalue()
         return value
@@ -733,7 +732,7 @@ class ManifestParser(object):
         pattern -- shell pattern (glob) or patterns of filenames to match
         ignore -- directory names to ignore
         write -- filename or file-like object of manifests to write;
-                 if `None` then a BytesIO instance will be created
+                 if `None` then a StringIO instance will be created
         relative_to -- write paths relative to this path;
                        if false then the paths are absolute
         """
@@ -745,7 +744,7 @@ class ManifestParser(object):
             opened_manifest_file = write
             write = open(write, 'w')
         if write is None:
-            write = BytesIO()
+            write = StringIO()
 
         # walk the directories, generating manifests
         def callback(directory, dirpath, dirnames, filenames):
@@ -762,8 +761,10 @@ class ManifestParser(object):
                              for filename in filenames]
 
             # write to manifest
-            print('\n'.join(['[%s]' % denormalize_path(filename)
-                             for filename in filenames]), file=write)
+            write_content = '\n'.join([
+                '[{}]'.format(denormalize_path(filename)) for filename in filenames
+            ])
+            print(write_content, file=write)
 
         cls._walk_directories(directories, callback, pattern=pattern, ignore=ignore)
 

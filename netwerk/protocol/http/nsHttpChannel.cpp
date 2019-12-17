@@ -337,6 +337,7 @@ nsHttpChannel::nsHttpChannel()
       mHasBeenIsolatedChecked(0),
       mIsIsolated(0),
       mTopWindowOriginComputed(0),
+      mHasCrossOriginOpenerPolicyMismatch(0),
       mPushedStream(nullptr),
       mLocalBlocklist(false),
       mOnTailUnblock(nullptr),
@@ -2501,6 +2502,23 @@ nsresult nsHttpChannel::ContinueProcessResponse1() {
     return NS_OK;
   }
 
+  rv = ProcessCrossOriginResourcePolicyHeader();
+  if (NS_FAILED(rv)) {
+    mStatus = NS_ERROR_DOM_CORP_FAILED;
+    HandleAsyncAbort();
+    return NS_OK;
+  }
+
+  rv = ComputeCrossOriginOpenerPolicyMismatch();
+  if (rv == NS_ERROR_BLOCKED_BY_POLICY) {
+    // this navigates the doc's browsing context to a network error.
+    mStatus = NS_ERROR_BLOCKED_BY_POLICY;
+    HandleAsyncAbort();
+    return NS_OK;
+  }
+
+  AssertNotDocumentChannel();
+
   // Check if request was cancelled during http-on-examine-response.
   if (mCanceled) {
     return CallOnStartRequest();
@@ -2561,26 +2579,6 @@ nsresult nsHttpChannel::ContinueProcessResponse1() {
     mStatus = NS_ERROR_BLOCKED_BY_POLICY;
     HandleAsyncAbort();
     return NS_OK;
-  }
-
-  rv = ProcessCrossOriginResourcePolicyHeader();
-  if (NS_FAILED(rv)) {
-    mStatus = NS_ERROR_DOM_CORP_FAILED;
-    HandleAsyncAbort();
-    return NS_OK;
-  }
-
-  rv = NS_OK;
-  if (!mCanceled) {
-    rv = ComputeCrossOriginOpenerPolicyMismatch();
-    if (rv == NS_ERROR_BLOCKED_BY_POLICY) {
-      // this navigates the doc's browsing context to a network error.
-      mStatus = NS_ERROR_BLOCKED_BY_POLICY;
-      HandleAsyncAbort();
-      return NS_OK;
-    }
-
-    AssertNotDocumentChannel();
   }
 
   // No process switch needed, continue as normal.
@@ -7413,6 +7411,7 @@ nsresult nsHttpChannel::ComputeCrossOriginOpenerPolicyMismatch() {
   if (!head) {
     // Not having a response head is not a hard failure at the point where
     // this method is called.
+    mComputedCrossOriginOpenerPolicy = Some(nsILoadInfo::OPENER_POLICY_NULL);
     return NS_OK;
   }
 
@@ -7576,7 +7575,9 @@ nsresult nsHttpChannel::ProcessCrossOriginResourcePolicyHeader() {
 
   MOZ_ASSERT(mLoadInfo->LoadingPrincipal(),
              "Resources should always have a LoadingPrincipal");
-  MOZ_ASSERT(mResponseHead);
+  if (!mResponseHead) {
+    return NS_OK;
+  }
 
   nsAutoCString content;
   Unused << mResponseHead->GetHeader(nsHttp::Cross_Origin_Resource_Policy,
@@ -7766,21 +7767,25 @@ nsHttpChannel::OnStartRequest(nsIRequest* request) {
     return NS_OK;
   }
 
+  rv = ProcessCrossOriginResourcePolicyHeader();
+  if (NS_FAILED(rv)) {
+    mStatus = NS_ERROR_DOM_CORP_FAILED;
+    HandleAsyncAbort();
+    return NS_OK;
+  }
+
   // before we check for redirects, check if the load should be shifted into a
   // new process.
-  rv = NS_OK;
-  if (!mCanceled) {
-    rv = ComputeCrossOriginOpenerPolicyMismatch();
+  rv = ComputeCrossOriginOpenerPolicyMismatch();
 
-    if (rv == NS_ERROR_BLOCKED_BY_POLICY) {
-      // this navigates the doc's browsing context to a network error.
-      mStatus = NS_ERROR_BLOCKED_BY_POLICY;
-      HandleAsyncAbort();
-      return NS_OK;
-    }
-
-    AssertNotDocumentChannel();
+  if (rv == NS_ERROR_BLOCKED_BY_POLICY) {
+    // this navigates the doc's browsing context to a network error.
+    mStatus = NS_ERROR_BLOCKED_BY_POLICY;
+    HandleAsyncAbort();
+    return NS_OK;
   }
+
+  AssertNotDocumentChannel();
 
   // No process change is needed, so continue on to ContinueOnStartRequest1.
   return ContinueOnStartRequest1(rv);
@@ -8657,19 +8662,18 @@ nsHttpChannel::OnTransportStatus(nsITransport* trans, nsresult status,
 
   if (status == NS_NET_STATUS_CONNECTED_TO ||
       status == NS_NET_STATUS_WAITING_FOR) {
+    bool isTrr = false;
     if (mTransaction) {
-      mTransaction->GetNetworkAddresses(mSelfAddr, mPeerAddr);
-      mResolvedByTRR = mTransaction->ResolvedByTRR();
+      mTransaction->GetNetworkAddresses(mSelfAddr, mPeerAddr, isTrr);
     } else {
       nsCOMPtr<nsISocketTransport> socketTransport = do_QueryInterface(trans);
       if (socketTransport) {
         socketTransport->GetSelfAddr(&mSelfAddr);
         socketTransport->GetPeerAddr(&mPeerAddr);
-        bool isTrr = false;
         socketTransport->ResolvedByTRR(&isTrr);
-        mResolvedByTRR = isTrr;
       }
     }
+    mResolvedByTRR = isTrr;
   }
 
   // block socket status event after Cancel or OnStopRequest has been called.
@@ -9785,24 +9789,28 @@ void nsHttpChannel::MaybeWarnAboutAppCache() {
 
 // Step 10 of HTTP-network-or-cache fetch
 void nsHttpChannel::SetOriginHeader() {
-  if (mRequestHead.IsGet() || mRequestHead.IsHead()) {
-    return;
-  }
   nsresult rv;
 
   nsAutoCString existingHeader;
   Unused << mRequestHead.GetHeader(nsHttp::Origin, existingHeader);
-  if (!existingHeader.IsEmpty()) {
-    LOG(("nsHttpChannel::SetOriginHeader Origin header already present"));
+  if (!existingHeader.IsEmpty() && !existingHeader.EqualsLiteral("null")) {
+    LOG(
+        ("nsHttpChannel::SetOriginHeader Origin header already present "
+         "[this=%p]",
+         this));
     nsCOMPtr<nsIURI> uri;
     rv = NS_NewURI(getter_AddRefs(uri), existingHeader);
-    if (NS_SUCCEEDED(rv) &&
+    if (NS_FAILED(rv) || !dom::ReferrerInfo::IsReferrerSchemeAllowed(uri) ||
         ReferrerInfo::ShouldSetNullOriginHeader(this, uri)) {
-      LOG(("nsHttpChannel::SetOriginHeader null Origin by Referrer-Policy"));
-      rv = mRequestHead.SetHeader(nsHttp::Origin, NS_LITERAL_CSTRING("null"),
-                                  false /* merge */);
-      MOZ_ASSERT(NS_SUCCEEDED(rv));
+      LOG(("nsHttpChannel::SetOriginHeader to null Origin [this=%p]", this));
+      DebugOnly<nsresult> success = mRequestHead.SetHeader(
+          nsHttp::Origin, NS_LITERAL_CSTRING("null"), false /* merge */);
+      MOZ_ASSERT(NS_SUCCEEDED(success));
     }
+    return;
+  }
+
+  if (mRequestHead.IsGet() || mRequestHead.IsHead()) {
     return;
   }
 

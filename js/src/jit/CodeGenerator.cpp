@@ -3506,78 +3506,32 @@ void CodeGenerator::visitLambda(LLambda* lir) {
   masm.bind(ool->rejoin());
 }
 
-class OutOfLineLambdaArrow : public OutOfLineCodeBase<CodeGenerator> {
- public:
-  LLambdaArrow* lir;
-  Label entryNoPop_;
-
-  explicit OutOfLineLambdaArrow(LLambdaArrow* lir) : lir(lir) {}
-
-  void accept(CodeGenerator* codegen) override {
-    codegen->visitOutOfLineLambdaArrow(this);
-  }
-
-  Label* entryNoPop() { return &entryNoPop_; }
-};
-
-void CodeGenerator::visitOutOfLineLambdaArrow(OutOfLineLambdaArrow* ool) {
-  Register envChain = ToRegister(ool->lir->environmentChain());
-  ValueOperand newTarget = ToValue(ool->lir, LLambdaArrow::NewTargetValue);
-  Register output = ToRegister(ool->lir->output());
-  const LambdaFunctionInfo& info = ool->lir->mir()->info();
-
-  // When we get here, we may need to restore part of the newTarget,
-  // which has been conscripted into service as a temp register.
-  masm.pop(newTarget.scratchReg());
-
-  masm.bind(ool->entryNoPop());
-
-  saveLive(ool->lir);
-
-  pushArg(newTarget);
-  pushArg(envChain);
-  pushArg(ImmGCPtr(info.funUnsafe()));
-
-  using Fn =
-      JSObject* (*)(JSContext*, HandleFunction, HandleObject, HandleValue);
-  callVM<Fn, js::LambdaArrow>(ool->lir);
-  StoreRegisterTo(output).generate(this);
-
-  restoreLiveIgnore(ool->lir, StoreRegisterTo(output).clobbered());
-
-  masm.jump(ool->rejoin());
-}
-
 void CodeGenerator::visitLambdaArrow(LLambdaArrow* lir) {
   Register envChain = ToRegister(lir->environmentChain());
   ValueOperand newTarget = ToValue(lir, LLambdaArrow::NewTargetValue);
   Register output = ToRegister(lir->output());
+  Register temp = ToRegister(lir->temp());
   const LambdaFunctionInfo& info = lir->mir()->info();
 
-  OutOfLineLambdaArrow* ool = new (alloc()) OutOfLineLambdaArrow(lir);
-  addOutOfLineCode(ool, lir->mir());
+  using Fn =
+      JSObject* (*)(JSContext*, HandleFunction, HandleObject, HandleValue);
+  OutOfLineCode* ool = oolCallVM<Fn, LambdaArrow>(
+      lir, ArgList(ImmGCPtr(info.funUnsafe()), envChain, newTarget),
+      StoreRegisterTo(output));
 
   MOZ_ASSERT(!info.useSingletonForClone);
 
   if (info.singletonType) {
     // If the function has a singleton type, this instruction will only be
     // executed once so we don't bother inlining it.
-    masm.jump(ool->entryNoPop());
+    masm.jump(ool->entry());
     masm.bind(ool->rejoin());
     return;
   }
 
-  // There's not enough registers on x86 with the profiler enabled to request
-  // a temp. Instead, spill part of one of the values, being prepared to
-  // restore it if necessary on the out of line path.
-  Register tempReg = newTarget.scratchReg();
-  masm.push(newTarget.scratchReg());
-
   TemplateObject templateObject(info.funUnsafe());
-  masm.createGCObject(output, tempReg, templateObject, gc::DefaultHeap,
+  masm.createGCObject(output, temp, templateObject, gc::DefaultHeap,
                       ool->entry());
-
-  masm.pop(newTarget.scratchReg());
 
   emitLambdaInit(output, envChain, info);
 
@@ -5261,11 +5215,11 @@ void CodeGenerator::emitCallInvokeFunction(T* apply, Register extraStackSize) {
   masm.moveStackPtrTo(objreg);
   masm.Push(extraStackSize);
 
-  pushArg(objreg);                            // argv.
-  pushArg(ToRegister(apply->getArgc()));      // argc.
-  pushArg(Imm32(false));                      // ignoresReturnValue.
-  pushArg(Imm32(false));                      // isConstrucing.
-  pushArg(ToRegister(apply->getFunction()));  // JSFunction*.
+  pushArg(objreg);                                     // argv.
+  pushArg(ToRegister(apply->getArgc()));               // argc.
+  pushArg(Imm32(apply->mir()->ignoresReturnValue()));  // ignoresReturnValue.
+  pushArg(Imm32(false));                               // isConstrucing.
+  pushArg(ToRegister(apply->getFunction()));           // JSFunction*.
 
   // This specialization og callVM restore the extraStackSize after the call.
   using Fn = bool (*)(JSContext*, HandleObject, bool, bool, uint32_t, Value*,
@@ -13890,7 +13844,7 @@ void CodeGenerator::visitFinishBoundFunctionInit(
   {
     // Load the length property of an interpreted function.
     masm.loadPtr(Address(target, JSFunction::offsetOfScript()), temp1);
-    masm.loadPtr(Address(temp1, JSScript::offsetOfScriptData()), temp1);
+    masm.loadPtr(Address(temp1, JSScript::offsetOfSharedData()), temp1);
     masm.loadPtr(Address(temp1, RuntimeScriptData::offsetOfISD()), temp1);
     masm.load16ZeroExtend(
         Address(temp1, ImmutableScriptData::offsetOfFunLength()), temp1);
@@ -13966,20 +13920,26 @@ void CodeGenerator::emitIonToWasmCallBase(LIonToWasmCallBase<NumDefs>* lir) {
   ABIArgGenerator abi;
   for (size_t i = 0; i < lir->numOperands(); i++) {
     MIRType argMir;
-    switch (sig.args()[i].code()) {
+    switch (sig.args()[i].kind()) {
       case wasm::ValType::I32:
       case wasm::ValType::F32:
       case wasm::ValType::F64:
-      case wasm::ValType::AnyRef:
-        // AnyRef is boxed on the JS side, so passed as a pointer here.
         argMir = ToMIRType(sig.args()[i]);
         break;
       case wasm::ValType::I64:
-      case wasm::ValType::Ref:
-      case wasm::ValType::FuncRef:
         MOZ_CRASH("unexpected argument type when calling from ion to wasm");
-      case wasm::ValType::NullRef:
-        MOZ_CRASH("NullRef not expressible");
+      case wasm::ValType::Ref:
+        switch (sig.args()[i].refTypeKind()) {
+          case wasm::RefType::Any:
+            // AnyRef is boxed on the JS side, so passed as a pointer here.
+            argMir = ToMIRType(sig.args()[i]);
+            break;
+          case wasm::RefType::Null:
+          case wasm::RefType::Func:
+          case wasm::RefType::TypeIndex:
+            MOZ_CRASH("unexpected argument type when calling from ion to wasm");
+        }
+        break;
     }
 
     ABIArg arg = abi.next(argMir);
@@ -14020,7 +13980,7 @@ void CodeGenerator::emitIonToWasmCallBase(LIonToWasmCallBase<NumDefs>* lir) {
     MOZ_ASSERT(lir->mir()->type() == MIRType::Value);
   } else {
     MOZ_ASSERT(results.length() == 1, "multi-value return unimplemented");
-    switch (results[0].code()) {
+    switch (results[0].kind()) {
       case wasm::ValType::I32:
         MOZ_ASSERT(lir->mir()->type() == MIRType::Int32);
         MOZ_ASSERT(ToRegister(lir->output()) == ReturnReg);
@@ -14033,18 +13993,23 @@ void CodeGenerator::emitIonToWasmCallBase(LIonToWasmCallBase<NumDefs>* lir) {
         MOZ_ASSERT(lir->mir()->type() == MIRType::Double);
         MOZ_ASSERT(ToFloatRegister(lir->output()) == ReturnDoubleReg);
         break;
-      case wasm::ValType::AnyRef:
-      case wasm::ValType::FuncRef:
-        // The wasm stubs layer unboxes anything that needs to be unboxed and
-        // leaves it in a Value.  A FuncRef we could in principle leave as a raw
-        // object pointer but for now it complicates the API to do so.
-        MOZ_ASSERT(lir->mir()->type() == MIRType::Value);
-        break;
-      case wasm::ValType::Ref:
       case wasm::ValType::I64:
         MOZ_CRASH("unexpected return type when calling from ion to wasm");
-      case wasm::ValType::NullRef:
-        MOZ_CRASH("NullRef not expressible");
+      case wasm::ValType::Ref:
+        switch (results[0].refTypeKind()) {
+          case wasm::RefType::Any:
+          case wasm::RefType::Func:
+          case wasm::RefType::Null:
+            // The wasm stubs layer unboxes anything that needs to be unboxed
+            // and leaves it in a Value.  A FuncRef we could in principle leave
+            // as a raw object pointer but for now it complicates the API to do
+            // so.
+            MOZ_ASSERT(lir->mir()->type() == MIRType::Value);
+            break;
+          case wasm::RefType::TypeIndex:
+            MOZ_CRASH("unexpected return type when calling from ion to wasm");
+        }
+        break;
     }
   }
 

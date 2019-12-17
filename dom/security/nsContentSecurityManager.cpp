@@ -287,7 +287,7 @@ static nsresult DoCheckLoadURIChecks(nsIURI* aURI, nsILoadInfo* aLoadInfo) {
     RefPtr<Document> doc;
     aLoadInfo->GetLoadingDocument(getter_AddRefs(doc));
     return nsContentUtils::PrincipalAllowsL10n(
-               aLoadInfo->TriggeringPrincipal(),
+               *aLoadInfo->TriggeringPrincipal(),
                doc ? doc->GetDocumentURI() : nullptr)
                ? NS_OK
                : NS_ERROR_DOM_BAD_URI;
@@ -309,7 +309,8 @@ static nsresult DoCheckLoadURIChecks(nsIURI* aURI, nsILoadInfo* aLoadInfo) {
   // the LoadingPrincipal when SEC_ALLOW_CROSS_ORIGIN_* security flags are set,
   // to allow, e.g. user stylesheets to load chrome:// URIs.
   return nsContentUtils::GetSecurityManager()->CheckLoadURIWithPrincipal(
-      aLoadInfo->TriggeringPrincipal(), aURI, aLoadInfo->CheckLoadURIFlags());
+      aLoadInfo->TriggeringPrincipal(), aURI, aLoadInfo->CheckLoadURIFlags(),
+      aLoadInfo->GetInnerWindowID());
 }
 
 static bool URIHasFlags(nsIURI* aURI, uint32_t aURIFlags) {
@@ -329,7 +330,11 @@ static nsresult DoSOPChecks(nsIURI* aURI, nsILoadInfo* aLoadInfo,
     return DoCheckLoadURIChecks(aURI, aLoadInfo);
   }
 
-  NS_ENSURE_FALSE(NS_HasBeenCrossOrigin(aChannel, true), NS_ERROR_DOM_BAD_URI);
+  if (NS_HasBeenCrossOrigin(aChannel, true)) {
+    NS_SetRequestBlockingReason(aLoadInfo,
+                                nsILoadInfo::BLOCKING_REASON_NOT_SAME_ORIGIN);
+    return NS_ERROR_DOM_BAD_URI;
+  }
 
   return NS_OK;
 }
@@ -955,7 +960,7 @@ nsContentSecurityManager::AsyncOnChannelRedirect(
       nsIScriptSecurityManager::LOAD_IS_AUTOMATIC_DOCUMENT_REPLACEMENT |
       nsIScriptSecurityManager::DISALLOW_SCRIPT;
   rv = nsContentUtils::GetSecurityManager()->CheckLoadURIWithPrincipal(
-      oldPrincipal, newURI, flags);
+      oldPrincipal, newURI, flags, loadInfo->GetInnerWindowID());
   NS_ENSURE_SUCCESS(rv, rv);
 
   aCb->OnRedirectVerifyCallback(NS_OK);
@@ -987,9 +992,9 @@ nsresult nsContentSecurityManager::CheckChannel(nsIChannel* aChannel) {
                nsIContentPolicy::TYPE_DOCUMENT);
     nsIPrincipal* loadingPrincipal = loadInfo->LoadingPrincipal();
 
-    // It doesn't matter what we pass for the third, data-inherits, argument.
+    // It doesn't matter what we pass for the second, data-inherits, argument.
     // Any protocol which inherits won't pay attention to cookies anyway.
-    rv = loadingPrincipal->CheckMayLoad(uri, false, false);
+    rv = loadingPrincipal->CheckMayLoad(uri, false);
     if (NS_FAILED(rv)) {
       AddLoadFlags(aChannel, nsIRequest::LOAD_ANONYMOUS);
     }

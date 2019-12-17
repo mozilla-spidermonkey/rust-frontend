@@ -320,16 +320,15 @@ pref("browser.urlbar.usepreloadedtopurls.expire_days", 14);
 #ifdef NIGHTLY_BUILD
   // Whether the quantum bar displays design update 1.
   pref("browser.urlbar.update1", true);
-  // Whether we expand the font size when when the urlbar is
-  // focused in design update 1.
-  pref("browser.urlbar.update1.expandTextOnFocus", true);
   // Whether the urlbar should strip https from urls in the view.
   pref("browser.urlbar.update1.view.stripHttps", true);
 #else
   pref("browser.urlbar.update1", false);
-  pref("browser.urlbar.update1.expandTextOnFocus", false);
   pref("browser.urlbar.update1.view.stripHttps", false);
 #endif
+// Whether we expand the font size when when the urlbar is
+// focused in design update 1.
+pref("browser.urlbar.update1.expandTextOnFocus", false);
 
 pref("browser.urlbar.openViewOnFocus", false);
 pref("browser.urlbar.eventTelemetry.enabled", false);
@@ -402,28 +401,17 @@ pref("permissions.manager.defaultsUrl", "resource://app/defaults/permissions");
 pref("permissions.default.camera", 0);
 pref("permissions.default.microphone", 0);
 pref("permissions.default.geo", 0);
+pref("permissions.default.xr", 0);
 pref("permissions.default.desktop-notification", 0);
 pref("permissions.default.shortcuts", 0);
 
+pref("permissions.delegation.enabled", true);
 pref("permissions.desktop-notification.postPrompt.enabled", true);
 pref("permissions.desktop-notification.notNow.enabled", false);
 
 pref("permissions.fullscreen.allowed", false);
 
 pref("permissions.postPrompt.animate", true);
-
-// This is primarily meant to be enabled for studies.
-#ifdef NIGHTLY_BUILD
-  pref("permissions.eventTelemetry.enabled", true);
-#else
-  pref("permissions.eventTelemetry.enabled", false);
-#endif
-
-#ifdef NIGHTLY_BUILD
-  pref("permissions.delegation.enabled", true);
-#else
-  pref("permissions.delegation.enabled", false);
-#endif
 
 // handle links targeting new windows
 // 1=current window/tab, 2=new window, 3=new tab in most recent window
@@ -516,14 +504,6 @@ pref("security.allow_eval_with_system_principal", false);
 pref("security.allow_eval_in_parent_process", false);
 
 pref("security.allow_parent_unrestricted_js_loads", false);
-
-#ifdef NIGHTLY_BUILD
-  pref("browser.tabs.remote.useHTTPResponseProcessSelection", true);
-#else
-  // Disabled outside of nightly due to bug 1554217
-  pref("browser.tabs.remote.useHTTPResponseProcessSelection", false);
-#endif
-
 
 // Unload tabs when available memory is running low
 pref("browser.tabs.unloadOnLowMemory", false);
@@ -831,6 +811,7 @@ pref("gecko.handlerService.schemes.ircs.3.name", "chrome://browser-region/locale
 pref("gecko.handlerService.schemes.ircs.3.uriTemplate", "chrome://browser-region/locale/region.properties");
 
 pref("browser.geolocation.warning.infoURL", "https://www.mozilla.org/%LOCALE%/firefox/geolocation/");
+pref("browser.xr.warning.infoURL", "https://www.mozilla.org/%LOCALE%/firefox/xr/");
 
 pref("browser.sessionstore.resume_from_crash", true);
 pref("browser.sessionstore.resume_session_once", false);
@@ -1322,8 +1303,6 @@ pref("trailhead.firstrun.branches", "");
 
 // The pref that controls if the What's New panel is enabled.
 pref("browser.messaging-system.whatsNewPanel.enabled", true);
-// Whether to use Messaging System to add a badge to the FxA toolbar button
-pref("browser.messaging-system.fxatoolbarbadge.enabled", true);
 // Used for CFR messages with scores. See Bug 1594422.
 pref("browser.messaging-system.personalized-cfr.scores", "{}");
 pref("browser.messaging-system.personalized-cfr.score-threshold", 5000);
@@ -1724,11 +1703,7 @@ pref("view_source.tab", true);
 
 pref("dom.serviceWorkers.enabled", true);
 
-#ifdef NIGHTLY_BUILD
-  pref("dom.security.featurePolicy.enabled", true);
-#else
-  pref("dom.security.featurePolicy.enabled", false);
-#endif
+pref("dom.security.featurePolicy.enabled", true);
 
 // Enable Push API.
 pref("dom.push.enabled", true);
@@ -1760,17 +1735,10 @@ pref("extensions.pocket.enabled", true);
 pref("extensions.pocket.oAuthConsumerKey", "40249-e88c401e1b1f2242d9e441c4");
 pref("extensions.pocket.site", "getpocket.com");
 
-pref("signon.generation.available", true);
-pref("signon.generation.enabled", true);
-pref("signon.schemeUpgrades", true);
-pref("signon.privateBrowsingCapture.enabled", true);
-pref("signon.showAutoCompleteFooter", true);
 pref("signon.management.page.enabled", true);
 pref("signon.management.page.breach-alerts.enabled", true);
 pref("signon.management.page.sort", "name");
 pref("signon.management.overrideURI", "about:logins?filter=%DOMAIN%");
-pref("signon.showAutoCompleteOrigins", true);
-pref("signon.includeOtherSubdomainsInLookup", true);
 // The utm_creative value is appended within the code (specific to the location on
 // where it is clicked). Be sure that if these two prefs are updated, that
 // the utm_creative param be last.
@@ -1864,6 +1832,8 @@ pref("app.normandy.first_run", true);
 pref("app.normandy.logging.level", 50); // Warn
 pref("app.normandy.run_interval_seconds", 21600); // 6 hours
 pref("app.normandy.shieldLearnMoreUrl", "https://support.mozilla.org/1/firefox/%VERSION%/%OS%/%LOCALE%/shield");
+pref("app.normandy.last_seen_buildid", "");
+pref("app.normandy.onsync_skew_sec", 600);
 #ifdef MOZ_DATA_REPORTING
   pref("app.shield.optoutstudies.enabled", true);
 #else
@@ -2088,37 +2058,6 @@ pref("devtools.performance.ui.enable-memory-flame", false);
   pref("devtools.performance.ui.experimental", false);
 #endif
 
-// Preferences for the new performance panel.
-// This pref configures the base URL for the profiler.firefox.com instance to
-// use. This is useful so that a developer can change it while working on
-// profiler.firefox.com, or in tests. This isn't exposed directly to the user.
-pref("devtools.performance.recording.ui-base-url", "https://profiler.firefox.com");
-
-// Profiler buffer size. It is the maximum number of 8-bytes entries in the
-// profiler's buffer. 10000000 is ~80mb.
-pref("devtools.performance.recording.entries", 10000000);
-// Profiler interval in microseconds. 1000µs is 1ms
-pref("devtools.performance.recording.interval", 1000);
-// Profiler duration of entries in the profiler's buffer in seconds.
-// `0` means no time limit for the markers, they roll off naturally from the
-// circular buffer.
-pref("devtools.performance.recording.duration", 0);
-// Profiler feature set. See tools/profiler/core/platform.cpp for features and
-// explanations.
-#if defined(__ANDROID__)
-  // If it's android, add "java" feature as well. Other features must be same
-  // with else branch. Please update both of them.
-  pref("devtools.performance.recording.features", "[\"js\",\"leaf\",\"stackwalk\",\"java\"]");
-#else
-  // Please update the if branch as well if you upadate this.
-  pref("devtools.performance.recording.features", "[\"js\",\"leaf\",\"stackwalk\"]");
-#endif
-pref("devtools.performance.recording.threads", "[\"GeckoMain\",\"Compositor\",\"Renderer\"]");
-// A JSON array of strings, where each string is a file path to an objdir on
-// the host machine. This is used in order to look up symbol information from
-// build artifacts of local builds.
-pref("devtools.performance.recording.objdirs", "[]");
-
 // The default cache UI setting
 pref("devtools.cache.disabled", false);
 
@@ -2202,6 +2141,10 @@ pref("devtools.webconsole.filter.netxhr", false);
 
 // Webconsole autocomplete preference
 pref("devtools.webconsole.input.autocomplete",true);
+
+// Set to true to eagerly show the results of webconsole terminal evaluations
+// when they don't have side effects.
+pref("devtools.webconsole.input.eagerEvaluation", false);
 
 // Browser console filters
 pref("devtools.browserconsole.filter.error", true);

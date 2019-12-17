@@ -187,6 +187,7 @@
 #include "mozilla/dom/VRDisplayEvent.h"
 #include "mozilla/dom/VRDisplayEventBinding.h"
 #include "mozilla/dom/VREventObserver.h"
+#include "mozilla/dom/XRPermissionRequest.h"
 
 #include "nsRefreshDriver.h"
 #include "Layers.h"
@@ -330,6 +331,7 @@ static nsGlobalWindowOuter* GetOuterWindowForForwarding(
 #define MAX_REPORT_RECORDS 100
 
 static LazyLogModule gDOMLeakPRLogInner("DOMLeakInner");
+extern mozilla::LazyLogModule gTimeoutLog;
 
 #ifdef DEBUG
 static LazyLogModule gDocShellAndDOMWindowLeakLogging(
@@ -839,6 +841,9 @@ nsGlobalWindowInner::nsGlobalWindowInner(nsGlobalWindowOuter* aOuterWindow,
       mHasGamepad(false),
       mHasVREvents(false),
       mHasVRDisplayActivateEvents(false),
+      mXRPermissionRequestInFlight(false),
+      mXRPermissionGranted(false),
+      mWasCurrentInnerWindow(false),
       mHasSeenGamepadInput(false),
       mSuspendDepth(0),
       mFreezeDepth(0),
@@ -1139,6 +1144,8 @@ void nsGlobalWindowInner::FreeInnerObjects() {
   DisableVRUpdates();
   mHasVREvents = false;
   mHasVRDisplayActivateEvents = false;
+  mXRPermissionRequestInFlight = false;
+  mXRPermissionGranted = false;
   mVRDisplays.Clear();
 
   // This breaks a cycle between the window and the ClientSource object.
@@ -2522,19 +2529,13 @@ bool nsPIDOMWindowInner::IsCurrentInnerWindow() const {
   auto* bc = GetBrowsingContext();
   MOZ_ASSERT(bc);
 
-  nsPIDOMWindowOuter* outer;
-  // When a BC is discarded, it stops returning outer windows altogether. That
-  // doesn't work for this check, since we still want current inner window to be
-  // treated as current after that point. Simply falling back to `mOuterWindow`
-  // here isn't ideal, since it will start returning true for inner windows
-  // which were current before a remoteness switch once a BrowsingContext has
-  // been discarded, but it's not incorrect in a way which should cause
-  // significant issues.
-  if (!bc->IsDiscarded()) {
-    outer = bc->GetDOMWindow();
-  } else {
-    outer = mOuterWindow;
+  if (bc->IsDiscarded()) {
+    // If our BrowsingContext has been discarded, we consider ourselves
+    // still-current if we were current at the time it was discarded.
+    return mOuterWindow && WasCurrentInnerWindow();
   }
+
+  nsPIDOMWindowOuter* outer = bc->GetDOMWindow();
   return outer && outer->GetCurrentInnerWindow() == this;
 }
 
@@ -2546,6 +2547,9 @@ void nsPIDOMWindowInner::SetAudioCapture(bool aCapture) {
 }
 
 void nsGlobalWindowInner::SetActiveLoadingState(bool aIsLoading) {
+  MOZ_LOG(
+      gTimeoutLog, mozilla::LogLevel::Debug,
+      ("SetActiveLoadingState innerwindow %p: %d", (void*)this, aIsLoading));
   if (GetBrowsingContext()) {
     GetBrowsingContext()->SetLoading(aIsLoading);
   }
@@ -4314,9 +4318,9 @@ already_AddRefed<nsICSSDeclaration> nsGlobalWindowInner::GetComputedStyleHelper(
 
 Storage* nsGlobalWindowInner::GetSessionStorage(ErrorResult& aError) {
   nsIPrincipal* principal = GetPrincipal();
-  nsIDocShell* docShell = GetDocShell();
+  BrowsingContext* browsingContext = GetBrowsingContext();
 
-  if (!principal || !docShell || !Storage::StoragePrefIsEnabled()) {
+  if (!principal || !browsingContext || !Storage::StoragePrefIsEnabled()) {
     return nullptr;
   }
 
@@ -4396,12 +4400,10 @@ Storage* nsGlobalWindowInner::GetSessionStorage(ErrorResult& aError) {
       return nullptr;
     }
 
-    nsresult rv;
-
-    nsCOMPtr<nsIDOMStorageManager> storageManager =
-        do_QueryInterface(docShell, &rv);
-    if (NS_FAILED(rv)) {
-      aError.Throw(rv);
+    const RefPtr<SessionStorageManager> storageManager =
+        browsingContext->GetSessionStorageManager();
+    if (!storageManager) {
+      aError.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
       return nullptr;
     }
 
@@ -4989,9 +4991,8 @@ void nsGlobalWindowInner::ObserveStorageNotification(
 
     bool check = false;
 
-    nsCOMPtr<nsIDOMStorageManager> storageManager =
-        do_QueryInterface(GetDocShell());
-    if (storageManager) {
+    if (const RefPtr<SessionStorageManager> storageManager =
+            GetBrowsingContext()->GetSessionStorageManager()) {
       nsresult rv =
           storageManager->CheckStorage(principal, changingStorage, &check);
       if (NS_FAILED(rv)) {
@@ -6017,13 +6018,48 @@ void nsGlobalWindowInner::SetHasGamepadEventListener(
   }
 }
 
+void nsGlobalWindowInner::RequestXRPermission() {
+  if (mXRPermissionGranted) {
+    // Don't prompt redundantly once permission to
+    // access XR devices has been granted.
+    OnXRPermissionRequestAllow();
+    return;
+  }
+  if (mXRPermissionRequestInFlight) {
+    // Don't allow multiple simultaneous permissions requests;
+    return;
+  }
+  mXRPermissionRequestInFlight = true;
+  RefPtr<XRPermissionRequest> request =
+      new XRPermissionRequest(this, WindowID());
+  Unused << NS_WARN_IF(NS_FAILED(request->Start()));
+}
+
+void nsGlobalWindowInner::OnXRPermissionRequestAllow() {
+  mXRPermissionRequestInFlight = false;
+  mXRPermissionGranted = true;
+
+  NotifyVREventListenerAdded();
+
+  dom::Navigator* nav = Navigator();
+  MOZ_ASSERT(nav != nullptr);
+  nav->OnXRPermissionRequestAllow();
+}
+
+void nsGlobalWindowInner::OnXRPermissionRequestCancel() {
+  mXRPermissionRequestInFlight = false;
+  dom::Navigator* nav = Navigator();
+  MOZ_ASSERT(nav != nullptr);
+  nav->OnXRPermissionRequestCancel();
+}
+
 void nsGlobalWindowInner::EventListenerAdded(nsAtom* aType) {
   if (aType == nsGkAtoms::onvrdisplayactivate ||
       aType == nsGkAtoms::onvrdisplayconnect ||
       aType == nsGkAtoms::onvrdisplaydeactivate ||
       aType == nsGkAtoms::onvrdisplaydisconnect ||
       aType == nsGkAtoms::onvrdisplaypresentchange) {
-    NotifyVREventListenerAdded();
+    RequestXRPermission();
   }
 
   if (aType == nsGkAtoms::onvrdisplayactivate) {

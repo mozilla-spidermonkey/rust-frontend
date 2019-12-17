@@ -2607,6 +2607,10 @@ var SessionStoreInternal = {
   // Examine the channel response to see if we should change the process
   // performing the given load. aRequestor implements nsIProcessSwitchRequestor
   onMayChangeProcess(aRequestor) {
+    if (!E10SUtils.documentChannel()) {
+      throw new Error("This code is only used by document channel");
+    }
+
     let switchRequestor;
     try {
       switchRequestor = aRequestor.QueryInterface(Ci.nsIProcessSwitchRequestor);
@@ -2645,21 +2649,9 @@ var SessionStoreInternal = {
 
     let topDocShell = topBC.embedderElement.ownerGlobal.docShell;
     let { useRemoteSubframes } = topDocShell.QueryInterface(Ci.nsILoadContext);
-    if (!useRemoteSubframes) {
-      if (
-        !E10SUtils.useHttpResponseProcessSelection() &&
-        !E10SUtils.useCrossOriginOpenerPolicy()
-      ) {
-        debug(
-          `[process-switch]: response process selection disabled - ignoring`
-        );
-        return;
-      }
-
-      if (cp != Ci.nsIContentPolicy.TYPE_DOCUMENT) {
-        debug(`[process-switch]: remote subframes disabled - ignoring`);
-        return;
-      }
+    if (!useRemoteSubframes && cp != Ci.nsIContentPolicy.TYPE_DOCUMENT) {
+      debug(`[process-switch]: remote subframes disabled - ignoring`);
+      return;
     }
 
     // Get principal for a document already loaded in the BrowsingContext.

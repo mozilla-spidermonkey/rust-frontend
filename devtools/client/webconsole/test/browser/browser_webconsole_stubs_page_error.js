@@ -64,9 +64,9 @@ add_task(async function() {
 async function generatePageErrorStubs() {
   const stubs = new Map();
   const toolbox = await openNewTabAndToolbox(TEST_URI, "webconsole");
-
+  const webConsoleFront = await toolbox.target.getFront("console");
   for (const [key, code] of getCommands()) {
-    const onPageError = toolbox.target.activeConsole.once("pageError");
+    const onPageError = webConsoleFront.once("pageError");
 
     // On e10s, the exception is triggered in child process
     // and is ignored by test harness
@@ -75,6 +75,8 @@ async function generatePageErrorStubs() {
       expectUncaughtException();
     }
 
+    // Note: This needs to use ContentTask rather than SpecialPowers.spawn
+    // because the latter includes cross-process stack information.
     await ContentTask.spawn(gBrowser.selectedBrowser, code, function(subCode) {
       const script = content.document.createElement("script");
       script.append(content.document.createTextNode(subCode));

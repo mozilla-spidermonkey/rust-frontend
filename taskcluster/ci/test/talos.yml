@@ -12,6 +12,7 @@ job-defaults:
             linux64-ccov/.*: 3
             default: default
     variants: ['fission']
+    fission-tier: 2
     virtualization:
         by-test-platform:
             windows10-64-ccov/.*: virtual
@@ -412,7 +413,6 @@ talos-motionmark-profiling:
     description: "Talos motionmark with gecko profiling"
     try-name: motionmark-prof
     treeherder-symbol: T-Prof(mm)
-    tier: 2
     run-on-projects: ['mozilla-central', 'try']
     max-run-time: 3600
     tier:

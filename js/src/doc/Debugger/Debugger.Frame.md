@@ -181,7 +181,7 @@ A string describing what sort of frame this is:
 * `"debugger"`: a frame for a call to user code invoked by the debugger
   (see the `eval` method below).
 
-Accessing this property will throw if `.onStack == false`.
+Accessing this property will throw if `.terminated == true`.
 
 ### `implementation`
 A string describing which tier of the JavaScript engine this frame is
@@ -201,19 +201,14 @@ Accessing this property will throw if `.onStack == false`.
 The value of `this` for this frame (a debuggee value). For a `wasmcall`
 frame, this property throws a `TypeError`.
 
-Accessing this property will throw if `.onStack == false`.
+Accessing this property will throw if `.terminated == true`.
 
 ### `older`
 The next-older visible frame, in which control will resume when this
-frame completes. If there is no older frame, this is `null`.
+frame completes. If there is no older frame, this is `null`. If this frame is
+a suspended generator or async call, this will also be `null`.
 
-Accessing this property will throw if `.onStack == false`.
-
-### `depth`
-The depth of this frame, counting from oldest to youngest; the oldest
-frame has a depth of zero.
-
-Accessing this property will throw if `.onStack == false`.
+Accessing this property will throw if `.terminated == true`.
 
 ### `onStack`
 True if the frame this `Debugger.Frame` instance refers to is still on
@@ -253,7 +248,7 @@ The lexical environment within which evaluation is taking place (a
 that do not represent the evaluation of debuggee code, like calls
 non-debuggee functions, host functions or `"debugger"` frames.
 
-Accessing this property will throw if `.onStack == false`.
+Accessing this property will throw if `.terminated == true`.
 
 ### `callee`
 The function whose application created this frame, as a debuggee value,
@@ -261,16 +256,11 @@ or `null` if this is not a `"call"` frame.
 
 Accessing this property will throw if `.terminated == true`.
 
-### `generator`
-True if this frame is a generator frame, false otherwise.
-
-Accessing this property will throw if `.onStack == false`.
-
 ### `constructing`
 True if this frame is for a function called as a constructor, false
 otherwise.
 
-Accessing this property will throw if `.onStack == false`.
+Accessing this property will throw if `.terminated == true`.
 
 ### `arguments`
 The arguments passed to the current frame, or `null` if this is not a

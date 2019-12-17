@@ -822,7 +822,13 @@ static Maybe<TransformData> CreateAnimationData(
   if (aFrame->HasAnyStateBits(NS_FRAME_SVG_LAYOUT) &&
       aFrame->StyleDisplay()->mTransformBox != StyleGeometryBox::ViewBox &&
       aFrame->StyleDisplay()->mTransformBox != StyleGeometryBox::BorderBox) {
-    framePosition = CSSPoint::FromAppUnits(aFrame->GetPosition());
+    if (aFrame->IsFrameOfType(nsIFrame::eSVGContainer)) {
+      nsRect boxRect = nsLayoutUtils::ComputeGeometryBox(
+          const_cast<nsIFrame*>(aFrame), StyleGeometryBox::FillBox);
+      framePosition = CSSPoint::FromAppUnits(nsPoint{boxRect.x, boxRect.y});
+    } else {
+      framePosition = CSSPoint::FromAppUnits(aFrame->GetPosition());
+    }
   }
 
   return Some(TransformData(origin, offsetToTransformOrigin, motionPathOrigin,
@@ -2918,11 +2924,10 @@ bool nsDisplayList::ComputeVisibilityForSublist(
   return anyVisible;
 }
 
-static bool TriggerPendingAnimationsOnSubDocuments(Document* aDocument,
+static bool TriggerPendingAnimationsOnSubDocuments(Document& aDoc,
                                                    void* aReadyTime) {
-  PendingAnimationTracker* tracker = aDocument->GetPendingAnimationTracker();
-  if (tracker) {
-    PresShell* presShell = aDocument->GetPresShell();
+  if (PendingAnimationTracker* tracker = aDoc.GetPendingAnimationTracker()) {
+    PresShell* presShell = aDoc.GetPresShell();
     // If paint-suppression is in effect then we haven't finished painting
     // this document yet so we shouldn't start animations
     if (!presShell || !presShell->IsPaintingSuppressed()) {
@@ -2930,12 +2935,12 @@ static bool TriggerPendingAnimationsOnSubDocuments(Document* aDocument,
       tracker->TriggerPendingAnimationsOnNextTick(readyTime);
     }
   }
-  aDocument->EnumerateSubDocuments(TriggerPendingAnimationsOnSubDocuments,
-                                   aReadyTime);
+  aDoc.EnumerateSubDocuments(TriggerPendingAnimationsOnSubDocuments,
+                             aReadyTime);
   return true;
 }
 
-static void TriggerPendingAnimations(Document* aDocument,
+static void TriggerPendingAnimations(Document& aDocument,
                                      const TimeStamp& aReadyTime) {
   MOZ_ASSERT(!aReadyTime.IsNull(),
              "Animation ready time is not set. Perhaps we're using a layer"
@@ -3180,7 +3185,8 @@ already_AddRefed<LayerManager> nsDisplayList::PaintRoot(
 
     aBuilder->SetIsCompositingCheap(prevIsCompositingCheap);
     if (document && widgetTransaction) {
-      TriggerPendingAnimations(document, layerManager->GetAnimationReadyTime());
+      TriggerPendingAnimations(*document,
+                               layerManager->GetAnimationReadyTime());
     }
 
     if (presContext->RefreshDriver()->HasScheduleFlush()) {
@@ -3280,7 +3286,7 @@ already_AddRefed<LayerManager> nsDisplayList::PaintRoot(
   aBuilder->SetIsCompositingCheap(temp);
 
   if (document && widgetTransaction) {
-    TriggerPendingAnimations(document, layerManager->GetAnimationReadyTime());
+    TriggerPendingAnimations(*document, layerManager->GetAnimationReadyTime());
   }
 
   nsIntRegion invalid;
@@ -3341,7 +3347,7 @@ void nsDisplayList::DeleteAll(nsDisplayListBuilder* aBuilder) {
 }
 
 static bool IsFrameReceivingPointerEvents(nsIFrame* aFrame) {
-  return NS_STYLE_POINTER_EVENTS_NONE !=
+  return StylePointerEvents::None !=
          aFrame->StyleUI()->GetEffectivePointerEvents(aFrame);
 }
 
@@ -7004,10 +7010,10 @@ bool nsDisplayOwnLayer::CreateWebRenderCommands(
   params.clip =
       wr::WrStackingContextClip::ClipChain(aBuilder.CurrentClipChainId());
   if (IsScrollbarContainer()) {
-    params.prim_flags |= wr::PrimitiveFlags_IS_SCROLLBAR_CONTAINER;
+    params.prim_flags |= wr::PrimitiveFlags::IS_SCROLLBAR_CONTAINER;
   }
   if (IsScrollThumbLayer()) {
-    params.prim_flags |= wr::PrimitiveFlags_IS_SCROLLBAR_THUMB;
+    params.prim_flags |= wr::PrimitiveFlags::IS_SCROLLBAR_THUMB;
   }
   StackingContextHelper sc(aSc, GetActiveScrolledRoot(), mFrame, this, aBuilder,
                            params);
@@ -8701,7 +8707,7 @@ bool nsDisplayTransform::CreateWebRenderCommands(
   params.animation = animationsId ? &prop : nullptr;
   params.mTransformPtr = transformForSC;
   params.prim_flags = !BackfaceIsHidden()
-                          ? wr::PrimitiveFlags_IS_BACKFACE_VISIBLE
+                          ? wr::PrimitiveFlags::IS_BACKFACE_VISIBLE
                           : wr::PrimitiveFlags{0};
   params.mDeferredTransformItem = deferredTransformItem;
   params.mAnimated = animated;
@@ -9406,7 +9412,7 @@ bool nsDisplayPerspective::CreateWebRenderCommands(
   params.mTransformPtr = &perspectiveMatrix;
   params.reference_frame_kind = wr::WrReferenceFrameKind::Perspective;
   params.prim_flags = !BackfaceIsHidden()
-                          ? wr::PrimitiveFlags_IS_BACKFACE_VISIBLE
+                          ? wr::PrimitiveFlags::IS_BACKFACE_VISIBLE
                           : wr::PrimitiveFlags{0};
   params.SetPreserve3D(preserve3D);
   params.clip =

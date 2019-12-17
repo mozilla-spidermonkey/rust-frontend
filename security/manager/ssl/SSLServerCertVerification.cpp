@@ -710,6 +710,7 @@ void GatherBaselineRequirementsTelemetry(const UniqueCERTCertList& certList) {
       // According to DNS.h, this includes space for the null-terminator
       char buf[net::kNetAddrMaxCStrBufSize] = {0};
       PRNetAddr addr;
+      memset(&addr, 0, sizeof(addr));
       if (currentName->name.other.len == 4) {
         addr.inet.family = PR_AF_INET;
         memcpy(&addr.inet.ip, currentName->name.other.data,
@@ -1015,7 +1016,7 @@ static void CollectCertTelemetry(
     const PinningTelemetryInfo& aPinningTelemetryInfo,
     const UniqueCERTCertList& aBuiltCertChain,
     const CertificateTransparencyInfo& aCertificateTransparencyInfo,
-    CRLiteTelemetryInfo crliteTelemetryInfo) {
+    const CRLiteTelemetryInfo& aCRLiteTelemetryInfo) {
   uint32_t evStatus = (aCertVerificationResult != Success)
                           ? 0  // 0 = Failure
                           : (aEvOidPolicy == SEC_OID_UNKNOWN) ? 1   // 1 = DV
@@ -1055,36 +1056,49 @@ static void CollectCertTelemetry(
         /*isEV*/ aEvOidPolicy != SEC_OID_UNKNOWN, aCertificateTransparencyInfo);
   }
 
-  switch (crliteTelemetryInfo) {
-    case CRLiteTelemetryInfo::FilterNotAvailable:
+  switch (aCRLiteTelemetryInfo.mLookupResult) {
+    case CRLiteLookupResult::FilterNotAvailable:
       Telemetry::AccumulateCategorical(
           Telemetry::LABELS_CRLITE_RESULT::FilterNotAvailable);
       break;
-    case CRLiteTelemetryInfo::IssuerNotEnrolled:
+    case CRLiteLookupResult::IssuerNotEnrolled:
       Telemetry::AccumulateCategorical(
           Telemetry::LABELS_CRLITE_RESULT::IssuerNotEnrolled);
       break;
-    case CRLiteTelemetryInfo::CertificateTooNew:
+    case CRLiteLookupResult::CertificateTooNew:
       Telemetry::AccumulateCategorical(
           Telemetry::LABELS_CRLITE_RESULT::CertificateTooNew);
       break;
-    case CRLiteTelemetryInfo::CertificateValid:
+    case CRLiteLookupResult::CertificateValid:
       Telemetry::AccumulateCategorical(
           Telemetry::LABELS_CRLITE_RESULT::CertificateValid);
       break;
-    case CRLiteTelemetryInfo::CertificateRevoked:
+    case CRLiteLookupResult::CertificateRevoked:
       Telemetry::AccumulateCategorical(
           Telemetry::LABELS_CRLITE_RESULT::CertificateRevoked);
       break;
-    case CRLiteTelemetryInfo::LibraryFailure:
+    case CRLiteLookupResult::LibraryFailure:
       Telemetry::AccumulateCategorical(
           Telemetry::LABELS_CRLITE_RESULT::LibraryFailure);
       break;
-    case CRLiteTelemetryInfo::NeverChecked:
+    case CRLiteLookupResult::NeverChecked:
       break;
     default:
-      MOZ_ASSERT_UNREACHABLE("Unhandled CRLiteTelemetryInfo value?");
+      MOZ_ASSERT_UNREACHABLE("Unhandled CRLiteLookupResult value?");
       break;
+  }
+
+  if (aCRLiteTelemetryInfo.mCRLiteFasterThanOCSPMillis.isSome()) {
+    Telemetry::Accumulate(
+        Telemetry::CRLITE_FASTER_THAN_OCSP_MS,
+        static_cast<uint32_t>(
+            *aCRLiteTelemetryInfo.mCRLiteFasterThanOCSPMillis));
+  }
+  if (aCRLiteTelemetryInfo.mOCSPFasterThanCRLiteMillis.isSome()) {
+    Telemetry::Accumulate(
+        Telemetry::OCSP_FASTER_THAN_CRLITE_MS,
+        static_cast<uint32_t>(
+            *aCRLiteTelemetryInfo.mOCSPFasterThanCRLiteMillis));
   }
 }
 
@@ -1149,7 +1163,7 @@ Result AuthCertificate(CertVerifier& certVerifier,
   SHA1ModeResult sha1ModeResult = SHA1ModeResult::NeverChecked;
   PinningTelemetryInfo pinningTelemetryInfo;
   CertificateTransparencyInfo certificateTransparencyInfo;
-  CRLiteTelemetryInfo crliteTelemetryInfo = CRLiteTelemetryInfo::NeverChecked;
+  CRLiteTelemetryInfo crliteTelemetryInfo;
 
   nsTArray<nsTArray<uint8_t>> peerCertsBytes;
   for (CERTCertListNode* n = CERT_LIST_HEAD(peerCertChain);

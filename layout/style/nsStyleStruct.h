@@ -1105,9 +1105,9 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleTextReset {
   // Note the difference between this and
   // ComputedStyle::HasTextDecorationLines.
   bool HasTextDecorationLines() const {
-    return mTextDecorationLine != mozilla::StyleTextDecorationLine_NONE &&
+    return mTextDecorationLine != mozilla::StyleTextDecorationLine::NONE &&
            mTextDecorationLine !=
-               mozilla::StyleTextDecorationLine_COLOR_OVERRIDE;
+               mozilla::StyleTextDecorationLine::COLOR_OVERRIDE;
   }
 
   nsChangeHint CalcDifference(const nsStyleTextReset& aNewData) const;
@@ -1267,18 +1267,20 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleVisibility {
   nsChangeHint CalcDifference(const nsStyleVisibility& aNewData) const;
 
   mozilla::StyleImageOrientation mImageOrientation;
-  uint8_t mDirection;       // NS_STYLE_DIRECTION_*
-  uint8_t mVisible;         // NS_STYLE_VISIBILITY_VISIBLE_*
+  uint8_t mDirection;  // NS_STYLE_DIRECTION_*
+  mozilla::StyleVisibility mVisible;
   uint8_t mImageRendering;  // NS_STYLE_IMAGE_RENDERING_*
   uint8_t mWritingMode;     // NS_STYLE_WRITING_MODE_*
   mozilla::StyleTextOrientation mTextOrientation;
   mozilla::StyleColorAdjust mColorAdjust;
 
-  bool IsVisible() const { return (mVisible == NS_STYLE_VISIBILITY_VISIBLE); }
+  bool IsVisible() const {
+    return mVisible == mozilla::StyleVisibility::Visible;
+  }
 
   bool IsVisibleOrCollapsed() const {
-    return ((mVisible == NS_STYLE_VISIBILITY_VISIBLE) ||
-            (mVisible == NS_STYLE_VISIBILITY_COLLAPSE));
+    return mVisible == mozilla::StyleVisibility::Visible ||
+           mVisible == mozilla::StyleVisibility::Collapse;
   }
 };
 
@@ -1291,20 +1293,15 @@ inline StyleTextTransform StyleTextTransform::None() {
 
 inline bool StyleTextTransform::IsNone() const { return *this == None(); }
 
-inline StyleTextUnderlinePosition StyleTextUnderlinePosition::Auto() {
-  return StyleTextUnderlinePosition_AUTO;
-}
-inline bool StyleTextUnderlinePosition::IsAuto() const {
-  return *this == Auto();
-}
+inline bool StyleTextUnderlinePosition::IsAuto() const { return *this == AUTO; }
 inline bool StyleTextUnderlinePosition::IsUnder() const {
-  return bool(*this & StyleTextUnderlinePosition_UNDER);
+  return bool(*this & StyleTextUnderlinePosition::UNDER);
 }
 inline bool StyleTextUnderlinePosition::IsLeft() const {
-  return bool(*this & StyleTextUnderlinePosition_LEFT);
+  return bool(*this & StyleTextUnderlinePosition::LEFT);
 }
 inline bool StyleTextUnderlinePosition::IsRight() const {
-  return bool(*this & StyleTextUnderlinePosition_RIGHT);
+  return bool(*this & StyleTextUnderlinePosition::RIGHT);
 }
 
 struct StyleTransition {
@@ -1748,7 +1745,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay {
   }
 
   bool IsContainPaint() const {
-    return (mContain & mozilla::StyleContain_PAINT) &&
+    return (mContain & mozilla::StyleContain::PAINT) &&
            !IsInternalRubyDisplayType() && !IsInternalTableStyleExceptCell();
   }
 
@@ -1760,7 +1757,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay {
     // responsible for checking if the box in question is
     // non-atomic and inline-level, and creating an
     // exemption as necessary.
-    return (mContain & mozilla::StyleContain_LAYOUT) &&
+    return (mContain & mozilla::StyleContain::LAYOUT) &&
            !IsInternalRubyDisplayType() && !IsInternalTableStyleExceptCell();
   }
 
@@ -1772,7 +1769,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay {
     // responsible for checking if the box in question is
     // non-atomic and inline-level, and creating an
     // exemption as necessary.
-    return (mContain & mozilla::StyleContain_SIZE) &&
+    return (mContain & mozilla::StyleContain::SIZE) &&
            !IsInternalRubyDisplayType() &&
            DisplayInside() != mozilla::StyleDisplayInside::Table &&
            !IsInnerTableStyle();
@@ -1783,7 +1780,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay {
   bool HasTransformStyle() const {
     return HasTransformProperty() || HasIndividualTransform() ||
            mTransformStyle == NS_STYLE_TRANSFORM_STYLE_PRESERVE_3D ||
-           (mWillChange.bits & mozilla::StyleWillChangeBits_TRANSFORM) ||
+           (mWillChange.bits & mozilla::StyleWillChangeBits::TRANSFORM) ||
            !mOffsetPath.IsNone();
   }
 
@@ -2130,7 +2127,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleUI {
   mozilla::StyleUserInput mUserInput;
   mozilla::StyleUserModify mUserModify;  // (modify-content)
   mozilla::StyleUserFocus mUserFocus;    // (auto-select)
-  uint8_t mPointerEvents;                // NS_STYLE_POINTER_EVENTS_*
+  mozilla::StylePointerEvents mPointerEvents;
 
   mozilla::StyleCursorKind mCursor;
   nsTArray<nsCursorImage> mCursorImages;  // images and coords
@@ -2138,7 +2135,8 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleUI {
   mozilla::StyleColorOrAuto mCaretColor;
   mozilla::StyleScrollbarColor mScrollbarColor;
 
-  inline uint8_t GetEffectivePointerEvents(nsIFrame* aFrame) const;
+  inline mozilla::StylePointerEvents GetEffectivePointerEvents(
+      nsIFrame* aFrame) const;
 
   bool HasCustomScrollbars() const { return !mScrollbarColor.IsAuto(); }
 };

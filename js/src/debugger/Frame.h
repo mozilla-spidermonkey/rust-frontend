@@ -149,8 +149,9 @@ class DebuggerFrame : public NativeObject {
   static NativeObject* initClass(JSContext* cx, Handle<GlobalObject*> global,
                                  HandleObject dbgCtor);
   static DebuggerFrame* create(JSContext* cx, HandleObject proto,
-                               const FrameIter& iter,
-                               HandleNativeObject debugger);
+                               HandleNativeObject debugger,
+                               const FrameIter* maybeIter,
+                               Handle<AbstractGeneratorObject*> maybeGenerator);
 
   static MOZ_MUST_USE bool getArguments(JSContext* cx,
                                         HandleDebuggerFrame frame,
@@ -163,7 +164,6 @@ class DebuggerFrame : public NativeObject {
   static MOZ_MUST_USE bool getEnvironment(
       JSContext* cx, HandleDebuggerFrame frame,
       MutableHandleDebuggerEnvironment result);
-  static bool getIsGenerator(HandleDebuggerFrame frame);
   static MOZ_MUST_USE bool getOffset(JSContext* cx, HandleDebuggerFrame frame,
                                      size_t& result);
   static MOZ_MUST_USE bool getOlder(JSContext* cx, HandleDebuggerFrame frame,

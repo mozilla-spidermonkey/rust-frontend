@@ -1898,7 +1898,7 @@ bool nsStyleImage::StartDecoding() const {
   }
   // null image types always return false from IsComplete, so we do the same
   // here.
-  return mType != eStyleImageType_Null ? true : false;
+  return mType != eStyleImageType_Null;
 }
 
 bool nsStyleImage::IsOpaque() const {
@@ -2663,7 +2663,7 @@ nsStyleDisplay::nsStyleDisplay(const Document& aDocument)
       mWillChange{{}, {0}},
       mDisplay(StyleDisplay::Inline),
       mOriginalDisplay(StyleDisplay::Inline),
-      mContain(StyleContain_NONE),
+      mContain(StyleContain::NONE),
       mAppearance(StyleAppearance::None),
       mPosition(NS_STYLE_POSITION_STATIC),
       mFloat(StyleFloat::None),
@@ -2679,7 +2679,7 @@ nsStyleDisplay::nsStyleDisplay(const Document& aDocument)
       mOrient(StyleOrient::Inline),
       mIsolation(StyleIsolation::Auto),
       mTopLayer(StyleTopLayer::None),
-      mTouchAction(StyleTouchAction_AUTO),
+      mTouchAction(StyleTouchAction::AUTO),
       mScrollBehavior(NS_STYLE_SCROLL_BEHAVIOR_AUTO),
       mOverscrollBehaviorX(StyleOverscrollBehavior::Auto),
       mOverscrollBehaviorY(StyleOverscrollBehavior::Auto),
@@ -3033,20 +3033,16 @@ nsChangeHint nsStyleDisplay::CalcDifference(
   // test above handles relevant changes in the StyleWillChangeBit_TRANSFORM
   // bit, which in turn handles frame reconstruction for changes in the
   // containing block of fixed-positioned elements.
-  //
-  // TODO(emilio): Should add xor to the generated cbindgen type.
-  auto willChangeBitsChanged =
-      StyleWillChangeBits{static_cast<decltype(StyleWillChangeBits::bits)>(
-          mWillChange.bits.bits ^ aNewData.mWillChange.bits.bits)};
+  auto willChangeBitsChanged = mWillChange.bits ^ aNewData.mWillChange.bits;
 
   if (willChangeBitsChanged &
-      (StyleWillChangeBits_STACKING_CONTEXT | StyleWillChangeBits_SCROLL |
-       StyleWillChangeBits_OPACITY)) {
+      (StyleWillChangeBits::STACKING_CONTEXT | StyleWillChangeBits::SCROLL |
+       StyleWillChangeBits::OPACITY)) {
     hint |= nsChangeHint_RepaintFrame;
   }
 
   if (willChangeBitsChanged &
-      (StyleWillChangeBits_FIXPOS_CB | StyleWillChangeBits_ABSPOS_CB)) {
+      (StyleWillChangeBits::FIXPOS_CB | StyleWillChangeBits::ABSPOS_CB)) {
     hint |= nsChangeHint_UpdateContainingBlock;
   }
 
@@ -3128,7 +3124,7 @@ nsStyleVisibility::nsStyleVisibility(const Document& aDocument)
     : mDirection(aDocument.GetBidiOptions() == IBMBIDI_TEXTDIRECTION_RTL
                      ? NS_STYLE_DIRECTION_RTL
                      : NS_STYLE_DIRECTION_LTR),
-      mVisible(NS_STYLE_VISIBILITY_VISIBLE),
+      mVisible(StyleVisibility::Visible),
       mImageRendering(NS_STYLE_IMAGE_RENDERING_AUTO),
       mWritingMode(NS_STYLE_WRITING_MODE_HORIZONTAL_TB),
       mTextOrientation(StyleTextOrientation::Mixed),
@@ -3164,12 +3160,12 @@ nsChangeHint nsStyleVisibility::CalcDifference(
       hint |= nsChangeHint_AllReflowHints | nsChangeHint_RepaintFrame;
     }
     if (mVisible != aNewData.mVisible) {
-      if (mVisible == NS_STYLE_VISIBILITY_VISIBLE ||
-          aNewData.mVisible == NS_STYLE_VISIBILITY_VISIBLE) {
+      if (mVisible == StyleVisibility::Visible ||
+          aNewData.mVisible == StyleVisibility::Visible) {
         hint |= nsChangeHint_VisibilityChange;
       }
-      if ((NS_STYLE_VISIBILITY_COLLAPSE == mVisible) ||
-          (NS_STYLE_VISIBILITY_COLLAPSE == aNewData.mVisible)) {
+      if (StyleVisibility::Collapse == mVisible ||
+          StyleVisibility::Collapse == aNewData.mVisible) {
         hint |= NS_STYLE_HINT_REFLOW;
       } else {
         hint |= NS_STYLE_HINT_VISUAL;
@@ -3336,7 +3332,7 @@ nsChangeHint nsStyleContent::CalcDifference(
 
 nsStyleTextReset::nsStyleTextReset(const Document& aDocument)
     : mTextOverflow(),
-      mTextDecorationLine(StyleTextDecorationLine_NONE),
+      mTextDecorationLine(StyleTextDecorationLine::NONE),
       mTextDecorationStyle(NS_STYLE_TEXT_DECORATION_STYLE_SOLID),
       mUnicodeBidi(NS_STYLE_UNICODE_BIDI_NORMAL),
       mInitialLetterSink(0),
@@ -3425,7 +3421,7 @@ nsStyleText::nsStyleText(const Document& aDocument)
       mTextIndent(LengthPercentage::Zero()),
       mTextUnderlineOffset(StyleTextDecorationLength::Auto()),
       mTextDecorationSkipInk(StyleTextDecorationSkipInk::Auto),
-      mTextUnderlinePosition(StyleTextUnderlinePosition::Auto()),
+      mTextUnderlinePosition(StyleTextUnderlinePosition::AUTO),
       mWebkitTextStrokeWidth(0),
       mTextEmphasisStyle(StyleTextEmphasisStyle::None()) {
   MOZ_COUNT_CTOR(nsStyleText);
@@ -3613,7 +3609,7 @@ nsStyleUI::nsStyleUI(const Document& aDocument)
     : mUserInput(StyleUserInput::Auto),
       mUserModify(StyleUserModify::ReadOnly),
       mUserFocus(StyleUserFocus::None),
-      mPointerEvents(NS_STYLE_POINTER_EVENTS_AUTO),
+      mPointerEvents(StylePointerEvents::Auto),
       mCursor(StyleCursorKind::Auto),
       mCaretColor(StyleColorOrAuto::Auto()),
       mScrollbarColor(StyleScrollbarColor::Auto()) {

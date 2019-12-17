@@ -104,6 +104,7 @@
 #include "mozilla/LoadInfo.h"
 #include "mozilla/UnderrunHandler.h"
 #include "mozilla/net/HttpChannelChild.h"
+#include "nsFocusManager.h"
 #include "nsQueryObject.h"
 #include "imgLoader.h"
 #include "GMPServiceChild.h"
@@ -112,6 +113,7 @@
 #include "audio_thread_priority.h"
 #include "nsIConsoleService.h"
 #include "audio_thread_priority.h"
+#include "nsIURIMutator.h"
 
 #if !defined(XP_WIN)
 #  include "mozilla/Omnijar.h"
@@ -218,6 +220,7 @@
 #  define getpid _getpid
 #  include "mozilla/widget/AudioSession.h"
 #  include "mozilla/audio/AudioNotificationReceiver.h"
+#  include "mozilla/WinDllServices.h"
 #endif
 
 #if defined(XP_MACOSX)
@@ -1334,6 +1337,13 @@ void ContentChild::InitXPCOM(
   // background thread since we'll likely need database information very soon.
   BackgroundChild::Startup();
 
+#if defined(XP_WIN)
+  // DLL services untrusted modules processing depends on
+  // BackgroundChild::Startup having been called
+  RefPtr<DllServices> dllSvc(DllServices::Get());
+  dllSvc->StartUntrustedModulesProcessor();
+#endif  // defined(XP_WIN)
+
   PBackgroundChild* actorChild = BackgroundChild::GetOrCreateForCurrentThread();
   if (NS_WARN_IF(!actorChild)) {
     MOZ_ASSERT_UNREACHABLE("PBackground init can't fail at this point");
@@ -1438,6 +1448,22 @@ mozilla::ipc::IPCResult ContentChild::RecvRequestMemoryReport(
         return GetSingleton()->SendFinishMemoryReport(aGeneration);
       });
   return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvGetUntrustedModulesData(
+    GetUntrustedModulesDataResolver&& aResolver) {
+#if defined(XP_WIN)
+  RefPtr<DllServices> dllSvc(DllServices::Get());
+  dllSvc->GetUntrustedModulesData()->Then(
+      GetMainThreadSerialEventTarget(), __func__,
+      [aResolver](Maybe<UntrustedModulesData>&& aData) {
+        aResolver(std::move(aData));
+      },
+      [aResolver](nsresult aReason) { aResolver(Nothing()); });
+  return IPC_OK();
+#else
+  return IPC_FAIL(this, "Unsupported on this platform");
+#endif  // defined(XP_WIN)
 }
 
 PCycleCollectWithLogsChild* ContentChild::AllocPCycleCollectWithLogsChild(
@@ -2386,6 +2412,11 @@ void ContentChild::ActorDestroy(ActorDestroyReason why) {
   // keep persistent state.
   ProcessChild::QuickExit();
 #else
+#  if defined(XP_WIN)
+  RefPtr<DllServices> dllSvc(DllServices::Get());
+  dllSvc->DisableFull();
+#  endif  // defined(XP_WIN)
+
   if (gFirstIdleTask) {
     gFirstIdleTask->Cancel();
     gFirstIdleTask = nullptr;
@@ -2411,7 +2442,7 @@ void ContentChild::ActorDestroy(ActorDestroyReason why) {
   CrashReporterClient::DestroySingleton();
 
   XRE_ShutdownChildProcess();
-#endif  // NS_FREE_PERMANENT_DATA
+#endif    // NS_FREE_PERMANENT_DATA
 }
 
 void ContentChild::ProcessingError(Result aCode, const char* aReason) {
@@ -3147,9 +3178,7 @@ ContentChild::AllocPContentPermissionRequestChild(
     const nsTArray<PermissionRequest>& aRequests,
     const IPC::Principal& aPrincipal, const IPC::Principal& aTopLevelPrincipal,
     const bool& aIsHandlingUserInput,
-    const bool& aMaybeUnsafePermissionDelegate,
-    const bool& aDocumentHasUserInput, const DOMTimeStamp aPageLoadTimestamp,
-    const TabId& aTabId) {
+    const bool& aMaybeUnsafePermissionDelegate, const TabId& aTabId) {
   MOZ_CRASH("unused");
   return nullptr;
 }
@@ -3724,7 +3753,7 @@ mozilla::ipc::IPCResult ContentChild::RecvCrossProcessRedirect(
     HttpBaseChannel::ReplacementChannelConfig config(std::move(*aArgs.init()));
     HttpBaseChannel::ConfigureReplacementChannel(
         newChannel, config,
-        HttpBaseChannel::ConfigureReason::DocumentChannelReplacement);
+        HttpBaseChannel::ReplacementReason::DocumentChannel);
   }
 
   // connect parent.
@@ -3744,7 +3773,8 @@ mozilla::ipc::IPCResult ContentChild::RecvCrossProcessRedirect(
       ChildProcessChannelListener::GetSingleton();
   // The listener will call completeRedirectSetup on the channel.
   processListener->OnChannelReady(childChannel, aArgs.redirectIdentifier(),
-                                  std::move(aArgs.redirects()));
+                                  std::move(aArgs.redirects()),
+                                  aArgs.loadStateLoadFlags());
 
   // scopeExit will call CrossProcessRedirectFinished(rv) here
   return IPC_OK();
@@ -3773,6 +3803,15 @@ mozilla::ipc::IPCResult ContentChild::RecvDestroySHEntrySharedState(
 mozilla::ipc::IPCResult ContentChild::RecvEvictContentViewers(
     nsTArray<uint64_t>&& aToEvictSharedStateIDs) {
   SHEntryChildShared::EvictContentViewers(std::move(aToEvictSharedStateIDs));
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvSessionStorageData(
+    BrowsingContext* const aTop, const nsACString& aOriginAttrs,
+    const nsACString& aOriginKey, const nsTArray<KeyValuePair>& aDefaultData,
+    const nsTArray<KeyValuePair>& aSessionData) {
+  aTop->GetSessionStorageManager()->LoadSessionStorageData(
+      nullptr, aOriginAttrs, aOriginKey, aDefaultData, aSessionData);
   return IPC_OK();
 }
 
@@ -4121,6 +4160,82 @@ mozilla::ipc::IPCResult ContentChild::RecvScriptError(
   rv = consoleService->LogMessage(scriptError);
   NS_ENSURE_SUCCESS(rv, IPC_FAIL(this, "Failed to log script error"));
 
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvLoadURI(
+    BrowsingContext* aContext, nsDocShellLoadState* aLoadState,
+    bool aSetNavigating) {
+  aContext->LoadURI(nullptr, aLoadState, aSetNavigating);
+
+  nsCOMPtr<nsPIDOMWindowOuter> window = aContext->GetDOMWindow();
+  BrowserChild* bc = BrowserChild::GetFrom(window);
+  if (bc) {
+    bc->NotifyNavigationFinished();
+  }
+
+#ifdef MOZ_CRASHREPORTER
+  if (CrashReporter::GetEnabled()) {
+    nsCOMPtr<nsIURI> annotationURI;
+
+    nsresult rv = NS_MutateURI(aLoadState->URI())
+                      .SetUserPass(EmptyCString())
+                      .Finalize(annotationURI);
+
+    if (NS_FAILED(rv)) {
+      // Ignore failures on about: URIs.
+      annotationURI = aLoadState->URI();
+    }
+
+    CrashReporter::AnnotateCrashReport(CrashReporter::Annotation::URL,
+                                       annotationURI->GetSpecOrDefault());
+  }
+#endif
+
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvInternalLoad(
+    BrowsingContext* aContext, nsDocShellLoadState* aLoadState,
+    bool aTakeFocus) {
+  aContext->InternalLoad(nullptr, aLoadState, nullptr, nullptr);
+
+  if (aTakeFocus) {
+    if (nsCOMPtr<nsPIDOMWindowOuter> domWin = aContext->GetDOMWindow()) {
+      nsFocusManager::FocusWindow(domWin);
+    }
+  }
+
+#ifdef MOZ_CRASHREPORTER
+  if (CrashReporter::GetEnabled()) {
+    nsCOMPtr<nsIURI> annotationURI;
+
+    nsresult rv = NS_MutateURI(aLoadState->URI())
+                      .SetUserPass(EmptyCString())
+                      .Finalize(annotationURI);
+
+    if (NS_FAILED(rv)) {
+      // Ignore failures on about: URIs.
+      annotationURI = aLoadState->URI();
+    }
+
+    CrashReporter::AnnotateCrashReport(CrashReporter::Annotation::URL,
+                                       annotationURI->GetSpecOrDefault());
+  }
+#endif
+
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvDisplayLoadError(
+    BrowsingContext* aContext, const nsAString& aURI) {
+  aContext->DisplayLoadError(aURI);
+
+  nsCOMPtr<nsPIDOMWindowOuter> window = aContext->GetDOMWindow();
+  BrowserChild* bc = BrowserChild::GetFrom(window);
+  if (bc) {
+    bc->NotifyNavigationFinished();
+  }
   return IPC_OK();
 }
 

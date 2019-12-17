@@ -765,15 +765,15 @@
      */ \
     MACRO(JSOP_ISNOITER, 77, "isnoiter", NULL, 1, 1, 2, JOF_BYTE) \
     /*
-     * Exits a for-in loop by popping the iterator object from the stack and
-     * closing it.
+     * Exits a for-in loop by popping the iteration value and the iterator
+     * object from the stack and closing the iterator object.
      *
      *   Category: Statements
      *   Type: For-In Statement
      *   Operands:
-     *   Stack: iter =>
+     *   Stack: iter, iterval =>
      */ \
-    MACRO(JSOP_ENDITER, 78, "enditer", NULL, 1, 1, 0, JOF_BYTE) \
+    MACRO(JSOP_ENDITER, 78, "enditer", NULL, 1, 2, 0, JOF_BYTE) \
     /*
      * Invokes 'callee' with 'this' and 'args', pushes return value onto the
      * stack.
@@ -1112,17 +1112,14 @@
     /*
      * This opcode is the target of the backwards jump for some loop.
      *
-     * The uint8 argument is a bitfield. The lower 7 bits of the argument
-     * indicate the loop depth. This value starts at 1 and is just a hint:
-     * deeply nested loops all have the same value. The upper bit is set if Ion
-     * should be able to OSR at this point, which is true unless there is
-     * non-loop state on the stack.
+     * The depthHint value is a loop depth hint for Ion. It starts at 1 and
+     * deeply nested loops all have the same value.
      *
      * See JSOP_JUMPTARGET for the icIndex operand.
      *
      *   Category: Statements
      *   Type: Jumps
-     *   Operands: uint32_t icIndex, uint8_t BITFIELD
+     *   Operands: uint32_t icIndex, uint8_t depthHint
      *   Stack: =>
      */ \
     MACRO(JSOP_LOOPHEAD, 109, "loophead", NULL, 6, 0, 0, JOF_LOOPHEAD) \
@@ -1774,21 +1771,27 @@
     /*
      * Push a default constructor for a base class literal.
      *
-     *   Category: Literals
-     *   Type: Class
-     *   Operands: atom className
-     *   Stack: => constructor
-     */ \
-    MACRO(JSOP_CLASSCONSTRUCTOR, 167, "classconstructor", NULL, 5, 0, 1, JOF_ATOM) \
-    /*
-     * Push a default constructor for a derived class literal.
+     * The sourceStart/sourceEnd offsets are the start/end offsets of the class
+     * definition in the source buffer and are used for toString().
      *
      *   Category: Literals
      *   Type: Class
-     *   Operands: atom className
+     *   Operands: atom className, uint32_t sourceStart, uint32_t sourceEnd
+     *   Stack: => constructor
+     */ \
+    MACRO(JSOP_CLASSCONSTRUCTOR, 167, "classconstructor", NULL, 13, 0, 1, JOF_CLASS_CTOR) \
+    /*
+     * Push a default constructor for a derived class literal.
+     *
+     * The sourceStart/sourceEnd offsets are the start/end offsets of the class
+     * definition in the source buffer and are used for toString().
+     *
+     *   Category: Literals
+     *   Type: Class
+     *   Operands: atom className, uint32_t sourceStart, uint32_t sourceEnd
      *   Stack: proto => constructor
      */ \
-    MACRO(JSOP_DERIVEDCONSTRUCTOR, 168, "derivedconstructor", NULL, 5, 1, 1, JOF_ATOM) \
+    MACRO(JSOP_DERIVEDCONSTRUCTOR, 168, "derivedconstructor", NULL, 13, 1, 1, JOF_CLASS_CTOR) \
     /*
      * Throws a runtime TypeError for invalid assignment to 'const'. The
      * localno is used for better error messages.

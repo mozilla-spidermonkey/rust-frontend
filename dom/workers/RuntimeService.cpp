@@ -93,9 +93,6 @@ namespace workerinternals {
 // The size of the worker runtime heaps in bytes. May be changed via pref.
 #define WORKER_DEFAULT_RUNTIME_HEAPSIZE 32 * 1024 * 1024
 
-// The size of the generational GC nursery for workers, in bytes.
-#define WORKER_DEFAULT_NURSERY_SIZE 1 * 1024 * 1024
-
 // The size of the worker JS allocation threshold in MB. May be changed via
 // pref.
 #define WORKER_DEFAULT_ALLOCATION_THRESHOLD 30
@@ -955,8 +952,7 @@ class WorkerJSContext final : public mozilla::CycleCollectedJSContext {
 
   nsresult Initialize(JSRuntime* aParentRuntime) {
     nsresult rv = CycleCollectedJSContext::Initialize(
-        aParentRuntime, WORKER_DEFAULT_RUNTIME_HEAPSIZE,
-        WORKER_DEFAULT_NURSERY_SIZE);
+        aParentRuntime, WORKER_DEFAULT_RUNTIME_HEAPSIZE);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }

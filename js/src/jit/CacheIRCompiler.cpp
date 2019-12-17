@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "jslibmath.h"
+#include "gc/Allocator.h"
 #include "jit/BaselineCacheIRCompiler.h"
 #include "jit/IonCacheIRCompiler.h"
 #include "jit/IonIC.h"
@@ -2968,7 +2969,7 @@ bool CacheIRCompiler::emitLoadFunctionLengthResult() {
   masm.bind(&interpreted);
   // Load the length from the function's script.
   masm.loadPtr(Address(obj, JSFunction::offsetOfScript()), scratch);
-  masm.loadPtr(Address(scratch, JSScript::offsetOfScriptData()), scratch);
+  masm.loadPtr(Address(scratch, JSScript::offsetOfSharedData()), scratch);
   masm.loadPtr(Address(scratch, RuntimeScriptData::offsetOfISD()), scratch);
   masm.load16ZeroExtend(
       Address(scratch, ImmutableScriptData::offsetOfFunLength()), scratch);
@@ -4359,9 +4360,15 @@ bool CacheIRCompiler::emitCompareBigIntInt32ResultShared(
     masm.branch32(Assembler::LessThan, int32, Imm32(0), greaterThan);
     masm.jump(&doCompare);
 
+    // We rely on |neg32(INT32_MIN)| staying INT32_MIN, because we're using an
+    // unsigned comparison below.
     masm.bind(&isNegative);
     masm.branch32(Assembler::GreaterThanOrEqual, int32, Imm32(0), lessThan);
     masm.neg32(scratch2);
+
+    // Not all supported platforms (e.g. MIPS64) zero-extend 32-bit operations,
+    // so we need to explicitly clear any high 32-bits.
+    masm.move32ZeroExtendToPtr(scratch2, scratch2);
 
     // Reverse the relational comparator for negative numbers.
     // |-x < -y| <=> |+x > +y|.

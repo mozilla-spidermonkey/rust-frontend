@@ -44,32 +44,6 @@ LoopControl::LoopControl(BytecodeEmitter* bce, StatementKind loopKind)
 
   stackDepth_ = bce->bytecodeSection().stackDepth();
   loopDepth_ = enclosingLoop ? enclosingLoop->loopDepth_ + 1 : 1;
-
-  int loopSlots;
-  if (loopKind == StatementKind::Spread) {
-    // The iterator next method, the iterator, the result array, and
-    // the current array index are on the stack.
-    loopSlots = 4;
-  } else if (loopKind == StatementKind::ForOfLoop) {
-    // The iterator next method, the iterator, and the current value
-    // are on the stack.
-    loopSlots = 3;
-  } else if (loopKind == StatementKind::ForInLoop) {
-    // The iterator is on the stack.
-    loopSlots = 1;
-  } else {
-    // No additional loop values are on the stack.
-    loopSlots = 0;
-  }
-
-  MOZ_ASSERT(loopSlots <= stackDepth_);
-
-  if (enclosingLoop) {
-    canIonOsr_ = (enclosingLoop->canIonOsr_ &&
-                  stackDepth_ == enclosingLoop->stackDepth_ + loopSlots);
-  } else {
-    canIonOsr_ = stackDepth_ == loopSlots;
-  }
 }
 
 bool LoopControl::emitContinueTarget(BytecodeEmitter* bce) {
@@ -93,6 +67,15 @@ bool LoopControl::emitSpecialBreakForDone(BytecodeEmitter* bce) {
 
 bool LoopControl::emitLoopHead(BytecodeEmitter* bce,
                                const Maybe<uint32_t>& nextPos) {
+  // Insert a NOP if needed to ensure the script does not start with a
+  // JSOP_LOOPHEAD. This avoids JIT issues with prologue code + try notes
+  // or OSR. See bug 1602390 and bug 1602681.
+  if (bce->bytecodeSection().offset().toUint32() == 0) {
+    if (!bce->emit1(JSOP_NOP)) {
+      return false;
+    }
+  }
+
   if (nextPos) {
     if (!bce->updateSourceCoordNotes(*nextPos)) {
       return false;
@@ -102,24 +85,37 @@ bool LoopControl::emitLoopHead(BytecodeEmitter* bce,
   MOZ_ASSERT(loopDepth_ > 0);
 
   head_ = {bce->bytecodeSection().offset()};
+
   BytecodeOffset off;
   if (!bce->emitJumpTargetOp(JSOP_LOOPHEAD, &off)) {
     return false;
   }
-  SetLoopHeadDepthHintAndFlags(bce->bytecodeSection().code(off), loopDepth_,
-                               canIonOsr_);
+  SetLoopHeadDepthHint(bce->bytecodeSection().code(off), loopDepth_);
 
   return true;
 }
 
-bool LoopControl::emitLoopEnd(BytecodeEmitter* bce, JSOp op) {
-  JumpList beq;
-  if (!bce->emitBackwardJump(op, head_, &beq, &breakTarget_)) {
+bool LoopControl::emitLoopEnd(BytecodeEmitter* bce, JSOp op,
+                              JSTryNoteKind tryNoteKind) {
+  JumpList jump;
+  if (!bce->emitJumpNoFallthrough(op, &jump)) {
     return false;
   }
+  bce->patchJumpsToTarget(jump, head_);
 
-  loopEndOffset_ = beq.offset;
-
+  // Create a fallthrough for closing iterators, and as a target for break
+  // statements.
+  JumpTarget breakTarget;
+  if (!bce->emitJumpTarget(&breakTarget)) {
+    return false;
+  }
+  if (!patchBreaks(bce)) {
+    return false;
+  }
+  if (!bce->addTryNote(tryNoteKind, bce->bytecodeSection().stackDepth(),
+                       headOffset(), breakTarget.offset)) {
+    return false;
+  }
   return true;
 }
 

@@ -2123,7 +2123,9 @@ void Selection::Collapse(const RawRangeBoundary& aPoint, ErrorResult& aRv) {
       aPoint.Container()->IsContent()) {
     int32_t frameOffset;
     nsTextFrame* f = do_QueryFrame(nsCaret::GetFrameAndOffset(
-        this, aPoint.Container(), aPoint.Offset(), &frameOffset));
+        this, aPoint.Container(),
+        *aPoint.Offset(RawRangeBoundary::OffsetFilter::kValidOffsets),
+        &frameOffset));
     if (f && f->IsAtEndOfLine() && f->HasSignificantTerminalNewline()) {
       // RawRangeBounary::Offset() causes computing offset if it's not been
       // done yet.  However, it's called only when the container is a text
@@ -2131,7 +2133,9 @@ void Selection::Collapse(const RawRangeBoundary& aPoint, ErrorResult& aRv) {
       // any children.  So, this doesn't cause computing offset with expensive
       // method, nsINode::ComputeIndexOf().
       if ((aPoint.Container()->AsContent() == f->GetContent() &&
-           f->GetContentEnd() == static_cast<int32_t>(aPoint.Offset())) ||
+           f->GetContentEnd() ==
+               static_cast<int32_t>(*aPoint.Offset(
+                   RawRangeBoundary::OffsetFilter::kValidOffsets))) ||
           (aPoint.Container() == f->GetContent()->GetParentNode() &&
            f->GetContent() == aPoint.GetPreviousSiblingOfChildAtOffset())) {
         frameSelection->SetHint(CARET_ASSOCIATE_AFTER);
@@ -3291,6 +3295,19 @@ void Selection::SetBaseAndExtentJS(nsINode& aAnchorNode, uint32_t aAnchorOffset,
   AutoRestore<bool> calledFromJSRestorer(mCalledByJS);
   mCalledByJS = true;
   SetBaseAndExtent(aAnchorNode, aAnchorOffset, aFocusNode, aFocusOffset, aRv);
+}
+
+void Selection::SetBaseAndExtent(nsINode& aAnchorNode, uint32_t aAnchorOffset,
+                                 nsINode& aFocusNode, uint32_t aFocusOffset,
+                                 ErrorResult& aRv) {
+  if ((aAnchorOffset > aAnchorNode.Length()) ||
+      (aFocusOffset > aFocusNode.Length())) {
+    aRv.Throw(NS_ERROR_DOM_INDEX_SIZE_ERR);
+    return;
+  }
+
+  SetBaseAndExtent(RawRangeBoundary{&aAnchorNode, aAnchorOffset},
+                   RawRangeBoundary{&aFocusNode, aFocusOffset}, aRv);
 }
 
 void Selection::SetBaseAndExtentInternal(InLimiter aInLimiter,

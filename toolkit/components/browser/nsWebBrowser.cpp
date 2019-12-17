@@ -209,15 +209,13 @@ NS_IMPL_CYCLE_COLLECTING_ADDREF(nsWebBrowser)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsWebBrowser)
 
 NS_IMPL_CYCLE_COLLECTION(nsWebBrowser, mDocShell, mDocShellAsReq,
-                         mDocShellAsWin, mDocShellAsNav, mDocShellAsScrollable,
-                         mWebProgress)
+                         mDocShellAsWin, mDocShellAsNav, mWebProgress)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsWebBrowser)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIWebBrowser)
   NS_INTERFACE_MAP_ENTRY(nsIWebBrowser)
   NS_INTERFACE_MAP_ENTRY(nsIWebNavigation)
   NS_INTERFACE_MAP_ENTRY(nsIBaseWindow)
-  NS_INTERFACE_MAP_ENTRY(nsIScrollable)
   NS_INTERFACE_MAP_ENTRY(nsIDocShellTreeItem)
   NS_INTERFACE_MAP_ENTRY(nsIInterfaceRequestor)
   NS_INTERFACE_MAP_ENTRY(nsIWebBrowserPersist)
@@ -470,17 +468,6 @@ NS_IMETHODIMP
 nsWebBrowser::GetInProcessChildAt(int32_t aIndex,
                                   nsIDocShellTreeItem** aChild) {
   return NS_ERROR_UNEXPECTED;
-}
-
-NS_IMETHODIMP
-nsWebBrowser::FindChildWithName(const nsAString& aName, bool aRecurse,
-                                bool aSameType, nsIDocShellTreeItem* aRequestor,
-                                nsIDocShellTreeItem* aOriginalRequestor,
-                                nsIDocShellTreeItem** aResult) {
-  NS_ENSURE_ARG_POINTER(aResult);
-
-  *aResult = nullptr;
-  return NS_OK;
 }
 
 //*****************************************************************************
@@ -1166,37 +1153,6 @@ nsWebBrowser::SetTitle(const nsAString& aTitle) {
 }
 
 //*****************************************************************************
-// nsWebBrowser::nsIScrollable
-//*****************************************************************************
-
-NS_IMETHODIMP
-nsWebBrowser::GetDefaultScrollbarPreferences(int32_t aScrollOrientation,
-                                             int32_t* aScrollbarPref) {
-  NS_ENSURE_STATE(mDocShell);
-
-  return mDocShellAsScrollable->GetDefaultScrollbarPreferences(
-      aScrollOrientation, aScrollbarPref);
-}
-
-NS_IMETHODIMP
-nsWebBrowser::SetDefaultScrollbarPreferences(int32_t aScrollOrientation,
-                                             int32_t aScrollbarPref) {
-  NS_ENSURE_STATE(mDocShell);
-
-  return mDocShellAsScrollable->SetDefaultScrollbarPreferences(
-      aScrollOrientation, aScrollbarPref);
-}
-
-NS_IMETHODIMP
-nsWebBrowser::GetScrollbarVisibility(bool* aVerticalVisible,
-                                     bool* aHorizontalVisible) {
-  NS_ENSURE_STATE(mDocShell);
-
-  return mDocShellAsScrollable->GetScrollbarVisibility(aVerticalVisible,
-                                                       aHorizontalVisible);
-}
-
-//*****************************************************************************
 // nsWebBrowser: Listener Helpers
 //*****************************************************************************
 
@@ -1213,16 +1169,13 @@ nsWebBrowser::SetDocShell(nsIDocShell* aDocShell) {
     nsCOMPtr<nsIInterfaceRequestor> req(do_QueryInterface(aDocShell));
     nsCOMPtr<nsIBaseWindow> baseWin(do_QueryInterface(aDocShell));
     nsCOMPtr<nsIWebNavigation> nav(do_QueryInterface(aDocShell));
-    nsCOMPtr<nsIScrollable> scrollable(do_QueryInterface(aDocShell));
     nsCOMPtr<nsIWebProgress> progress(do_GetInterface(aDocShell));
-    NS_ENSURE_TRUE(req && baseWin && nav && scrollable && progress,
-                   NS_ERROR_FAILURE);
+    NS_ENSURE_TRUE(req && baseWin && nav && progress, NS_ERROR_FAILURE);
 
     mDocShell = aDocShell;
     mDocShellAsReq = req;
     mDocShellAsWin = baseWin;
     mDocShellAsNav = nav;
-    mDocShellAsScrollable = scrollable;
     mWebProgress = progress;
 
     // By default, do not allow DNS prefetch, so we don't break our frozen
@@ -1240,7 +1193,6 @@ nsWebBrowser::SetDocShell(nsIDocShell* aDocShell) {
     mDocShellAsReq = nullptr;
     mDocShellAsWin = nullptr;
     mDocShellAsNav = nullptr;
-    mDocShellAsScrollable = nullptr;
     mWebProgress = nullptr;
   }
 

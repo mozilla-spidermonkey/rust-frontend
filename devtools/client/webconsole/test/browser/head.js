@@ -100,7 +100,7 @@ async function openNewTabAndConsole(url, clearJstermHistory = true) {
  *         Resolves to the toolbox.
  */
 async function openNewWindowAndConsole(url) {
-  const win = await openNewBrowserWindow();
+  const win = await BrowserTestUtils.openNewBrowserWindow();
   const tab = await addTab(url, { window: win });
   win.gBrowser.selectedTab = tab;
   const hud = await openConsole(tab);
@@ -899,26 +899,6 @@ function overrideOpenLink(fn) {
 }
 
 /**
- * Open a new browser window and return a promise that resolves when the new window has
- * fired the "browser-delayed-startup-finished" event.
- *
- * @param {Object} options: An options object that will be passed to OpenBrowserWindow.
- * @returns Promise
- *          A Promise that resolves when the window is ready.
- */
-function openNewBrowserWindow(options) {
-  const win = OpenBrowserWindow(options);
-  return new Promise(resolve => {
-    Services.obs.addObserver(function observer(subject, topic) {
-      if (win == subject) {
-        Services.obs.removeObserver(observer, topic);
-        resolve(win);
-      }
-    }, "browser-delayed-startup-finished");
-  });
-}
-
-/**
  * Open a network request logged in the webconsole in the netmonitor panel.
  *
  * @param {Object} toolbox
@@ -1174,6 +1154,31 @@ function isReverseSearchInputFocused(hud) {
   return document.activeElement == reverseSearchInput && documentIsFocused;
 }
 
+async function waitForEagerEvaluationResult(hud, text) {
+  await waitUntil(() => {
+    const elem = hud.ui.outputNode.querySelector(".eager-evaluation-result");
+    if (elem) {
+      if (text instanceof RegExp) {
+        return text.test(elem.innerText);
+      }
+      return elem.innerText == text;
+    }
+    return false;
+  });
+  ok(true, `Got eager evaluation result ${text}`);
+}
+
+// This just makes sure the eager evaluation result disappears. This will pass
+// even for inputs which eventually have a result because nothing will be shown
+// while the evaluation happens. Waiting here does make sure that a previous
+// input was processed and sent down to the server for evaluating.
+async function waitForNoEagerEvaluationResult(hud) {
+  await waitUntil(() => {
+    return !hud.ui.outputNode.querySelector(".eager-evaluation-result");
+  });
+  ok(true, `Eager evaluation result disappeared`);
+}
+
 /**
  * Selects a node in the inspector.
  *
@@ -1346,9 +1351,9 @@ async function selectFrame(dbg, frame) {
 async function pauseDebugger(dbg) {
   info("Waiting for debugger to pause");
   const onPaused = waitForPaused(dbg);
-  ContentTask.spawn(gBrowser.selectedBrowser, {}, async function() {
+  SpecialPowers.spawn(gBrowser.selectedBrowser, [], function() {
     content.wrappedJSObject.firstCall();
-  });
+  }).catch(() => {});
   await onPaused;
 }
 
@@ -1540,7 +1545,7 @@ function reloadPage() {
     "load",
     true
   );
-  ContentTask.spawn(gBrowser.selectedBrowser, null, () => {
+  SpecialPowers.spawn(gBrowser.selectedBrowser, [], () => {
     content.location.reload();
   });
   return onLoad;

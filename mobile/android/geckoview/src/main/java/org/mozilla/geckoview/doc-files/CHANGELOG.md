@@ -16,9 +16,27 @@ exclude: true
 ## v73
 - Added [`WebExtensionController.install`][73.1] and [`uninstall`][73.2] to
   manage installed extensions
+- ⚠️ Renamed `ScreenLength.VIEWPORT_WIDTH`, `ScreenLength.VIEWPORT_HEIGHT`,
+  `ScreenLength.fromViewportWidth` and `ScreenLength.fromViewportHeight` to
+  [`ScreenLength.VISUAL_VIEWPORT_WIDTH`][73.3],
+  [`ScreenLength.VISUAL_VIEWPORT_HEIGHT`][73.4],
+  [`ScreenLength.fromVisualViewportWidth`][73.5] and
+  [`ScreenLength.fromVisualViewportHeight`][73.6] respectively.
+- Added the [`LoginStorage`][73.7] API. Apps may handle login fetch requests now by
+  attaching a [`LoginStorage.Delegate`][73.8] via
+  [`GeckoRuntime#setLoginStorageDelegate`][73.9]
+  ([bug 1602881]({{bugzilla}}1602881))
+
 
 [73.1]: {{javadoc_uri}}/WebExtensionController.html#install-java.lang.String-
 [73.2]: {{javadoc_uri}}/WebExtensionController.html#uninstall-org.mozilla.geckoview.WebExtension-
+[73.3]: {{javadoc_uri}}/ScreenLength.html#VISUAL_VIEWPORT_WIDTH
+[73.4]: {{javadoc_uri}}/ScreenLength.html#VISUAL_VIEWPORT_HEIGHT
+[73.5]: {{javadoc_uri}}/ScreenLength.html#fromVisualViewportWidth-double-
+[73.6]: {{javadoc_uri}}/ScreenLength.html#fromVisualViewportHeight-double-
+[73.7]: {{javadoc_uri}}/LoginStorage.html
+[73.8]: {{javadoc_uri}}/LoginStorage.Delegate.html
+[73.9]: {{javadoc_uri}}/GeckoRuntime.html#setLoginStorageDelegate-org.mozilla.geckoview.LoginStorage.Delegate-
 
 ## v72
 - Added [`GeckoSession.NavigationDelegate.LoadRequest#hasUserGesture`][72.1]. This indicates
@@ -62,6 +80,8 @@ exclude: true
   accept a JSON object instead of a Map. Said object also includes the
   application name that was previously passed as the fourth argument to the
   method, which was thus removed.
+- Added WebXR device access permission support, [`PERMISSION_PERSISTENT_XR`][72.24].
+  ([bug 1599927]({{bugzilla}}1599927))
 
 [72.1]: {{javadoc_uri}}/GeckoSession.NavigationDelegate.LoadRequest#hasUserGesture-
 [72.2]: {{javadoc_uri}}/Autofill.html
@@ -86,6 +106,7 @@ exclude: true
 [72.21]: {{javadoc_uri}}/WebExtension.Icon.html
 [72.22]: {{javadoc_uri}}/GeckoWebExecutor.html#FETCH_FLAGS_STREAM_FAILURE_TEST
 [72.23]: {{javadoc_uri}}/CrashReporter#sendCrashReport-android.content.Context-java.io.File-org.json.JSONObject-
+[72.24]: {{javadoc_uri}}/GeckoSession.PermissionDelegate.html#PERMISSION_PERSISTENT_XR
 
 ## v71
 - Added a content blocking flag for blocked social cookies to [`ContentBlocking`][70.17].
@@ -483,4 +504,4 @@ exclude: true
 [65.24]: {{javadoc_uri}}/CrashReporter.html#sendCrashReport-android.content.Context-android.os.Bundle-java.lang.String-
 [65.25]: {{javadoc_uri}}/GeckoResult.html
 
-[api-version]: 5856cdf682140fafdd09d74dbc004bf0b6bb7398
+[api-version]: 07ee732ba2eaafada09739c61c0196e427a2f0ed

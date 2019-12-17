@@ -2254,8 +2254,7 @@ void EventStateManager::DoScrollZoom(nsIFrame* aTargetFrame,
                                      int32_t adjustment) {
   // Exclude form controls and content in chrome docshells.
   nsIContent* content = aTargetFrame->GetContent();
-  if (content && !content->IsNodeOfType(nsINode::eHTML_FORM_CONTROL) &&
-      !nsContentUtils::IsInChromeDocshell(content->OwnerDoc())) {
+  if (content && !nsContentUtils::IsInChromeDocshell(content->OwnerDoc())) {
     // positive adjustment to decrease zoom, negative to increase
     int32_t change = (adjustment > 0) ? -1 : 1;
 
@@ -2638,12 +2637,14 @@ nsIFrame* EventStateManager::ComputeScrollTargetAndMayAdjustWheelEvent(
       }
     }
 
-    ScrollStyles ss = scrollableFrame->GetScrollStyles();
-    bool hiddenForV = (StyleOverflow::Hidden == ss.mVertical);
-    bool hiddenForH = (StyleOverflow::Hidden == ss.mHorizontal);
-    if ((hiddenForV && hiddenForH) ||
-        (checkIfScrollableY && !checkIfScrollableX && hiddenForV) ||
-        (checkIfScrollableX && !checkIfScrollableY && hiddenForH)) {
+    uint32_t directions =
+        scrollableFrame->GetAvailableScrollingDirectionsForUserInputEvents();
+    if ((!(directions & nsIScrollableFrame::VERTICAL) &&
+         !(directions & nsIScrollableFrame::HORIZONTAL)) ||
+        (checkIfScrollableY && !checkIfScrollableX &&
+         !(directions & nsIScrollableFrame::VERTICAL)) ||
+        (checkIfScrollableX && !checkIfScrollableY &&
+         !(directions & nsIScrollableFrame::HORIZONTAL))) {
       continue;
     }
 

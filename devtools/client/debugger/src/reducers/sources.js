@@ -99,9 +99,10 @@ export type SourceBase = {|
   +extensionName: ?string,
   +isExtension: boolean,
   +isWasm: boolean,
+  +isOriginal: boolean,
 |};
 
-type SourceResource = Resource<{
+export type SourceResource = Resource<{
   ...SourceBase,
   content: AsyncValue<SourceContent> | null,
 }>;

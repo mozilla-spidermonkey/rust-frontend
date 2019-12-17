@@ -6,6 +6,7 @@
 
 #include "frontend/SharedContext.h"
 
+#include "frontend/AbstractScope.h"
 #include "frontend/ModuleSharedContext.h"
 
 #include "frontend/ParseContext-inl.h"
@@ -121,7 +122,7 @@ FunctionBox::FunctionBox(JSContext* cx, TraceListNode* traceListHead,
                          FunctionFlags flags)
     : ObjectBox(nullptr, traceListHead, TraceListNode::NodeType::Function),
       SharedContext(cx, Kind::FunctionBox, directives, extraWarnings),
-      enclosingScope_(nullptr),
+      enclosingScope_(),
       namedLambdaBindings_(nullptr),
       functionScopeBindings_(nullptr),
       extraVarScopeBindings_(nullptr),
@@ -185,16 +186,13 @@ FunctionBox::FunctionBox(JSContext* cx, TraceListNode* traceListHead,
 }
 
 void FunctionBox::initFromLazyFunction(JSFunction* fun) {
-  LazyScript* lazy = fun->lazyScript();
+  BaseScript* lazy = fun->baseScript();
   if (lazy->isDerivedClassConstructor()) {
     setDerivedClassConstructor();
   }
   if (lazy->needsHomeObject()) {
     setNeedsHomeObject();
   }
-
-  enclosingScope_ = fun->enclosingScope();
-
   if (lazy->bindingsAccessedDynamically()) {
     setBindingsAccessedDynamically();
   }
@@ -208,15 +206,13 @@ void FunctionBox::initFromLazyFunction(JSFunction* fun) {
   toStringEnd = lazy->toStringEnd();
   startLine = lazy->lineno();
   startColumn = lazy->column();
-
-  initWithEnclosingScope(enclosingScope_, fun);
 }
 
 void FunctionBox::initStandaloneFunction(Scope* enclosingScope) {
   // Standalone functions are Function or Generator constructors and are
   // always scoped to the global.
   MOZ_ASSERT(enclosingScope->is<GlobalScope>());
-  enclosingScope_ = enclosingScope;
+  enclosingScope_ = AbstractScope(enclosingScope);
   allowNewTarget_ = true;
   thisBinding_ = ThisBinding::Function;
 }
@@ -278,8 +274,10 @@ void FunctionBox::initFieldInitializer(ParseContext* enclosing,
   needsThisTDZChecks_ = hasHeritage == HasHeritage::Yes;
 }
 
-void FunctionBox::initWithEnclosingScope(Scope* enclosingScope,
-                                         JSFunction* fun) {
+void FunctionBox::initWithEnclosingScope(JSFunction* fun) {
+  Scope* enclosingScope = fun->enclosingScope();
+  MOZ_ASSERT(enclosingScope);
+
   if (!isArrow()) {
     allowNewTarget_ = true;
     allowSuperProperty_ = fun->allowSuperProperty();
@@ -297,24 +295,29 @@ void FunctionBox::initWithEnclosingScope(Scope* enclosingScope,
   }
 
   computeInWith(enclosingScope);
+
+  enclosingScope_ = AbstractScope(enclosingScope);
 }
 
-void FunctionBox::setEnclosingScopeForInnerLazyFunction(Scope* enclosingScope) {
-  MOZ_ASSERT(isLazyFunctionWithoutEnclosingScope());
-
+void FunctionBox::setEnclosingScopeForInnerLazyFunction(
+    const AbstractScope& enclosingScope) {
   // For lazy functions inside a function which is being compiled, we cache
   // the incomplete scope object while compiling, and store it to the
   // LazyScript once the enclosing script successfully finishes compilation
   // in FunctionBox::finish.
+  MOZ_ASSERT(!enclosingScope_);
   enclosingScope_ = enclosingScope;
 }
 
 void FunctionBox::finish() {
-  if (!isLazyFunctionWithoutEnclosingScope()) {
-    return;
+  if (isInterpretedLazy()) {
+    // Lazy inner functions need to record their enclosing scope for when they
+    // eventually are compiled.
+    function()->setEnclosingScope(enclosingScope_.maybeScope());
+  } else {
+    // Non-lazy inner functions don't use the enclosingScope_ field.
+    MOZ_ASSERT(!enclosingScope_);
   }
-  MOZ_ASSERT(enclosingScope_);
-  function()->setEnclosingScope(enclosingScope_);
 }
 
 ModuleSharedContext::ModuleSharedContext(JSContext* cx, ModuleObject* module,

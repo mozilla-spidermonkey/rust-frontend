@@ -1395,7 +1395,7 @@ AbortReasonOr<Ok> IonBuilder::addOsrValueTypeBarrier(
              type == MIRType::MagicOptimizedArguments) {
     // No unbox instruction will be added below, so check the type by
     // adding a type barrier for a singleton type set.
-    TypeSet::Type ntype = TypeSet::PrimitiveType(ValueTypeFromMIRType(type));
+    TypeSet::Type ntype = TypeSet::PrimitiveType(type);
     LifoAlloc* lifoAlloc = alloc().lifoAlloc();
     typeSet = lifoAlloc->new_<TemporaryTypeSet>(lifoAlloc, ntype);
     if (!typeSet) {
@@ -1420,6 +1420,13 @@ AbortReasonOr<Ok> IonBuilder::addOsrValueTypeBarrier(
       break;
   }
 
+  // Unbox the OSR value to the type expected by the loop header.
+  //
+  // The only specialized types that can show up here are MIRTypes with a
+  // corresponding TypeSet::Type because NewBaselineFrameInspector and
+  // newPendingLoopHeader use TypeSet::Type for Values from the BaselineFrame.
+  // This means magic values other than MagicOptimizedArguments are represented
+  // as UnknownType() and MIRType::Value. See also TypeSet::IsUntrackedValue.
   switch (type) {
     case MIRType::Boolean:
     case MIRType::Int32:
@@ -1434,6 +1441,10 @@ AbortReasonOr<Ok> IonBuilder::addOsrValueTypeBarrier(
         osrBlock->rewriteSlot(slot, unbox);
         def = unbox;
       }
+      break;
+
+    case MIRType::Value:
+      // Nothing to do.
       break;
 
     case MIRType::Null: {
@@ -1463,7 +1474,7 @@ AbortReasonOr<Ok> IonBuilder::addOsrValueTypeBarrier(
     }
 
     default:
-      break;
+      MOZ_CRASH("Unexpected type");
   }
 
   MOZ_ASSERT(def == osrBlock->getSlot(slot));
@@ -1620,6 +1631,9 @@ class MOZ_RAII PoppedValueUseChecker {
 
         default:
           MOZ_ASSERT(popped_[i]->isImplicitlyUsed() ||
+                     // First value popped by JSOP_ENDITER is not used at all,
+                     // it's similar to JSOP_POP above.
+                     (op == JSOP_ENDITER && i == 0) ||
                      // MNewDerivedTypedObject instances are
                      // often dead unless they escape from the
                      // fn. See IonBuilder::loadTypedObjectData()
@@ -1714,7 +1728,9 @@ AbortReasonOr<Ok> IonBuilder::traverseBytecode() {
     }
   }
 
-  return Ok();
+  // The iloop above never breaks, so this point is unreachable.  Don't add code
+  // here, or you'll trigger compile errors about unreachable code with some
+  // compilers!
 }
 
 AbortReasonOr<Ok> IonBuilder::startTraversingBlock(MBasicBlock* block) {
@@ -1786,7 +1802,7 @@ AbortReasonOr<Ok> IonBuilder::jsop_loophead() {
   //
   //    LOOPHEAD
   //    ...
-  //    IFNE/IFEQ/GOTO to LOOPHEAD
+  //    IFNE/GOTO to LOOPHEAD
 
   MOZ_ASSERT(*pc == JSOP_LOOPHEAD);
 
@@ -1795,29 +1811,8 @@ AbortReasonOr<Ok> IonBuilder::jsop_loophead() {
     return Ok();
   }
 
-  jssrcnote* sn = GetSrcNote(gsn, script(), pc);
-  MOZ_ASSERT(sn);
-
-  uint32_t stackPhiCount;
-  switch (SN_TYPE(sn)) {
-    case SRC_FOR_OF:
-      stackPhiCount = 3;
-      break;
-    case SRC_FOR_IN:
-    case SRC_FOR:
-    case SRC_WHILE:
-    case SRC_DO_WHILE:
-      stackPhiCount = 0;
-      break;
-    default:
-      MOZ_CRASH("Unexpected source note");
-  }
-
-  bool canOsr = LoopHeadCanIonOsr(pc);
   bool osr = pc == info().osrPc();
   if (osr) {
-    MOZ_ASSERT(canOsr);
-
     MBasicBlock* preheader;
     MOZ_TRY_VAR(preheader, newOsrPreheader(current, pc));
     current->end(MGoto::New(alloc(), preheader));
@@ -1826,8 +1821,7 @@ AbortReasonOr<Ok> IonBuilder::jsop_loophead() {
 
   loopDepth_++;
   MBasicBlock* header;
-  MOZ_TRY_VAR(header,
-              newPendingLoopHeader(current, pc, osr, canOsr, stackPhiCount));
+  MOZ_TRY_VAR(header, newPendingLoopHeader(current, pc, osr));
   current->end(MGoto::New(alloc(), header));
 
   if (!loopStack_.emplaceBack(header)) {
@@ -2797,7 +2791,7 @@ AbortReasonOr<Ok> IonBuilder::improveTypesAtTypeOfCompare(MCompare* ins,
       return Ok();
     }
     inputTypes = &tmp;
-    tmp.addType(TypeSet::PrimitiveType(ValueTypeFromMIRType(subject->type())),
+    tmp.addType(TypeSet::PrimitiveOrAnyObjectType(subject->type()),
                 alloc_->lifoAlloc());
   }
 
@@ -2888,7 +2882,7 @@ AbortReasonOr<Ok> IonBuilder::improveTypesAtNullOrUndefinedCompare(
       return Ok();
     }
     inputTypes = &tmp;
-    tmp.addType(TypeSet::PrimitiveType(ValueTypeFromMIRType(subject->type())),
+    tmp.addType(TypeSet::PrimitiveOrAnyObjectType(subject->type()),
                 alloc_->lifoAlloc());
   }
 
@@ -2971,9 +2965,8 @@ AbortReasonOr<Ok> IonBuilder::improveTypesAtTest(MDefinition* ins,
           return Ok();
         }
         oldType = &tmp;
-        tmp.addType(
-            TypeSet::PrimitiveType(ValueTypeFromMIRType(subject->type())),
-            alloc_->lifoAlloc());
+        tmp.addType(TypeSet::PrimitiveOrAnyObjectType(subject->type()),
+                    alloc_->lifoAlloc());
       }
 
       if (oldType->unknown()) {
@@ -3005,9 +2998,8 @@ AbortReasonOr<Ok> IonBuilder::improveTypesAtTest(MDefinition* ins,
           return Ok();
         }
         oldType = &tmp;
-        tmp.addType(
-            TypeSet::PrimitiveType(ValueTypeFromMIRType(subject->type())),
-            alloc_->lifoAlloc());
+        tmp.addType(TypeSet::PrimitiveOrAnyObjectType(subject->type()),
+                    alloc_->lifoAlloc());
       }
 
       // If ins does not have a typeset we return as we cannot optimize.
@@ -3055,7 +3047,7 @@ AbortReasonOr<Ok> IonBuilder::improveTypesAtTest(MDefinition* ins,
       return Ok();
     }
     oldType = &tmp;
-    tmp.addType(TypeSet::PrimitiveType(ValueTypeFromMIRType(ins->type())),
+    tmp.addType(TypeSet::PrimitiveOrAnyObjectType(ins->type()),
                 alloc_->lifoAlloc());
   }
 
@@ -5917,6 +5909,9 @@ AbortReasonOr<Ok> IonBuilder::jsop_spreadcall() {
   if (target && target->realm() == script()->realm()) {
     apply->setNotCrossRealm();
   }
+  if (BytecodeIsPopped(pc)) {
+    apply->setIgnoresReturnValue();
+  }
 
   // TypeBarrier the call result
   TemporaryTypeSet* types = bytecodeTypes(pc);
@@ -6074,6 +6069,9 @@ AbortReasonOr<Ok> IonBuilder::jsop_funapplyarray(uint32_t argc) {
   if (target && target->realm() == script()->realm()) {
     apply->setNotCrossRealm();
   }
+  if (BytecodeIsPopped(pc)) {
+    apply->setIgnoresReturnValue();
+  }
 
   TemporaryTypeSet* types = bytecodeTypes(pc);
   return pushTypeBarrier(apply, types, BarrierKind::TypeSet);
@@ -6139,6 +6137,9 @@ AbortReasonOr<Ok> IonBuilder::jsop_funapplyarguments(uint32_t argc) {
 
     if (target && target->realm() == script()->realm()) {
       apply->setNotCrossRealm();
+    }
+    if (BytecodeIsPopped(pc)) {
+      apply->setIgnoresReturnValue();
     }
 
     TemporaryTypeSet* types = bytecodeTypes(pc);
@@ -6317,7 +6318,14 @@ AbortReasonOr<bool> IonBuilder::testShouldDOMCall(TypeSet* inTypes,
 }
 
 static bool ArgumentTypesMatch(MDefinition* def, StackTypeSet* calleeTypes) {
-  if (!calleeTypes) {
+  MOZ_ASSERT(calleeTypes);
+
+  if (calleeTypes->unknown()) {
+    return true;
+  }
+
+  if (TypeSet::IsUntrackedMIRType(def->type())) {
+    // The TypeSet has to be marked as unknown. See JitScript::MonitorThisType.
     return false;
   }
 
@@ -6814,10 +6822,7 @@ static bool ObjectOrSimplePrimitive(MDefinition* op) {
   return !op->mightBeType(MIRType::String) &&
          !op->mightBeType(MIRType::BigInt) &&
          !op->mightBeType(MIRType::Double) &&
-         !op->mightBeType(MIRType::Float32) &&
-         !op->mightBeType(MIRType::MagicOptimizedArguments) &&
-         !op->mightBeType(MIRType::MagicHole) &&
-         !op->mightBeType(MIRType::MagicIsConstructing);
+         !op->mightBeType(MIRType::Float32) && !op->mightBeMagicType();
 }
 
 AbortReasonOr<Ok> IonBuilder::compareTrySpecialized(bool* emitted, JSOp op,
@@ -7330,13 +7335,26 @@ AbortReasonOr<Ok> IonBuilder::jsop_initelem_inc() {
   MDefinition* id = current->pop();
   MDefinition* obj = current->peek(-1);
 
-  bool emitted = false;
-
   MAdd* nextId = MAdd::New(alloc(), id, constantInt(1), MIRType::Int32);
   current->add(nextId);
   current->push(nextId);
 
+  return initArrayElement(obj, id, value);
+}
+
+AbortReasonOr<Ok> IonBuilder::initArrayElement(MDefinition* obj,
+                                               MDefinition* id,
+                                               MDefinition* value) {
+  MOZ_ASSERT(*pc == JSOP_INITELEM_ARRAY || *pc == JSOP_INITELEM_INC);
+
+  bool emitted = false;
+
   if (!forceInlineCaches()) {
+    MOZ_TRY(initArrayElemTryFastPath(&emitted, obj, id, value));
+    if (emitted) {
+      return Ok();
+    }
+
     MOZ_TRY(initOrSetElemTryDense(&emitted, obj, id, value,
                                   /* writeHole = */ true));
     if (emitted) {
@@ -7356,57 +7374,70 @@ AbortReasonOr<Ok> IonBuilder::jsop_initelem_inc() {
   return resumeAfter(initElem);
 }
 
-AbortReasonOr<Ok> IonBuilder::jsop_initelem_array() {
-  MDefinition* value = current->pop();
-  MDefinition* obj = current->peek(-1);
+AbortReasonOr<Ok> IonBuilder::initArrayElemTryFastPath(bool* emitted,
+                                                       MDefinition* obj,
+                                                       MDefinition* id,
+                                                       MDefinition* value) {
+  MOZ_ASSERT(*emitted == false);
+  MOZ_ASSERT(*pc == JSOP_INITELEM_ARRAY || *pc == JSOP_INITELEM_INC);
 
   // Make sure that arrays have the type being written to them by the
   // intializer, and that arrays are marked as non-packed when writing holes
   // to them during initialization.
-  bool needStub = false;
+
+  if (!obj->isNewArray()) {
+    return Ok();
+  }
+
   if (shouldAbortOnPreliminaryGroups(obj)) {
-    needStub = true;
-  } else if (!obj->resultTypeSet() || obj->resultTypeSet()->unknownObject() ||
-             obj->resultTypeSet()->getObjectCount() != 1) {
-    needStub = true;
-  } else {
-    MOZ_ASSERT(obj->resultTypeSet()->getObjectCount() == 1);
-    TypeSet::ObjectKey* initializer = obj->resultTypeSet()->getObject(0);
-    if (value->type() == MIRType::MagicHole) {
-      if (!initializer->hasFlags(constraints(), OBJECT_FLAG_NON_PACKED)) {
-        needStub = true;
-      }
-    } else if (!initializer->unknownProperties()) {
-      HeapTypeSetKey elemTypes = initializer->property(JSID_VOID);
-      if (!TypeSetIncludes(elemTypes.maybeTypes(), value->type(),
-                           value->resultTypeSet())) {
-        elemTypes.freeze(constraints());
-        needStub = true;
-      }
+    return Ok();
+  }
+
+  if (!obj->resultTypeSet() || obj->resultTypeSet()->unknownObject() ||
+      obj->resultTypeSet()->getObjectCount() != 1) {
+    return Ok();
+  }
+
+  TypeSet::ObjectKey* initializer = obj->resultTypeSet()->getObject(0);
+  if (value->type() == MIRType::MagicHole) {
+    if (!initializer->hasFlags(constraints(), OBJECT_FLAG_NON_PACKED)) {
+      return Ok();
+    }
+  } else if (!initializer->unknownProperties()) {
+    HeapTypeSetKey elemTypes = initializer->property(JSID_VOID);
+    if (!TypeSetIncludes(elemTypes.maybeTypes(), value->type(),
+                         value->resultTypeSet())) {
+      elemTypes.freeze(constraints());
+      return Ok();
     }
   }
 
-  uint32_t index = GET_UINT32(pc);
-  if (needStub) {
-    MOZ_ASSERT(index <= INT32_MAX,
-               "the bytecode emitter must fail to compile code that would "
-               "produce JSOP_INITELEM_ARRAY with an index exceeding "
-               "int32_t range");
-    MCallInitElementArray* store =
-        MCallInitElementArray::New(alloc(), obj, constantInt(index), value);
-    current->add(store);
-    return resumeAfter(store);
-  }
+  MOZ_TRY(initArrayElementFastPath(obj->toNewArray(), id, value,
+                                   /* addResumePoint = */ true));
 
-  return initializeArrayElement(obj, index, value, /* addResumePoint = */ true);
+  *emitted = true;
+  return Ok();
 }
 
-AbortReasonOr<Ok> IonBuilder::initializeArrayElement(
-    MDefinition* obj, size_t index, MDefinition* value,
-    bool addResumePointAndIncrementInitializedLength) {
+AbortReasonOr<Ok> IonBuilder::jsop_initelem_array() {
+  MDefinition* value = current->pop();
+  MDefinition* obj = current->peek(-1);
+
+  uint32_t index = GET_UINT32(pc);
+  MOZ_ASSERT(index <= INT32_MAX,
+             "the bytecode emitter must fail to compile code that would "
+             "produce JSOP_INITELEM_ARRAY with an index exceeding "
+             "int32_t range");
+
   MConstant* id = MConstant::New(alloc(), Int32Value(index));
   current->add(id);
 
+  return initArrayElement(obj, id, value);
+}
+
+AbortReasonOr<Ok> IonBuilder::initArrayElementFastPath(
+    MNewArray* obj, MDefinition* id, MDefinition* value,
+    bool addResumePointAndIncrementInitializedLength) {
   // Get the elements vector.
   MElements* elements = MElements::New(alloc(), obj);
   current->add(elements);
@@ -7415,7 +7446,7 @@ AbortReasonOr<Ok> IonBuilder::initializeArrayElement(
     current->add(MPostWriteBarrier::New(alloc(), obj, value));
   }
 
-  if (obj->isNewArray() && obj->toNewArray()->convertDoubleElements()) {
+  if (obj->convertDoubleElements()) {
     MInstruction* valueDouble = MToDouble::New(alloc(), value);
     current->add(valueDouble);
     value = valueDouble;
@@ -7767,16 +7798,9 @@ AbortReasonOr<MBasicBlock*> IonBuilder::newOsrPreheader(
 }
 
 AbortReasonOr<MBasicBlock*> IonBuilder::newPendingLoopHeader(
-    MBasicBlock* predecessor, jsbytecode* pc, bool osr, bool canOsr,
-    unsigned stackPhiCount) {
-  // If this site can OSR, all values on the expression stack are part of the
-  // loop.
-  if (canOsr) {
-    stackPhiCount = predecessor->stackDepth() - info().firstStackSlot();
-  }
-
+    MBasicBlock* predecessor, jsbytecode* pc, bool osr) {
   MBasicBlock* block = MBasicBlock::NewPendingLoopHeader(
-      graph(), info(), predecessor, bytecodeSite(pc), stackPhiCount);
+      graph(), info(), predecessor, bytecodeSite(pc));
   if (!block) {
     return abort(AbortReason::Alloc);
   }
@@ -8515,9 +8539,12 @@ AbortReasonOr<Ok> IonBuilder::setStaticName(JSObject* staticObject,
 
   current->pop();
 
-  // Pop the bound object on the stack.
+  // Pop the bound object on the stack. This is usually a constant but it can
+  // be a phi if loops are involved, for example: x = [...arr];
   MDefinition* obj = current->pop();
-  MOZ_ASSERT(&obj->toConstant()->toObject() == staticObject);
+  MOZ_ASSERT(obj->isConstant() || obj->isPhi());
+  MOZ_ASSERT_IF(obj->isConstant(),
+                &obj->toConstant()->toObject() == staticObject);
 
   if (needsPostBarrier(value)) {
     current->add(MPostWriteBarrier::New(alloc(), obj, value));
@@ -12954,7 +12981,6 @@ AbortReasonOr<Ok> IonBuilder::jsop_setarg(uint32_t arg) {
     }
 
     MSetFrameArgument* store = MSetFrameArgument::New(alloc(), arg, val);
-    modifiesFrameArguments_ = true;
     current->add(store);
     current->setArg(arg);
     return Ok();
@@ -13182,9 +13208,10 @@ AbortReasonOr<Ok> IonBuilder::jsop_isnoiter() {
 }
 
 AbortReasonOr<Ok> IonBuilder::jsop_iterend() {
+  current->pop();  // Iterator value is not used.
   MDefinition* iter = current->pop();
-  MInstruction* ins = MIteratorEnd::New(alloc(), iter);
 
+  MInstruction* ins = MIteratorEnd::New(alloc(), iter);
   current->add(ins);
 
   return resumeAfter(ins);

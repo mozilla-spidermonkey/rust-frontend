@@ -11,11 +11,13 @@
 #include "jstypes.h"
 
 #include "ds/InlineTable.h"
+#include "frontend/AbstractScope.h"
 #include "frontend/FunctionCreationData.h"
 #include "frontend/ParseNode.h"
 #include "vm/BytecodeUtil.h"
 #include "vm/JSFunction.h"
 #include "vm/JSScript.h"
+#include "vm/Scope.h"
 
 namespace js {
 namespace frontend {
@@ -41,13 +43,15 @@ enum class StatementKind : uint8_t {
   Class,
 
   // Used only by BytecodeEmitter.
-  Spread
+  Spread,
+  YieldStar,
 };
 
 static inline bool StatementKindIsLoop(StatementKind kind) {
   return kind == StatementKind::ForLoop || kind == StatementKind::ForInLoop ||
          kind == StatementKind::ForOfLoop || kind == StatementKind::DoLoop ||
-         kind == StatementKind::WhileLoop || kind == StatementKind::Spread;
+         kind == StatementKind::WhileLoop || kind == StatementKind::Spread ||
+         kind == StatementKind::YieldStar;
 }
 
 static inline bool StatementKindIsUnlabeledBreakTarget(StatementKind kind) {
@@ -271,34 +275,6 @@ inline EvalSharedContext* SharedContext::asEvalContext() {
 
 enum class HasHeritage : bool { No, Yes };
 
-// Data used to instantiate the lazy script before script emission.
-struct LazyScriptCreationData {
-  frontend::AtomVector closedOverBindings;
-
-  // This is traced by the functionbox which owns this LazyScriptCreationData
-  FunctionBoxVector innerFunctionBoxes;
-  bool strict = false;
-
-  mozilla::Maybe<FieldInitializers> fieldInitializers;
-
-  explicit LazyScriptCreationData(JSContext* cx) : innerFunctionBoxes(cx) {}
-
-  bool init(JSContext* cx, const frontend::AtomVector& COB,
-            FunctionBoxVector& innerBoxes, bool isStrict) {
-    strict = isStrict;
-    // Copy out of the stack allocated vectors.
-    if (!innerFunctionBoxes.appendAll(innerBoxes)) {
-      return false;
-    }
-
-    if (!closedOverBindings.appendAll(COB)) {
-      ReportOutOfMemory(cx);  // closedOverBindings uses SystemAllocPolicy.
-      return false;
-    }
-    return true;
-  }
-};
-
 class FunctionBox : public ObjectBox, public SharedContext {
   // The parser handles tracing the fields below via the TraceListNode linked
   // list.
@@ -313,7 +289,7 @@ class FunctionBox : public ObjectBox, public SharedContext {
   //     partially initialized enclosing scopes, so we must avoid storing the
   //     scope in the LazyScript until compilation has completed
   //     successfully.)
-  Scope* enclosingScope_;
+  AbstractScope enclosingScope_;
 
   // Names from the named lambda scope, if a named lambda.
   LexicalScope::Data* namedLambdaBindings_;
@@ -329,8 +305,6 @@ class FunctionBox : public ObjectBox, public SharedContext {
               uint32_t toStringStart, Directives directives, bool extraWarnings,
               GeneratorKind generatorKind, FunctionAsyncKind asyncKind,
               JSAtom* explicitName, FunctionFlags flags);
-
-  void initWithEnclosingScope(Scope* enclosingScope, JSFunction* fun);
 
   void initWithEnclosingParseContext(ParseContext* enclosing,
                                      FunctionSyntaxKind kind, bool isArrow,
@@ -429,12 +403,6 @@ class FunctionBox : public ObjectBox, public SharedContext {
   JSAtom* explicitName_;
   FunctionFlags flags_;
 
-  mozilla::Maybe<LazyScriptCreationData> lazyScriptData_;
-
-  mozilla::Maybe<LazyScriptCreationData>& lazyScriptData() {
-    return lazyScriptData_;
-  }
-
   mozilla::Maybe<FunctionCreationData> functionCreationData_;
 
   bool hasFunctionCreationData() { return functionCreationData_.isSome(); }
@@ -487,6 +455,8 @@ class FunctionBox : public ObjectBox, public SharedContext {
   void initFromLazyFunction(JSFunction* fun);
   void initStandaloneFunction(Scope* enclosingScope);
 
+  void initWithEnclosingScope(JSFunction* fun);
+
   void initWithEnclosingParseContext(ParseContext* enclosing,
                                      Handle<FunctionCreationData> fun,
                                      FunctionSyntaxKind kind) {
@@ -506,10 +476,8 @@ class FunctionBox : public ObjectBox, public SharedContext {
                             Handle<FunctionCreationData> data,
                             HasHeritage hasHeritage);
 
-  inline bool isLazyFunctionWithoutEnclosingScope() const {
-    return isInterpretedLazy() && !function()->enclosingScope();
-  }
-  void setEnclosingScopeForInnerLazyFunction(Scope* enclosingScope);
+  void setEnclosingScopeForInnerLazyFunction(
+      const AbstractScope& enclosingScope);
   void finish();
 
   // Free non-LifoAlloc memory which would otherwise be leaked when
@@ -517,10 +485,7 @@ class FunctionBox : public ObjectBox, public SharedContext {
   void cleanupMemory() { clearDeferredAllocationInfo(); }
 
   // Clear any deferred allocation info which will no longer be used.
-  void clearDeferredAllocationInfo() {
-    lazyScriptData().reset();
-    functionCreationData().reset();
-  }
+  void clearDeferredAllocationInfo() { functionCreationData().reset(); }
 
   JSFunction* function() const { return &object()->as<JSFunction>(); }
 
@@ -538,25 +503,11 @@ class FunctionBox : public ObjectBox, public SharedContext {
   }
 
   Scope* compilationEnclosingScope() const override {
-    // This method is used to distinguish the outermost SharedContext. If
-    // a FunctionBox is the outermost SharedContext, it must be a lazy
-    // function.
+    // This is used when emitting code for the current FunctionBox and therefore
+    // the enclosingScope_ must have be set correctly during initalization.
 
-    // If the function is lazy and it has enclosing scope, the function is
-    // being delazified.  In that case the enclosingScope_ field is copied
-    // from the lazy function at the beginning of delazification and should
-    // keep pointing the same scope.
-    MOZ_ASSERT_IF(isInterpretedLazy() && function()->enclosingScope(),
-                  enclosingScope_ == function()->enclosingScope());
-
-    // If this FunctionBox is a lazy child of the function we're actually
-    // compiling, then it is not the outermost SharedContext, so this
-    // method should return nullptr."
-    if (isLazyFunctionWithoutEnclosingScope()) {
-      return nullptr;
-    }
-
-    return enclosingScope_;
+    MOZ_ASSERT(enclosingScope_);
+    return enclosingScope_.maybeScope();
   }
 
   bool needsCallObjectRegardlessOfBindings() const {
@@ -717,12 +668,12 @@ class FunctionBox : public ObjectBox, public SharedContext {
 
   void setFieldInitializers(FieldInitializers fi) {
     if (hasObject()) {
-      MOZ_ASSERT(function()->lazyScript());
-      function()->lazyScript()->setFieldInitializers(fi);
+      MOZ_ASSERT(function()->baseScript());
+      function()->baseScript()->setFieldInitializers(fi);
       return;
     }
-    MOZ_ASSERT(lazyScriptData());
-    lazyScriptData()->fieldInitializers.emplace(fi);
+    MOZ_ASSERT(functionCreationData()->lazyScriptData);
+    functionCreationData()->lazyScriptData->fieldInitializers.emplace(fi);
   }
 
   void trace(JSTracer* trc) override;

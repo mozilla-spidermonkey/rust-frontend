@@ -42,10 +42,6 @@ bool WhileEmitter::emitCond(const Maybe<uint32_t>& whilePos,
 
   loopInfo_.emplace(bce_, StatementKind::WhileLoop);
 
-  if (!bce_->newSrcNote(SRC_WHILE)) {
-    return false;
-  }
-
   if (!loopInfo_->emitLoopHead(bce_, condPos)) {
     return false;
   }
@@ -80,17 +76,7 @@ bool WhileEmitter::emitEnd() {
     return false;
   }
 
-  if (!loopInfo_->emitLoopEnd(bce_, JSOP_GOTO)) {
-    return false;
-  }
-
-  if (!bce_->addTryNote(JSTRY_LOOP, bce_->bytecodeSection().stackDepth(),
-                        loopInfo_->headOffset(),
-                        loopInfo_->breakTargetOffset())) {
-    return false;
-  }
-
-  if (!loopInfo_->patchBreaks(bce_)) {
+  if (!loopInfo_->emitLoopEnd(bce_, JSOP_GOTO, JSTRY_LOOP)) {
     return false;
   }
 

@@ -241,13 +241,12 @@ nsresult LocalStorageManagerConstructor(nsISupports* aOuter, REFNSIID aIID,
 
 nsresult SessionStorageManagerConstructor(nsISupports* aOuter, REFNSIID aIID,
                                           void** aResult) {
-  RefPtr<SessionStorageManager> manager = new SessionStorageManager();
+  RefPtr<SessionStorageManager> manager = new SessionStorageManager(nullptr);
   return manager->QueryInterface(aIID, aResult);
 }
 
 static const mozilla::Module::CategoryEntry kLayoutCategories[] = {
     // clang-format off
-  { "clear-origin-attributes-data", "QuotaManagerService", "service," QUOTAMANAGER_SERVICE_CONTRACTID },
     {nullptr}
     // clang-format on
 };

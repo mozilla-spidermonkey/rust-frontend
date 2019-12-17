@@ -281,6 +281,7 @@
 #ifdef XP_WIN
 #  include "mozilla/audio/AudioNotificationSender.h"
 #  include "mozilla/widget/AudioSession.h"
+#  include "mozilla/WinDllServices.h"
 #endif
 
 #ifdef ACCESSIBILITY
@@ -3023,7 +3024,7 @@ ContentParent::Observe(nsISupports* aSubject, const char* aTopic,
   } else if (!strcmp(aTopic, NS_IPC_IOSERVICE_SET_OFFLINE_TOPIC)) {
     NS_ConvertUTF16toUTF8 dataStr(aData);
     const char* offline = dataStr.get();
-    if (!SendSetOffline(!strcmp(offline, "true") ? true : false)) {
+    if (!SendSetOffline(!strcmp(offline, "true"))) {
       return NS_ERROR_NOT_AVAILABLE;
     }
   } else if (!strcmp(aTopic, NS_IPC_IOSERVICE_SET_CONNECTIVITY_TOPIC)) {
@@ -4608,9 +4609,7 @@ ContentParent::AllocPContentPermissionRequestParent(
     const nsTArray<PermissionRequest>& aRequests,
     const IPC::Principal& aPrincipal, const IPC::Principal& aTopLevelPrincipal,
     const bool& aIsHandlingUserInput,
-    const bool& aMaybeUnsafePermissionDelegate,
-    const bool& aDocumentHasUserInput, const DOMTimeStamp& aPageLoadTimestamp,
-    const TabId& aTabId) {
+    const bool& aMaybeUnsafePermissionDelegate, const TabId& aTabId) {
   ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
   RefPtr<BrowserParent> tp =
       cpm->GetTopLevelBrowserParentByProcessAndTabId(this->ChildID(), aTabId);
@@ -4625,8 +4624,7 @@ ContentParent::AllocPContentPermissionRequestParent(
   }
   return nsContentPermissionUtils::CreateContentPermissionRequestParent(
       aRequests, tp->GetOwnerElement(), aPrincipal, topPrincipal,
-      aIsHandlingUserInput, aMaybeUnsafePermissionDelegate,
-      aDocumentHasUserInput, aPageLoadTimestamp, aTabId);
+      aIsHandlingUserInput, aMaybeUnsafePermissionDelegate, aTabId);
 }
 
 bool ContentParent::DeallocPContentPermissionRequestParent(
@@ -5400,6 +5398,19 @@ nsresult ContentParent::AboutToLoadHttpFtpDocumentForChild(
     UpdateCookieStatus(aChannel);
   }
 
+  RefPtr<nsILoadInfo> loadInfo;
+  rv = aChannel->GetLoadInfo(getter_AddRefs(loadInfo));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  RefPtr<BrowsingContext> browsingContext;
+  rv = loadInfo->GetBrowsingContext(getter_AddRefs(browsingContext));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (browsingContext && !browsingContext->IsDiscarded()) {
+    browsingContext->GetSessionStorageManager()
+        ->SendSessionStorageDataToContentProcess(this, principal);
+  }
+
   if (!NextGenLocalStorageEnabled()) {
     return NS_OK;
   }
@@ -5791,6 +5802,33 @@ mozilla::ipc::IPCResult ContentParent::RecvNotifyMediaAudibleChanged(
   if (controller) {
     controller->NotifyMediaAudibleChanged(aAudible);
   }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvGetModulesTrust(
+    ModulePaths&& aModPaths, bool aRunAtNormalPriority,
+    GetModulesTrustResolver&& aResolver) {
+#if defined(XP_WIN)
+  RefPtr<DllServices> dllSvc(DllServices::Get());
+  dllSvc->GetModulesTrust(std::move(aModPaths), aRunAtNormalPriority)
+      ->Then(
+          GetMainThreadSerialEventTarget(), __func__,
+          [aResolver](ModulesMapResult&& aResult) {
+            aResolver(Some(ModulesMapResult(std::move(aResult))));
+          },
+          [aResolver](nsresult aRv) { aResolver(Nothing()); });
+  return IPC_OK();
+#else
+  return IPC_FAIL(this, "Unsupported on this platform");
+#endif  // defined(XP_WIN)
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvSessionStorageData(
+    BrowsingContext* const aTop, const nsACString& aOriginAttrs,
+    const nsACString& aOriginKey, const nsTArray<KeyValuePair>& aDefaultData,
+    const nsTArray<KeyValuePair>& aSessionData) {
+  aTop->GetSessionStorageManager()->LoadSessionStorageData(
+      this, aOriginAttrs, aOriginKey, aDefaultData, aSessionData);
   return IPC_OK();
 }
 

@@ -107,7 +107,7 @@ either Raptor or browsertime."""
                  symbols_path=None, host=None, power_test=False, cpu_test=False, memory_test=False,
                  is_release_build=False, debug_mode=False, post_startup_delay=None,
                  interrupt_handler=None, e10s=True, enable_webrender=False,
-                 results_handler_class=RaptorResultsHandler, with_conditioned_profile=False,
+                 results_handler_class=RaptorResultsHandler, no_conditioned_profile=False,
                  extra_prefs={}, **kwargs):
 
         # Override the magic --host HOST_IP with the value of the environment variable.
@@ -133,10 +133,21 @@ either Raptor or browsertime."""
             'enable_control_server_wait': memory_test or cpu_test,
             'e10s': e10s,
             'enable_webrender': enable_webrender,
-            'with_conditioned_profile': with_conditioned_profile,
+            'no_conditioned_profile': no_conditioned_profile,
             'enable_fission': extra_prefs.get('fission.autostart', False),
             'extra_prefs': extra_prefs
         }
+
+        self.firefox_android_apps = FIREFOX_ANDROID_APPS
+        # See bug 1582757; until we support aarch64 conditioned-profile builds, fall back
+        # to mozrunner-created profiles
+        # only use conditioned profiles on Firefox desktop for now;
+        # see bug 1597711 for GeckoView/Android support
+        self.no_condprof = ((self.config['platform'] == 'win'
+                             and self.config['processor'] == 'aarch64') or
+                            (self.config['app'] in self.firefox_android_apps) or
+                            self.config['no_conditioned_profile'])
+
         # We can never use e10s on fennec
         if self.config['app'] == 'fennec':
             self.config['e10s'] = False
@@ -154,7 +165,6 @@ either Raptor or browsertime."""
         self.device = None
         self.profile_class = profile_class or app
         self.conditioned_profile_dir = None
-        self.firefox_android_apps = FIREFOX_ANDROID_APPS
         self.interrupt_handler = interrupt_handler
         self.results_handler = results_handler_class(**self.config)
 
@@ -171,12 +181,6 @@ either Raptor or browsertime."""
             self.post_startup_delay = min(self.post_startup_delay, 3000)
             LOG.info("debug-mode enabled, reducing post-browser startup pause to %d ms"
                      % self.post_startup_delay)
-
-        if self.config['with_conditioned_profile']:
-            self.post_startup_delay = 0
-            LOG.info("Using conditioned profile; setting post-startup-delay to: {}"
-                     .format(self.post_startup_delay))
-
         LOG.info("main raptor init, config is: %s" % str(self.config))
 
         self.build_browser_profile()
@@ -189,15 +193,15 @@ either Raptor or browsertime."""
         temp_download_dir = tempfile.mkdtemp()
         LOG.info("Making temp_download_dir from inside get_conditioned_profile {}"
                  .format(temp_download_dir))
+        # call condprof's client API to yield our platform-specific
+        # conditioned-profile binary
         platform = get_current_platform()
-        cond_prof_target_dir = get_profile(temp_download_dir, platform, "cold")
-        LOG.info("temp_download_dir is: {}".format(temp_download_dir))
-        LOG.info("cond_prof_target_dir is: {}".format(cond_prof_target_dir))
-
+        cond_prof_target_dir = get_profile(temp_download_dir, platform, "settled")
+        # now get the full directory path to our fetched conditioned profile
         self.conditioned_profile_dir = os.path.join(temp_download_dir, cond_prof_target_dir)
         if not os.path.exists(cond_prof_target_dir):
             LOG.critical("Can't find target_dir {}, from get_profile()"
-                         "temp_download_dir {}, platform {}, cold"
+                         "temp_download_dir {}, platform {}, settled"
                          .format(cond_prof_target_dir, temp_download_dir, platform))
             raise OSError
 
@@ -208,15 +212,12 @@ either Raptor or browsertime."""
         return self.conditioned_profile_dir
 
     def build_browser_profile(self):
-        # if --with-conditioned-profile was passed in via the commandline,
-        # we need to fetch and use a conditioned profile
-        if self.config['with_conditioned_profile']:
-            self.get_conditioned_profile()
-            self.profile = create_profile(self.profile_class, profile=self.conditioned_profile_dir)
-        else:
-            # have mozprofile create a new profile for us
+        if self.no_condprof:
             self.profile = create_profile(self.profile_class)
-
+        else:
+            self.get_conditioned_profile()
+            # use mozprofile to create a profile for us, from our conditioned profile's path
+            self.profile = create_profile(self.profile_class, profile=self.conditioned_profile_dir)
         # Merge extra profile data from testing/profiles
         with open(os.path.join(self.profile_data_dir, 'profiles.json'), 'r') as fh:
             base_profiles = json.load(fh)['raptor']
@@ -263,6 +264,9 @@ either Raptor or browsertime."""
         # if 'alert_on' was provided in the test INI, add to our config for results/output
         self.config['subtest_alert_on'] = test.get('alert_on')
 
+        if test.get('playback') is not None and self.playback is None:
+            self.start_playback(test)
+
         if test.get("preferences") is not None:
             self.set_browser_test_prefs(test['preferences'])
 
@@ -297,7 +301,7 @@ either Raptor or browsertime."""
         self.check_for_crashes()
 
         # gecko profiling symbolication
-        if self.config['gecko_profile'] is True:
+        if self.config['gecko_profile']:
             self.gecko_profiler.symbolicate()
             # clean up the temp gecko profiling folders
             LOG.info("cleaning up after gecko profiling")
@@ -406,6 +410,16 @@ either Raptor or browsertime."""
 
         self.log_recording_dates(test)
 
+    def _init_gecko_profiling(self, test):
+        LOG.info("initializing gecko profiler")
+        upload_dir = os.getenv('MOZ_UPLOAD_DIR')
+        if not upload_dir:
+            LOG.critical("Profiling ignored because MOZ_UPLOAD_DIR was not set")
+        else:
+            self.gecko_profiler = GeckoProfile(upload_dir,
+                                               self.config,
+                                               test)
+
 
 class PerftestDesktop(Perftest):
     """Mixin class for Desktop-specific Perftest subclasses"""
@@ -430,7 +444,7 @@ class PerftestDesktop(Perftest):
 
         if test.get('playback', False):
             pb_args = [
-                '--proxy-server=127.0.0.1:8080',
+                '--proxy-server=%s:%d' % (self.playback.host, self.playback.port),
                 '--proxy-bypass-list=localhost;127.0.0.1',
                 '--ignore-certificate-errors',
             ]
@@ -586,6 +600,7 @@ class Browsertime(Perftest):
 
         super(Browsertime, self).__init__(app, binary, results_handler_class=klass, **kwargs)
         LOG.info("cwd: '{}'".format(os.getcwd()))
+        self.config['browsertime'] = True
 
         # For debugging.
         for k in ("browsertime_node",
@@ -636,7 +651,7 @@ class Browsertime(Perftest):
             test['test_url'] = test['test_url'].replace('<host>', self.benchmark.host)
             test['test_url'] = test['test_url'].replace('<port>', self.benchmark.port)
 
-        if test.get('playback') is not None:
+        if test.get('playback') is not None and self.playback is None:
             self.start_playback(test)
 
         # TODO: geckodriver/chromedriver from tasks.
@@ -668,6 +683,7 @@ class Browsertime(Perftest):
         # if we were using a playback tool, stop it
         if self.playback is not None:
             self.playback.stop()
+            self.playback = None
 
     def check_for_crashes(self):
         super(Browsertime, self).check_for_crashes()
@@ -693,31 +709,47 @@ class Browsertime(Perftest):
 
         # Raptor's `pageCycleDelay` delay (ms) between pageload cycles
         browsertime_script.extend(["--browsertime.page_cycle_delay", "1000"])
-        # Raptor's `foregroundDelay` delay (ms) for foregrounding app
-        browsertime_script.extend(["--browsertime.foreground_delay", "5000"])
 
         # Raptor's `post startup delay` is settle time after the browser has started
         browsertime_script.extend(["--browsertime.post_startup_delay",
                                    str(self.post_startup_delay)])
 
-        if self.config['with_conditioned_profile']:
+        browsertime_options = ['--firefox.profileTemplate', str(self.profile.profile),
+                               '--skipHar',
+                               '--video', self.browsertime_video and 'true' or 'false',
+                               '--visualMetrics', 'false',
+                               # url load timeout (milliseconds)
+                               '--timeouts.pageLoad', str(timeout),
+                               # running browser scripts timeout (milliseconds)
+                               '--timeouts.script', str(timeout * int(test.get("page_cycles", 1))),
+                               '-vv',
+                               '--resultDir', self.results_handler.result_dir_for_test(test)]
+
+        # have browsertime use our newly-created conditioned-profile path
+        if not self.no_condprof:
             self.profile.profile = self.conditioned_profile_dir
+
+        if self.config['gecko_profile']:
+            self.config['browsertime_result_dir'] = self.results_handler.result_dir_for_test(test)
+            self._init_gecko_profiling(test)
+            browsertime_options.append('--firefox.geckoProfiler')
+
+            for option, browser_time_option in (('gecko_profile_interval',
+                                                 '--firefox.geckoProfilerParams.interval'),
+                                                ('gecko_profile_entries',
+                                                 '--firefox.geckoProfilerParams.bufferSize')):
+                value = self.config.get(option)
+                if value is None:
+                    value = test.get(option)
+                if value is not None:
+                    browsertime_options.extend([browser_time_option, str(value)])
 
         return ([self.browsertime_node, self.browsertime_browsertimejs] +
                 self.driver_paths +
                 browsertime_script +
-                ['--firefox.profileTemplate', str(self.profile.profile),
-                 '--skipHar',
-                 '--video', self.browsertime_video and 'true' or 'false',
-                 '--visualMetrics', 'false',
-                 # url load timeout (milliseconds)
-                 '--timeouts.pageLoad', str(timeout),
-                 # running browser scripts timeout (milliseconds)
-                 '--timeouts.script', str(timeout * int(test.get("page_cycles", 1))),
-                 '-vv',
-                 '--resultDir', self.results_handler.result_dir_for_test(test),
-                 # -n option for the browsertime to restart the browser
-                 '-n', str(test.get('browser_cycles', 1))])
+                # -n option for the browsertime to restart the browser
+                browsertime_options +
+                ['-n', str(test.get('browser_cycles', 1))])
 
     def _compute_process_timeout(self, test, timeout):
         # bt_timeout will be the overall browsertime cmd/session timeout (seconds)
@@ -867,7 +899,7 @@ class Raptor(Perftest):
             power_test=self.config.get('power_test'),
             cpu_test=self.config.get('cpu_test'),
             memory_test=self.config.get('memory_test'),
-            with_conditioned_profile=self.config['with_conditioned_profile'],
+            no_conditioned_profile=self.config['no_conditioned_profile'],
             extra_prefs=self.config.get('extra_prefs')
         )
         browser_name, browser_version = self.get_browser_meta()
@@ -949,6 +981,7 @@ class Raptor(Perftest):
 
         if self.playback is not None:
             self.playback.stop()
+            self.playback = None
 
         self.remove_raptor_webext()
 
@@ -1007,16 +1040,6 @@ class Raptor(Perftest):
         chrome_apps = CHROMIUM_DISTROS + ["chrome-android", "chromium-android"]
         if self.config['app'] in chrome_apps:
             self.profile.addons.remove(self.raptor_webext)
-
-    def _init_gecko_profiling(self, test):
-        LOG.info("initializing gecko profiler")
-        upload_dir = os.getenv('MOZ_UPLOAD_DIR')
-        if not upload_dir:
-            LOG.critical("Profiling ignored because MOZ_UPLOAD_DIR was not set")
-        else:
-            self.gecko_profiler = GeckoProfile(upload_dir,
-                                               self.config,
-                                               test)
 
     def clean_up(self):
         super(Raptor, self).clean_up()
@@ -1173,9 +1196,6 @@ class RaptorDesktop(PerftestDesktop, Raptor):
 
             if test['browser_cycle'] == 1:
 
-                if test.get('playback') is not None:
-                    self.start_playback(test)
-
                 if self.config['host'] not in ('localhost', '127.0.0.1'):
                     self.delete_proxy_settings_from_profile()
 
@@ -1199,9 +1219,6 @@ class RaptorDesktop(PerftestDesktop, Raptor):
 
     def __run_test_warm(self, test, timeout):
         self.run_test_setup(test)
-
-        if test.get('playback') is not None:
-            self.start_playback(test)
 
         if self.config['host'] not in ('localhost', '127.0.0.1'):
             self.delete_proxy_settings_from_profile()
@@ -1322,19 +1339,20 @@ class RaptorAndroid(PerftestAndroid, Raptor):
         tcp_port = "tcp:{}".format(port)
         self.device.create_socket_connection('reverse', tcp_port, tcp_port)
 
-    def set_reverse_ports(self, is_benchmark=False):
-        # Make services running on the host available to the device
+    def set_reverse_ports(self):
         if self.config['host'] in ('localhost', '127.0.0.1'):
             LOG.info("making the raptor control server port available to device")
             self.set_reverse_port(self.control_server.port)
 
-        if self.config['host'] in ('localhost', '127.0.0.1'):
-            LOG.info("making the raptor playback server port available to device")
-            self.set_reverse_port(8080)
+            if self.playback:
+                LOG.info("making the raptor playback server port available to device")
+                self.set_reverse_port(self.playback.port)
 
-        if is_benchmark and self.config['host'] in ('localhost', '127.0.0.1'):
-            LOG.info("making the raptor benchmarks server port available to device")
-            self.set_reverse_port(self.benchmark_port)
+            if self.benchmark:
+                LOG.info("making the raptor benchmarks server port available to device")
+                self.set_reverse_port(self.benchmark_port)
+        else:
+            LOG.info("Reverse port forwarding is uded only on local devices")
 
     def setup_adb_device(self):
         if self.device is None:
@@ -1390,10 +1408,10 @@ class RaptorAndroid(PerftestAndroid, Raptor):
         LOG.info("setting profile prefs to turn on the android app proxy")
         proxy_prefs = {}
         proxy_prefs["network.proxy.type"] = 1
-        proxy_prefs["network.proxy.http"] = self.config['host']
-        proxy_prefs["network.proxy.http_port"] = 8080
-        proxy_prefs["network.proxy.ssl"] = self.config['host']
-        proxy_prefs["network.proxy.ssl_port"] = 8080
+        proxy_prefs["network.proxy.http"] = self.playback.host
+        proxy_prefs["network.proxy.http_port"] = self.playback.port
+        proxy_prefs["network.proxy.ssl"] = self.playback.host
+        proxy_prefs["network.proxy.ssl_port"] = self.playback.port
         proxy_prefs["network.proxy.no_proxies_on"] = self.config['host']
         self.profile.set_preferences(proxy_prefs)
 
@@ -1507,9 +1525,7 @@ class RaptorAndroid(PerftestAndroid, Raptor):
 
     def run_test_setup(self, test):
         super(RaptorAndroid, self).run_test_setup(test)
-
-        is_benchmark = test.get('type') == "benchmark"
-        self.set_reverse_ports(is_benchmark=is_benchmark)
+        self.set_reverse_ports()
 
     def run_test_teardown(self, test):
         LOG.info('removing reverse socket connections')
@@ -1583,7 +1599,6 @@ class RaptorAndroid(PerftestAndroid, Raptor):
 
             if test['browser_cycle'] == 1:
                 if test.get('playback') is not None:
-                    self.start_playback(test)
 
                     # an ssl cert db has now been created in the profile; copy it out so we
                     # can use the same cert db in future test cycles / browser restarts
@@ -1645,9 +1660,6 @@ class RaptorAndroid(PerftestAndroid, Raptor):
                  "page cycles" % test['name'])
 
         self.run_test_setup(test)
-
-        if test.get('playback') is not None:
-            self.start_playback(test)
 
         if self.config['host'] not in ('localhost', '127.0.0.1'):
             self.delete_proxy_settings_from_profile()
@@ -1797,7 +1809,6 @@ def main(args=sys.argv[1:]):
                           intent=args.intent,
                           interrupt_handler=SignalHandler(),
                           enable_webrender=args.enable_webrender,
-                          with_conditioned_profile=args.with_conditioned_profile,
                           extra_prefs=args.extra_prefs or {}
                           )
 

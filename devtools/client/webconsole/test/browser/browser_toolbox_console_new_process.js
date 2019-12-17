@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// Test that when the omniscient browser toolbox is used, console messages from
-// newly opened content processes appear.
+// Test that when the multiprocess browser toolbox is used, console messages
+// from newly opened content processes appear.
 
 "use strict";
 
@@ -30,7 +30,9 @@ add_task(async function() {
   await pushPref("security.allow_parent_unrestricted_js_loads", true);
 
   await addTab(TEST_URI);
-  const ToolboxTask = await initBrowserToolboxTask();
+  const ToolboxTask = await initBrowserToolboxTask({
+    enableContentMessages: true,
+  });
   await ToolboxTask.importFunctions({ findMessages, findMessage, waitUntil });
 
   // Make sure the data: URL message appears in the OBT.

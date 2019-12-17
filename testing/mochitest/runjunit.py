@@ -119,7 +119,6 @@ class JUnitTestRunner(MochitestDesktop):
         if self.fillCertificateDB(self.options):
             self.log.error("Certificate integration failed")
 
-        self.device.mkdir(self.remote_profile, parents=True)
         self.device.push(self.profile.profile, self.remote_profile)
         self.log.debug("profile %s -> %s" %
                        (str(self.profile.profile), str(self.remote_profile)))
@@ -163,7 +162,6 @@ class JUnitTestRunner(MochitestDesktop):
         # environment
         env = {}
         env["MOZ_CRASHREPORTER"] = "1"
-        env["MOZ_CRASHREPORTER_NO_REPORT"] = "1"
         env["MOZ_CRASHREPORTER_SHUTDOWN"] = "1"
         env["XPCOM_DEBUG_BREAK"] = "stack"
         env["DISABLE_UNSAFE_CPOW_WARNINGS"] = "1"

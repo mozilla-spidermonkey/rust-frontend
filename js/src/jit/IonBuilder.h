@@ -234,9 +234,7 @@ class IonBuilder : public MIRGenerator,
   AbortReasonOr<MBasicBlock*> newOsrPreheader(MBasicBlock* header,
                                               jsbytecode* loopHead);
   AbortReasonOr<MBasicBlock*> newPendingLoopHeader(MBasicBlock* predecessor,
-                                                   jsbytecode* pc, bool osr,
-                                                   bool canOsr,
-                                                   unsigned stackPhiCount);
+                                                   jsbytecode* pc, bool osr);
 
   AbortReasonOr<MBasicBlock*> newBlock(MBasicBlock* predecessor,
                                        jsbytecode* pc) {
@@ -610,9 +608,17 @@ class IonBuilder : public MIRGenerator,
       bool* emitted, MDefinition* obj, MDefinition* index,
       TypedObjectPrediction objTypeReprs, MDefinition* value,
       TypedObjectPrediction elemTypeReprs, uint32_t elemSize);
-  AbortReasonOr<Ok> initializeArrayElement(
-      MDefinition* obj, size_t index, MDefinition* value,
+
+  AbortReasonOr<Ok> initArrayElemTryFastPath(bool* emitted, MDefinition* obj,
+                                             MDefinition* id,
+                                             MDefinition* value);
+
+  AbortReasonOr<Ok> initArrayElementFastPath(
+      MNewArray* obj, MDefinition* id, MDefinition* value,
       bool addResumePointAndIncrementInitializedLength);
+
+  AbortReasonOr<Ok> initArrayElement(MDefinition* obj, MDefinition* id,
+                                     MDefinition* value);
 
   // jsop_getelem() helpers.
   AbortReasonOr<Ok> getElemTryDense(bool* emitted, MDefinition* obj,

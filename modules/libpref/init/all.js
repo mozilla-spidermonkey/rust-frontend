@@ -438,9 +438,11 @@ pref("media.videocontrols.picture-in-picture.video-toggle.always-show", false);
   #ifdef NIGHTLY_BUILD
     pref("media.peerconnection.sdp.parser", "sipcc");
     pref("media.peerconnection.sdp.alternate_parse_mode", "never");
+    pref("media.peerconnection.sdp.strict_success", false);
   #else
     pref("media.peerconnection.sdp.parser", "sipcc");
     pref("media.peerconnection.sdp.alternate_parse_mode", "never");
+    pref("media.peerconnection.sdp.strict_success", false);
   #endif
 
   pref("media.webrtc.debug.trace_mask", 0);
@@ -581,7 +583,7 @@ pref("media.cubeb.logging_level", "");
 #endif
 
 // GraphRunner (fixed MediaTrackGraph thread) control
-pref("media.audiograph.single_thread.enabled", false);
+pref("media.audiograph.single_thread.enabled", true);
 
 // APZ preferences. For documentation/details on what these prefs do, check
 // gfx/layers/apz/src/AsyncPanZoomController.cpp.
@@ -773,6 +775,11 @@ pref("accessibility.typeaheadfind.matchesCountLimit", 1000);
 pref("findbar.highlightAll", false);
 pref("findbar.entireword", false);
 pref("findbar.iteratorTimeout", 100);
+// matchdiacritics: controls the find bar's diacritic matching
+//     0 - "never"  (ignore diacritics)
+//     1 - "always" (match diacritics)
+// other - "auto"   (match diacritics if input has diacritics, ignore otherwise)
+pref("findbar.matchdiacritics", 0);
 
 // use Mac OS X Appearance panel text smoothing setting when rendering text, disabled by default
 pref("gfx.use_text_smoothing_setting", false);
@@ -846,6 +853,33 @@ pref("devtools.recordreplay.includeSystemScripts", false);
 pref("devtools.recordreplay.logging", false);
 pref("devtools.recordreplay.loggingFull", false);
 pref("devtools.recordreplay.fastLogpoints", false);
+
+// Preferences for the new performance panel.
+// This pref configures the base URL for the profiler.firefox.com instance to
+// use. This is useful so that a developer can change it while working on
+// profiler.firefox.com, or in tests. This isn't exposed directly to the user.
+pref("devtools.performance.recording.ui-base-url", "https://profiler.firefox.com");
+
+// Profiler buffer size. It is the maximum number of 8-bytes entries in the
+// profiler's buffer. 10000000 is ~80mb.
+pref("devtools.performance.recording.entries", 10000000);
+// Profiler interval in microseconds. 1000µs is 1ms
+pref("devtools.performance.recording.interval", 1000);
+// Profiler duration of entries in the profiler's buffer in seconds.
+// `0` means no time limit for the markers, they roll off naturally from the
+// circular buffer.
+pref("devtools.performance.recording.duration", 0);
+// Profiler feature set. See tools/profiler/core/platform.cpp for features and
+// explanations. Android additionally has "java" feature but other features must
+// be the same. If you intend to change the default value of this pref, please
+// don't forget to change the mobile/android/app/mobile.js accordingly.
+pref("devtools.performance.recording.features", "[\"js\",\"leaf\",\"stackwalk\"]");
+// Threads to be captured by the profiler.
+pref("devtools.performance.recording.threads", "[\"GeckoMain\",\"Compositor\",\"Renderer\"]");
+// A JSON array of strings, where each string is a file path to an objdir on
+// the host machine. This is used in order to look up symbol information from
+// build artifacts of local builds.
+pref("devtools.performance.recording.objdirs", "[]");
 
 // view source
 pref("view_source.syntax_highlight", true);
@@ -1079,10 +1113,16 @@ pref("javascript.options.wasm_baselinejit",       true);
 #endif
 pref("javascript.options.native_regexp",    true);
 pref("javascript.options.parallel_parsing", true);
-#if !defined(RELEASE_OR_BETA) && !defined(ANDROID) && !defined(XP_IOS)
-  pref("javascript.options.asyncstack",       true);
-#else
+// Async stacks instrumentation adds overhead that is only
+// advisable for developers, so we limit it to Nightly and DevEdition
+#if defined(ANDROID) || defined(XP_IOS)
   pref("javascript.options.asyncstack",       false);
+#else
+  #if defined(NIGHTLY_BUILD) || defined(MOZ_DEV_EDITION)
+    pref("javascript.options.asyncstack",       true);
+  #else
+    pref("javascript.options.asyncstack",       false);
+  #endif
 #endif
 pref("javascript.options.throw_on_asmjs_validation_failure", false);
 pref("javascript.options.ion.offthread_compilation", true);
@@ -3910,21 +3950,19 @@ pref("signon.autofillForms.autocompleteOff", true);
 pref("signon.autofillForms.http",           false);
 pref("signon.autologin.proxy",              false);
 pref("signon.formlessCapture.enabled",      true);
-pref("signon.generation.available",         false);
-pref("signon.generation.enabled",           false);
-pref("signon.privateBrowsingCapture.enabled", false);
+pref("signon.generation.available",               true);
+pref("signon.generation.enabled",                 true);
+pref("signon.privateBrowsingCapture.enabled",     true);
 pref("signon.storeWhenAutocompleteOff",     true);
-pref("signon.userInputRequiredToCapture.enabled", false);
+pref("signon.userInputRequiredToCapture.enabled", true);
 pref("signon.debug",                        false);
 pref("signon.recipes.path",                 "chrome://passwordmgr/content/recipes.json");
-pref("signon.schemeUpgrades",               false);
-pref("signon.includeOtherSubdomainsInLookup", false);
+pref("signon.schemeUpgrades",                     true);
+pref("signon.includeOtherSubdomainsInLookup",     true);
 // This temporarily prevents the master password to reprompt for autocomplete.
 pref("signon.masterPasswordReprompt.timeout_ms", 900000); // 15 Minutes
-pref("signon.showAutoCompleteFooter", false);
-pref("signon.showAutoCompleteOrigins", false);
-// Enable login manager storage.
-pref("signon.storeSignons", true);
+pref("signon.showAutoCompleteFooter",             true);
+pref("signon.showAutoCompleteOrigins",            true);
 
 // Satchel (Form Manager) prefs
 pref("browser.formfill.debug",            false);
@@ -4177,15 +4215,6 @@ pref("dom.push.requestTimeout", 10000);
 pref("dom.push.http2.reset_retry_count_after_ms", 60000);
 pref("dom.push.http2.maxRetries", 2);
 pref("dom.push.http2.retryInterval", 5000);
-
-// W3C touch events
-// 0 - disabled, 1 - enabled, 2 - autodetect
-// Autodetection is currently only supported on Windows and GTK3
-#if defined(XP_MACOSX)
-  pref("dom.w3c_touch_events.enabled", 0);
-#else
-  pref("dom.w3c_touch_events.enabled", 2);
-#endif
 
 // W3C pointer events draft
 pref("dom.w3c_pointer_events.implicit_capture", false);
@@ -4677,10 +4706,6 @@ pref("dom.noopener.newprocess.enabled", true);
 // loops with faulty converters involved.
 pref("general.document_open_conversion_depth_limit", 20);
 
-// If true, touchstart and touchmove listeners on window, document,
-// documentElement and document.body are passive by default.
-pref("dom.event.default_to_passive_touch_listeners", true);
-
 // Should only be enabled in tests
 pref("dom.events.testing.asyncClipboard", false);
 
@@ -4906,11 +4931,7 @@ pref("devtools.errorconsole.deprecation_warnings", true);
   pref("devtools.debugger.remote-enabled", true, sticky);
 #endif
 
-#if defined(MOZ_DEV_EDITION) || defined(NIGHTLY_BUILD)
-  pref("devtools.debugger.features.watchpoints", true);
-#else
-  pref("devtools.debugger.features.watchpoints", false);
-#endif
+pref("devtools.debugger.features.watchpoints", true);
 
 // Disable remote debugging protocol logging.
 pref("devtools.debugger.log", false);

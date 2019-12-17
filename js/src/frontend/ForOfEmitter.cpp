@@ -70,10 +70,6 @@ bool ForOfEmitter::emitInitialize(const Maybe<uint32_t>& forPos) {
 
   loopInfo_.emplace(bce_, iterDepth, allowSelfHostedIter_, iterKind_);
 
-  if (!bce_->newSrcNote(SRC_FOR_OF)) {
-    return false;
-  }
-
   if (!loopInfo_->emitLoopHead(bce_, Nothing())) {
     //              [stack] NEXT ITER UNDEF
     return false;
@@ -88,7 +84,7 @@ bool ForOfEmitter::emitInitialize(const Maybe<uint32_t>& forPos) {
     // it must be the innermost one. If that scope has closed-over
     // bindings inducing an environment, recreate the current environment.
     MOZ_ASSERT(headLexicalEmitterScope_ == bce_->innermostEmitterScope());
-    MOZ_ASSERT(headLexicalEmitterScope_->scope(bce_)->kind() ==
+    MOZ_ASSERT(headLexicalEmitterScope_->scope(bce_).kind() ==
                ScopeKind::Lexical);
 
     if (headLexicalEmitterScope_->hasEnvironment()) {
@@ -233,22 +229,12 @@ bool ForOfEmitter::emitEnd(const Maybe<uint32_t>& iteratedPos) {
     }
   }
 
-  if (!loopInfo_->emitLoopEnd(bce_, JSOP_GOTO)) {
+  if (!loopInfo_->emitLoopEnd(bce_, JSOP_GOTO, JSTRY_FOR_OF)) {
     //              [stack] NEXT ITER UNDEF
     return false;
   }
 
   MOZ_ASSERT(bce_->bytecodeSection().stackDepth() == loopDepth_);
-
-  if (!loopInfo_->patchBreaks(bce_)) {
-    return false;
-  }
-
-  if (!bce_->addTryNote(JSTRY_FOR_OF, bce_->bytecodeSection().stackDepth(),
-                        loopInfo_->headOffset(),
-                        loopInfo_->breakTargetOffset())) {
-    return false;
-  }
 
   if (!bce_->emitPopN(3)) {
     //              [stack]

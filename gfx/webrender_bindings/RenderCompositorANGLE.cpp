@@ -279,7 +279,12 @@ void RenderCompositorANGLE::CreateSwapChainForDCompIfPossible(
 
   HWND hwnd = mWidget->AsWindows()->GetCompositorHwnd();
   if (!hwnd) {
-    gfxCriticalNote << "Compositor window was not created ";
+    // When DirectComposition or DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL is used,
+    // compositor window needs to exist.
+    if (gfx::gfxVars::UseWebRenderDCompWin() ||
+        gfx::gfxVars::UseWebRenderFlipSequentialWin()) {
+      gfxCriticalNote << "Compositor window was not created";
+    }
     return;
   }
 
@@ -703,6 +708,12 @@ RenderedFrameId RenderCompositorANGLE::GetLastCompletedFrameId() {
   return mLastCompletedFrameId;
 }
 
+RenderedFrameId RenderCompositorANGLE::UpdateFrameId() {
+  RenderedFrameId frameId = GetNextRenderFrameId();
+  InsertGraphicsCommandsFinishedWaitQuery(frameId);
+  return frameId;
+}
+
 bool RenderCompositorANGLE::IsContextLost() {
   // XXX glGetGraphicsResetStatus sometimes did not work for detecting TDR.
   // Then this function just uses GetDeviceRemovedReason().
@@ -713,7 +724,7 @@ bool RenderCompositorANGLE::IsContextLost() {
 }
 
 bool RenderCompositorANGLE::UseCompositor() {
-  if (!mDCLayerTree || !StaticPrefs::gfx_webrender_compositor_AtStartup()) {
+  if (!mDCLayerTree || !gfx::gfxVars::UseWebRenderCompositor()) {
     return false;
   }
   return true;
@@ -766,7 +777,7 @@ void RenderCompositorANGLE::AddSurface(wr::NativeSurfaceId aId,
 void RenderCompositorANGLE::InitializeUsePartialPresent() {
   if (UseCompositor() || !mSwapChain1 ||
       mWidget->AsWindows()->HasFxrOutputHandler() ||
-      StaticPrefs::gfx_webrender_max_partial_present_rects_AtStartup() <= 0) {
+      gfx::gfxVars::WebRenderMaxPartialPresentRects() <= 0) {
     mUsePartialPresent = false;
   } else {
     mUsePartialPresent = true;
@@ -781,7 +792,7 @@ uint32_t RenderCompositorANGLE::GetMaxPartialPresentRects() {
   if (!mUsePartialPresent) {
     return 0;
   }
-  return StaticPrefs::gfx_webrender_max_partial_present_rects_AtStartup();
+  return gfx::gfxVars::WebRenderMaxPartialPresentRects();
 }
 
 bool RenderCompositorANGLE::MaybeReadback(

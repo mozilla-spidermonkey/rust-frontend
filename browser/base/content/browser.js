@@ -495,16 +495,6 @@ XPCOMUtils.defineLazyPreferenceGetter(
 
 XPCOMUtils.defineLazyPreferenceGetter(
   this,
-  "gMsgingSystemFxABadge",
-  "browser.messaging-system.fxatoolbarbadge.enabled",
-  true,
-  (aPref, aOldVal, aNewVal) => {
-    updateFxaToolbarMenu(gFxaToolbarEnabled);
-  }
-);
-
-XPCOMUtils.defineLazyPreferenceGetter(
-  this,
   "gAddonAbuseReportEnabled",
   "extensions.abuseReport.enabled",
   false
@@ -637,16 +627,6 @@ function updateFxaToolbarMenu(enable, isInitialUpdate = false) {
     }
 
     Services.telemetry.setEventRecordingEnabled("fxa_avatar_menu", true);
-
-    // We set an attribute here so that we can toggle the custom
-    // badge depending on whether the FxA menu was ever accessed.
-    // If badging is handled by Messaging System we shouldn't set
-    // the attribute.
-    if (!gFxaToolbarAccessed && !gMsgingSystemFxABadge) {
-      mainWindowEl.setAttribute("fxa_avatar_badged", "badged");
-    } else {
-      mainWindowEl.removeAttribute("fxa_avatar_badged");
-    }
 
     // When the pref for a FxA service is removed, we remove it from
     // the FxA toolbar menu as well. This is useful when the service
@@ -2129,19 +2109,6 @@ var gBrowserInit = {
       this._firstBrowserPaintDeferred.resolve = resolve;
     });
 
-    let mm = window.messageManager;
-    let initialBrowser = gBrowser.selectedBrowser;
-    mm.addMessageListener(
-      "Browser:FirstNonBlankPaint",
-      function onFirstNonBlankPaint() {
-        mm.removeMessageListener(
-          "Browser:FirstNonBlankPaint",
-          onFirstNonBlankPaint
-        );
-        initialBrowser.removeAttribute("blank");
-      }
-    );
-
     // To prevent flickering of the urlbar-history-dropmarker in the general
     // case, the urlbar has the 'focused' attribute set by default.
     // If we are not fully sure the urlbar will be focused in this window,
@@ -2596,10 +2563,7 @@ function HandleAppCommandEvent(evt) {
       BrowserOpenFileWindow();
       break;
     case "Print":
-      PrintUtils.printWindow(
-        gBrowser.selectedBrowser.outerWindowID,
-        gBrowser.selectedBrowser
-      );
+      PrintUtils.printWindow(gBrowser.selectedBrowser.browsingContext);
       break;
     case "Save":
       saveBrowser(gBrowser.selectedBrowser);
@@ -2847,11 +2811,11 @@ function focusAndSelectUrlBar() {
 function openLocation(event) {
   if (window.location.href == AppConstants.BROWSER_CHROME_URL) {
     focusAndSelectUrlBar();
-    if (
-      !gURLBar.view.maybeReopen() &&
-      gURLBar.openViewOnFocusForCurrentTab &&
-      !gURLBar.view.isOpen
-    ) {
+    // We don't want to reopen or requery if the view is open.
+    if (gURLBar.view.isOpen) {
+      return;
+    }
+    if (!gURLBar.view.maybeReopen() && gURLBar.openViewOnFocusForCurrentTab) {
       gURLBar.startQuery({ event });
     }
     return;
@@ -3263,7 +3227,7 @@ function BrowserPageInfo(
 
   // We didn't find a matching window, so open a new one.
   return openDialog(
-    "chrome://browser/content/pageinfo/pageInfo.xul",
+    "chrome://browser/content/pageinfo/pageInfo.xhtml",
     "",
     "chrome,toolbar,dialog=no,resizable",
     args
@@ -5281,8 +5245,7 @@ var XULBrowserWindow = {
     const nsIWebProgressListener = Ci.nsIWebProgressListener;
 
     let browser = gBrowser.selectedBrowser;
-
-    gProtectionsHandler.onStateChange(aStateFlags);
+    gProtectionsHandler.onStateChange(aWebProgress, aStateFlags);
 
     if (
       aStateFlags & nsIWebProgressListener.STATE_START &&
