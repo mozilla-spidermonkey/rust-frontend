@@ -36,8 +36,8 @@ class JS_PUBLIC_API ContextOptions {
         dumpStackOnDebuggeeWouldRun_(false),
         werror_(false),
         strictMode_(false),
-        tryRustFrontend_(false),
         extraWarnings_(false),
+        tryRustFrontend_(false),
         fuzzing_(false) {
   }
 
