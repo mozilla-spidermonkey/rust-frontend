@@ -149,7 +149,7 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
   }
 
   RootedScript script(cx, JSScript::Create(cx, cx->global(), info.getOptions(),
-                                           sso, 0, length, 0, length));
+                                           sso, 0, length, 0, length, 1, 0));
 
   if (!initScript(cx, script, jsparagus)) {
     return nullptr;
