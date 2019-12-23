@@ -118,6 +118,13 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
   JsparagusResult jsparagus = run_jsparagus(bytes, length);
   AutoFreeJsparagusResult afjr(&jsparagus);
 
+  if (jsparagus.error.data) {
+    *unimplemented = false;
+    JS_ReportErrorASCII(cx, "%s",
+                        reinterpret_cast<const char*>(jsparagus.error.data));
+    return nullptr;
+  }
+
   if (jsparagus.unimplemented) {
     *unimplemented = true;
     return nullptr;
