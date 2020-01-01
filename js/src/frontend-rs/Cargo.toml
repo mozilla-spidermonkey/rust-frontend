@@ -11,4 +11,4 @@ emitter = { path = "../../jsparagus/rust/emitter" }
 parser = { path = "../../jsparagus/rust/parser" }
 
 [build-dependencies]
-cbindgen = "0.9"
+cbindgen = "0.12"

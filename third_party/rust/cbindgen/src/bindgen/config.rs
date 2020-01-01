@@ -4,12 +4,8 @@
 
 use std::collections::HashMap;
 use std::default::Default;
-use std::fmt;
-use std::fs::File;
-use std::io::prelude::*;
-use std::io::{self, BufReader};
-use std::path::Path as StdPath;
 use std::str::FromStr;
+use std::{fmt, fs, path::Path as StdPath};
 
 use serde::de::value::{MapAccessDeserializer, SeqAccessDeserializer};
 use serde::de::{Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
@@ -18,9 +14,10 @@ use toml;
 
 use bindgen::ir::annotation::AnnotationSet;
 use bindgen::ir::path::Path;
+use bindgen::ir::repr::ReprAlign;
 pub use bindgen::rename::RenameRule;
 
-pub const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// A language type to generate bindings for.
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -137,19 +134,17 @@ pub enum Style {
 }
 
 impl Style {
-    pub fn generate_tag(&self) -> bool {
+    pub fn generate_tag(self) -> bool {
         match self {
-            &Style::Both => true,
-            &Style::Tag => true,
-            &Style::Type => false,
+            Style::Both | Style::Tag => true,
+            Style::Type => false,
         }
     }
 
-    pub fn generate_typedef(&self) -> bool {
+    pub fn generate_typedef(self) -> bool {
         match self {
-            &Style::Both => true,
-            &Style::Tag => false,
-            &Style::Type => true,
+            Style::Both | Style::Type => true,
+            Style::Tag => false,
         }
     }
 }
@@ -251,6 +246,29 @@ impl ExportConfig {
     }
 }
 
+/// Settings to apply to generated types with layout modifiers.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[serde(deny_unknown_fields)]
+#[serde(default)]
+pub struct LayoutConfig {
+    /// The way to annotate C types as #[repr(packed)].
+    pub packed: Option<String>,
+    /// The way to annotate C types as #[repr(align(...))]. This is assumed to be a functional
+    /// macro which takes a single argument (the alignment).
+    pub aligned_n: Option<String>,
+}
+
+impl LayoutConfig {
+    pub(crate) fn ensure_safe_to_represent(&self, align: &ReprAlign) -> Result<(), String> {
+        match (align, &self.packed, &self.aligned_n) {
+            (ReprAlign::Packed, None, _) => Err("Cannot safely represent #[repr(packed)] type without configured 'packed' annotation.".to_string()),
+            (ReprAlign::Align(_), _, None) => Err("Cannot safely represent #[repr(aligned(...))] type without configured 'aligned_n' annotation.".to_string()),
+            _ => Ok(()),
+        }
+    }
+}
+
 /// Settings to apply to generated functions.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -323,7 +341,7 @@ pub struct StructConfig {
     /// Whether associated constants should be in the body. Only applicable to
     /// non-transparent structs, and in C++-only.
     pub associated_constants_in_body: bool,
-    /// The way to annotation this struct as #[must_use].
+    /// The way to annotate this struct as #[must_use].
     pub must_use: Option<String>,
 }
 
@@ -402,6 +420,14 @@ pub struct EnumConfig {
     pub derive_tagged_enum_destructor: bool,
     /// Whether to generate copy-constructors of tagged enums.
     pub derive_tagged_enum_copy_constructor: bool,
+    /// Whether to generate copy-assignment operators of tagged enums.
+    ///
+    /// This is only generated if a copy constructor for the same tagged enum is
+    /// generated as well.
+    pub derive_tagged_enum_copy_assignment: bool,
+    /// Whether to generate empty, private default-constructors for tagged
+    /// enums.
+    pub private_default_tagged_enum_constructor: bool,
 }
 
 impl EnumConfig {
@@ -440,6 +466,21 @@ impl EnumConfig {
             return x;
         }
         self.derive_tagged_enum_copy_constructor
+    }
+    pub(crate) fn derive_tagged_enum_copy_assignment(&self, annotations: &AnnotationSet) -> bool {
+        if let Some(x) = annotations.bool("derive-tagged-enum-copy-assignment") {
+            return x;
+        }
+        self.derive_tagged_enum_copy_assignment
+    }
+    pub(crate) fn private_default_tagged_enum_constructor(
+        &self,
+        annotations: &AnnotationSet,
+    ) -> bool {
+        if let Some(x) = annotations.bool("private-default-tagged-enum-constructor") {
+            return x;
+        }
+        self.private_default_tagged_enum_constructor
     }
 }
 
@@ -611,6 +652,8 @@ pub struct Config {
     pub namespace: Option<String>,
     /// An optional list of namespaces. Only applicable when language="C++"
     pub namespaces: Option<Vec<String>>,
+    /// An optional list of namespaces to declare as using. Only applicable when language="C++"
+    pub using_namespaces: Option<Vec<String>>,
     /// The style to use for braces
     pub braces: Braces,
     /// The preferred length of a line, used for auto breaking function arguments
@@ -629,6 +672,8 @@ pub struct Config {
     pub export: ExportConfig,
     /// The configuration options for macros.
     pub macro_expansion: MacroExpansionConfig,
+    /// The configuration options for type layouts.
+    pub layout: LayoutConfig,
     /// The configuration options for functions
     #[serde(rename = "fn")]
     pub function: FunctionConfig,
@@ -662,6 +707,7 @@ impl Default for Config {
             no_includes: false,
             namespace: None,
             namespaces: None,
+            using_namespaces: None,
             braces: Braces::SameLine,
             line_length: 100,
             tab_width: 2,
@@ -671,6 +717,7 @@ impl Default for Config {
             macro_expansion: Default::default(),
             parse: ParseConfig::default(),
             export: ExportConfig::default(),
+            layout: LayoutConfig::default(),
             function: FunctionConfig::default(),
             structure: StructConfig::default(),
             enumeration: EnumConfig::default(),
@@ -684,15 +731,12 @@ impl Default for Config {
 
 impl Config {
     pub fn from_file<P: AsRef<StdPath>>(file_name: P) -> Result<Config, String> {
-        fn read(file_name: &StdPath) -> io::Result<String> {
-            let file = File::open(file_name)?;
-            let mut reader = BufReader::new(&file);
-            let mut contents = String::new();
-            reader.read_to_string(&mut contents)?;
-            Ok(contents)
-        }
-
-        let config_text = read(file_name.as_ref()).unwrap();
+        let config_text = fs::read_to_string(file_name.as_ref()).or_else(|_| {
+            Err(format!(
+                "Couldn't open config file: {}.",
+                file_name.as_ref().display()
+            ))
+        })?;
 
         match toml::from_str::<Config>(&config_text) {
             Ok(x) => Ok(x),

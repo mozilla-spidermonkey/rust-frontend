@@ -2,10 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path;
+use std::rc::Rc;
 
 use bindgen::config::{Config, Language};
 use bindgen::ir::{
@@ -19,10 +22,17 @@ pub struct Bindings {
     /// The map from path to struct, used to lookup whether a given type is a
     /// transparent struct. This is needed to generate code for constants.
     struct_map: ItemMap<Struct>,
+    struct_fileds_memo: RefCell<HashMap<BindgenPath, Rc<Vec<String>>>>,
     globals: Vec<Static>,
     constants: Vec<Constant>,
     items: Vec<ItemContainer>,
     functions: Vec<Function>,
+}
+
+#[derive(PartialEq)]
+enum NamespaceOperation {
+    Open,
+    Close,
 }
 
 impl Bindings {
@@ -37,6 +47,7 @@ impl Bindings {
         Bindings {
             config,
             struct_map,
+            struct_fileds_memo: Default::default(),
             globals,
             constants,
             items,
@@ -55,6 +66,30 @@ impl Bindings {
         let mut any = false;
         self.struct_map.for_items(path, |_| any = true);
         any
+    }
+
+    pub fn struct_field_names(&self, path: &BindgenPath) -> Rc<Vec<String>> {
+        let mut memos = self.struct_fileds_memo.borrow_mut();
+        if let Some(memo) = memos.get(path) {
+            return memo.clone();
+        }
+
+        let mut fields = Vec::<String>::new();
+        self.struct_map.for_items(path, |st| {
+            let mut pos: usize = 0;
+            for field in &st.fields {
+                if let Some(found_pos) = fields.iter().position(|v| *v == field.0) {
+                    pos = found_pos + 1;
+                } else {
+                    fields.insert(pos, field.0.clone());
+                    pos += 1;
+                }
+            }
+        });
+
+        let fields = Rc::new(fields);
+        memos.insert(path.clone(), fields.clone());
+        fields
     }
 
     pub fn write_to_file<P: AsRef<path::Path>>(&self, path: P) -> bool {
@@ -167,9 +202,7 @@ impl Bindings {
 
         self.write_headers(&mut out);
 
-        if self.config.language == Language::Cxx {
-            self.open_namespaces(&mut out);
-        }
+        self.open_namespaces(&mut out);
 
         for constant in &self.constants {
             if constant.ty.is_primitive_or_ptr_primitive() {
@@ -216,6 +249,16 @@ impl Bindings {
                 out.write("#ifdef __cplusplus");
             }
 
+            if self.config.language == Language::Cxx {
+                if let Some(ref using_namespaces) = self.config.using_namespaces {
+                    for namespace in using_namespaces {
+                        out.new_line();
+                        write!(out, "using namespace {};", namespace);
+                    }
+                    out.new_line();
+                }
+            }
+
             if self.config.language == Language::Cxx || self.config.cpp_compat {
                 out.new_line();
                 out.write("extern \"C\" {");
@@ -256,9 +299,7 @@ impl Bindings {
             }
         }
 
-        if self.config.language == Language::Cxx {
-            self.close_namespaces(&mut out);
-        }
+        self.close_namespaces(&mut out);
 
         if let Some(ref f) = self.config.include_guard {
             out.new_line_if_not_start();
@@ -276,44 +317,58 @@ impl Bindings {
         }
     }
 
-    pub(crate) fn open_namespaces<F: Write>(&self, out: &mut SourceWriter<F>) {
-        let mut wrote_namespace: bool = false;
+    fn all_namespaces(&self) -> Vec<&str> {
+        if self.config.language != Language::Cxx && !self.config.cpp_compat {
+            return vec![];
+        }
+        let mut ret = vec![];
         if let Some(ref namespace) = self.config.namespace {
-            wrote_namespace = true;
-
-            out.new_line();
-            write!(out, "namespace {} {{", namespace);
+            ret.push(&**namespace);
         }
         if let Some(ref namespaces) = self.config.namespaces {
-            wrote_namespace = true;
             for namespace in namespaces {
-                out.new_line();
-                write!(out, "namespace {} {{", namespace);
+                ret.push(&**namespace);
             }
         }
-        if wrote_namespace {
+        ret
+    }
+
+    fn open_close_namespaces<F: Write>(&self, op: NamespaceOperation, out: &mut SourceWriter<F>) {
+        let mut namespaces = self.all_namespaces();
+        if namespaces.is_empty() {
+            return;
+        }
+
+        if op == NamespaceOperation::Close {
+            namespaces.reverse();
+        }
+
+        let write_ifdefs = self.config.cpp_compat && self.config.language == Language::C;
+        if write_ifdefs {
+            out.new_line_if_not_start();
+            out.write("#ifdef __cplusplus");
+        }
+
+        for namespace in namespaces {
+            out.new_line();
+            match op {
+                NamespaceOperation::Open => write!(out, "namespace {} {{", namespace),
+                NamespaceOperation::Close => write!(out, "}} // namespace {}", namespace),
+            }
+        }
+
+        out.new_line();
+        if write_ifdefs {
+            out.write("#endif // __cplusplus");
             out.new_line();
         }
     }
 
+    pub(crate) fn open_namespaces<F: Write>(&self, out: &mut SourceWriter<F>) {
+        self.open_close_namespaces(NamespaceOperation::Open, out);
+    }
+
     pub(crate) fn close_namespaces<F: Write>(&self, out: &mut SourceWriter<F>) {
-        let mut wrote_namespace: bool = false;
-        if let Some(ref namespaces) = self.config.namespaces {
-            wrote_namespace = true;
-
-            for namespace in namespaces.iter().rev() {
-                out.new_line_if_not_start();
-                write!(out, "}} // namespace {}", namespace);
-            }
-        }
-        if let Some(ref namespace) = self.config.namespace {
-            wrote_namespace = true;
-
-            out.new_line_if_not_start();
-            write!(out, "}} // namespace {}", namespace);
-        }
-        if wrote_namespace {
-            out.new_line();
-        }
+        self.open_close_namespaces(NamespaceOperation::Close, out);
     }
 }

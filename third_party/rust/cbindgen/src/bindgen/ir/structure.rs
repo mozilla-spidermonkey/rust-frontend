@@ -6,12 +6,12 @@ use std::io::Write;
 
 use syn;
 
-use bindgen::config::{Config, Language};
+use bindgen::config::{Config, Language, LayoutConfig};
 use bindgen::declarationtyperesolver::DeclarationTypeResolver;
 use bindgen::dependencies::Dependencies;
 use bindgen::ir::{
     AnnotationSet, Cfg, ConditionWrite, Constant, Documentation, GenericParams, Item,
-    ItemContainer, Path, Repr, ToCondition, Type, Typedef,
+    ItemContainer, Path, Repr, ReprAlign, ReprStyle, ToCondition, Type, Typedef,
 };
 use bindgen::library::Library;
 use bindgen::mangle;
@@ -32,6 +32,7 @@ pub struct Struct {
     pub is_tagged: bool,
     /// Whether this is an enum variant body.
     pub is_enum_variant_body: bool,
+    pub alignment: Option<ReprAlign>,
     pub is_transparent: bool,
     pub tuple_struct: bool,
     pub cfg: Option<Cfg>,
@@ -50,25 +51,35 @@ impl Struct {
         self.associated_constants.push(c);
     }
 
-    pub fn load(item: &syn::ItemStruct, mod_cfg: Option<&Cfg>) -> Result<Self, String> {
-        let is_transparent = match Repr::load(&item.attrs)? {
-            Repr::C => false,
-            Repr::TRANSPARENT => true,
+    pub fn load(
+        layout_config: &LayoutConfig,
+        item: &syn::ItemStruct,
+        mod_cfg: Option<&Cfg>,
+    ) -> Result<Self, String> {
+        let repr = Repr::load(&item.attrs)?;
+        let is_transparent = match repr.style {
+            ReprStyle::C => false,
+            ReprStyle::Transparent => true,
             _ => {
                 return Err("Struct is not marked #[repr(C)] or #[repr(transparent)].".to_owned());
             }
         };
 
-        let (fields, tuple_struct) = match &item.fields {
-            &syn::Fields::Unit => (Vec::new(), false),
-            &syn::Fields::Named(ref fields) => {
+        // Ensure we can safely represent the struct given the configuration.
+        if let Some(align) = repr.align {
+            layout_config.ensure_safe_to_represent(&align)?;
+        }
+
+        let (fields, tuple_struct) = match item.fields {
+            syn::Fields::Unit => (Vec::new(), false),
+            syn::Fields::Named(ref fields) => {
                 let out = fields
                     .named
                     .iter()
                     .try_skip_map(|x| x.as_ident_and_type())?;
                 (out, false)
             }
-            &syn::Fields::Unnamed(ref fields) => {
+            syn::Fields::Unnamed(ref fields) => {
                 let mut out = Vec::new();
                 let mut current = 0;
                 for field in fields.unnamed.iter() {
@@ -90,6 +101,7 @@ impl Struct {
             fields,
             is_tagged,
             is_enum_variant_body,
+            repr.align,
             is_transparent,
             tuple_struct,
             Cfg::append(mod_cfg, Cfg::load(&item.attrs)),
@@ -104,6 +116,7 @@ impl Struct {
         fields: Vec<(String, Type, Documentation)>,
         is_tagged: bool,
         is_enum_variant_body: bool,
+        alignment: Option<ReprAlign>,
         is_transparent: bool,
         tuple_struct: bool,
         cfg: Option<Cfg>,
@@ -118,6 +131,7 @@ impl Struct {
             fields,
             is_tagged,
             is_enum_variant_body,
+            alignment,
             is_transparent,
             tuple_struct,
             cfg,
@@ -166,12 +180,52 @@ impl Struct {
                 .collect(),
             self.is_tagged,
             self.is_enum_variant_body,
+            self.alignment,
             self.is_transparent,
             self.tuple_struct,
             self.cfg.clone(),
             self.annotations.clone(),
             self.documentation.clone(),
         )
+    }
+
+    fn emit_bitflags_binop<F: Write>(
+        &self,
+        operator: char,
+        other: &str,
+        out: &mut SourceWriter<F>,
+    ) {
+        out.new_line();
+        write!(
+            out,
+            "{} operator{}(const {}& {}) const",
+            self.export_name(),
+            operator,
+            self.export_name(),
+            other
+        );
+        out.open_brace();
+        write!(
+            out,
+            "return {{static_cast<decltype(bits)>(this->bits {} {}.bits)}};",
+            operator, other
+        );
+        out.close_brace(false);
+
+        out.new_line();
+        write!(
+            out,
+            "{}& operator{}=(const {}& {})",
+            self.export_name(),
+            operator,
+            self.export_name(),
+            other
+        );
+        out.open_brace();
+        write!(out, "*this = (*this {} {});", operator, other);
+        out.new_line();
+        write!(out, "return *this;");
+        out.close_brace(false);
     }
 }
 
@@ -371,9 +425,24 @@ impl Source for Struct {
 
         out.write("struct");
 
+        if let Some(align) = self.alignment {
+            match align {
+                ReprAlign::Packed => {
+                    if let Some(ref anno) = config.layout.packed {
+                        write!(out, " {}", anno);
+                    }
+                }
+                ReprAlign::Align(n) => {
+                    if let Some(ref anno) = config.layout.aligned_n {
+                        write!(out, " {}({})", anno, n);
+                    }
+                }
+            }
+        }
+
         if self.annotations.must_use {
             if let Some(ref anno) = config.structure.must_use {
-                write!(out, " {}", anno)
+                write!(out, " {}", anno);
             }
         }
 
@@ -459,64 +528,14 @@ impl Source for Struct {
                 out.close_brace(false);
 
                 out.new_line();
-                write!(
-                    out,
-                    "{} operator|(const {}& {}) const",
-                    self.export_name(),
-                    self.export_name(),
-                    other
-                );
+                write!(out, "{} operator~() const", self.export_name());
                 out.open_brace();
-                write!(
-                    out,
-                    "return {{static_cast<decltype(bits)>(this->bits | {}.bits)}};",
-                    other
-                );
+                write!(out, "return {{static_cast<decltype(bits)>(~bits)}};");
                 out.close_brace(false);
 
-                out.new_line();
-                write!(
-                    out,
-                    "{}& operator|=(const {}& {})",
-                    self.export_name(),
-                    self.export_name(),
-                    other
-                );
-                out.open_brace();
-                write!(out, "*this = (*this | {});", other);
-                out.new_line();
-                write!(out, "return *this;");
-                out.close_brace(false);
-
-                out.new_line();
-                write!(
-                    out,
-                    "{} operator&(const {}& {}) const",
-                    self.export_name(),
-                    self.export_name(),
-                    other
-                );
-                out.open_brace();
-                write!(
-                    out,
-                    "return {{static_cast<decltype(bits)>(this->bits & {}.bits)}};",
-                    other
-                );
-                out.close_brace(false);
-
-                out.new_line();
-                write!(
-                    out,
-                    "{}& operator&=(const {}& {})",
-                    self.export_name(),
-                    self.export_name(),
-                    other
-                );
-                out.open_brace();
-                write!(out, "*this = (*this & {});", other);
-                out.new_line();
-                write!(out, "return *this;");
-                out.close_brace(false);
+                self.emit_bitflags_binop('|', &other, out);
+                self.emit_bitflags_binop('&', &other, out);
+                self.emit_bitflags_binop('^', &other, out);
             }
 
             let skip_fields = if self.is_tagged { 1 } else { 0 };
@@ -620,7 +639,7 @@ impl SynFieldHelpers for syn::Field {
         let ident = self
             .ident
             .as_ref()
-            .ok_or(format!("field is missing identifier"))?
+            .ok_or_else(|| "field is missing identifier".to_string())?
             .clone();
         let converted_ty = Type::load(&self.ty)?;
 

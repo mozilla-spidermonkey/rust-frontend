@@ -33,7 +33,7 @@ To use cbindgen you need two things:
 Then all you need to do is run it:
 
 ```text
-cbindgen --config cbindgen.toml --crate my_rust_library --output my_header.h`
+cbindgen --config cbindgen.toml --crate my_rust_library --output my_header.h
 ```
 
 See `cbindgen --help` for more options.
@@ -107,9 +107,9 @@ You can learn about all of the different repr attributes [by reading Rust's refe
 * `#[repr(u8, u16, ... etc)]`: give this enum the same layout and ABI as the given integer type
 * `#[repr(transparent)]`: give this single-field struct the same ABI as its field (useful for newtyping integers but keeping the integer ABI)
 
-cbindgen does not currently support the align or packed reprs.
+cbindgen supports the `#[repr(align(N))]` and `#[repr(packed)]` attributes, but currently does not support `#[repr(packed(N))]`.
 
-However it *does* support using `repr(C)`/`repr(u8)` on non-C-like enums (enums with fields). This gives a C-compatible tagged union layout, as [defined by this RFC 2195][really-tagged-unions]. `repr(C)` will give a simpler layout that is perhaps more intuitive, while `repr(u8)` will produce a more compact layout.
+cbindgen also supports using `repr(C)`/`repr(u8)` on non-C-like enums (enums with fields). This gives a C-compatible tagged union layout, as [defined by this RFC 2195][really-tagged-unions]. `repr(C)` will give a simpler layout that is perhaps more intuitive, while `repr(u8)` will produce a more compact layout.
 
 If you ensure everything has a guaranteed repr, then cbindgen will generate definitions for:
 
@@ -140,7 +140,7 @@ cbindgen contains the following hardcoded mappings (again completely ignoring na
 ## std types
 
 * bool => bool
-* char => wchar_t
+* char => uint32_t
 * u8 => uint8_t
 * u16 => uint16_t
 * u32 => uint32_t
@@ -270,6 +270,7 @@ The rest are just local overrides for the same options found in the cbindgen.tom
 * derive-tagged-enum-destructor
 * derive-tagged-enum-copy-constructor
 * prefix-with-name
+* private-default-tagged-enum-constructor
 
 
 
@@ -343,6 +344,10 @@ namespace = "ffi"
 # default: []
 namespaces = ["mozilla", "wr"]
 
+# An optional list of namespaces to declare as using with "using namespace"
+# default: []
+using_namespaces = ["mozilla", "wr"]
+
 # A list of sys headers to #include (with angle brackets)
 # default: []
 sys_includes = ["stdio", "string"]
@@ -355,7 +360,7 @@ includes = ["my_great_lib.h"]
 # imports are included by default because our generated headers tend to require
 # them (e.g. for uint32_t). Currently, the generated imports are:
 #
-# * for C: <stdarg.h>, <stdbool.h>, <stdint.h>, <stdlib.h>
+# * for C: <stdarg.h>, <stdbool.h>, <stdint.h>, <stdlib.h>, <uchar.h>
 #
 # * for C++: <cstdarg>, <cstdint>, <cstdlib>, <new>, <cassert> (depending on config)
 #
@@ -489,8 +494,27 @@ renaming_overrides_prefixing = true
   void cppMethod() const;
 """
 
+[layout]
+# A string that should come before the name of any type which has been marked
+# as `#[repr(packed)]`. For instance, "__attribute__((packed))" would be a
+# reasonable value if targeting gcc/clang. A more portable solution would
+# involve emitting the name of a macro which you define in a platform-specific
+# way. e.g. "PACKED"
+#
+# default: `#[repr(packed)]` types will be treated as opaque, since it would
+# be unsafe for C callers to use a incorrectly laid-out union.
+packed = "PACKED"
 
-
+# A string that should come before the name of any type which has been marked
+# as `#[repr(align(n))]`. This string must be a function-like macro which takes
+# a single argument (the requested alignment, `n`). For instance, a macro
+# `#define`d as `ALIGNED(n)` in `header` which translates to
+# `__attribute__((aligned(n)))` would be a reasonable value if targeting
+# gcc/clang.
+#
+# default: `#[repr(align(n))]` types will be treated as opaque, since it
+# could be unsafe for C callers to use a incorrectly-aligned union.
+aligned_n = "ALIGNED"
 
 
 [fn]
@@ -539,9 +563,6 @@ must_use = "MUST_USE_FUNC"
 #
 # default: "None"
 rename_args = "PascalCase"
-
-
-
 
 
 [struct]
@@ -626,7 +647,7 @@ derive_gte = false
 # * "CamelCase": MyVariant => myVariant
 # * "SnakeCase": MyVariant => my_variant
 # * "ScreamingSnakeCase": MyVariant => MY_VARIANT
-# * "QualifiedScreamingScakeCase": MyVariant => ENUM_NAME_MY_VARIANT
+# * "QualifiedScreamingSnakeCase": MyVariant => ENUM_NAME_MY_VARIANT
 # * "LowerCase": MyVariant => myvariant
 # * "UpperCase": MyVariant => MYVARIANT
 # * "None": apply no renaming
@@ -702,6 +723,21 @@ derive_tagged_enum_destructor = false
 #
 # default: false
 derive_tagged_enum_copy_constructor = false
+# Whether enums with fields should generate copy-assignment operators.
+#
+# This depends on also deriving copy-constructors, and it is highly encouraged
+# for this to be set to true.
+#
+# default: false
+derive_tagged_enum_copy_assignment = false
+
+# Whether enums with fields should generate an empty, private destructor.
+# This allows the auto-generated constructor functions to compile, if there are
+# non-trivially constructible members. This falls in the same family of
+# dangerousness as `derive_tagged_enum_copy_constructor` and co.
+#
+# default: false
+private_default_tagged_enum_constructor = false
 
 
 

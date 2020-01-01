@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#![allow(clippy::redundant_closure_call)]
+
 use syn;
 
 pub trait IterHelpers: Iterator {
@@ -30,11 +32,11 @@ where
 
 pub fn find_first_some<T>(slice: &[Option<T>]) -> Option<&T> {
     for x in slice {
-        if let &Some(ref x) = x {
+        if let Some(ref x) = *x {
             return Some(x);
         }
     }
-    return None;
+    None
 }
 
 pub trait SynItemHelpers {
@@ -81,9 +83,9 @@ macro_rules! syn_item_match_helper {
             syn::Item::Type(ref item) => (|$i: &syn::ItemType| $a)(item),
             syn::Item::Union(ref item) => (|$i: &syn::ItemUnion| $a)(item),
             syn::Item::Use(ref item) => (|$i: &syn::ItemUse| $a)(item),
-            syn::Item::Existential(ref item) => (|$i: &syn::ItemExistential| $a)(item),
             syn::Item::TraitAlias(ref item) => (|$i: &syn::ItemTraitAlias| $a)(item),
             syn::Item::Verbatim(_) => (|| $b)(),
+            _ => panic!("Unhandled syn::Item:  {:?}", $s),
         }
     };
 }
@@ -144,22 +146,7 @@ impl_syn_item_helper!(syn::ItemTrait);
 impl_syn_item_helper!(syn::ItemImpl);
 impl_syn_item_helper!(syn::ItemMacro);
 impl_syn_item_helper!(syn::ItemMacro2);
-impl_syn_item_helper!(syn::ItemExistential);
 impl_syn_item_helper!(syn::ItemTraitAlias);
-
-impl SynItemHelpers for syn::ItemVerbatim {
-    fn has_attr_word(&self, _name: &str) -> bool {
-        false
-    }
-
-    fn has_attr_list(&self, _name: &str, _args: &[&str]) -> bool {
-        false
-    }
-
-    fn has_attr_name_value(&self, _name: &str, _value: &str) -> bool {
-        false
-    }
-}
 
 /// Helper function for accessing Abi information
 pub trait SynAbiHelpers {
@@ -169,7 +156,7 @@ pub trait SynAbiHelpers {
 
 impl SynAbiHelpers for Option<syn::Abi> {
     fn is_c(&self) -> bool {
-        if let &Some(ref abi) = self {
+        if let Some(ref abi) = *self {
             if let Some(ref lit_string) = abi.name {
                 return lit_string.value() == String::from("C");
             }
@@ -177,7 +164,7 @@ impl SynAbiHelpers for Option<syn::Abi> {
         false
     }
     fn is_omitted(&self) -> bool {
-        if let &Some(ref abi) = self {
+        if let Some(ref abi) = *self {
             abi.name.is_none()
         } else {
             false
@@ -207,9 +194,9 @@ pub trait SynAttributeHelpers {
 
 impl SynAttributeHelpers for [syn::Attribute] {
     fn has_attr_word(&self, name: &str) -> bool {
-        self.iter().filter_map(|x| x.interpret_meta()).any(|attr| {
-            if let syn::Meta::Word(ref ident) = attr {
-                ident == name
+        self.iter().filter_map(|x| x.parse_meta().ok()).any(|attr| {
+            if let syn::Meta::Path(ref path) = attr {
+                path.is_ident(name)
             } else {
                 false
             }
@@ -217,15 +204,15 @@ impl SynAttributeHelpers for [syn::Attribute] {
     }
 
     fn has_attr_list(&self, name: &str, args: &[&str]) -> bool {
-        self.iter().filter_map(|x| x.interpret_meta()).any(|attr| {
-            if let syn::Meta::List(syn::MetaList { ident, nested, .. }) = attr {
-                if ident != name {
+        self.iter().filter_map(|x| x.parse_meta().ok()).any(|attr| {
+            if let syn::Meta::List(syn::MetaList { path, nested, .. }) = attr {
+                if !path.is_ident(name) {
                     return false;
                 }
                 args.iter().all(|arg| {
                     nested.iter().any(|nested_meta| {
-                        if let syn::NestedMeta::Meta(syn::Meta::Word(ident)) = nested_meta {
-                            ident == arg
+                        if let syn::NestedMeta::Meta(syn::Meta::Path(path)) = nested_meta {
+                            path.is_ident(arg)
                         } else {
                             false
                         }
@@ -238,10 +225,10 @@ impl SynAttributeHelpers for [syn::Attribute] {
     }
 
     fn has_attr_name_value(&self, name: &str, value: &str) -> bool {
-        self.iter().filter_map(|x| x.interpret_meta()).any(|attr| {
-            if let syn::Meta::NameValue(syn::MetaNameValue { ident, lit, .. }) = attr {
+        self.iter().filter_map(|x| x.parse_meta().ok()).any(|attr| {
+            if let syn::Meta::NameValue(syn::MetaNameValue { path, lit, .. }) = attr {
                 if let syn::Lit::Str(lit) = lit {
-                    (ident == name) && (&lit.value() == value)
+                    path.is_ident(name) && (&lit.value() == value)
                 } else {
                     false
                 }
@@ -252,37 +239,24 @@ impl SynAttributeHelpers for [syn::Attribute] {
     }
 
     fn get_comment_lines(&self) -> Vec<String> {
-        let mut comment_lines = Vec::new();
+        let mut comment = Vec::new();
 
         for attr in self {
             if attr.style == syn::AttrStyle::Outer {
-                if let Some(syn::Meta::NameValue(syn::MetaNameValue {
-                    ident,
-                    lit: syn::Lit::Str(comment),
+                if let Ok(syn::Meta::NameValue(syn::MetaNameValue {
+                    path,
+                    lit: syn::Lit::Str(content),
                     ..
-                })) = attr.interpret_meta()
+                })) = attr.parse_meta()
                 {
-                    let name = ident.to_string();
-                    let comment = comment.value();
-
-                    if &*name == "doc" {
-                        for raw in comment.lines() {
-                            let line = raw
-                                .trim_start_matches(" ")
-                                .trim_start_matches("//")
-                                .trim_start_matches("///")
-                                .trim_start_matches("/**")
-                                .trim_start_matches("/*")
-                                .trim_start_matches("*/")
-                                .trim_start_matches("*")
-                                .trim_end();
-                            comment_lines.push(line.to_owned());
-                        }
+                    if path.is_ident("doc") {
+                        let text = content.value().trim_end().to_owned();
+                        comment.push(text);
                     }
                 }
             }
         }
 
-        comment_lines
+        comment
     }
 }

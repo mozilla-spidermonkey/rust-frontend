@@ -3,11 +3,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use std::borrow::Cow;
-use std::fmt;
+use std::collections::HashMap;
 use std::io::Write;
-use std::mem;
 
-use syn;
+use syn::{self, UnOp};
 
 use bindgen::config::{Config, Language};
 use bindgen::declarationtyperesolver::DeclarationTypeResolver;
@@ -19,11 +18,15 @@ use bindgen::ir::{
 use bindgen::library::Library;
 use bindgen::writer::{Source, SourceWriter};
 use bindgen::Bindings;
-use syn::UnOp;
 
 #[derive(Debug, Clone)]
 pub enum Literal {
     Expr(String),
+    Path(String),
+    PostfixUnaryOp {
+        op: &'static str,
+        value: Box<Literal>,
+    },
     BinOp {
         left: Box<Literal>,
         op: &'static str,
@@ -32,14 +35,17 @@ pub enum Literal {
     Struct {
         path: Path,
         export_name: String,
-        fields: Vec<(String, Literal)>,
+        fields: HashMap<String, Literal>,
     },
 }
 
 impl Literal {
     fn replace_self_with(&mut self, self_ty: &Path) {
         match *self {
-            Literal::BinOp { .. } | Literal::Expr(..) => {}
+            Literal::PostfixUnaryOp { .. }
+            | Literal::BinOp { .. }
+            | Literal::Expr(..)
+            | Literal::Path(..) => {}
             Literal::Struct {
                 ref mut path,
                 ref mut export_name,
@@ -48,7 +54,7 @@ impl Literal {
                 if path.replace_self_with(self_ty) {
                     *export_name = self_ty.name().to_owned();
                 }
-                for &mut (ref _name, ref mut expr) in fields {
+                for (ref _name, ref mut expr) in fields {
                     expr.replace_self_with(self_ty);
                 }
             }
@@ -58,6 +64,8 @@ impl Literal {
     fn is_valid(&self, bindings: &Bindings) -> bool {
         match *self {
             Literal::Expr(..) => true,
+            Literal::Path(..) => true,
+            Literal::PostfixUnaryOp { ref value, .. } => value.is_valid(bindings),
             Literal::BinOp {
                 ref left,
                 ref right,
@@ -68,45 +76,24 @@ impl Literal {
     }
 }
 
-impl fmt::Display for Literal {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Literal::Expr(v) => write!(f, "{}", v),
-            Literal::BinOp {
-                ref left,
-                op,
-                ref right,
-            } => write!(f, "{} {} {}", left, op, right),
-            Literal::Struct {
-                path: _,
-                export_name,
-                fields,
-            } => write!(
-                f,
-                "({}){{ {} }}",
-                export_name,
-                fields
-                    .iter()
-                    .map(|(key, lit)| format!(".{} = {}", key, lit))
-                    .collect::<Vec<String>>()
-                    .join(", "),
-            ),
-        }
-    }
-}
-
 impl Literal {
     pub fn rename_for_config(&mut self, config: &Config) {
         match self {
             Literal::Struct {
-                path: _,
                 ref mut export_name,
                 fields,
+                ..
             } => {
                 config.export.rename(export_name);
                 for (_, lit) in fields {
                     lit.rename_for_config(config);
                 }
+            }
+            Literal::Path(ref mut name) => {
+                config.export.rename(name);
+            }
+            Literal::PostfixUnaryOp { ref mut value, .. } => {
+                value.rename_for_config(config);
             }
             Literal::BinOp {
                 ref mut left,
@@ -120,8 +107,10 @@ impl Literal {
         }
     }
 
+    // Translate from full blown `syn::Expr` into a simpler `Literal` type
     pub fn load(expr: &syn::Expr) -> Result<Literal, String> {
         match *expr {
+            // Match binary expressions of the form `a * b`
             syn::Expr::Binary(ref bin_expr) => {
                 let l = Self::load(&bin_expr.left)?;
                 let r = Self::load(&bin_expr.right)?;
@@ -131,9 +120,29 @@ impl Literal {
                     syn::BinOp::Mul(..) => "*",
                     syn::BinOp::Div(..) => "/",
                     syn::BinOp::Rem(..) => "%",
+                    syn::BinOp::And(..) => "&&",
+                    syn::BinOp::Or(..) => "||",
+                    syn::BinOp::BitXor(..) => "^",
+                    syn::BinOp::BitAnd(..) => "&",
+                    syn::BinOp::BitOr(..) => "|",
                     syn::BinOp::Shl(..) => "<<",
                     syn::BinOp::Shr(..) => ">>",
-                    _ => return Err(format!("Unsupported binary op {:?}", bin_expr.op)),
+                    syn::BinOp::Eq(..) => "==",
+                    syn::BinOp::Lt(..) => "<",
+                    syn::BinOp::Le(..) => "<=",
+                    syn::BinOp::Ne(..) => "!=",
+                    syn::BinOp::Ge(..) => ">=",
+                    syn::BinOp::Gt(..) => ">",
+                    syn::BinOp::AddEq(..) => "+=",
+                    syn::BinOp::SubEq(..) => "-=",
+                    syn::BinOp::MulEq(..) => "*=",
+                    syn::BinOp::DivEq(..) => "/=",
+                    syn::BinOp::RemEq(..) => "%=",
+                    syn::BinOp::BitXorEq(..) => "^=",
+                    syn::BinOp::BitAndEq(..) => "&=",
+                    syn::BinOp::BitOrEq(..) => "|=",
+                    syn::BinOp::ShlEq(..) => ">>=",
+                    syn::BinOp::ShrEq(..) => "<<=",
                 };
                 Ok(Literal::BinOp {
                     left: Box::new(l),
@@ -141,52 +150,29 @@ impl Literal {
                     right: Box::new(r),
                 })
             }
-            syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Str(ref value),
-                ..
-            }) => Ok(Literal::Expr(format!("u8\"{}\"", value.value()))),
-            syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Byte(ref value),
-                ..
-            }) => Ok(Literal::Expr(format!("{}", value.value()))),
-            syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Char(ref value),
-                ..
-            }) => Ok(Literal::Expr(match value.value() as u32 {
-                0..=255 => format!("'{}'", value.value().escape_default()),
-                other_code => format!(r"L'\u{:X}'", other_code),
-            })),
-            syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Int(ref value),
-                ..
-            }) => match value.suffix() {
-                syn::IntSuffix::Usize
-                | syn::IntSuffix::U8
-                | syn::IntSuffix::U16
-                | syn::IntSuffix::U32
-                | syn::IntSuffix::U64
-                | syn::IntSuffix::U128
-                | syn::IntSuffix::None => Ok(Literal::Expr(format!("{}", value.value()))),
-                syn::IntSuffix::Isize
-                | syn::IntSuffix::I8
-                | syn::IntSuffix::I16
-                | syn::IntSuffix::I32
-                | syn::IntSuffix::I64
-                | syn::IntSuffix::I128 => unsafe {
-                    Ok(Literal::Expr(format!(
-                        "{}",
-                        mem::transmute::<u64, i64>(value.value())
-                    )))
-                },
-            },
-            syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Float(ref value),
-                ..
-            }) => Ok(Literal::Expr(format!("{}", value.value()))),
-            syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Bool(ref value),
-                ..
-            }) => Ok(Literal::Expr(format!("{}", value.value))),
+
+            // Match literals like "one", 'a', 32 etc
+            syn::Expr::Lit(syn::ExprLit { ref lit, .. }) => {
+                match lit {
+                    syn::Lit::Str(ref value) => {
+                        Ok(Literal::Expr(format!("u8\"{}\"", value.value())))
+                    }
+                    syn::Lit::Byte(ref value) => Ok(Literal::Expr(format!("{}", value.value()))),
+                    syn::Lit::Char(ref value) => Ok(Literal::Expr(match value.value() as u32 {
+                        0..=255 => format!("'{}'", value.value().escape_default()),
+                        other_code => format!(r"L'\u{:X}'", other_code),
+                    })),
+                    syn::Lit::Int(ref value) => {
+                        Ok(Literal::Expr(value.base10_digits().to_string()))
+                    }
+                    syn::Lit::Float(ref value) => {
+                        Ok(Literal::Expr(value.base10_digits().to_string()))
+                    }
+                    syn::Lit::Bool(ref value) => Ok(Literal::Expr(format!("{}", value.value))),
+                    // TODO: Add support for byte string and Verbatim
+                    _ => Err(format!("Unsupported literal expression. {:?}", *lit)),
+                }
+            }
 
             syn::Expr::Struct(syn::ExprStruct {
                 ref path,
@@ -194,7 +180,7 @@ impl Literal {
                 ..
             }) => {
                 let struct_name = path.segments[0].ident.to_string();
-                let mut field_pairs: Vec<(String, Literal)> = Vec::new();
+                let mut field_map = HashMap::<String, Literal>::default();
                 for field in fields {
                     let ident = match field.member {
                         syn::Member::Named(ref name) => name.to_string(),
@@ -202,26 +188,98 @@ impl Literal {
                     };
                     let key = ident.to_string();
                     let value = Literal::load(&field.expr)?;
-                    field_pairs.push((key, value));
+                    field_map.insert(key, value);
                 }
                 Ok(Literal::Struct {
                     path: Path::new(struct_name.clone()),
                     export_name: struct_name,
-                    fields: field_pairs,
+                    fields: field_map,
                 })
             }
+
             syn::Expr::Unary(syn::ExprUnary {
-                attrs: _,
-                ref op,
-                ref expr,
+                ref op, ref expr, ..
             }) => match *op {
                 UnOp::Neg(_) => {
                     let val = Self::load(expr)?;
-                    Ok(Literal::Expr(format!("-{}", val)))
+                    Ok(Literal::PostfixUnaryOp {
+                        op: "-",
+                        value: Box::new(val),
+                    })
                 }
                 _ => Err(format!("Unsupported Unary expression. {:?}", *op)),
             },
-            _ => Err(format!("Unsupported literal expression. {:?}", *expr)),
+
+            // Match identifiers, like `5 << SHIFT`
+            syn::Expr::Path(syn::ExprPath {
+                path: syn::Path { ref segments, .. },
+                ..
+            }) => {
+                // Handle only the simplest identifiers and error for anything else.
+                if segments.len() == 1 {
+                    Ok(Literal::Path(format!("{}", segments.last().unwrap().ident)))
+                } else {
+                    Err(format!("Unsupported path expression. {:?}", *segments))
+                }
+            }
+
+            syn::Expr::Paren(syn::ExprParen { ref expr, .. }) => Self::load(expr),
+
+            _ => Err(format!("Unsupported expression. {:?}", *expr)),
+        }
+    }
+
+    fn write<F: Write>(&self, config: &Config, out: &mut SourceWriter<F>) {
+        match self {
+            Literal::Expr(v) => write!(out, "{}", v),
+            Literal::Path(v) => write!(out, "{}", v),
+            Literal::PostfixUnaryOp { op, ref value } => {
+                write!(out, "{}", op);
+                value.write(config, out);
+            }
+            Literal::BinOp {
+                ref left,
+                op,
+                ref right,
+            } => {
+                write!(out, "(");
+                left.write(config, out);
+                write!(out, " {} ", op);
+                right.write(config, out);
+                write!(out, ")");
+            }
+            Literal::Struct {
+                export_name,
+                fields,
+                path,
+            } => {
+                if config.language == Language::C {
+                    write!(out, "({})", export_name);
+                } else {
+                    write!(out, "{}", export_name);
+                }
+
+                write!(out, "{{ ");
+                let mut is_first_field = true;
+                // In C++, same order as defined is required.
+                let ordered_fields = out.bindings().struct_field_names(path);
+                for ordered_key in ordered_fields.iter() {
+                    if let Some(ref lit) = fields.get(ordered_key) {
+                        if !is_first_field {
+                            write!(out, ", ");
+                        } else {
+                            is_first_field = false;
+                        }
+                        if config.language == Language::Cxx {
+                            write!(out, "/* .{} = */ ", ordered_key);
+                        } else {
+                            write!(out, ".{} = ", ordered_key);
+                        }
+                        lit.write(config, out);
+                    }
+                }
+                write!(out, " }}");
+            }
         }
     }
 }
@@ -427,7 +485,7 @@ impl Constant {
                 ref fields,
                 ref path,
                 ..
-            } if out.bindings().struct_is_transparent(path) => &fields[0].1,
+            } if out.bindings().struct_is_transparent(path) => &fields.iter().next().unwrap().1,
             _ => &self.value,
         };
 
@@ -439,9 +497,12 @@ impl Constant {
                 out.write("const ");
             }
             self.ty.write(config, out);
-            write!(out, " {} = {};", name, value)
+            write!(out, " {} = ", name);
+            value.write(config, out);
+            write!(out, ";");
         } else {
-            write!(out, "#define {} {}", name, value)
+            write!(out, "#define {} ", name);
+            value.write(config, out);
         }
         condition.write_after(config, out);
     }

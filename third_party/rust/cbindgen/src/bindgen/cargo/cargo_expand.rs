@@ -6,7 +6,7 @@ use std::env;
 use std::error;
 use std::fmt;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::{from_utf8, Utf8Error};
 
@@ -75,7 +75,17 @@ pub fn expand(
         cmd.env("CARGO_TARGET_DIR", _temp_dir.unwrap().path());
     } else if let Ok(ref path) = env::var("CARGO_EXPAND_TARGET_DIR") {
         cmd.env("CARGO_TARGET_DIR", path);
+    } else if let Ok(ref path) = env::var("OUT_DIR") {
+        // When cbindgen was started programatically from a build.rs file, Cargo is running and
+        // locking the default target directory. In this case we need to use another directory,
+        // else we would end up in a deadlock. If Cargo is running `OUT_DIR` will be set, so we
+        // can use a directory relative to that.
+        cmd.env("CARGO_TARGET_DIR", PathBuf::from(path).join("expanded"));
     }
+
+    // Set this variable so that we don't call it recursively if we expand a crate that is using
+    // cbindgen
+    cmd.env("_CBINDGEN_IS_RUNNING", "1");
 
     cmd.arg("rustc");
     cmd.arg("--lib");
@@ -100,16 +110,18 @@ pub fn expand(
     }
     cmd.arg("-p");
     cmd.arg(&format!("{}:{}", crate_name, version));
+    cmd.arg("--verbose");
     cmd.arg("--");
     cmd.arg("-Z");
     cmd.arg("unstable-options");
     cmd.arg("--pretty=expanded");
+    info!("Command: {:?}", cmd);
     let output = cmd.output()?;
 
     let src = from_utf8(&output.stdout)?.to_owned();
     let error = from_utf8(&output.stderr)?.to_owned();
 
-    if src.len() == 0 {
+    if src.is_empty() {
         Err(Error::Compile(error))
     } else {
         Ok(src)

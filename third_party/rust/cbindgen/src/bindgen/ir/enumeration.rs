@@ -32,9 +32,7 @@ pub struct EnumVariant {
 fn value_from_expr(val: &syn::Expr) -> Option<i64> {
     match *val {
         syn::Expr::Lit(ref lit) => match lit.lit {
-            syn::Lit::Int(ref lit) if lit.value() <= ::std::i64::MAX as u64 => {
-                Some(lit.value() as i64)
-            }
+            syn::Lit::Int(ref lit) => lit.base10_parse::<i64>().ok(),
             _ => None,
         },
         syn::Expr::Unary(ref unary) => {
@@ -104,6 +102,7 @@ impl EnumVariant {
                     parse_fields(is_tagged, &fields.named)?,
                     is_tagged,
                     true,
+                    None,
                     false,
                     false,
                     Cfg::append(mod_cfg, Cfg::load(&variant.attrs)),
@@ -119,6 +118,7 @@ impl EnumVariant {
                     parse_fields(is_tagged, &fields.unnamed)?,
                     is_tagged,
                     true,
+                    None,
                     false,
                     true,
                     Cfg::append(mod_cfg, Cfg::load(&variant.attrs)),
@@ -252,8 +252,12 @@ impl Enum {
 
     pub fn load(item: &syn::ItemEnum, mod_cfg: Option<&Cfg>) -> Result<Enum, String> {
         let repr = Repr::load(&item.attrs)?;
-        if repr == Repr::RUST {
-            return Err("Enum not marked with a valid repr(prim) or repr(C).".to_owned());
+        if repr.style == ReprStyle::Rust && repr.ty.is_none() {
+            return Err("Enum is not marked with a valid #[repr(prim)] or #[repr(C)].".to_owned());
+        }
+        // TODO: Implement translation of aligned enums.
+        if repr.align.is_some() {
+            return Err("Enum is marked with #[repr(align(...))] or #[repr(packed)].".to_owned());
         }
 
         let generic_params = GenericParams::new(&item.generics);
@@ -414,7 +418,7 @@ impl Item for Enum {
                             &variant.export_name,
                             IdentifierType::EnumVariant(self),
                         ),
-                        variant.discriminant.clone(),
+                        variant.discriminant,
                         variant.body.as_ref().map(|body| {
                             (
                                 r.apply_to_snake_case(&body.0, IdentifierType::StructMember),
@@ -463,7 +467,7 @@ impl Item for Enum {
         let monomorph = Enum::new(
             mangled_path,
             GenericParams::default(),
-            self.repr.clone(),
+            self.repr,
             self.variants
                 .iter()
                 .map(|v| v.specialize(generic_values, &mappings))
@@ -537,7 +541,7 @@ impl Source for Enum {
 
             out.write("enum");
 
-            if !size.is_none() || config.style.generate_tag() {
+            if size.is_some() || config.style.generate_tag() {
                 write!(out, " {}", enum_name);
             }
 
@@ -804,12 +808,10 @@ impl Source for Enum {
                                 Type::MutRef(Box::new(return_type))
                             };
                             return_type.write(config, out);
+                        } else if const_casts {
+                            write!(out, "const {}&", body.export_name());
                         } else {
-                            if const_casts {
-                                write!(out, "const {}&", body.export_name());
-                            } else {
-                                write!(out, "{}&", body.export_name());
-                            }
+                            write!(out, "{}&", body.export_name());
                         }
 
                         write!(out, " As{}()", variant.export_name);
@@ -897,6 +899,23 @@ impl Source for Enum {
             if config.language == Language::Cxx
                 && config
                     .enumeration
+                    .private_default_tagged_enum_constructor(&self.annotations)
+            {
+                out.new_line();
+                out.new_line();
+                write!(out, "private:");
+                out.new_line();
+                write!(out, "{}()", self.export_name);
+                out.open_brace();
+                out.close_brace(false);
+                out.new_line();
+                write!(out, "public:");
+                out.new_line();
+            }
+
+            if config.language == Language::Cxx
+                && config
+                    .enumeration
                     .derive_tagged_enum_destructor(&self.annotations)
             {
                 out.new_line();
@@ -958,6 +977,29 @@ impl Source for Enum {
                 write!(out, "default: break;");
                 out.close_brace(false);
                 out.close_brace(false);
+
+                if config.language == Language::Cxx
+                    && config
+                        .enumeration
+                        .derive_tagged_enum_copy_assignment(&self.annotations)
+                {
+                    out.new_line();
+                    write!(
+                        out,
+                        "{}& operator=(const {}& {})",
+                        self.export_name, self.export_name, other
+                    );
+                    out.open_brace();
+                    write!(out, "if (this != &{})", other);
+                    out.open_brace();
+                    write!(out, "this->~{}();", self.export_name);
+                    out.new_line();
+                    write!(out, "new (this) {}({});", self.export_name, other);
+                    out.close_brace(false);
+                    out.new_line();
+                    write!(out, "return *this;");
+                    out.close_brace(false);
+                }
             }
 
             if let Some(body) = config.export.extra_body(&self.path) {

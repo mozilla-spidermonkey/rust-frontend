@@ -5,6 +5,8 @@
 
 #define DELIMITER ':'
 
+#define EQUID L'\u10083'
+
 #define FOO 10
 
 #define HEART L'\u2764'
@@ -19,7 +21,15 @@
 
 #define QUOTE '\''
 
+#define SHIFT 3
+
 #define TAB '\t'
+
+#define XBOOL 1
+
+#define XFALSE ((0 << SHIFT) | XBOOL)
+
+#define XTRUE (1 << (SHIFT | XBOOL))
 
 #define ZOM 3.14
 
