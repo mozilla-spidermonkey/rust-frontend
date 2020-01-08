@@ -16,12 +16,12 @@ const EventEmitter = require("devtools/shared/event-emitter");
 const {
   updateClasses,
   updateClassPanelExpanded,
-} = require("./actions/class-list");
+} = require("devtools/client/inspector/rules/actions/class-list");
 const {
   disableAllPseudoClasses,
   setPseudoClassLocks,
   togglePseudoClass,
-} = require("./actions/pseudo-classes");
+} = require("devtools/client/inspector/rules/actions/pseudo-classes");
 const {
   updateAddRuleEnabled,
   updateColorSchemeSimulationHidden,
@@ -29,9 +29,11 @@ const {
   updatePrintSimulationHidden,
   updateRules,
   updateSourceLinkEnabled,
-} = require("./actions/rules");
+} = require("devtools/client/inspector/rules/actions/rules");
 
-const RulesApp = createFactory(require("./components/RulesApp"));
+const RulesApp = createFactory(
+  require("devtools/client/inspector/rules/components/RulesApp")
+);
 
 const { LocalizationHelper } = require("devtools/shared/l10n");
 const INSPECTOR_L10N = new LocalizationHelper(
@@ -166,11 +168,29 @@ class RulesView {
     this.provider = provider;
   }
 
+  /**
+   * Initializes the content-viewer front and enable the print and color scheme simulation
+   * if they are supported in the current target.
+   */
   async initSimulationFeatures() {
-    // In order to query if the emulation actor's print simulation methods are supported,
-    // we have to call the emulation front so that the actor is lazily loaded. This allows
-    // us to use `actorHasMethod`. Please see `getActorDescription` for more information.
-    this.emulationFront = await this.currentTarget.getFront("emulation");
+    // In order to query if the content-viewer actor's print and color simulation methods are
+    // supported, we have to call the content-viewer front so that the actor is lazily loaded.
+    // This allows us to use `actorHasMethod`. Please see `getActorDescription` for more
+    // information.
+    try {
+      this.contentViewerFront = await this.currentTarget.getFront(
+        "contentViewer"
+      );
+    } catch (e) {
+      console.error(e);
+    }
+
+    // Bug 1606852: For backwards compatibility, we need to get the emulation actor. The ContentViewer
+    // actor is only available in Firefox 73 or newer. We can remove this call when Firefox 73
+    // is on release.
+    if (!this.contentViewerFront) {
+      this.contentViewerFront = await this.currentTarget.getFront("emulation");
+    }
 
     if (!this.currentTarget.chrome) {
       this.store.dispatch(updatePrintSimulationHidden(false));
@@ -181,14 +201,22 @@ class RulesView {
     // Show the color scheme simulation toggle button if:
     // - The feature pref is enabled.
     // - Color scheme simulation is supported for the current target.
+    const isEmulateColorSchemeSupported =
+      (await this.currentTarget.actorHasMethod(
+        "contentViewer",
+        "getEmulatedColorScheme"
+      )) ||
+      // Bug 1606852: We can removed this check when Firefox 73 is on release.
+      (await this.currentTarget.actorHasMethod(
+        "emulation",
+        "getEmulatedColorScheme"
+      ));
+
     if (
       Services.prefs.getBoolPref(
         "devtools.inspector.color-scheme-simulation.enabled"
       ) &&
-      (await this.currentTarget.actorHasMethod(
-        "emulation",
-        "getEmulatedColorScheme"
-      ))
+      isEmulateColorSchemeSupported
     ) {
       this.store.dispatch(updateColorSchemeSimulationHidden(false));
     } else {
@@ -224,9 +252,9 @@ class RulesView {
       this.elementStyle = null;
     }
 
-    if (this.emulationFront) {
-      this.emulationFront.destroy();
-      this.emulationFront = null;
+    if (this.contentViewerFront) {
+      this.contentViewerFront.destroy();
+      this.contentViewerFront = null;
     }
 
     this._dummyElement = null;
@@ -489,10 +517,10 @@ class RulesView {
    * Handler for toggling color scheme simulation.
    */
   async onToggleColorSchemeSimulation() {
-    const currentState = await this.emulationFront.getEmulatedColorScheme();
+    const currentState = await this.contentViewerFront.getEmulatedColorScheme();
     const index = COLOR_SCHEMES.indexOf(currentState);
     const nextState = COLOR_SCHEMES[(index + 1) % COLOR_SCHEMES.length];
-    await this.emulationFront.setEmulatedColorScheme(nextState);
+    await this.contentViewerFront.setEmulatedColorScheme(nextState);
     await this.updateElementStyle();
   }
 
@@ -500,12 +528,12 @@ class RulesView {
    * Handler for toggling print media simulation.
    */
   async onTogglePrintSimulation() {
-    const enabled = await this.emulationFront.getIsPrintSimulationEnabled();
+    const enabled = await this.contentViewerFront.getIsPrintSimulationEnabled();
 
     if (!enabled) {
-      await this.emulationFront.startPrintMediaSimulation();
+      await this.contentViewerFront.startPrintMediaSimulation();
     } else {
-      await this.emulationFront.stopPrintMediaSimulation(false);
+      await this.contentViewerFront.stopPrintMediaSimulation(false);
     }
 
     await this.updateElementStyle();

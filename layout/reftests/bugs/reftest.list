@@ -997,7 +997,7 @@ fuzzy-if(Android,0-11,0-17) fuzzy-if(webrender,0-1,0-10) == 413361-1.html 413361
 == 421436-1a.html 421436-1-ref.html
 == 421436-1b.html 421436-1-ref.html
 fuzzy-if(skiaContent,0-1,0-40) == 421632-1.html 421632-1-ref.html
-asserts(1-1) != 421710-1.html about:blank # Bug 1574046
+!= 421710-1.html about:blank
 fails-if(Android) fuzzy-if(webrender,63-64,1024-1024) fails-if(usesRepeatResampling&&!(webrender&&winWidget)) == 421885-1.xml 421885-1-ref.xml
 == 421955-1.html 421955-1-ref.html
 == 422249-1.html 422249-1-ref.html
@@ -1516,12 +1516,6 @@ fuzzy-if(Android,0-1,0-1) needs-focus == 568441.html 568441-ref.html
 == 571281-1a.html 571281-1-ref.html
 == 571281-1b.html 571281-1-ref.html
 == 571281-1c.html 571281-1-ref.html
-# Bug 1423383: The three tests for bug 571281 are duplicated for testing
-# while layout.css.column-span.enabled is disabled. Remove them once the
-# pref is default on.
-pref(layout.css.column-span.enabled,true) == 571281-1a.html 571281-1-ref.html
-pref(layout.css.column-span.enabled,true) == 571281-1b.html 571281-1-ref.html
-pref(layout.css.column-span.enabled,true) == 571281-1c.html 571281-1-ref.html
 == 571347-1a.html 571347-1-ref.html
 == 571347-1b.html 571347-1-ref.html
 == 571347-2a.html 571347-2-ref.html
@@ -2092,3 +2086,4 @@ fuzzy(0-1,0-10000) == 1577566-1.html 1577566-1-ref.html
 == 1579953-2.html 1579953-2-ref.html
 == 1595199-1.html 1595199-1-ref.html
 fuzzy-if(gtkWidget,0-255,0-42) == 1599841-1.html 1599841-1-ref.html
+pref(layout.css.xul-box-display-values.content.enabled,true) == 1606130.html 1606130-ref.html

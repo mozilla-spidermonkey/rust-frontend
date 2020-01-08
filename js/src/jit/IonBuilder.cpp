@@ -1627,7 +1627,7 @@ class MOZ_RAII PoppedValueUseChecker {
           if (current_->peek(-1) == popped_[0]) {
             break;
           }
-          MOZ_FALLTHROUGH;
+          [[fallthrough]];
 
         default:
           MOZ_ASSERT(popped_[i]->isImplicitlyUsed() ||
@@ -1651,13 +1651,10 @@ AbortReasonOr<Ok> IonBuilder::traverseBytecode() {
   // See the "Control Flow handling in IonBuilder" comment in IonBuilder.h for
   // more information.
 
-  // IonBuilder's destructor is not called, so make sure pendingEdges_ and
-  // GSNCache are not holding onto malloc memory when we return.
+  // IonBuilder's destructor is not called, so make sure pendingEdges_ is not
+  // holding onto malloc memory when we return.
   pendingEdges_.emplace();
-  auto freeMemory = mozilla::MakeScopeExit([&] {
-    pendingEdges_.reset();
-    gsn.purge();
-  });
+  auto freeMemory = mozilla::MakeScopeExit([&] { pendingEdges_.reset(); });
 
   MOZ_TRY(startTraversingBlock(current));
 
@@ -2248,7 +2245,7 @@ AbortReasonOr<Ok> IonBuilder::inspectOpcode(JSOp op, bool* restarted) {
         }
       }
       // Fall through to JSOP_BINDNAME
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case JSOP_BINDNAME:
       return jsop_bindname(info().getName(pc));
 
@@ -2447,7 +2444,7 @@ AbortReasonOr<Ok> IonBuilder::inspectOpcode(JSOp op, bool* restarted) {
         return Ok();
       }
       // Fallthrough to IMPLICITTHIS in non-syntactic scope case
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case JSOP_IMPLICITTHIS: {
       PropertyName* name = info().getAtom(pc)->asPropertyName();
       return jsop_implicitthis(name);
@@ -2549,6 +2546,8 @@ AbortReasonOr<Ok> IonBuilder::inspectOpcode(JSOp op, bool* restarted) {
     case JSOP_YIELD:
     case JSOP_FINALYIELDRVAL:
     case JSOP_RESUME:
+    case JSOP_RESUMEKIND:
+    case JSOP_CHECK_RESUMEKIND:
     case JSOP_AFTERYIELD:
     case JSOP_AWAIT:
     case JSOP_TRYSKIPAWAIT:
@@ -2573,11 +2572,6 @@ AbortReasonOr<Ok> IonBuilder::inspectOpcode(JSOp op, bool* restarted) {
       // Intentionally not implemented.
       break;
 
-    case JSOP_UNUSED71:
-    case JSOP_UNUSED106:
-    case JSOP_UNUSED120:
-    case JSOP_UNUSED149:
-    case JSOP_UNUSED227:
     case JSOP_LIMIT:
       break;
   }
@@ -3223,13 +3217,9 @@ AbortReasonOr<Ok> IonBuilder::visitTry() {
     return abort(AbortReason::Disable, "Try-catch during analysis");
   }
 
-  jssrcnote* sn = GetSrcNote(gsn, script(), pc);
-  MOZ_ASSERT(SN_TYPE(sn) == SRC_TRY);
-
   // Get the pc of the last instruction in the try block. It's a JSOP_GOTO to
   // jump over the catch block.
-  jsbytecode* endpc =
-      pc + GetSrcNoteOffset(sn, SrcNote::Try::EndOfTryJumpOffset);
+  jsbytecode* endpc = pc + GET_CODE_OFFSET(pc);
   MOZ_ASSERT(JSOp(*endpc) == JSOP_GOTO);
   MOZ_ASSERT(GET_JUMP_OFFSET(endpc) > 0);
 
@@ -6351,18 +6341,6 @@ bool IonBuilder::testNeedsArgumentCheck(JSFunction* target,
   // callee. Since typeset accumulates and can't decrease that means we don't
   // need to check the arguments anymore.
 
-  if (target->isNativeWithJitEntry()) {
-    // For natives with JitEntry we use the call-scripted path, but that
-    // requires a JitScript for the skip-arguments-check optimization so make
-    // sure we don't use that optimization. Note that these natives don't do
-    // argument type checks anyway.
-    return true;
-  }
-
-  if (target->isNative()) {
-    return false;
-  }
-
   if (!target->hasScript()) {
     return true;
   }
@@ -8498,6 +8476,10 @@ bool IonBuilder::needsPostBarrier(MDefinition* value) {
   }
   if (value->mightBeType(MIRType::String) &&
       zone->canNurseryAllocateStrings()) {
+    return true;
+  }
+  if (value->mightBeType(MIRType::BigInt) &&
+      zone->canNurseryAllocateBigInts()) {
     return true;
   }
   return false;
@@ -14202,12 +14184,12 @@ AbortReasonOr<Ok> IonBuilder::setPropTryReferenceTypedObjectValue(
   return resumeAfter(store);
 }
 
-JSObject* IonBuilder::checkNurseryObject(JSObject* obj) {
+void IonBuilder::checkNurseryCell(gc::Cell* cell) {
   // If we try to use any nursery pointers during compilation, make sure that
   // the main thread will cancel this compilation before performing a minor
   // GC. All constants used during compilation should either go through this
   // function or should come from a type set (which has a similar barrier).
-  if (obj && IsInsideNursery(obj)) {
+  if (cell && IsInsideNursery(cell)) {
     realm->zone()->setMinorGCShouldCancelIonCompilations();
     IonBuilder* builder = this;
     while (builder) {
@@ -14215,7 +14197,10 @@ JSObject* IonBuilder::checkNurseryObject(JSObject* obj) {
       builder = builder->callerBuilder_;
     }
   }
+}
 
+JSObject* IonBuilder::checkNurseryObject(JSObject* obj) {
+  checkNurseryCell(obj);
   return obj;
 }
 
@@ -14223,8 +14208,8 @@ MConstant* IonBuilder::constant(const Value& v) {
   MOZ_ASSERT(!v.isString() || v.toString()->isAtom(),
              "Handle non-atomized strings outside IonBuilder.");
 
-  if (v.isObject()) {
-    checkNurseryObject(&v.toObject());
+  if (v.isGCThing()) {
+    checkNurseryCell(v.toGCThing());
   }
 
   MConstant* c = MConstant::New(alloc(), v, constraints());

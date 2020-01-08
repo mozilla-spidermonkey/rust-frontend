@@ -444,10 +444,18 @@ static bool str_resolve(JSContext* cx, HandleObject obj, HandleId id,
 }
 
 static const JSClassOps StringObjectClassOps = {
-    nullptr,                /* addProperty */
-    nullptr,                /* delProperty */
-    str_enumerate, nullptr, /* newEnumerate */
-    str_resolve,   str_mayResolve};
+    nullptr,         // addProperty
+    nullptr,         // delProperty
+    str_enumerate,   // enumerate
+    nullptr,         // newEnumerate
+    str_resolve,     // resolve
+    str_mayResolve,  // mayResolve
+    nullptr,         // finalize
+    nullptr,         // call
+    nullptr,         // hasInstance
+    nullptr,         // construct
+    nullptr,         // trace
+};
 
 const JSClass StringObject::class_ = {
     js_String_str,
@@ -684,12 +692,6 @@ static char16_t Final_Sigma(const char16_t* chars, size_t length,
   return unicode::GREEK_SMALL_LETTER_SIGMA;
 }
 
-static Latin1Char Final_Sigma(const Latin1Char* chars, size_t length,
-                              size_t index) {
-  MOZ_ASSERT_UNREACHABLE("U+03A3 is not a Latin-1 character");
-  return 0;
-}
-
 // If |srcLength == destLength| is true, the destination buffer was allocated
 // with the same size as the source buffer. When we append characters which
 // have special casing mappings, we test |srcLength == destLength| to decide
@@ -708,7 +710,7 @@ static size_t ToLowerCaseImpl(CharT* destChars, const CharT* srcChars,
   size_t j = startIndex;
   for (size_t i = startIndex; i < srcLength; i++) {
     char16_t c = srcChars[i];
-    if (!IsSame<CharT, Latin1Char>::value) {
+    if constexpr (!IsSame<CharT, Latin1Char>::value) {
       if (unicode::IsLeadSurrogate(c) && i + 1 < srcLength) {
         char16_t trail = srcChars[i + 1];
         if (unicode::IsTrailSurrogate(trail)) {
@@ -765,12 +767,6 @@ static size_t ToLowerCaseLength(const char16_t* chars, size_t startIndex,
   return lowerLength;
 }
 
-static size_t ToLowerCaseLength(const Latin1Char* chars, size_t startIndex,
-                                size_t length) {
-  MOZ_ASSERT_UNREACHABLE("never called for Latin-1 strings");
-  return 0;
-}
-
 template <typename CharT>
 static JSString* ToLowerCase(JSContext* cx, JSLinearString* str) {
   // Unlike toUpperCase, toLowerCase has the nice invariant that if the
@@ -796,7 +792,7 @@ static JSString* ToLowerCase(JSContext* cx, JSLinearString* str) {
 
     // One element Latin-1 strings can be directly retrieved from the
     // static strings cache.
-    if (IsSame<CharT, Latin1Char>::value) {
+    if constexpr (IsSame<CharT, Latin1Char>::value) {
       if (length == 1) {
         char16_t lower = unicode::ToLowerCase(chars[0]);
         MOZ_ASSERT(lower <= JSString::MAX_LATIN1_CHAR);
@@ -810,7 +806,7 @@ static JSString* ToLowerCase(JSContext* cx, JSLinearString* str) {
     size_t i = 0;
     for (; i < length; i++) {
       CharT c = chars[i];
-      if (!IsSame<CharT, Latin1Char>::value) {
+      if constexpr (!IsSame<CharT, Latin1Char>::value) {
         if (unicode::IsLeadSurrogate(c) && i + 1 < length) {
           CharT trail = chars[i + 1];
           if (unicode::IsTrailSurrogate(trail)) {
@@ -842,18 +838,21 @@ static JSString* ToLowerCase(JSContext* cx, JSLinearString* str) {
 
     size_t readChars =
         ToLowerCaseImpl(newChars.get(), chars, i, length, resultLength);
-    if (readChars < length) {
-      MOZ_ASSERT((!IsSame<CharT, Latin1Char>::value),
-                 "Latin-1 strings don't have special lower case mappings");
-      resultLength = ToLowerCaseLength(chars, readChars, length);
+    if constexpr (!IsSame<CharT, Latin1Char>::value) {
+      if (readChars < length) {
+        resultLength = ToLowerCaseLength(chars, readChars, length);
 
-      if (!newChars.maybeRealloc(cx, length, resultLength)) {
-        return nullptr;
+        if (!newChars.maybeRealloc(cx, length, resultLength)) {
+          return nullptr;
+        }
+
+        MOZ_ALWAYS_TRUE(length == ToLowerCaseImpl(newChars.get(), chars,
+                                                  readChars, length,
+                                                  resultLength));
       }
-
-      MOZ_ALWAYS_TRUE(length == ToLowerCaseImpl(newChars.get(), chars,
-                                                readChars, length,
-                                                resultLength));
+    } else {
+      MOZ_ASSERT(readChars == length,
+                 "Latin-1 strings don't have special lower case mappings");
     }
   }
 
@@ -1083,7 +1082,7 @@ static size_t ToUpperCaseImpl(DestChar* destChars, const SrcChar* srcChars,
   size_t j = startIndex;
   for (size_t i = startIndex; i < srcLength; i++) {
     char16_t c = srcChars[i];
-    if (!IsSame<DestChar, Latin1Char>::value) {
+    if constexpr (!IsSame<DestChar, Latin1Char>::value) {
       if (unicode::IsLeadSurrogate(c) && i + 1 < srcLength) {
         char16_t trail = srcChars[i + 1];
         if (unicode::IsTrailSurrogate(trail)) {
@@ -1115,15 +1114,6 @@ static size_t ToUpperCaseImpl(DestChar* destChars, const SrcChar* srcChars,
 
   MOZ_ASSERT(j == destLength);
   return srcLength;
-}
-
-// Explicit instantiation so we don't hit the static_assert from above.
-static bool ToUpperCaseImpl(Latin1Char* destChars, const char16_t* srcChars,
-                            size_t startIndex, size_t srcLength,
-                            size_t destLength) {
-  MOZ_ASSERT_UNREACHABLE(
-      "cannot write non-Latin-1 characters into Latin-1 string");
-  return false;
 }
 
 template <typename CharT>
@@ -1201,7 +1191,7 @@ static JSString* ToUpperCase(JSContext* cx, JSLinearString* str) {
 
     // Most one element Latin-1 strings can be directly retrieved from the
     // static strings cache.
-    if (IsSame<CharT, Latin1Char>::value) {
+    if constexpr (IsSame<CharT, Latin1Char>::value) {
       if (length == 1) {
         Latin1Char c = chars[0];
         if (c != unicode::MICRO_SIGN &&
@@ -1223,7 +1213,7 @@ static JSString* ToUpperCase(JSContext* cx, JSLinearString* str) {
     size_t i = 0;
     for (; i < length; i++) {
       CharT c = chars[i];
-      if (!IsSame<CharT, Latin1Char>::value) {
+      if constexpr (!IsSame<CharT, Latin1Char>::value) {
         if (unicode::IsLeadSurrogate(c) && i + 1 < length) {
           CharT trail = chars[i + 1];
           if (unicode::IsTrailSurrogate(trail)) {
@@ -1260,9 +1250,8 @@ static JSString* ToUpperCase(JSContext* cx, JSLinearString* str) {
     // If the original string is a two-byte string, its uppercase form is
     // so rarely Latin-1 that we don't even consider creating a new
     // Latin-1 string.
-    bool resultIsLatin1;
-    if (IsSame<CharT, Latin1Char>::value) {
-      resultIsLatin1 = true;
+    if constexpr (IsSame<CharT, Latin1Char>::value) {
+      bool resultIsLatin1 = true;
       for (size_t j = i; j < length; j++) {
         Latin1Char c = chars[j];
         if (c == unicode::MICRO_SIGN ||
@@ -1274,16 +1263,21 @@ static JSString* ToUpperCase(JSContext* cx, JSLinearString* str) {
           MOZ_ASSERT(unicode::ToUpperCase(c) <= JSString::MAX_LATIN1_CHAR);
         }
       }
-    } else {
-      resultIsLatin1 = false;
-    }
 
-    if (resultIsLatin1) {
-      newChars.construct<Latin1Buffer>();
+      if (resultIsLatin1) {
+        newChars.construct<Latin1Buffer>();
 
-      if (!ToUpperCase(cx, newChars.ref<Latin1Buffer>(), chars, i, length,
-                       &resultLength)) {
-        return nullptr;
+        if (!ToUpperCase(cx, newChars.ref<Latin1Buffer>(), chars, i, length,
+                         &resultLength)) {
+          return nullptr;
+        }
+      } else {
+        newChars.construct<TwoByteBuffer>();
+
+        if (!ToUpperCase(cx, newChars.ref<TwoByteBuffer>(), chars, i, length,
+                         &resultLength)) {
+          return nullptr;
+        }
       }
     } else {
       newChars.construct<TwoByteBuffer>();
@@ -1802,25 +1796,25 @@ static const TextChar* FirstCharMatcherUnrolled(const TextChar* text,
   switch ((textend - t) & 7) {
     case 0:
       if (*t++ == pat) return t - 1;
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case 7:
       if (*t++ == pat) return t - 1;
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case 6:
       if (*t++ == pat) return t - 1;
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case 5:
       if (*t++ == pat) return t - 1;
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case 4:
       if (*t++ == pat) return t - 1;
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case 3:
       if (*t++ == pat) return t - 1;
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case 2:
       if (*t++ == pat) return t - 1;
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case 1:
       if (*t++ == pat) return t - 1;
   }

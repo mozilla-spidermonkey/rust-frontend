@@ -2946,35 +2946,7 @@ bool CacheIRCompiler::emitLoadFunctionLengthResult() {
       Imm32(FunctionFlags::INTERPRETED_LAZY | FunctionFlags::RESOLVED_LENGTH),
       failure->label());
 
-  Label boundFunction;
-  masm.branchTest32(Assembler::NonZero, scratch,
-                    Imm32(FunctionFlags::BOUND_FUN), &boundFunction);
-  Label interpreted;
-  masm.branchTest32(Assembler::NonZero, scratch,
-                    Imm32(FunctionFlags::INTERPRETED), &interpreted);
-
-  // Load the length of the native function.
-  masm.load16ZeroExtend(Address(obj, JSFunction::offsetOfNargs()), scratch);
-  Label done;
-  masm.jump(&done);
-
-  masm.bind(&boundFunction);
-  // Bound functions might have a non-int32 length.
-  Address boundLength(
-      obj, FunctionExtended::offsetOfExtendedSlot(BOUND_FUN_LENGTH_SLOT));
-  masm.branchTestInt32(Assembler::NotEqual, boundLength, failure->label());
-  masm.unboxInt32(boundLength, scratch);
-  masm.jump(&done);
-
-  masm.bind(&interpreted);
-  // Load the length from the function's script.
-  masm.loadPtr(Address(obj, JSFunction::offsetOfScript()), scratch);
-  masm.loadPtr(Address(scratch, JSScript::offsetOfSharedData()), scratch);
-  masm.loadPtr(Address(scratch, RuntimeScriptData::offsetOfISD()), scratch);
-  masm.load16ZeroExtend(
-      Address(scratch, ImmutableScriptData::offsetOfFunLength()), scratch);
-
-  masm.bind(&done);
+  masm.loadFunctionLength(obj, scratch, scratch, failure->label());
   EmitStoreResult(masm, scratch, JSVAL_TYPE_INT32, output);
   return true;
 }
@@ -3651,11 +3623,17 @@ bool CacheIRCompiler::emitStoreTypedElement() {
   return true;
 }
 
+static bool CanNurseryAllocateBigInt(JSContext* cx) {
+  JS::Zone* zone = cx->zone();
+  return zone->runtimeFromAnyThread()->gc.nursery().canAllocateBigInts() &&
+         zone->allocNurseryBigInts;
+}
+
 static void EmitAllocateBigInt(MacroAssembler& masm, Register result,
                                Register temp, const LiveRegisterSet& liveSet,
-                               Label* fail) {
+                               Label* fail, bool attemptNursery) {
   Label fallback, done;
-  masm.newGCBigInt(result, temp, &fallback);
+  masm.newGCBigInt(result, temp, &fallback, attemptNursery);
   masm.jump(&done);
   {
     masm.bind(&fallback);
@@ -3664,6 +3642,8 @@ static void EmitAllocateBigInt(MacroAssembler& masm, Register result,
     masm.setupUnalignedABICall(temp);
     masm.loadJSContext(temp);
     masm.passABIArg(temp);
+    masm.move32(Imm32(attemptNursery), result);
+    masm.passABIArg(result);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, jit::AllocateBigIntNoGC));
     masm.storeCallPointerResult(result);
 
@@ -3733,7 +3713,9 @@ bool CacheIRCompiler::emitLoadTypedElementResult() {
     save.takeUnchecked(scratch2);
     save.takeUnchecked(output);
 
-    EmitAllocateBigInt(masm, *bigInt, scratch1, save, failure->label());
+    bool attemptNursery = CanNurseryAllocateBigInt(cx_);
+    EmitAllocateBigInt(masm, *bigInt, scratch1, save, failure->label(),
+                       attemptNursery);
   }
 
   // Load the elements vector.
@@ -3902,7 +3884,9 @@ bool CacheIRCompiler::emitLoadTypedObjectResult() {
       save.takeUnchecked(scratch2);
       save.takeUnchecked(output);
 
-      EmitAllocateBigInt(masm, *bigInt, scratch1, save, failure->label());
+      bool attemptNursery = CanNurseryAllocateBigInt(cx_);
+      EmitAllocateBigInt(masm, *bigInt, scratch1, save, failure->label(),
+                         attemptNursery);
     }
   }
 
@@ -4830,7 +4814,8 @@ void CacheIRCompiler::emitPostBarrierShared(Register obj,
 
   TypedOrValueRegister reg = val.reg();
   if (reg.hasTyped()) {
-    if (reg.type() != MIRType::Object && reg.type() != MIRType::String) {
+    if (reg.type() != MIRType::Object && reg.type() != MIRType::String &&
+        reg.type() != MIRType::BigInt) {
       return;
     }
   }

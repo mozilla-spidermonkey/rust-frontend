@@ -58,17 +58,17 @@ using mozilla::Maybe;
 using mozilla::Some;
 
 const JSClassOps DebuggerScript::classOps_ = {
-    nullptr,                         /* addProperty */
-    nullptr,                         /* delProperty */
-    nullptr,                         /* enumerate   */
-    nullptr,                         /* newEnumerate */
-    nullptr,                         /* resolve     */
-    nullptr,                         /* mayResolve  */
-    nullptr,                         /* finalize    */
-    nullptr,                         /* call        */
-    nullptr,                         /* hasInstance */
-    nullptr,                         /* construct   */
-    CallTraceMethod<DebuggerScript>, /* trace */
+    nullptr,                          // addProperty
+    nullptr,                          // delProperty
+    nullptr,                          // enumerate
+    nullptr,                          // newEnumerate
+    nullptr,                          // resolve
+    nullptr,                          // mayResolve
+    nullptr,                          // finalize
+    nullptr,                          // call
+    nullptr,                          // hasInstance
+    nullptr,                          // construct
+    CallTraceMethod<DebuggerScript>,  // trace
 };
 
 const JSClass DebuggerScript::class_ = {
@@ -1198,7 +1198,7 @@ class FlowGraphSummary {
         // because we only report offsets of entry points which have
         // valid incoming edges.
         for (const JSTryNote& tn : script->trynotes()) {
-          if (tn.start == r.frontOffset() + 1) {
+          if (tn.start == r.frontOffset() + JSOP_TRY_LENGTH) {
             uint32_t catchOffset = tn.start + tn.length;
             if (tn.kind == JSTRY_CATCH || tn.kind == JSTRY_FINALLY) {
               addEdge(lineno, column, catchOffset);
@@ -1605,6 +1605,7 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOP_STRICTEVAL:
     case JSOP_INT8:
     case JSOP_UINT16:
+    case JSOP_RESUMEKIND:
     case JSOP_GETGNAME:
     case JSOP_GETNAME:
     case JSOP_GETINTRINSIC:
@@ -1696,6 +1697,7 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOP_ISGENCLOSING:
     case JSOP_FINALYIELDRVAL:
     case JSOP_RESUME:
+    case JSOP_CHECK_RESUMEKIND:
     case JSOP_AFTERYIELD:
     case JSOP_AWAIT:
     case JSOP_TRYSKIPAWAIT:
@@ -1708,11 +1710,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOP_RETSUB:
     case JSOP_THROWMSG:
     case JSOP_FORCEINTERPRETER:
-    case JSOP_UNUSED71:
-    case JSOP_UNUSED106:
-    case JSOP_UNUSED120:
-    case JSOP_UNUSED149:
-    case JSOP_UNUSED227:
     case JSOP_LIMIT:
       return false;
   }
@@ -1730,7 +1727,7 @@ bool DebuggerScript::CallData::getEffectfulOffsets() {
   if (!result) {
     return false;
   }
-  for (BytecodeRangeWithPosition r(cx, script); !r.empty(); r.popFront()) {
+  for (BytecodeRange r(cx, script); !r.empty(); r.popFront()) {
     if (BytecodeIsEffectful(r.frontOpcode())) {
       if (!NewbornArrayPush(cx, result, NumberValue(r.frontOffset()))) {
         return false;

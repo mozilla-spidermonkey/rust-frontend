@@ -277,6 +277,7 @@ ForkServer::RunForkServer(int* aArgc, char*** aArgv) {
             // In the fork server process
             // The server has stopped.
             MOZ_LOG(gForkServiceLog, LogLevel::Verbose, ("Terminate the fork server"));
+            NS_LogTerm();
             return true;
         }
         // Now, we are running in a content process just forked from
@@ -302,8 +303,10 @@ ForkServer::RunForkServer(int* aArgc, char*** aArgv) {
     forkserver.mAppProcBuilder->InitAppProcess(aArgc, aArgv);
     forkserver.mAppProcBuilder.reset();
 
-    // Open log files again with the right names with the new PID.
-    nsTraceRefcnt::ResetLogFiles();
+    MOZ_ASSERT(NS_LITERAL_CSTRING("tab") == (*aArgv)[*aArgc - 1], "Only |tab| is allowed!");
+
+    // Open log files again with right names and the new PID.
+    nsTraceRefcnt::ResetLogFiles((*aArgv)[*aArgc - 1]);
 
     return false;
 }

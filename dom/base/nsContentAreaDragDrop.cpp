@@ -34,7 +34,6 @@
 #include "nsIURIMutator.h"
 #include "mozilla/dom/Document.h"
 #include "nsIPrincipal.h"
-#include "nsIDocShellTreeItem.h"
 #include "nsIWebBrowserPersist.h"
 #include "nsEscape.h"
 #include "nsContentUtils.h"
@@ -46,6 +45,7 @@
 #include "nsRange.h"
 #include "BrowserParent.h"
 #include "mozilla/TextControlElement.h"
+#include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/HTMLAreaElement.h"
 #include "mozilla/dom/HTMLAnchorElement.h"
@@ -542,9 +542,8 @@ nsresult DragDataProducer::Produce(DataTransfer* aDataTransfer, bool* aCanDrag,
   // if set, serialize the content under this node
   nsCOMPtr<nsIContent> nodeToSerialize;
 
-  nsCOMPtr<nsIDocShellTreeItem> dsti = mWindow->GetDocShell();
-  const bool isChromeShell =
-      dsti && dsti->ItemType() == nsIDocShellTreeItem::typeChrome;
+  BrowsingContext* bc = mWindow->GetBrowsingContext();
+  const bool isChromeShell = bc && bc->IsChrome();
 
   // In chrome shells, only allow dragging inside editable areas.
   if (isChromeShell && !editingElement) {
@@ -623,10 +622,10 @@ nsresult DragDataProducer::Produce(DataTransfer* aDataTransfer, bool* aCanDrag,
           HTMLAreaElement::FromNodeOrNull(draggedNode);
       if (areaElem) {
         // use the alt text (or, if missing, the href) as the title
-        areaElem->GetAttribute(NS_LITERAL_STRING("alt"), mTitleString);
+        areaElem->GetAttr(nsGkAtoms::alt, mTitleString);
         if (mTitleString.IsEmpty()) {
           // this can be a relative link
-          areaElem->GetAttribute(NS_LITERAL_STRING("href"), mTitleString);
+          areaElem->GetAttr(nsGkAtoms::href, mTitleString);
         }
 
         // we'll generate HTML like <a href="absurl">alt text</a>
@@ -663,7 +662,7 @@ nsresult DragDataProducer::Produce(DataTransfer* aDataTransfer, bool* aCanDrag,
         // XXXbz Also, what if this is an nsIImageLoadingContent
         // that's not an <html:img>?
         if (imageElement) {
-          imageElement->GetAttribute(NS_LITERAL_STRING("alt"), mTitleString);
+          imageElement->GetAttr(nsGkAtoms::alt, mTitleString);
         }
 
         if (mTitleString.IsEmpty()) {

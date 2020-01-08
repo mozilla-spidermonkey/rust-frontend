@@ -306,7 +306,7 @@ class Page extends Domain {
    *     Based on the transferMode setting data is a base64-encoded string,
    *     or stream is a handle to a OS.File stream.
    */
-  async printToPDF(options) {
+  async printToPDF(options = {}) {
     const {
       displayHeaderFooter = false,
       // Bug 1601570 - Implement templates for header and footer
@@ -455,6 +455,19 @@ class Page extends Domain {
 
     return retval;
   }
+
+  /**
+   * Intercept file chooser requests and transfer control to protocol clients.
+   *
+   * When file chooser interception is enabled,
+   * the native file chooser dialog is not shown.
+   * Instead, a protocol event Page.fileChooserOpened is emitted.
+   *
+   * @param {Object} options
+   * @param {boolean=} options.enabled
+   *     Enabled state of file chooser interception.
+   */
+  setInterceptFileChooserDialog(options = {}) {}
 
   /**
    * Emit the proper CDP event javascriptDialogOpening when a javascript dialog

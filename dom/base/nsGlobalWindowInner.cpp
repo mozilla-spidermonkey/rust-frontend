@@ -839,8 +839,9 @@ nsGlobalWindowInner::nsGlobalWindowInner(nsGlobalWindowOuter* aOuterWindow,
       mFocusByKeyOccurred(false),
       mDidFireDocElemInserted(false),
       mHasGamepad(false),
-      mHasVREvents(false),
+      mHasXRSession(false),
       mHasVRDisplayActivateEvents(false),
+      mXRRuntimeDetectionInFlight(false),
       mXRPermissionRequestInFlight(false),
       mXRPermissionGranted(false),
       mWasCurrentInnerWindow(false),
@@ -1142,8 +1143,9 @@ void nsGlobalWindowInner::FreeInnerObjects() {
   mHasGamepad = false;
   mGamepads.Clear();
   DisableVRUpdates();
-  mHasVREvents = false;
+  mHasXRSession = false;
   mHasVRDisplayActivateEvents = false;
+  mXRRuntimeDetectionInFlight = false;
   mXRPermissionRequestInFlight = false;
   mXRPermissionGranted = false;
   mVRDisplays.Clear();
@@ -1533,18 +1535,16 @@ void nsGlobalWindowInner::TraceGlobalJSObject(JSTracer* aTrc) {
   TraceWrapper(aTrc, "active window global");
 }
 
-void nsGlobalWindowInner::InnerSetNewDocument(JSContext* aCx,
-                                              Document* aDocument) {
-  MOZ_ASSERT(aDocument);
+void nsGlobalWindowInner::InitDocumentDependentState(JSContext* aCx) {
+  MOZ_ASSERT(mDoc);
 
   if (MOZ_LOG_TEST(gDOMLeakPRLogInner, LogLevel::Debug)) {
-    nsIURI* uri = aDocument->GetDocumentURI();
+    nsIURI* uri = mDoc->GetDocumentURI();
     MOZ_LOG(gDOMLeakPRLogInner, LogLevel::Debug,
             ("DOMWINDOW %p SetNewDocument %s", this,
              uri ? uri->GetSpecOrDefault().get() : ""));
   }
 
-  mDoc = aDocument;
   mFocusedElement = nullptr;
   mLocalStorage = nullptr;
   mSessionStorage = nullptr;
@@ -1578,7 +1578,7 @@ void nsGlobalWindowInner::InnerSetNewDocument(JSContext* aCx,
 #endif
 
 #ifdef DEBUG
-  mLastOpenedURI = aDocument->GetDocumentURI();
+  mLastOpenedURI = mDoc->GetDocumentURI();
 #endif
 
   Telemetry::Accumulate(Telemetry::INNERWINDOWS_WITH_MUTATION_LISTENERS,
@@ -2262,8 +2262,7 @@ bool nsGlobalWindowInner::HasOpenerForInitialContentBrowser() {
   FORWARD_TO_OUTER(HasOpenerForInitialContentBrowser, (), false);
 }
 
-nsGlobalWindowInner::CallState
-nsGlobalWindowInner::ShouldReportForServiceWorkerScopeInternal(
+CallState nsGlobalWindowInner::ShouldReportForServiceWorkerScopeInternal(
     const nsACString& aScope, bool* aResultOut) {
   MOZ_DIAGNOSTIC_ASSERT(aResultOut);
 
@@ -2329,7 +2328,7 @@ nsGlobalWindowInner::ShouldReportForServiceWorkerScopeInternal(
 
   // The current window doesn't care about this service worker, but maybe
   // one of our child frames does.
-  return CallOnChildren(
+  return CallOnInProcessChildren(
       &nsGlobalWindowInner::ShouldReportForServiceWorkerScopeInternal, aScope,
       aResultOut);
 }
@@ -2466,16 +2465,6 @@ void nsPIDOMWindowInner::TryToCacheTopInnerWindow() {
   }
 }
 
-void nsPIDOMWindowInner::UpdateActiveIndexedDBTransactionCount(int32_t aDelta) {
-  MOZ_ASSERT(NS_IsMainThread());
-
-  if (aDelta == 0) {
-    return;
-  }
-
-  TabGroup()->IndexedDBTransactionCounter() += aDelta;
-}
-
 void nsPIDOMWindowInner::UpdateActiveIndexedDBDatabaseCount(int32_t aDelta) {
   MOZ_ASSERT(NS_IsMainThread());
 
@@ -2490,8 +2479,6 @@ void nsPIDOMWindowInner::UpdateActiveIndexedDBDatabaseCount(int32_t aDelta) {
                           : mNumOfIndexedDBDatabases;
 
   counter += aDelta;
-
-  TabGroup()->IndexedDBDatabaseCounter() += aDelta;
 }
 
 bool nsPIDOMWindowInner::HasActiveIndexedDBDatabases() {
@@ -3998,12 +3985,23 @@ void nsGlobalWindowInner::DisableGamepadUpdates() {
 }
 
 void nsGlobalWindowInner::EnableVRUpdates() {
-  if (mHasVREvents && !mVREventObserver) {
-    MOZ_ASSERT(!IsDying());
+  // We need to create a VREventObserver before we can either detect XR runtimes
+  // or start an XR session
+  if (!mVREventObserver && (mHasXRSession || mXRRuntimeDetectionInFlight)) {
+    // Assert that we are not creating the observer while IsDying() as
+    // that would result in a leak.  VREventObserver holds a RefPtr to
+    // this nsGlobalWindowInner and would prevent it from being deallocated.
+    MOZ_ASSERT(!IsDying(),
+               "Creating a VREventObserver for an nsGlobalWindow that is "
+               "dying would cause it to leak.");
     mVREventObserver = new VREventObserver(this);
+  }
+  // If the content has an XR session, then we need to tell
+  // VREventObserver that there is VR activity.
+  if (mHasXRSession) {
     nsPIDOMWindowOuter* outer = GetOuterWindow();
     if (outer && !outer->IsBackground()) {
-      mVREventObserver->StartActivity();
+      StartVRActivity();
     }
   }
 }
@@ -4022,13 +4020,36 @@ void nsGlobalWindowInner::ResetVRTelemetry(bool aUpdate) {
 }
 
 void nsGlobalWindowInner::StartVRActivity() {
-  if (mVREventObserver) {
+  /**
+   * If the content has an XR session, tell
+   * the VREventObserver that the window is accessing
+   * VR devices.
+   *
+   * It's possible to have a VREventObserver without
+   * and XR session, if we are using it to get updates
+   * about XR runtime enumeration.  In this case,
+   * we would not tell the VREventObserver that
+   * we are accessing VR devices.
+   */
+  if (mVREventObserver && mHasXRSession) {
     mVREventObserver->StartActivity();
   }
 }
 
 void nsGlobalWindowInner::StopVRActivity() {
-  if (mVREventObserver) {
+  /**
+   * If the content has an XR session, tell
+   * the VReventObserver that the window is no longer
+   * accessing VR devices.  This does not stop the
+   * XR session itself, which may be resumed with
+   * EnableVRUpdates.
+   * It's possible to have a VREventObserver without
+   * and XR session, if we are using it to get updates
+   * about XR runtime enumeration.  In this case,
+   * we would not tell the VREventObserver that
+   * we ending an activity that accesses VR devices.
+   */
+  if (mVREventObserver && mHasXRSession) {
     mVREventObserver->StopActivity();
   }
 }
@@ -5126,7 +5147,7 @@ void nsGlobalWindowInner::Suspend() {
 
   // All children are also suspended.  This ensure mSuspendDepth is
   // set properly and the timers are properly canceled for each child.
-  CallOnChildren(&nsGlobalWindowInner::Suspend);
+  CallOnInProcessChildren(&nsGlobalWindowInner::Suspend);
 
   mSuspendDepth += 1;
   if (mSuspendDepth != 1) {
@@ -5174,7 +5195,7 @@ void nsGlobalWindowInner::Resume() {
 
   // Resume all children.  This restores timers recursively canceled
   // in Suspend() and ensures all children have the correct mSuspendDepth.
-  CallOnChildren(&nsGlobalWindowInner::Resume);
+  CallOnInProcessChildren(&nsGlobalWindowInner::Resume);
 
   MOZ_ASSERT(mSuspendDepth != 0);
   mSuspendDepth -= 1;
@@ -5231,7 +5252,7 @@ void nsGlobalWindowInner::FreezeInternal() {
   MOZ_DIAGNOSTIC_ASSERT(IsCurrentInnerWindow());
   MOZ_DIAGNOSTIC_ASSERT(IsSuspended());
 
-  CallOnChildren(&nsGlobalWindowInner::FreezeInternal);
+  CallOnInProcessChildren(&nsGlobalWindowInner::FreezeInternal);
 
   mFreezeDepth += 1;
   MOZ_ASSERT(mSuspendDepth >= mFreezeDepth);
@@ -5266,7 +5287,7 @@ void nsGlobalWindowInner::ThawInternal() {
   MOZ_DIAGNOSTIC_ASSERT(IsCurrentInnerWindow());
   MOZ_DIAGNOSTIC_ASSERT(IsSuspended());
 
-  CallOnChildren(&nsGlobalWindowInner::ThawInternal);
+  CallOnInProcessChildren(&nsGlobalWindowInner::ThawInternal);
 
   MOZ_ASSERT(mFreezeDepth != 0);
   mFreezeDepth -= 1;
@@ -5342,8 +5363,8 @@ void nsGlobalWindowInner::SyncStateFromParentWindow() {
 }
 
 template <typename Method, typename... Args>
-nsGlobalWindowInner::CallState nsGlobalWindowInner::CallOnChildren(
-    Method aMethod, Args&... aArgs) {
+CallState nsGlobalWindowInner::CallOnInProcessChildren(Method aMethod,
+                                                       Args&... aArgs) {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(IsCurrentInnerWindow());
 
@@ -5354,22 +5375,11 @@ nsGlobalWindowInner::CallState nsGlobalWindowInner::CallOnChildren(
     return state;
   }
 
-  int32_t childCount = 0;
-  docShell->GetInProcessChildCount(&childCount);
+  BrowsingContext::Children children;
+  GetBrowsingContext()->GetChildren(children);
 
-  // Take a copy of the current children so that modifications to
-  // the child list don't affect to the iteration.
-  AutoTArray<nsCOMPtr<nsIDocShellTreeItem>, 8> children;
-  for (int32_t i = 0; i < childCount; ++i) {
-    nsCOMPtr<nsIDocShellTreeItem> childShell;
-    docShell->GetInProcessChildAt(i, getter_AddRefs(childShell));
-    if (childShell) {
-      children.AppendElement(childShell);
-    }
-  }
-
-  for (nsCOMPtr<nsIDocShellTreeItem> childShell : children) {
-    nsCOMPtr<nsPIDOMWindowOuter> pWin = childShell->GetWindow();
+  for (const RefPtr<BrowsingContext>& bc : children) {
+    nsCOMPtr<nsPIDOMWindowOuter> pWin = bc->GetDOMWindow();
     if (!pWin) {
       continue;
     }
@@ -6018,28 +6028,70 @@ void nsGlobalWindowInner::SetHasGamepadEventListener(
   }
 }
 
-void nsGlobalWindowInner::RequestXRPermission() {
-  if (mXRPermissionGranted) {
-    // Don't prompt redundantly once permission to
-    // access XR devices has been granted.
-    OnXRPermissionRequestAllow();
+void nsGlobalWindowInner::NotifyDetectXRRuntimesCompleted() {
+  if (!mXRRuntimeDetectionInFlight) {
     return;
   }
+  mXRRuntimeDetectionInFlight = false;
   if (mXRPermissionRequestInFlight) {
-    // Don't allow multiple simultaneous permissions requests;
     return;
   }
+  gfx::VRManagerChild* vm = gfx::VRManagerChild::Get();
+  bool supported = vm->RuntimeSupportsVR();
+  if (!supported) {
+    // A VR runtime was not installed; we can suppress
+    // the permission prompt
+    OnXRPermissionRequestCancel();
+    return;
+  }
+  // A VR runtime was found.  Display a permission prompt before
+  // allowing it to be accessed.
+  // Connect to the VRManager in order to receive the runtime
+  // detection results.
   mXRPermissionRequestInFlight = true;
   RefPtr<XRPermissionRequest> request =
       new XRPermissionRequest(this, WindowID());
   Unused << NS_WARN_IF(NS_FAILED(request->Start()));
 }
 
+void nsGlobalWindowInner::RequestXRPermission() {
+  if (IsDying()) {
+    // Do not proceed if the window is dying, as that will result
+    // in leaks of objects that get re-allocated after FreeInnerObjects
+    // has been called, including mVREventObserver.
+    return;
+  }
+  if (mXRPermissionGranted) {
+    // Don't prompt redundantly once permission to
+    // access XR devices has been granted.
+    OnXRPermissionRequestAllow();
+    return;
+  }
+  if (mXRRuntimeDetectionInFlight || mXRPermissionRequestInFlight) {
+    // Don't allow multiple simultaneous permissions requests;
+    return;
+  }
+  // Before displaying a permission prompt, detect
+  // if there is any VR runtime installed.
+  gfx::VRManagerChild* vm = gfx::VRManagerChild::Get();
+  mXRRuntimeDetectionInFlight = true;
+  EnableVRUpdates();
+  vm->DetectRuntimes();
+}
+
 void nsGlobalWindowInner::OnXRPermissionRequestAllow() {
   mXRPermissionRequestInFlight = false;
+  if (IsDying()) {
+    // The window may have started dying while the permission request
+    // is in flight.
+    // Do not proceed if the window is dying, as that will result
+    // in leaks of objects that get re-allocated after FreeInnerObjects
+    // has been called, including mNavigator.
+    return;
+  }
   mXRPermissionGranted = true;
 
-  NotifyVREventListenerAdded();
+  NotifyHasXRSession();
 
   dom::Navigator* nav = Navigator();
   MOZ_ASSERT(nav != nullptr);
@@ -6048,6 +6100,14 @@ void nsGlobalWindowInner::OnXRPermissionRequestAllow() {
 
 void nsGlobalWindowInner::OnXRPermissionRequestCancel() {
   mXRPermissionRequestInFlight = false;
+  if (IsDying()) {
+    // The window may have started dying while the permission request
+    // is in flight.
+    // Do not proceed if the window is dying, as that will result
+    // in leaks of objects that get re-allocated after FreeInnerObjects
+    // has been called, including mNavigator.
+    return;
+  }
   dom::Navigator* nav = Navigator();
   MOZ_ASSERT(nav != nullptr);
   nav->OnXRPermissionRequestCancel();
@@ -6108,15 +6168,22 @@ void nsGlobalWindowInner::EventListenerRemoved(nsAtom* aType) {
   }
 }
 
-void nsGlobalWindowInner::NotifyVREventListenerAdded() {
-  mHasVREvents = true;
+void nsGlobalWindowInner::NotifyHasXRSession() {
+  if (IsDying()) {
+    // Do not proceed if the window is dying, as that will result
+    // in leaks of objects that get re-allocated after FreeInnerObjects
+    // has been called, including mVREventObserver.
+    return;
+  }
+  mHasXRSession = true;
   EnableVRUpdates();
 }
 
 bool nsGlobalWindowInner::HasUsedVR() const {
-  // Returns true only if any WebVR API call or related event
-  // has been used
-  return mHasVREvents;
+  // Returns true only if content has enumerated and activated
+  // XR devices.  Detection of XR runtimes without activation
+  // will not cause true to be returned.
+  return mHasXRSession;
 }
 
 bool nsGlobalWindowInner::IsVRContentDetected() const {
@@ -7205,7 +7272,7 @@ void nsGlobalWindowInner::ClearActiveStoragePrincipal() {
     doc->ClearActiveStoragePrincipal();
   }
 
-  CallOnChildren(&nsGlobalWindowInner::ClearActiveStoragePrincipal);
+  CallOnInProcessChildren(&nsGlobalWindowInner::ClearActiveStoragePrincipal);
 }
 
 bool nsPIDOMWindowInner::HasStorageAccessGranted(

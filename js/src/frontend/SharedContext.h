@@ -12,8 +12,8 @@
 
 #include "ds/InlineTable.h"
 #include "frontend/AbstractScope.h"
-#include "frontend/FunctionCreationData.h"
 #include "frontend/ParseNode.h"
+#include "frontend/Stencil.h"
 #include "vm/BytecodeUtil.h"
 #include "vm/JSFunction.h"
 #include "vm/JSScript.h"
@@ -148,6 +148,12 @@ class SharedContext {
   // A direct eval occurs in the body of the script.
   bool hasDirectEval_ : 1;
 
+  // True if a tagged template exists in the body.
+  bool hasCallSiteObj_ : 1;
+
+  // Script is being parsed with a goal of Module.
+  bool hasModuleGoal_ : 1;
+
   void computeAllowSyntax(Scope* scope);
   void computeInWith(Scope* scope);
   void computeThisBinding(Scope* scope);
@@ -169,7 +175,9 @@ class SharedContext {
         needsThisTDZChecks_(false),
         hasExplicitUseStrict_(false),
         bindingsAccessedDynamically_(false),
-        hasDirectEval_(false) {}
+        hasDirectEval_(false),
+        hasCallSiteObj_(false),
+        hasModuleGoal_(false) {}
 
   // If this is the outermost SharedContext, the Scope that encloses
   // it. Otherwise nullptr.
@@ -199,6 +207,7 @@ class SharedContext {
 
   ThisBinding thisBinding() const { return thisBinding_; }
 
+  bool hasModuleGoal() const { return hasModuleGoal_; }
   bool allowNewTarget() const { return allowNewTarget_; }
   bool allowSuperProperty() const { return allowSuperProperty_; }
   bool allowSuperCall() const { return allowSuperCall_; }
@@ -211,10 +220,13 @@ class SharedContext {
     return bindingsAccessedDynamically_;
   }
   bool hasDirectEval() const { return hasDirectEval_; }
+  bool hasCallSiteObj() const { return hasCallSiteObj_; }
 
   void setExplicitUseStrict() { hasExplicitUseStrict_ = true; }
   void setBindingsAccessedDynamically() { bindingsAccessedDynamically_ = true; }
   void setHasDirectEval() { hasDirectEval_ = true; }
+  void setHasCallSiteObj() { hasCallSiteObj_ = true; }
+  void setHasModuleGoal() { hasModuleGoal_ = true; }
 
   inline bool allBindingsClosedOver();
 
@@ -507,7 +519,7 @@ class FunctionBox : public ObjectBox, public SharedContext {
     // the enclosingScope_ must have be set correctly during initalization.
 
     MOZ_ASSERT(enclosingScope_);
-    return enclosingScope_.maybeScope();
+    return enclosingScope_.scope();
   }
 
   bool needsCallObjectRegardlessOfBindings() const {
@@ -575,6 +587,7 @@ class FunctionBox : public ObjectBox, public SharedContext {
   bool isGetter() const { return flags_.isGetter(); }
   bool isSetter() const { return flags_.isSetter(); }
   bool isMethod() const { return flags_.isMethod(); }
+  bool isClassConstructor() const { return flags_.isClassConstructor(); }
 
   bool isInterpreted() const { return flags_.isInterpreted(); }
   void setIsInterpreted(bool interpreted) {
@@ -674,6 +687,15 @@ class FunctionBox : public ObjectBox, public SharedContext {
     }
     MOZ_ASSERT(functionCreationData()->lazyScriptData);
     functionCreationData()->lazyScriptData->fieldInitializers.emplace(fi);
+  }
+
+  bool setTypeForScriptedFunction(JSContext* cx, bool singleton) {
+    if (hasObject()) {
+      RootedFunction fun(cx, function());
+      return JSFunction::setTypeForScriptedFunction(cx, fun, singleton);
+    }
+    functionCreationData()->typeForScriptedFunction.emplace(singleton);
+    return true;
   }
 
   void trace(JSTracer* trc) override;

@@ -114,13 +114,14 @@ void nsCSSProps::ReleaseTable(void) {
 }
 
 /* static */
-bool nsCSSProps::IsCustomPropertyName(const nsAString& aProperty) {
+bool nsCSSProps::IsCustomPropertyName(const nsACString& aProperty) {
   return aProperty.Length() >= CSS_CUSTOM_NAME_PREFIX_LENGTH &&
-         StringBeginsWith(aProperty, NS_LITERAL_STRING("--"));
+         StringBeginsWith(aProperty, NS_LITERAL_CSTRING("--"));
 }
 
 nsCSSPropertyID nsCSSProps::LookupPropertyByIDLName(
     const nsACString& aPropertyIDLName, EnabledState aEnabled) {
+  MOZ_ASSERT(gPropertyIDLNameTable, "no lookup table, needs addref");
   nsCSSPropertyID res;
   if (!gPropertyIDLNameTable->Get(aPropertyIDLName, &res)) {
     return eCSSProperty_UNKNOWN;
@@ -132,14 +133,7 @@ nsCSSPropertyID nsCSSProps::LookupPropertyByIDLName(
   return res;
 }
 
-nsCSSPropertyID nsCSSProps::LookupPropertyByIDLName(
-    const nsAString& aPropertyIDLName, EnabledState aEnabled) {
-  MOZ_ASSERT(gPropertyIDLNameTable, "no lookup table, needs addref");
-  return LookupPropertyByIDLName(NS_ConvertUTF16toUTF8(aPropertyIDLName),
-                                 aEnabled);
-}
-
-nsCSSFontDesc nsCSSProps::LookupFontDesc(const nsAString& aFontDesc) {
+nsCSSFontDesc nsCSSProps::LookupFontDesc(const nsACString& aFontDesc) {
   MOZ_ASSERT(gFontDescTable, "no lookup table, needs addref");
   nsCSSFontDesc which = nsCSSFontDesc(gFontDescTable->Lookup(aFontDesc));
 

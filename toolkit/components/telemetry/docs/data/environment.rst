@@ -82,6 +82,7 @@ Structure:
           content: <string>, // identifier to indicate the particular link within a campaign
           variation: <string>, // name/id of the variation cohort used in the enrolled funnel experiment
           experiment: <string>, // name/id of the enrolled funnel experiment
+          ua: <string>, // identifier derived from the user agent downloading the installer, e.g., chrome, Google Chrome 123
         },
         sandbox: {
           effectiveContentProcessLevel: <integer>,
@@ -384,6 +385,8 @@ The following is a partial list of collected preferences.
 - ``browser.zoom.full`` (deprecated): True if zoom is enabled for both text and images, that is if "Zoom Text Only" is not enabled. Defaults to true. This preference was collected in Firefox 50 to 52 (`Bug 979323 <https://bugzilla.mozilla.org/show_bug.cgi?id=979323>`_).
 
 - ``fission.autostart``: True if fission is enabled at startup. Default to false. For more information please visit `the project wiki page <https://wiki.mozilla.org/Project_Fission>`_.
+
+- ``security.tls.version.enable-deprecated``: True if deprecated versions of TLS (1.0 and 1.1) have been enabled by the user. Defaults to false.
 
 attribution
 ~~~~~~~~~~~

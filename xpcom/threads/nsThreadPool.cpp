@@ -5,13 +5,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsCOMArray.h"
-#include "nsIClassInfoImpl.h"
 #include "ThreadDelay.h"
 #include "nsThreadPool.h"
 #include "nsThreadManager.h"
 #include "nsThread.h"
 #include "nsMemory.h"
-#include "nsAutoPtr.h"
 #include "prinrval.h"
 #include "mozilla/Logging.h"
 #include "mozilla/SystemGroup.h"
@@ -41,11 +39,8 @@ static MOZ_THREAD_LOCAL(nsThreadPool*) gCurrentThreadPool;
 
 NS_IMPL_ADDREF(nsThreadPool)
 NS_IMPL_RELEASE(nsThreadPool)
-NS_IMPL_CLASSINFO(nsThreadPool, nullptr, nsIClassInfo::THREADSAFE,
-                  NS_THREADPOOL_CID)
-NS_IMPL_QUERY_INTERFACE_CI(nsThreadPool, nsIThreadPool, nsIEventTarget,
-                           nsIRunnable)
-NS_IMPL_CI_INTERFACE_GETTER(nsThreadPool, nsIThreadPool, nsIEventTarget)
+NS_IMPL_QUERY_INTERFACE(nsThreadPool, nsIThreadPool, nsIEventTarget,
+                        nsIRunnable)
 
 nsThreadPool::nsThreadPool()
     : mMutex("[nsThreadPool.mMutex]"),
@@ -478,17 +473,18 @@ nsThreadPool::ShutdownWithTimeout(int32_t aTimeoutMs) {
   // For any threads that have not shutdown yet, we need to remove them from
   // mRequestedShutdownContexts so the thread manager does not wait for them
   // at shutdown.
+  static const nsThread::ShutdownContextsComp comparator{};
   for (int32_t i = 0; i < threads.Count(); ++i) {
     nsThread* thread = static_cast<nsThread*>(threads[i]);
     // If mThread is not null on the thread it means that it hasn't shutdown
     // context[i] corresponds to thread[i]
     if (thread->mThread && contexts[i]) {
-      auto index =
-          currentThread->mRequestedShutdownContexts.IndexOf(contexts[i]);
+      auto index = currentThread->mRequestedShutdownContexts.IndexOf(
+          contexts[i], 0, comparator);
       if (index != nsThread::ShutdownContexts::NoIndex) {
         // We must leak the shutdown context just in case the leaked thread
         // does get unstuck and completes before the main thread is done.
-        currentThread->mRequestedShutdownContexts[index].forget();
+        Unused << currentThread->mRequestedShutdownContexts[index].release();
         currentThread->mRequestedShutdownContexts.RemoveElementsAt(index, 1);
       }
     }

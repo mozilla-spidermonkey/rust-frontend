@@ -194,7 +194,7 @@ class CompileInfo {
     // jit-code. Precisely because it can flow in from anywhere, it's not
     // guaranteed to be non-lazy. Hence, don't access its script!
     if (fun_) {
-      fun_ = fun_->nonLazyScript()->function();
+      fun_ = fun_->baseScript()->function();
       MOZ_ASSERT(fun_->isTenured());
     }
 
@@ -296,10 +296,6 @@ class CompileInfo {
   inline JSFunction* getFunction(jsbytecode* pc) const;
 
   BigInt* getBigInt(jsbytecode* pc) const { return script_->getBigInt(pc); }
-
-  jssrcnote* getNote(GSNCache& gsn, jsbytecode* pc) const {
-    return GetSrcNote(gsn, script(), pc);
-  }
 
   // Total number of slots: args, locals, and stack.
   unsigned nslots() const { return nslots_; }

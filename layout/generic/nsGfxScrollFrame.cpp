@@ -28,6 +28,7 @@
 #include "nsINode.h"
 #include "nsIScrollbarMediator.h"
 #include "nsITextControlFrame.h"
+#include "nsILayoutHistoryState.h"
 #include "nsNodeInfoManager.h"
 #include "nsContentCreatorFunctions.h"
 #include "mozilla/PresState.h"
@@ -73,6 +74,7 @@
 #include "nsPluginFrame.h"
 #include "nsSliderFrame.h"
 #include "ViewportFrame.h"
+#include "mozilla/gfx/gfxVars.h"
 #include "mozilla/layers/APZCCallbackHelper.h"
 #include "mozilla/layers/AxisPhysicsModel.h"
 #include "mozilla/layers/AxisPhysicsMSDModel.h"
@@ -6645,24 +6647,9 @@ uint32_t nsIScrollableFrame::GetAvailableScrollingDirections() const {
   return directions;
 }
 
-uint32_t nsIScrollableFrame::GetAvailableVisualScrollingDirections() const {
-  nscoord oneDevPixel =
-      GetScrolledFrame()->PresContext()->AppUnitsPerDevPixel();
-  uint32_t directions = 0;
-  nsRect scrollRange = GetVisualScrollRange();
-  if (scrollRange.width >= oneDevPixel) {
-    directions |= HORIZONTAL;
-  }
-  if (scrollRange.height >= oneDevPixel) {
-    directions |= VERTICAL;
-  }
-  return directions;
-}
-
-uint32_t ScrollFrameHelper::GetAvailableScrollingDirectionsForUserInputEvents()
-    const {
-  // This function basically computes a scroll range based on a scrolled rect
-  // and scroll port defined as follows:
+nsRect ScrollFrameHelper::GetScrollRangeForUserInputEvents() const {
+  // This function computes a scroll range based on a scrolled rect and scroll
+  // port defined as follows:
   //   scrollable rect = overflow:hidden ? layout viewport : scrollable rect
   //   scroll port = have visual viewport ? visual viewport : layout viewport
   // The results in the same notion of scroll range that APZ uses (the combined
@@ -6681,15 +6668,31 @@ uint32_t ScrollFrameHelper::GetAvailableScrollingDirectionsForUserInputEvents()
 
   nsSize scrollPort = GetVisualViewportSize();
 
-  nsSize scrollRange;
+  nsRect scrollRange = scrolledRect;
   scrollRange.width = std::max(scrolledRect.width - scrollPort.width, 0);
   scrollRange.height = std::max(scrolledRect.height - scrollPort.height, 0);
 
+  return scrollRange;
+}
+
+uint32_t ScrollFrameHelper::GetAvailableScrollingDirectionsForUserInputEvents()
+    const {
+  nsRect scrollRange = GetScrollRangeForUserInputEvents();
+
+  // We check if there is at least one half of a screen pixel of scroll range to
+  // roughly match what apz does when it checks if the change in scroll position
+  // in screen pixels round to zero or not.
+  // (https://searchfox.org/mozilla-central/rev/2f09184ec781a2667feec87499d4b81b32b6c48e/gfx/layers/apz/src/AsyncPanZoomController.cpp#3210)
+  // This isn't quite half a screen pixel, it doesn't take into account CSS
+  // transforms, but should be good enough.
+  float halfScreenPixel =
+      GetScrolledFrame()->PresContext()->AppUnitsPerDevPixel() /
+      (mOuter->PresShell()->GetCumulativeResolution() * 2.f);
   uint32_t directions = 0;
-  if (scrollRange.width > 0) {
+  if (scrollRange.width >= halfScreenPixel) {
     directions |= nsIScrollableFrame::HORIZONTAL;
   }
-  if (scrollRange.height > 0) {
+  if (scrollRange.height >= halfScreenPixel) {
     directions |= nsIScrollableFrame::VERTICAL;
   }
   return directions;

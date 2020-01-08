@@ -15,6 +15,7 @@
 
 #include "frontend/ParseNode.h"
 #include "frontend/SharedContext.h"
+#include "frontend/Stencil.h"
 #include "vm/JSContext.h"
 
 namespace js {
@@ -165,8 +166,9 @@ class FullParseHandler {
 
   // This variant requires two phase initializaton to ensure ownership is clear
   // in an OOM situation.
-  BigIntLiteralType newBigInt(const TokenPos& pos) {
-    return new_<BigIntLiteral>(pos);
+  BigIntLiteralType newBigInt(BigIntIndex index, ParseInfo& parseInfo,
+                              const TokenPos& pos) {
+    return new_<BigIntLiteral>(index, parseInfo, pos);
   }
 
   BooleanLiteralType newBooleanLiteral(bool cond, const TokenPos& pos) {
@@ -236,8 +238,8 @@ class FullParseHandler {
     return new_<RegExpLiteral>(objbox, pos);
   }
 
-  RegExpLiteralType newRegExp(const TokenPos& pos) {
-    return new_<RegExpLiteral>(pos);
+  RegExpLiteralType newRegExp(RegExpIndex index, const TokenPos& pos) {
+    return new_<RegExpLiteral>(index, pos);
   }
 
   ConditionalExpressionType newConditional(Node cond, Node thenExpr,
@@ -1056,10 +1058,16 @@ class FullParseHandler {
                 .as<JSFunction>();
   }
   JSAtom* nextLazyClosedOverBinding() {
+    auto gcthings = lazyOuterFunction_->gcthings();
+
+    // Trailing nullptrs were elided in PerHandlerParser::finishFunction().
+    if (lazyClosedOverBindingIndex >= gcthings.Length()) {
+      return nullptr;
+    }
+
     // These entries are either JSAtom* or nullptr, so use the 'asCell()'
     // accessor which is faster.
-    gc::Cell* cell =
-        lazyOuterFunction_->gcthings()[lazyClosedOverBindingIndex++].asCell();
+    gc::Cell* cell = gcthings[lazyClosedOverBindingIndex++].asCell();
     MOZ_ASSERT_IF(cell, cell->is<JSAtom>());
     return static_cast<JSAtom*>(cell);
   }

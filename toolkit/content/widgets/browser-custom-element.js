@@ -291,8 +291,6 @@
 
       this._loadContext = null;
 
-      this._imageDocument = null;
-
       this._webBrowserFind = null;
 
       this._finder = null;
@@ -565,24 +563,6 @@
       }
 
       return this.docShellIsActive;
-    }
-
-    get imageDocument() {
-      if (this.isRemoteBrowser) {
-        return this._imageDocument;
-      }
-      var document = this.contentDocument;
-      if (!document || !(document instanceof Ci.nsIImageDocument)) {
-        return null;
-      }
-
-      try {
-        return {
-          width: document.imageRequest.image.width,
-          height: document.imageRequest.image.height,
-        };
-      } catch (e) {}
-      return null;
     }
 
     get isRemoteBrowser() {
@@ -1263,7 +1243,6 @@
 
         this.messageManager.addMessageListener("Browser:Init", this);
         this.messageManager.addMessageListener("DOMTitleChanged", this);
-        this.messageManager.addMessageListener("ImageDocumentLoaded", this);
 
         let jsm = "resource://gre/modules/RemoteWebProgress.jsm";
         let { RemoteWebProgressManager } = ChromeUtils.import(jsm, {});
@@ -1299,10 +1278,9 @@
           );
         }
 
-        let rc_js = "resource://gre/modules/RemoteController.js";
-        let scope = {};
-        Services.scriptloader.loadSubScript(rc_js, scope);
-        let RemoteController = scope.RemoteController;
+        const { RemoteController } = ChromeUtils.import(
+          "resource://gre/modules/RemoteController.jsm"
+        );
         this._controller = new RemoteController(this);
         this.controllers.appendController(this._controller);
       }
@@ -1365,8 +1343,6 @@
           "PopupBlocking:UpdateBlockedPopups",
           this
         );
-        this.messageManager.addMessageListener("Autoscroll:Start", this);
-        this.messageManager.addMessageListener("Autoscroll:Cancel", this);
         this.messageManager.addMessageListener(
           "UnselectedTabHover:Toggle",
           this
@@ -1393,6 +1369,14 @@
         }
       }
 
+      if (this._controller) {
+        try {
+          this.controllers.removeController(this._controller);
+        } catch (ex) {
+          Cu.reportError(ex);
+        }
+      }
+
       this.resetFields();
 
       if (!this.mInitialized) {
@@ -1400,17 +1384,6 @@
       }
 
       this.mInitialized = false;
-
-      if (this.isRemoteBrowser) {
-        try {
-          this.controllers.removeController(this._controller);
-        } catch (ex) {
-          // This can fail when this browser element is not attached to a
-          // BrowserDOMWindow.
-        }
-        return;
-      }
-
       this.lastURI = null;
 
       if (!this.isRemoteBrowser) {
@@ -1439,41 +1412,6 @@
           this.updateBlockedPopups();
           break;
         }
-        case "Autoscroll:Start": {
-          if (!this.autoscrollEnabled) {
-            return { autoscrollEnabled: false, usingApz: false };
-          }
-          this.startScroll(data.scrolldir, data.screenX, data.screenY);
-          let usingApz = false;
-          if (
-            this.isRemoteBrowser &&
-            data.scrollId != null &&
-            this.mPrefs.getBoolPref("apz.autoscroll.enabled", false)
-          ) {
-            let { remoteTab } = this.frameLoader;
-            if (remoteTab) {
-              // If APZ is handling the autoscroll, it may decide to cancel
-              // it of its own accord, so register an observer to allow it
-              // to notify us of that.
-              var os = Services.obs;
-              os.addObserver(this.observer, "apz:cancel-autoscroll", true);
-
-              usingApz = remoteTab.startApzAutoscroll(
-                data.screenX,
-                data.screenY,
-                data.scrollId,
-                data.presShellId
-              );
-            }
-            // Save the IDs for later
-            this._autoScrollScrollId = data.scrollId;
-            this._autoScrollPresShellId = data.presShellId;
-          }
-          return { autoscrollEnabled: true, usingApz };
-        }
-        case "Autoscroll:Cancel":
-          this._autoScrollPopup.hidePopup();
-          break;
         case "UnselectedTabHover:Toggle":
           this._shouldSendUnselectedTabHover = data.enable
             ? ++this._unselectedTabHoverMessageListenerCount > 0
@@ -1495,12 +1433,6 @@
           break;
         case "DOMTitleChanged":
           this._contentTitle = data.title;
-          break;
-        case "ImageDocumentLoaded":
-          this._imageDocument = {
-            width: data.width,
-            height: data.height,
-          };
           break;
         default:
           return this._receiveMessage(aMessage);
@@ -1601,7 +1533,6 @@
         this._remoteWebNavigation._currentURI = aLocation;
         this._documentURI = aDocumentURI;
         this._contentTitle = aTitle;
-        this._imageDocument = null;
         this._contentPrincipal = aContentPrincipal;
         this._contentStoragePrincipal = aContentStoragePrincipal;
         this._contentBlockingAllowListPrincipal = aContentBlockingAllowListPrincipal;
@@ -1687,7 +1618,8 @@
         window.removeEventListener("keydown", this, true);
         window.removeEventListener("keypress", this, true);
         window.removeEventListener("keyup", this, true);
-        this.messageManager.sendAsyncMessage("Autoscroll:Stop");
+
+        this.sendMessageToActor("Autoscroll:Stop", {}, "AutoScroll", true);
 
         try {
           Services.obs.removeObserver(this.observer, "apz:cancel-autoscroll");
@@ -1718,7 +1650,11 @@
       return popup;
     }
 
-    startScroll(scrolldir, screenX, screenY) {
+    startScroll({ scrolldir, screenX, screenY, scrollId, presShellId }) {
+      if (!this.autoscrollEnabled) {
+        return { autoscrollEnabled: false, usingApz: false };
+      }
+
       const POPUP_SIZE = 32;
       if (!this._autoScrollPopup) {
         if (this.hasAttribute("autoscrollpopup")) {
@@ -1800,6 +1736,40 @@
       window.addEventListener("keydown", this, true);
       window.addEventListener("keypress", this, true);
       window.addEventListener("keyup", this, true);
+
+      let usingApz = false;
+      if (
+        this.isRemoteBrowser &&
+        scrollId != null &&
+        this.mPrefs.getBoolPref("apz.autoscroll.enabled", false)
+      ) {
+        let { remoteTab } = this.frameLoader;
+        if (remoteTab) {
+          // If APZ is handling the autoscroll, it may decide to cancel
+          // it of its own accord, so register an observer to allow it
+          // to notify us of that.
+          Services.obs.addObserver(
+            this.observer,
+            "apz:cancel-autoscroll",
+            true
+          );
+
+          usingApz = remoteTab.startApzAutoscroll(
+            screenX,
+            screenY,
+            scrollId,
+            presShellId
+          );
+        }
+        // Save the IDs for later
+        this._autoScrollScrollId = scrollId;
+        this._autoScrollPresShellId = presShellId;
+      }
+      return { autoscrollEnabled: true, usingApz };
+    }
+
+    cancelScroll() {
+      this._autoScrollPopup.hidePopup();
     }
 
     handleEvent(aEvent) {
@@ -1951,7 +1921,6 @@
             "_contentPrincipal",
             "_contentStoragePrincipal",
             "_contentBlockingAllowListPrincipal",
-            "_imageDocument",
             "_fullZoom",
             "_textZoom",
             "_isSyntheticDocument",

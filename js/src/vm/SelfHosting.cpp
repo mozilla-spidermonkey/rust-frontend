@@ -2596,17 +2596,19 @@ GlobalObject* JSRuntime::createSelfHostingGlobal(JSContext* cx) {
     return nullptr;
   }
 
-  static const JSClassOps shgClassOps = {nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         JS_GlobalObjectTraceHook};
+  static const JSClassOps shgClassOps = {
+      nullptr,                   // addProperty
+      nullptr,                   // delProperty
+      nullptr,                   // enumerate
+      nullptr,                   // newEnumerate
+      nullptr,                   // resolve
+      nullptr,                   // mayResolve
+      nullptr,                   // finalize
+      nullptr,                   // call
+      nullptr,                   // hasInstance
+      nullptr,                   // construct
+      JS_GlobalObjectTraceHook,  // trace
+  };
 
   static const JSClass shgClass = {"self-hosting-global", JSCLASS_GLOBAL_FLAGS,
                                    &shgClassOps};
@@ -3099,8 +3101,7 @@ bool JSRuntime::cloneSelfHostedFunctionScript(JSContext* cx,
   // make sure there aren't any.
   MOZ_ASSERT(!sourceFun->isGenerator() && !sourceFun->isAsync());
   MOZ_ASSERT(targetFun->isExtended());
-  MOZ_ASSERT(targetFun->isInterpretedLazy());
-  MOZ_ASSERT(targetFun->isSelfHostedBuiltin());
+  MOZ_ASSERT(targetFun->hasSelfHostedLazyScript());
 
   RootedScript sourceScript(cx, JSFunction::getOrCreateScript(cx, sourceFun));
   if (!sourceScript) {
@@ -3125,7 +3126,7 @@ bool JSRuntime::cloneSelfHostedFunctionScript(JSContext* cx,
                                sourceObject)) {
     return false;
   }
-  MOZ_ASSERT(!targetFun->isInterpretedLazy());
+  MOZ_ASSERT(targetFun->hasScript());
 
   MOZ_ASSERT(sourceFun->nargs() == targetFun->nargs());
   MOZ_ASSERT(sourceScript->hasRest() == targetFun->baseScript()->hasRest());

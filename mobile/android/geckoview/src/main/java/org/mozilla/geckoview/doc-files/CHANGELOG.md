@@ -13,6 +13,14 @@ exclude: true
 
 ⚠️  breaking change
 
+## v74
+- Added [`WebExtensionController.enable`][74.1] and [`disable`][74.2] to
+  enable and disable extensions.
+  ([bug 1599585]({{bugzilla}}1599585))
+
+[74.1]: {{javadoc_uri}}/WebExtensionController.html#enable-org.mozilla.geckoview.WebExtension-int-
+[74.2]: {{javadoc_uri}}/WebExtensionController.html#disable-org.mozilla.geckoview.WebExtension-int-
+
 ## v73
 - Added [`WebExtensionController.install`][73.1] and [`uninstall`][73.2] to
   manage installed extensions
@@ -26,7 +34,18 @@ exclude: true
   attaching a [`LoginStorage.Delegate`][73.8] via
   [`GeckoRuntime#setLoginStorageDelegate`][73.9]
   ([bug 1602881]({{bugzilla}}1602881))
-
+- ⚠️ [`WebExtension`][69.5]'s constructor now requires a `WebExtensionController`
+  instance.
+- Added [`GeckoResult.allOf`][73.10] for consuming a list of results.
+- Added [`WebExtensionController.list`][73.11] to list all installed extensions.
+- Added [`GeckoSession.PermissionDelegate#PERMISSION_AUTOPLAY_AUDIBLE`][73.12] and
+  [`GeckoSession.PermissionDelegate#PERMISSION_AUTOPLAY_INAUDIBLE`][73.13]. These control
+  autoplay permissions for audible and inaudible videos.
+  ([bug 1577596]({{bugzilla}}1577596))
+- Added [`LoginStorage.Delegate.onLoginSave`][73.14] for login storage save
+  requests and [`GeckoSession.PromptDelegate.onLoginStoragePrompt`][73.15] for
+  login storage prompts.
+  ([bug 1599873]({{bugzilla}}1599873))
 
 [73.1]: {{javadoc_uri}}/WebExtensionController.html#install-java.lang.String-
 [73.2]: {{javadoc_uri}}/WebExtensionController.html#uninstall-org.mozilla.geckoview.WebExtension-
@@ -37,6 +56,12 @@ exclude: true
 [73.7]: {{javadoc_uri}}/LoginStorage.html
 [73.8]: {{javadoc_uri}}/LoginStorage.Delegate.html
 [73.9]: {{javadoc_uri}}/GeckoRuntime.html#setLoginStorageDelegate-org.mozilla.geckoview.LoginStorage.Delegate-
+[73.10]: {{javadoc_uri}}/GeckoResult.html#allOf-java.util.List-
+[73.11]: {{javadoc_uri}}/WebExtensionController.html#list--
+[73.12]: {{javadoc_uri}}/GeckoSession.PermissionDelegate.html#PERMISSION_AUTOPLAY_AUDIBLE
+[73.13]: {{javadoc_uri}}/GeckoSession.PermissionDelegate.html#PERMISSION_AUTOPLAY_INAUDIBLE
+[73.14]: {{javadoc_uri}}/LoginStorage.Delegate.html#onLoginSave-org.mozilla.geckoview.LoginStorage.LoginEntry-
+[73.15]: {{javadoc_uri}}/GeckoSession.PromptDelegate.html#onLoginStoragePrompt-org.mozilla.geckoview.GeckoSession-org.mozilla.geckoview.GeckoSession.PromptDelegate.LoginStoragePrompt-
 
 ## v72
 - Added [`GeckoSession.NavigationDelegate.LoadRequest#hasUserGesture`][72.1]. This indicates
@@ -105,9 +130,10 @@ exclude: true
 [72.20]: https://developer.android.com/reference/java/lang/String
 [72.21]: {{javadoc_uri}}/WebExtension.Icon.html
 [72.22]: {{javadoc_uri}}/GeckoWebExecutor.html#FETCH_FLAGS_STREAM_FAILURE_TEST
-[72.23]: {{javadoc_uri}}/CrashReporter#sendCrashReport-android.content.Context-java.io.File-org.json.JSONObject-
+[72.23]: {{javadoc_uri}}/CrashReporter.html#sendCrashReport-android.content.Context-java.io.File-org.json.JSONObject-
 [72.24]: {{javadoc_uri}}/GeckoSession.PermissionDelegate.html#PERMISSION_PERSISTENT_XR
 
+=
 ## v71
 - Added a content blocking flag for blocked social cookies to [`ContentBlocking`][70.17].
   ([bug 1584479]({{bugzilla}}1584479))
@@ -504,4 +530,4 @@ exclude: true
 [65.24]: {{javadoc_uri}}/CrashReporter.html#sendCrashReport-android.content.Context-android.os.Bundle-java.lang.String-
 [65.25]: {{javadoc_uri}}/GeckoResult.html
 
-[api-version]: 07ee732ba2eaafada09739c61c0196e427a2f0ed
+[api-version]: 45f21fe6c3c30f903b65a573540901e8f45affca

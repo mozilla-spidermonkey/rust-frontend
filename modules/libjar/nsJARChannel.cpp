@@ -167,6 +167,7 @@ nsJARInputThunk::IsNonBlocking(bool* nonBlocking) {
 
 nsJARChannel::nsJARChannel()
     : mOpened(false),
+      mCanceled(false),
       mContentLength(-1),
       mLoadFlags(LOAD_NORMAL),
       mStatus(NS_OK),
@@ -560,6 +561,7 @@ nsJARChannel::GetStatus(nsresult* status) {
 
 NS_IMETHODIMP
 nsJARChannel::Cancel(nsresult status) {
+  mCanceled = true;
   mStatus = status;
   if (mPump) {
     return mPump->Cancel(status);
@@ -569,6 +571,12 @@ nsJARChannel::Cancel(nsresult status) {
     mPendingEvent.isCanceled = true;
   }
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsJARChannel::GetCanceled(bool* aCanceled) {
+  *aCanceled = mCanceled;
   return NS_OK;
 }
 
@@ -607,6 +615,16 @@ NS_IMETHODIMP
 nsJARChannel::SetLoadFlags(nsLoadFlags aLoadFlags) {
   mLoadFlags = aLoadFlags;
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsJARChannel::GetTRRMode(nsIRequest::TRRMode* aTRRMode) {
+  return GetTRRModeImpl(aTRRMode);
+}
+
+NS_IMETHODIMP
+nsJARChannel::SetTRRMode(nsIRequest::TRRMode aTRRMode) {
+  return SetTRRModeImpl(aTRRMode);
 }
 
 NS_IMETHODIMP

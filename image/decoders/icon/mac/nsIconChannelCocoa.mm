@@ -65,7 +65,16 @@ NS_IMETHODIMP
 nsIconChannel::GetStatus(nsresult* status) { return mPump->GetStatus(status); }
 
 NS_IMETHODIMP
-nsIconChannel::Cancel(nsresult status) { return mPump->Cancel(status); }
+nsIconChannel::Cancel(nsresult status) {
+  mCanceled = true;
+  return mPump->Cancel(status);
+}
+
+NS_IMETHODIMP
+nsIconChannel::GetCanceled(bool* result) {
+  *result = mCanceled;
+  return NS_OK;
+}
 
 NS_IMETHODIMP
 nsIconChannel::Suspend(void) { return mPump->Suspend(); }
@@ -343,6 +352,12 @@ NS_IMETHODIMP
 nsIconChannel::SetLoadFlags(uint32_t aLoadAttributes) {
   return mPump->SetLoadFlags(aLoadAttributes);
 }
+
+NS_IMETHODIMP
+nsIconChannel::GetTRRMode(nsIRequest::TRRMode* aTRRMode) { return GetTRRModeImpl(aTRRMode); }
+
+NS_IMETHODIMP
+nsIconChannel::SetTRRMode(nsIRequest::TRRMode aTRRMode) { return SetTRRModeImpl(aTRRMode); }
 
 NS_IMETHODIMP
 nsIconChannel::GetIsDocument(bool* aIsDocument) {

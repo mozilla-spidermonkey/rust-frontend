@@ -24,6 +24,14 @@ function toMojoNDEFMessage(message) {
 
 function toMojoNDEFRecord(record) {
   let nfcRecord = new device.mojom.NDEFRecord();
+  if (record.recordType.search(':') != -1) {
+    // Simply checks the existence of ':' to decide whether it's an external
+    // type. As a mock, no need to really implement the validation algo at
+    // https://w3c.github.io/web-nfc/#dfn-validate-external-type.
+    nfcRecord.category = device.mojom.NDEFRecordTypeCategory.kExternal;
+  } else {
+    nfcRecord.category = device.mojom.NDEFRecordTypeCategory.kStandardized;
+  }
   nfcRecord.recordType = record.recordType;
   nfcRecord.mediaType = record.mediaType;
   nfcRecord.id = record.id;
@@ -154,15 +162,15 @@ var WebNFCTest = (() => {
 
       this.hw_status_ = NFCHWStatus.ENABLED;
       this.pushed_message_ = null;
-      this.push_options_ = null;
+      this.pending_push_options_ = null;
       this.pending_promise_func_ = null;
       this.push_completed_ = true;
       this.client_ = null;
       this.watchers_ = [];
       this.reading_messages_ = [];
       this.operations_suspended_ = false;
-      this.is_ndef_tech_ = true;
       this.is_formatted_tag_ = false;
+      this.data_transfer_failed_ = false;
     }
 
     // NFC delegate functions.
@@ -176,22 +184,18 @@ var WebNFCTest = (() => {
       }
 
       this.pushed_message_ = message;
-      this.push_options_ = options;
-
+      this.pending_push_options_ = options;
       return new Promise(resolve => {
-        this.pending_promise_func_ = resolve;
-        if (this.operations_suspended_) {
-          // Pends push operation if NFC operation is suspended.
-        } else if (!this.push_completed_) {
-          // Leaves the push operating pending.
-        } else if (!this.is_ndef_tech_) {
-          // Resolves with NotSupportedError if the device does not expose
-          // NDEF technology.
-          resolve(createNDEFError(device.mojom.NDEFErrorType.NOT_SUPPORTED));
+        if (this.operations_suspended_ || !this.push_completed_) {
+          // Leaves the push pending.
+          this.pending_promise_func_ = resolve;
         } else if (this.is_formatted_tag_ && !options.overwrite) {
           // Resolves with NotAllowedError if there are NDEF records on the device
           // and overwrite is false.
           resolve(createNDEFError(device.mojom.NDEFErrorType.NOT_ALLOWED));
+        } else if (this.data_transfer_failed_) {
+          // Resolves with NetworkError if data transfer fails.
+          resolve(createNDEFError(device.mojom.NDEFErrorType.IO_ERROR));
         } else {
           resolve(createNDEFError(null));
         }
@@ -199,8 +203,9 @@ var WebNFCTest = (() => {
     }
 
     async cancelPush(target) {
-      if (this.push_options_ && ((target === device.mojom.NDEFPushTarget.ANY) ||
-          (this.push_options_.target === target))) {
+      if (this.pending_push_options_ &&
+          ((target === device.mojom.NDEFPushTarget.ANY) ||
+           (this.pending_push_options_.target === target))) {
         this.cancelPendingPushOperation();
       }
 
@@ -221,7 +226,7 @@ var WebNFCTest = (() => {
       this.watchers_.push({id: id, options: options});
       // Ignores reading if NFC operation is suspended
       // or the NFC tag does not expose NDEF technology.
-      if(!this.operations_suspended_ && this.is_ndef_tech_) {
+      if (!this.operations_suspended_) {
         // Triggers onWatch if the new watcher matches existing messages.
         for (let message of this.reading_messages_) {
           if (matchesWatchOptions(message, options)) {
@@ -270,7 +275,7 @@ var WebNFCTest = (() => {
     }
 
     pushOptions() {
-      return this.push_options_;
+      return this.pending_push_options_;
     }
 
     watchOptions() {
@@ -288,31 +293,29 @@ var WebNFCTest = (() => {
       this.reading_messages_ = [];
       this.operations_suspended_ = false;
       this.cancelPendingPushOperation();
-      this.is_ndef_tech_ = true;
       this.is_formatted_tag_ = false;
+      this.data_transfer_failed_ = false;
     }
 
     cancelPendingPushOperation() {
       if (this.pending_promise_func_) {
         this.pending_promise_func_(
             createNDEFError(device.mojom.NDEFErrorType.OPERATION_CANCELLED));
+        this.pending_promise_func_ = null;
       }
 
       this.pushed_message_ = null;
-      this.push_options_ = null;
-      this.pending_promise_func_ = null;
+      this.pending_push_options_ = null;
       this.push_completed_ = true;
     }
 
     // Sets message that is used to deliver NFC reading updates.
     setReadingMessage(message) {
       this.reading_messages_.push(message);
-      // Ignores reading if the NFC tag does not expose NDEF technology.
-      if(!this.is_ndef_tech_) return;
       // Ignores reading if NFC operation is suspended.
       if(this.operations_suspended_) return;
       // Ignores reading if NDEFPushOptions.ignoreRead is true.
-      if(this.push_options_ && this.push_options_.ignoreRead)
+      if (this.pending_push_options_ && this.pending_push_options_.ignoreRead)
         return;
       // Triggers onWatch if the new message matches existing watchers.
       for (let watcher of this.watchers_) {
@@ -336,7 +339,7 @@ var WebNFCTest = (() => {
       // Resumes pending NFC reading.
       for (let watcher of this.watchers_) {
         for (let message of this.reading_messages_) {
-          if (matchesWatchOptions(message, watcher.options) && this.is_ndef_tech_) {
+          if (matchesWatchOptions(message, watcher.options)) {
             this.client_.onWatch(
                 [watcher.id], fake_tag_serial_number,
                 toMojoNDEFMessage(message));
@@ -344,17 +347,32 @@ var WebNFCTest = (() => {
         }
       }
       // Resumes pending push operation.
-      if (this.pending_promise_func_) {
+      if (this.pending_promise_func_ && this.push_completed_) {
         this.pending_promise_func_(createNDEFError(null));
+        this.pending_promise_func_ = null;
       }
     }
 
-    setIsNDEFTech(isNdef) {
-      this.is_ndef_tech_ = isNdef;
+    // Simulates the device coming in proximity does not expose NDEF technology.
+    simulateNonNDEFTagDiscovered() {
+      // Notify NotSupportedError to all active readers.
+      if (this.watchers_.length != 0) {
+        this.client_.onError(device.mojom.NDEFErrorType.NOT_SUPPORTED);
+      }
+      // Reject the pending push with NotSupportedError.
+      if (this.pending_promise_func_) {
+        this.pending_promise_func_(
+            createNDEFError(device.mojom.NDEFErrorType.NOT_SUPPORTED));
+        this.pending_promise_func_ = null;
+      }
     }
 
     setIsFormattedTag(isFormatted) {
       this.is_formatted_tag_ = isFormatted;
+    }
+
+    simulateDataTransferFails() {
+      this.data_transfer_failed_ = true;
     }
   }
 

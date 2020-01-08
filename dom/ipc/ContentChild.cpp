@@ -73,6 +73,7 @@
 #include "mozilla/ipc/FileDescriptorSetChild.h"
 #include "mozilla/ipc/FileDescriptorUtils.h"
 #include "mozilla/ipc/GeckoChildProcessHost.h"
+#include "mozilla/ipc/LibrarySandboxPreload.h"
 #include "mozilla/ipc/ProcessChild.h"
 #include "mozilla/ipc/PChildToParentStreamChild.h"
 #include "mozilla/ipc/PParentToChildStreamChild.h"
@@ -114,6 +115,7 @@
 #include "nsIConsoleService.h"
 #include "audio_thread_priority.h"
 #include "nsIURIMutator.h"
+#include "nsIInputStreamChannel.h"
 
 #if !defined(XP_WIN)
 #  include "mozilla/Omnijar.h"
@@ -242,7 +244,7 @@
 #endif
 
 #include "mozilla/dom/File.h"
-#include "mozilla/dom/MediaController.h"
+#include "mozilla/dom/MediaControlKeysEvent.h"
 #include "mozilla/dom/PPresentationChild.h"
 #include "mozilla/dom/PresentationIPCService.h"
 #include "mozilla/ipc/IPCStreamAlloc.h"
@@ -997,6 +999,11 @@ nsresult ContentChild::ProvideWindowCommon(
   RefPtr<BrowsingContext> browsingContext = BrowsingContext::Create(
       nullptr, openerBC, aName, BrowsingContext::Type::Content);
 
+  browsingContext->SetPendingInitialization(true);
+  auto unsetPending = MakeScopeExit([browsingContext]() {
+    browsingContext->SetPendingInitialization(false);
+  });
+
   TabContext newTabContext = aTabOpener ? *aTabOpener : TabContext();
 
   // The initial about:blank document we generate within the nsDocShell will
@@ -1059,15 +1066,6 @@ nsresult ContentChild::ProvideWindowCommon(
     return NS_ERROR_ABORT;
   }
 
-  nsCOMPtr<nsPIDOMWindowInner> parentTopInnerWindow;
-  if (aParent) {
-    nsCOMPtr<nsPIDOMWindowOuter> parentTopWindow =
-        nsPIDOMWindowOuter::From(aParent)->GetInProcessTop();
-    if (parentTopWindow) {
-      parentTopInnerWindow = parentTopWindow->GetCurrentInnerWindow();
-    }
-  }
-
   // Set to true when we're ready to return from this function.
   bool ready = false;
 
@@ -1078,7 +1076,6 @@ nsresult ContentChild::ProvideWindowCommon(
     rv = info.rv();
     *aWindowIsNew = info.windowOpened();
     nsTArray<FrameScriptInfo> frameScripts(info.frameScripts());
-    nsCString urlToLoad = info.urlToLoad();
     uint32_t maxTouchPoints = info.maxTouchPoints();
     DimensionInfo dimensionInfo = info.dimensions();
     bool hasSiblings = info.hasSiblings();
@@ -1107,15 +1104,16 @@ nsresult ContentChild::ProvideWindowCommon(
       return;
     }
 
-    ShowInfo showInfo(EmptyString(), false, false, true, false, 0, 0, 0);
+    ParentShowInfo showInfo(EmptyString(), false, false, true, false, 0, 0, 0);
     auto* opener = nsPIDOMWindowOuter::From(aParent);
     nsIDocShell* openerShell;
     if (opener && (openerShell = opener->GetDocShell())) {
       nsCOMPtr<nsILoadContext> context = do_QueryInterface(openerShell);
-      showInfo = ShowInfo(EmptyString(), false, context->UsePrivateBrowsing(),
-                          true, false, aTabOpener->WebWidget()->GetDPI(),
-                          aTabOpener->WebWidget()->RoundsWidgetCoordinatesTo(),
-                          aTabOpener->WebWidget()->GetDefaultScale().scale);
+      showInfo =
+          ParentShowInfo(EmptyString(), false, context->UsePrivateBrowsing(),
+                         true, false, aTabOpener->WebWidget()->GetDPI(),
+                         aTabOpener->WebWidget()->RoundsWidgetCoordinatesTo(),
+                         aTabOpener->WebWidget()->GetDefaultScale().scale);
     }
 
     newChild->SetMaxTouchPoints(maxTouchPoints);
@@ -1226,6 +1224,7 @@ nsresult ContentChild::ProvideWindowCommon(
   // SendBrowserFrameOpenWindow with information we're going to need to return
   // from this function, So we spin a nested event loop until they get back to
   // us.
+  //
 
   // Prevent the docshell from becoming active while the nested event loop is
   // spinning.
@@ -1236,12 +1235,15 @@ nsresult ContentChild::ProvideWindowCommon(
     }
   });
 
-  // Suspend our window if we have one to make sure we don't re-enter it.
-  if (parentTopInnerWindow) {
-    parentTopInnerWindow->Suspend();
-  }
-
   {
+    // Suppress event handling for all contexts in our BrowsingContextGroup so
+    // that event handlers cannot target our new window while it's still being
+    // opened. Note that pending events that were suppressed while our blocker
+    // was active will be dispatched asynchronously from a runnable dispatched
+    // to the main event loop after this function returns, not immediately when
+    // we leave this scope.
+    AutoSuppressEventHandlingAndSuspend seh(browsingContext->Group());
+
     AutoNoJSAPI nojsapi;
 
     // Spin the event loop until we get a response. Callers of this function
@@ -1252,10 +1254,6 @@ nsresult ContentChild::ProvideWindowCommon(
     MOZ_RELEASE_ASSERT(ready,
                        "We are on the main thread, so we should not exit this "
                        "loop without ready being true.");
-  }
-
-  if (parentTopInnerWindow) {
-    parentTopInnerWindow->Resume();
   }
 
   // =====================
@@ -1807,6 +1805,11 @@ mozilla::ipc::IPCResult ContentChild::RecvSetProcessSandbox(
   // We may want to move the sandbox initialization somewhere else
   // at some point; see bug 880808.
 #if defined(MOZ_SANDBOX)
+
+#  ifdef MOZ_USING_WASM_SANDBOXING
+  mozilla::ipc::PreloadSandboxedDynamicLibraries();
+#  endif
+
   bool sandboxEnabled = true;
 #  if defined(XP_LINUX)
   // On Linux, we have to support systems that can't use any sandboxing.
@@ -3698,11 +3701,12 @@ mozilla::ipc::IPCResult ContentChild::RecvCrossProcessRedirect(
   }
 
   nsCOMPtr<nsIChannel> newChannel;
-  rv = NS_NewChannelInternal(getter_AddRefs(newChannel), aArgs.uri(), loadInfo,
-                             nullptr,  // PerformanceStorage
-                             nullptr,  // aLoadGroup
-                             nullptr,  // aCallbacks
-                             aArgs.newLoadFlags());
+  MOZ_ASSERT((aArgs.loadStateLoadFlags() &
+              nsDocShell::InternalLoad::INTERNAL_LOAD_FLAGS_IS_SRCDOC) ||
+             aArgs.srcdocData().IsVoid());
+  rv = nsDocShell::CreateRealChannelForDocument(
+      getter_AddRefs(newChannel), aArgs.uri(), loadInfo, nullptr, nullptr,
+      aArgs.newLoadFlags(), aArgs.srcdocData(), aArgs.baseUri());
 
   // This is used to report any errors back to the parent by calling
   // CrossProcessRedirectFinished.
@@ -3726,27 +3730,24 @@ mozilla::ipc::IPCResult ContentChild::RecvCrossProcessRedirect(
     return IPC_OK();
   }
 
-  RefPtr<nsIChildChannel> childChannel = do_QueryObject(newChannel);
-  if (!childChannel) {
-    rv = NS_ERROR_UNEXPECTED;
+  if (nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(newChannel)) {
+    rv = httpChannel->SetChannelId(aArgs.channelId());
+  }
+  if (NS_FAILED(rv)) {
     return IPC_OK();
   }
 
-  if (httpChild) {
-    rv = httpChild->SetChannelId(aArgs.channelId());
-    if (NS_FAILED(rv)) {
-      return IPC_OK();
-    }
+  rv = newChannel->SetOriginalURI(aArgs.originalURI());
+  if (NS_FAILED(rv)) {
+    return IPC_OK();
+  }
 
-    rv = httpChild->SetOriginalURI(aArgs.originalURI());
-    if (NS_FAILED(rv)) {
-      return IPC_OK();
-    }
-
-    rv = httpChild->SetRedirectMode(aArgs.redirectMode());
-    if (NS_FAILED(rv)) {
-      return IPC_OK();
-    }
+  if (nsCOMPtr<nsIHttpChannelInternal> httpChannelInternal =
+          do_QueryInterface(newChannel)) {
+    rv = httpChannelInternal->SetRedirectMode(aArgs.redirectMode());
+  }
+  if (NS_FAILED(rv)) {
+    return IPC_OK();
   }
 
   if (aArgs.init()) {
@@ -3756,11 +3757,15 @@ mozilla::ipc::IPCResult ContentChild::RecvCrossProcessRedirect(
         HttpBaseChannel::ReplacementReason::DocumentChannel);
   }
 
-  // connect parent.
-  rv = childChannel->ConnectParent(
-      aArgs.registrarId());  // creates parent channel
-  if (NS_FAILED(rv)) {
-    return IPC_OK();
+  if (nsCOMPtr<nsIChildChannel> childChannel = do_QueryInterface(newChannel)) {
+    // Connect to the parent if this is a remote channel. If it's entirely
+    // handled locally, then we'll call AsyncOpen from the docshell when
+    // we complete the setup
+    rv = childChannel->ConnectParent(
+        aArgs.registrarId());  // creates parent channel
+    if (NS_FAILED(rv)) {
+      return IPC_OK();
+    }
   }
 
   // We need to copy the property bag before signaling that the channel
@@ -3771,10 +3776,10 @@ mozilla::ipc::IPCResult ContentChild::RecvCrossProcessRedirect(
 
   RefPtr<ChildProcessChannelListener> processListener =
       ChildProcessChannelListener::GetSingleton();
-  // The listener will call completeRedirectSetup on the channel.
-  processListener->OnChannelReady(childChannel, aArgs.redirectIdentifier(),
-                                  std::move(aArgs.redirects()),
-                                  aArgs.loadStateLoadFlags());
+  // The listener will call completeRedirectSetup or asyncOpen on the channel.
+  processListener->OnChannelReady(
+      newChannel, aArgs.redirectIdentifier(), std::move(aArgs.redirects()),
+      aArgs.loadStateLoadFlags(), aArgs.timing().refOr(nullptr));
 
   // scopeExit will call CrossProcessRedirectFinished(rv) here
   return IPC_OK();
@@ -3787,10 +3792,10 @@ mozilla::ipc::IPCResult ContentChild::RecvStartDelayedAutoplayMediaComponents(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult ContentChild::RecvUpdateMediaAction(
-    BrowsingContext* aContext, MediaControlActions aAction) {
+mozilla::ipc::IPCResult ContentChild::RecvUpdateMediaControlKeysEvent(
+    BrowsingContext* aContext, MediaControlKeysEvent aEvent) {
   MOZ_ASSERT(aContext);
-  MediaActionHandler::UpdateMediaAction(aContext, aAction);
+  MediaActionHandler::HandleMediaControlKeysEvent(aContext, aEvent);
   return IPC_OK();
 }
 

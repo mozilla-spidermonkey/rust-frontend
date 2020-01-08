@@ -11,6 +11,7 @@
 #include "nscore.h"
 #include "nsRange.h"
 
+#include "nsDebug.h"
 #include "nsString.h"
 #include "nsReadableUtils.h"
 #include "nsIContent.h"
@@ -138,11 +139,11 @@ struct IsItemInRangeComparator {
   nsContentUtils::ComparePointsCache* mCache;
 
   int operator()(const nsRange* const aRange) const {
-    int32_t cmp = nsContentUtils::ComparePoints(
+    int32_t cmp = nsContentUtils::ComparePoints_Deprecated(
         mNode, static_cast<int32_t>(mEndOffset), aRange->GetStartContainer(),
         static_cast<int32_t>(aRange->StartOffset()), nullptr, mCache);
     if (cmp == 1) {
-      cmp = nsContentUtils::ComparePoints(
+      cmp = nsContentUtils::ComparePoints_Deprecated(
           mNode, static_cast<int32_t>(mStartOffset), aRange->GetEndContainer(),
           static_cast<int32_t>(aRange->EndOffset()), nullptr, mCache);
       if (cmp == -1) {
@@ -212,7 +213,7 @@ bool nsRange::IsNodeSelected(nsINode* aNode, uint32_t aStartOffset,
           // if node end > start of middle+1, result = 1
           if (middle + 1 < high &&
               (middlePlus1 = selection->GetRangeAt(middle + 1)) &&
-              nsContentUtils::ComparePoints(
+              nsContentUtils::ComparePoints_Deprecated(
                   aNode, static_cast<int32_t>(aEndOffset),
                   middlePlus1->GetStartContainer(),
                   static_cast<int32_t>(middlePlus1->StartOffset()), nullptr,
@@ -221,7 +222,7 @@ bool nsRange::IsNodeSelected(nsINode* aNode, uint32_t aStartOffset,
             // if node start < end of middle - 1, result = -1
           } else if (middle >= 1 &&
                      (middleMinus1 = selection->GetRangeAt(middle - 1)) &&
-                     nsContentUtils::ComparePoints(
+                     nsContentUtils::ComparePoints_Deprecated(
                          aNode, static_cast<int32_t>(aStartOffset),
                          middleMinus1->GetEndContainer(),
                          static_cast<int32_t>(middleMinus1->EndOffset()),
@@ -873,11 +874,18 @@ int16_t nsRange::ComparePoint(nsINode& aContainer, uint32_t aOffset,
 
   MOZ_ASSERT(point.IsSetAndValid());
 
-  const int32_t cmp = nsContentUtils::ComparePoints(point, mStart);
-  if (cmp <= 0) {
-    return cmp;
+  Maybe<int32_t> order = nsContentUtils::ComparePoints(point, mStart);
+
+  // `order` must contain a value, because `IsPointComparableToRange()` was
+  // checked above.
+  if (*order <= 0) {
+    return *order;
   }
-  if (nsContentUtils::ComparePoints(mEnd, point) == -1) {
+
+  order = nsContentUtils::ComparePoints(mEnd, point);
+  // `order` must contain a value, because `IsPointComparableToRange()` was
+  // checked above.
+  if (*order == -1) {
     return 1;
   }
 
@@ -890,34 +898,26 @@ bool nsRange::IntersectsNode(nsINode& aNode, ErrorResult& aRv) {
     return false;
   }
 
-  // Step 3.
   nsINode* parent = aNode.GetParentNode();
   if (!parent) {
-    // Steps 2 and 4.
     // |parent| is null, so |node|'s root is |node| itself.
     return GetRoot() == &aNode;
   }
 
-  // Step 5.
-  int32_t nodeIndex = parent->ComputeIndexOf(&aNode);
+  const int32_t nodeIndex = parent->ComputeIndexOf(&aNode);
 
-  // Steps 6-7.
-  // Note: if disconnected is true, ComparePoints returns 1.
-  bool disconnected = false;
-  bool result = nsContentUtils::ComparePoints(
-                    mStart.Container(),
-                    *mStart.Offset(RangeBoundary::OffsetFilter::kValidOffsets),
-                    parent, nodeIndex + 1, &disconnected) < 0 &&
-                nsContentUtils::ComparePoints(
-                    parent, nodeIndex, mEnd.Container(),
-                    *mEnd.Offset(RangeBoundary::OffsetFilter::kValidOffsets),
-                    &disconnected) < 0;
-
-  // Step 2.
-  if (disconnected) {
-    result = false;
+  const Maybe<int32_t> startOrder = nsContentUtils::ComparePoints(
+      mStart.Container(),
+      *mStart.Offset(RangeBoundary::OffsetFilter::kValidOffsets), parent,
+      nodeIndex + 1);
+  if (startOrder && (*startOrder < 0)) {
+    const Maybe<int32_t> endOrder = nsContentUtils::ComparePoints(
+        parent, nodeIndex, mEnd.Container(),
+        *mEnd.Offset(RangeBoundary::OffsetFilter::kValidOffsets));
+    return endOrder && (*endOrder < 0);
   }
-  return result;
+
+  return false;
 }
 
 void nsRange::NotifySelectionListenersAfterRangeSet() {
@@ -1122,8 +1122,21 @@ void nsRange::SetStart(const RawRangeBoundary& aPoint, ErrorResult& aRv) {
 
   // Collapse if not positioned yet, if positioned in another doc or
   // if the new start is after end.
-  if (!mIsPositioned || newRoot != mRoot ||
-      nsContentUtils::ComparePoints(aPoint, mEnd) == 1) {
+  const bool collapse = [&]() {
+    if (!mIsPositioned || (newRoot != mRoot)) {
+      return true;
+    }
+
+    const Maybe<int32_t> order = nsContentUtils::ComparePoints(aPoint, mEnd);
+    if (order) {
+      return *order == 1;
+    }
+
+    MOZ_ASSERT_UNREACHABLE();
+    return true;
+  }();
+
+  if (collapse) {
     DoSetRange(aPoint, aPoint, newRoot);
     return;
   }
@@ -1198,8 +1211,21 @@ void nsRange::SetEnd(const RawRangeBoundary& aPoint, ErrorResult& aRv) {
 
   // Collapse if not positioned yet, if positioned in another doc or
   // if the new end is before start.
-  if (!mIsPositioned || newRoot != mRoot ||
-      nsContentUtils::ComparePoints(mStart, aPoint) == 1) {
+  const bool collapse = [&]() {
+    if (!mIsPositioned || (newRoot != mRoot)) {
+      return true;
+    }
+
+    const Maybe<int32_t> order = nsContentUtils::ComparePoints(mStart, aPoint);
+    if (order) {
+      return *order == 1;
+    }
+
+    MOZ_ASSERT_UNREACHABLE();
+    return true;
+  }();
+
+  if (collapse) {
     DoSetRange(aPoint, aPoint, newRoot);
     return;
   }
@@ -1684,11 +1710,12 @@ nsresult nsRange::CutContents(DocumentFragment** aFragment) {
   // of Range gravity during our edits!
 
   nsCOMPtr<nsINode> startContainer = mStart.Container();
+  // `GetCommonAncestorContainer()` above ensures the range is positioned, hence
+  // there have to be valid offsets.
   uint32_t startOffset =
-      *mStart.Offset(RangeBoundary::OffsetFilter::kValidOrInvalidOffsets);
+      *mStart.Offset(RangeBoundary::OffsetFilter::kValidOffsets);
   nsCOMPtr<nsINode> endContainer = mEnd.Container();
-  uint32_t endOffset =
-      *mEnd.Offset(RangeBoundary::OffsetFilter::kValidOrInvalidOffsets);
+  uint32_t endOffset = *mEnd.Offset(RangeBoundary::OffsetFilter::kValidOffsets);
 
   if (retval) {
     // For extractContents(), abort early if there's a doctype (bug 719533).
@@ -1699,12 +1726,16 @@ nsresult nsRange::CutContents(DocumentFragment** aFragment) {
     if (commonAncestorDocument) {
       RefPtr<DocumentType> doctype = commonAncestorDocument->GetDoctype();
 
+      // `GetCommonAncestorContainer()` above ensured the range is positioned.
+      // Hence, start and end are both set and valid. If available, `doctype`
+      // has a common ancestor with start and end, hence both have to be
+      // comparable to it.
       if (doctype &&
-          nsContentUtils::ComparePoints(startContainer,
-                                        static_cast<int32_t>(startOffset),
-                                        doctype, 0) < 0 &&
-          nsContentUtils::ComparePoints(doctype, 0, endContainer,
-                                        static_cast<int32_t>(endOffset)) < 0) {
+          *nsContentUtils::ComparePoints(startContainer,
+                                         static_cast<int32_t>(startOffset),
+                                         doctype, 0) < 0 &&
+          *nsContentUtils::ComparePoints(doctype, 0, endContainer,
+                                         static_cast<int32_t>(endOffset)) < 0) {
         return NS_ERROR_DOM_HIERARCHY_REQUEST_ERR;
       }
     }
@@ -2020,9 +2051,14 @@ int16_t nsRange::CompareBoundaryPoints(uint16_t aHow, nsRange& aOtherRange,
     return 0;
   }
 
-  return nsContentUtils::ComparePoints(ourNode, static_cast<int32_t>(ourOffset),
-                                       otherNode,
-                                       static_cast<int32_t>(otherOffset));
+  const Maybe<int32_t> order = nsContentUtils::ComparePoints(
+      ourNode, static_cast<int32_t>(ourOffset), otherNode,
+      static_cast<int32_t>(otherOffset));
+
+  // `this` and `aOtherRange` share the same root and (ourNode, ourOffset),
+  // (otherNode, otherOffset) correspond to some of their boundaries. Hence,
+  // (ourNode, ourOffset) and (otherNode, otherOffset) have to be comparable.
+  return *order;
 }
 
 /* static */

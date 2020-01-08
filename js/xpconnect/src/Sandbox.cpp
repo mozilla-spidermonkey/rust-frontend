@@ -446,21 +446,21 @@ static size_t sandbox_moved(JSObject* obj, JSObject* old) {
   (XPCONNECT_GLOBAL_EXTRA_SLOT_OFFSET)
 
 static const JSClassOps SandboxClassOps = {
-    nullptr,
-    nullptr,
-    nullptr,
-    JS_NewEnumerateStandardClasses,
-    JS_ResolveStandardClass,
-    JS_MayResolveStandardClass,
-    sandbox_finalize,
-    nullptr,
-    nullptr,
-    nullptr,
-    JS_GlobalObjectTraceHook,
+    nullptr,                         // addProperty
+    nullptr,                         // delProperty
+    nullptr,                         // enumerate
+    JS_NewEnumerateStandardClasses,  // newEnumerate
+    JS_ResolveStandardClass,         // resolve
+    JS_MayResolveStandardClass,      // mayResolve
+    sandbox_finalize,                // finalize
+    nullptr,                         // call
+    nullptr,                         // hasInstance
+    nullptr,                         // construct
+    JS_GlobalObjectTraceHook,        // trace
 };
 
 static const js::ClassExtension SandboxClassExtension = {
-    sandbox_moved /* objectMovedOp */
+    sandbox_moved,  // objectMovedOp
 };
 
 static const JSClass SandboxClass = {

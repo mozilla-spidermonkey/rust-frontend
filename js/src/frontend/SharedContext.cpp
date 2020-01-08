@@ -199,6 +199,9 @@ void FunctionBox::initFromLazyFunction(JSFunction* fun) {
   if (lazy->hasDirectEval()) {
     setHasDirectEval();
   }
+  if (lazy->hasModuleGoal()) {
+    setHasModuleGoal();
+  }
 
   sourceStart = lazy->sourceStart();
   sourceEnd = lazy->sourceEnd();
@@ -251,6 +254,9 @@ void FunctionBox::initWithEnclosingParseContext(ParseContext* enclosing,
 
     thisBinding_ = ThisBinding::Function;
   }
+
+  // We inherit the parse goal from our top-level.
+  hasModuleGoal_ = sc->hasModuleGoal();
 
   if (sc->inWith()) {
     inWith_ = true;
@@ -313,7 +319,7 @@ void FunctionBox::finish() {
   if (isInterpretedLazy()) {
     // Lazy inner functions need to record their enclosing scope for when they
     // eventually are compiled.
-    function()->setEnclosingScope(enclosingScope_.maybeScope());
+    function()->setEnclosingScope(enclosingScope_.getExistingScope());
   } else {
     // Non-lazy inner functions don't use the enclosingScope_ field.
     MOZ_ASSERT(!enclosingScope_);
@@ -329,6 +335,7 @@ ModuleSharedContext::ModuleSharedContext(JSContext* cx, ModuleObject* module,
       bindings(cx),
       builder(builder) {
   thisBinding_ = ThisBinding::Module;
+  hasModuleGoal_ = true;
 }
 
 }  // namespace frontend

@@ -297,6 +297,10 @@ release-secondary-snap-push
 Performs the same function as `release-snap-push`, except for the beta channel as part of RC
 Releases.
 
+release-notify-av-announce
+--------------------------
+Notify anti-virus vendors when a release is likely shipping.
+
 release-notify-push
 -------------------
 Notify when a release has been pushed to CDNs.
@@ -581,6 +585,11 @@ webrender
 ---------
 Tasks used to do testing of WebRender standalone (without gecko). The
 WebRender code lives in gfx/wr and has its own testing infrastructure.
+
+github-sync
+------------
+Tasks used to do synchronize parts of Gecko that have downstream GitHub
+repositories.
 
 instrumented-build
 ------------------

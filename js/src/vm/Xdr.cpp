@@ -228,6 +228,8 @@ XDRResult XDRState<mode>::codeModuleObject(MutableHandleModuleObject modp) {
 #endif
   if (mode == XDR_DECODE) {
     modp.set(nullptr);
+  } else {
+    MOZ_ASSERT(modp->status() < MODULE_STATUS_INSTANTIATING);
   }
 
   MOZ_TRY(XDRModuleObject(this, modp));
@@ -291,10 +293,10 @@ XDRResult XDRState<mode>::codeFunction(MutableHandleFunction funp,
     funp.set(nullptr);
   } else if (getTreeKey(funp) != AutoXDRTree::noKey) {
     MOZ_ASSERT(sourceObject);
-    scope = funp->nonLazyScript()->enclosingScope();
+    scope = funp->enclosingScope();
   } else {
     MOZ_ASSERT(!sourceObject);
-    MOZ_ASSERT(funp->nonLazyScript()->enclosingScope()->is<GlobalScope>());
+    MOZ_ASSERT(funp->enclosingScope()->is<GlobalScope>());
   }
 
   MOZ_TRY(VersionCheck(this));

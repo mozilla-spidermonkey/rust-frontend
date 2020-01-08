@@ -305,6 +305,7 @@ nsHttpChannel::nsHttpChannel()
       mOfflineCacheLastModifiedTime(0),
       mSuspendTotalTime(0),
       mRedirectType(0),
+      mComputedCrossOriginOpenerPolicy(nsILoadInfo::OPENER_POLICY_NULL),
       mCacheOpenWithPriority(false),
       mCacheQueueSizeWhenOpen(0),
       mCachedContentIsValid(false),
@@ -613,12 +614,10 @@ nsresult nsHttpChannel::ContinueOnBeforeConnect(bool aShouldUpgrade,
   }
 
   if (mIsTRRServiceChannel) {
-    mCaps |= NS_HTTP_LARGE_KEEPALIVE | NS_HTTP_DISABLE_TRR;
+    mCaps |= NS_HTTP_LARGE_KEEPALIVE;
   }
 
-  if (mLoadFlags & LOAD_DISABLE_TRR) {
-    mCaps |= NS_HTTP_DISABLE_TRR;
-  }
+  mCaps |= NS_HTTP_TRR_FLAGS_FROM_MODE(nsIRequest::GetTRRMode());
 
   // Finalize ConnectionInfo flags before SpeculativeConnect
   mConnectionInfo->SetAnonymous((mLoadFlags & LOAD_ANONYMOUS) != 0);
@@ -629,7 +628,7 @@ nsresult nsHttpChannel::ContinueOnBeforeConnect(bool aShouldUpgrade,
                                      mBeConservative);
   mConnectionInfo->SetTlsFlags(mTlsFlags);
   mConnectionInfo->SetIsTrrServiceChannel(mIsTRRServiceChannel);
-  mConnectionInfo->SetTrrDisabled(mCaps & NS_HTTP_DISABLE_TRR);
+  mConnectionInfo->SetTRRMode(nsIRequest::GetTRRMode());
   mConnectionInfo->SetIPv4Disabled(mCaps & NS_HTTP_DISABLE_IPV4);
   mConnectionInfo->SetIPv6Disabled(mCaps & NS_HTTP_DISABLE_IPV6);
 
@@ -902,7 +901,7 @@ void nsHttpChannel::SpeculativeConnect() {
 
   Unused << gHttpHandler->SpeculativeConnect(
       mConnectionInfo, callbacks,
-      mCaps & (NS_HTTP_DISALLOW_SPDY | NS_HTTP_DISABLE_TRR |
+      mCaps & (NS_HTTP_DISALLOW_SPDY | NS_HTTP_TRR_MODE_MASK |
                NS_HTTP_DISABLE_IPV4 | NS_HTTP_DISABLE_IPV6));
 }
 
@@ -2822,7 +2821,7 @@ nsresult nsHttpChannel::ContinueProcessResponse3(nsresult rv) {
     case 429:
       // Do not cache 425 and 429.
       CloseCacheEntry(false);
-      MOZ_FALLTHROUGH;  // process normally
+      [[fallthrough]];  // process normally
     default:
       rv = ProcessNormal();
       MaybeInvalidateCacheEntryForSubsequentGet();
@@ -6857,8 +6856,8 @@ void nsHttpChannel::MaybeStartDNSPrefetch() {
          mCaps & NS_HTTP_REFRESH_DNS ? ", refresh requested" : ""));
     OriginAttributes originAttributes;
     NS_GetOriginAttributes(this, originAttributes);
-    mDNSPrefetch =
-        new nsDNSPrefetch(mURI, originAttributes, this, mTimingEnabled);
+    mDNSPrefetch = new nsDNSPrefetch(
+        mURI, originAttributes, nsIRequest::GetTRRMode(), this, mTimingEnabled);
     mDNSPrefetch->PrefetchHigh(mCaps & NS_HTTP_REFRESH_DNS);
   }
 }
@@ -7344,10 +7343,10 @@ nsHttpChannel::GetCrossOriginOpenerPolicy(
   // If this method is called before OnStartRequest (ie. before we call
   // ComputeCrossOriginOpenerPolicy) or if we were unable to compute the
   // policy we'll throw an error.
-  if (!mComputedCrossOriginOpenerPolicy.isSome()) {
+  if (!mOnStartRequestCalled) {
     return NS_ERROR_NOT_AVAILABLE;
   }
-  *aPolicy = mComputedCrossOriginOpenerPolicy.value();
+  *aPolicy = mComputedCrossOriginOpenerPolicy;
   return NS_OK;
 }
 
@@ -7411,7 +7410,6 @@ nsresult nsHttpChannel::ComputeCrossOriginOpenerPolicyMismatch() {
   if (!head) {
     // Not having a response head is not a hard failure at the point where
     // this method is called.
-    mComputedCrossOriginOpenerPolicy = Some(nsILoadInfo::OPENER_POLICY_NULL);
     return NS_OK;
   }
 
@@ -7428,7 +7426,7 @@ nsresult nsHttpChannel::ComputeCrossOriginOpenerPolicyMismatch() {
   nsILoadInfo::CrossOriginOpenerPolicy resultPolicy =
       nsILoadInfo::OPENER_POLICY_NULL;
   Unused << ComputeCrossOriginOpenerPolicy(documentPolicy, &resultPolicy);
-  mComputedCrossOriginOpenerPolicy = Some(resultPolicy);
+  mComputedCrossOriginOpenerPolicy = resultPolicy;
 
   // If bc's popup sandboxing flag set is not empty and potentialCOOP is
   // non-null, then navigate bc to a network error and abort these steps.
@@ -7440,8 +7438,9 @@ nsresult nsHttpChannel::ComputeCrossOriginOpenerPolicyMismatch() {
     return NS_ERROR_BLOCKED_BY_POLICY;
   }
 
+  // In xpcshell-tests we don't always have a current window global
   if (!ctx->Canonical()->GetCurrentWindowGlobal()) {
-    return NS_ERROR_NOT_AVAILABLE;
+    return NS_OK;
   }
 
   // We use the top window principal as the documentOrigin

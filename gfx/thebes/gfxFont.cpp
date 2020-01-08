@@ -45,6 +45,8 @@
 #include "gfx2DGlue.h"
 #include "TextDrawTarget.h"
 
+#include "ThebesRLBox.h"
+
 #include "GreekCasing.h"
 
 #include "cairo.h"
@@ -481,7 +483,7 @@ void gfxFontShaper::MergeFontFeatures(
     case NS_FONT_VARIANT_CAPS_ALLSMALL:
       mergedFeatures.Put(HB_TAG('c', '2', 's', 'c'), 1);
       // fall through to the small-caps case
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
 
     case NS_FONT_VARIANT_CAPS_SMALLCAPS:
       mergedFeatures.Put(HB_TAG('s', 'm', 'c', 'p'), 1);
@@ -492,7 +494,7 @@ void gfxFontShaper::MergeFontFeatures(
                                        : HB_TAG('c', '2', 'p', 'c'),
                          1);
       // fall through to the petite-caps case
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
 
     case NS_FONT_VARIANT_CAPS_PETITECAPS:
       mergedFeatures.Put(aAddSmallCaps ? HB_TAG('s', 'm', 'c', 'p')
@@ -1238,7 +1240,7 @@ bool gfxFont::HasSubstitutionRulesWithSpaceLookups(Script aRunScript) {
   return false;
 }
 
-bool gfxFont::SpaceMayParticipateInShaping(Script aRunScript) {
+tainted_boolean_hint gfxFont::SpaceMayParticipateInShaping(Script aRunScript) {
   // avoid checking fonts known not to include default space-dependent features
   if (MOZ_UNLIKELY(mFontEntry->mSkipDefaultFeatureSpaceCheck)) {
     if (!mKerningSet && mStyle.featureSettings.IsEmpty() &&
@@ -3018,7 +3020,16 @@ bool gfxFont::SplitAndInitTextRun(
   // fractions), need to shape without using the word cache which segments
   // textruns on space boundaries. Word cache can be used if the textrun
   // is short enough to fit in the word cache and it lacks spaces.
-  if (SpaceMayParticipateInShaping(aRunScript)) {
+  tainted_boolean_hint t_canParticipate =
+      SpaceMayParticipateInShaping(aRunScript);
+  bool canParticipate = t_canParticipate.unverified_safe_because(
+      "We need to ensure that this function operates safely independent of "
+      "t_canParticipate. The worst that can happen here is that the decision "
+      "to use the cache is incorrectly made, resulting in a bad "
+      "rendering/slowness. However, this  would not compromise the memory "
+      "safety of Firefox in any way, and can thus be permitted");
+
+  if (canParticipate) {
     if (aRunLength > wordCacheCharLimit || HasSpaces(aString, aRunLength)) {
       TEXT_PERF_INCR(tp, wordCacheSpaceRules);
       return ShapeTextWithoutWordCache(aDrawTarget, aString, aRunStart,
@@ -3261,7 +3272,7 @@ bool gfxFont::InitFakeSmallCapsRun(DrawTarget* aDrawTarget,
         case kUppercaseReduce:
           // use reduced-size font, then fall through to uppercase the text
           f = smallCapsFont;
-          MOZ_FALLTHROUGH;
+          [[fallthrough]];
 
         case kUppercase:
           // apply uppercase transform to the string

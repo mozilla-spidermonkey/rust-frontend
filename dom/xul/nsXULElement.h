@@ -383,29 +383,9 @@ class nsXULElement : public nsStyledElement {
   }
 
   // WebIDL API
-  void GetDir(DOMString& aValue) const { GetXULAttr(nsGkAtoms::dir, aValue); }
-  void SetDir(const nsAString& aValue, mozilla::ErrorResult& rv) {
-    SetXULAttr(nsGkAtoms::dir, aValue, rv);
-  }
   void GetFlex(DOMString& aValue) const { GetXULAttr(nsGkAtoms::flex, aValue); }
   void SetFlex(const nsAString& aValue, mozilla::ErrorResult& rv) {
     SetXULAttr(nsGkAtoms::flex, aValue, rv);
-  }
-  void GetOrdinal(DOMString& aValue) const {
-    GetXULAttr(nsGkAtoms::ordinal, aValue);
-  }
-  void SetOrdinal(const nsAString& aValue, mozilla::ErrorResult& rv) {
-    SetXULAttr(nsGkAtoms::ordinal, aValue, rv);
-  }
-  void GetOrient(DOMString& aValue) const {
-    GetXULAttr(nsGkAtoms::orient, aValue);
-  }
-  void SetOrient(const nsAString& aValue, mozilla::ErrorResult& rv) {
-    SetXULAttr(nsGkAtoms::orient, aValue, rv);
-  }
-  void GetPack(DOMString& aValue) const { GetXULAttr(nsGkAtoms::pack, aValue); }
-  void SetPack(const nsAString& aValue, mozilla::ErrorResult& rv) {
-    SetXULAttr(nsGkAtoms::pack, aValue, rv);
   }
   bool Hidden() const { return BoolAttrIsTrue(nsGkAtoms::hidden); }
   void SetHidden(bool aHidden) { SetXULBoolAttr(nsGkAtoms::hidden, aHidden); }

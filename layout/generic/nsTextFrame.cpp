@@ -5116,7 +5116,7 @@ void nsTextFrame::GetTextDecorations(
     // If we're on a ruby frame other than ruby text container, we
     // should continue.
     mozilla::StyleDisplay display = f->GetDisplay();
-    if (nsStyleDisplay::DisplayInside(display) != StyleDisplayInside::Inline &&
+    if (!nsStyleDisplay::IsInlineFlow(display) &&
         (!nsStyleDisplay::IsRubyDisplayType(display) ||
          display == mozilla::StyleDisplay::RubyTextContainer) &&
         nsStyleDisplay::IsDisplayTypeInlineOutside(display)) {
@@ -7853,7 +7853,7 @@ bool ClusterIterator::IsPunctuation() {
       if (ch == '_' && !sStopAtUnderscore) {
         return false;
       }
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case HB_UNICODE_GENERAL_CATEGORY_DASH_PUNCTUATION:    /* Pd */
     case HB_UNICODE_GENERAL_CATEGORY_CLOSE_PUNCTUATION:   /* Pe */
     case HB_UNICODE_GENERAL_CATEGORY_FINAL_PUNCTUATION:   /* Pf */

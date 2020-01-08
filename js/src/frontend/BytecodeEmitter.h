@@ -51,6 +51,12 @@
 #include "vm/StringType.h"  // JSAtom
 
 namespace js {
+
+enum class GeneratorResumeKind;
+
+}  // namespace js
+
+namespace js {
 namespace frontend {
 
 class CallOrNewEmitter;
@@ -135,9 +141,6 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   EmitterScope* innermostEmitterScopeNoCheck() const {
     return innermostEmitterScope_;
   }
-
-  // Script contains JSOP_CALLSITEOBJ.
-  bool hasCallSiteObj = false;
 
   // Script contains finally block.
   bool hasTryFinally = false;
@@ -294,8 +297,6 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   MOZ_MUST_USE bool emitThisEnvironmentCallee();
   MOZ_MUST_USE bool emitSuperBase();
-
-  void tellDebuggerAboutCompiledScript(JSContext* cx);
 
   uint32_t mainOffset() const { return *mainOffset_; }
 
@@ -578,6 +579,8 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   }
   MOZ_MUST_USE bool emitAwaitInInnermostScope(UnaryNode* awaitNode);
   MOZ_MUST_USE bool emitAwaitInScope(EmitterScope& currentScope);
+
+  MOZ_MUST_USE bool emitPushResumeKind(GeneratorResumeKind kind);
 
   MOZ_MUST_USE bool emitPropLHS(PropertyAccess* prop);
   MOZ_MUST_USE bool emitPropIncDec(UnaryNode* incDec);

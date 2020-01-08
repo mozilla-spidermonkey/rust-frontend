@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <numeric>
 #include <stdint.h>  // UINTPTR_MAX, uintptr_t
+#include <utility>
 #include "FileInfo.h"
 #include "FileManager.h"
 #include "IDBObjectStore.h"
@@ -38,6 +39,7 @@
 #include "mozilla/storage.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/Unused.h"
+#include "mozilla/UniquePtr.h"
 #include "mozilla/UniquePtrExtensions.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/File.h"
@@ -75,7 +77,6 @@
 #include "mozIStorageFunction.h"
 #include "mozIStorageProgressHandler.h"
 #include "mozIStorageService.h"
-#include "nsAutoPtr.h"
 #include "nsCharSeparatedTokenizer.h"
 #include "nsClassHashtable.h"
 #include "nsCOMPtr.h"
@@ -816,7 +817,7 @@ nsresult MakeCompressedIndexDataValues(
 
   MOZ_ASSERT(blobDataIter == blobData.get() + blobDataLength);
 
-  aCompressedIndexDataValues.swap(blobData);
+  aCompressedIndexDataValues = std::move(blobData);
   *aCompressedIndexDataValuesLength = uint32_t(blobDataLength);
 
   return NS_OK;
@@ -3887,7 +3888,8 @@ nsresult UpgradeSchemaFrom25_0To26_0(mozIStorageConnection* aConnection) {
 }
 
 nsresult GetDatabaseFileURL(nsIFile* aDatabaseFile, int64_t aDirectoryLockId,
-                            uint32_t aTelemetryId, nsIFileURL** aResult) {
+                            uint32_t aTelemetryId,
+                            nsCOMPtr<nsIFileURL>* aResult) {
   MOZ_ASSERT(aDatabaseFile);
   MOZ_ASSERT(aDirectoryLockId >= -1);
   MOZ_ASSERT(aResult);
@@ -3912,8 +3914,6 @@ nsresult GetDatabaseFileURL(nsIFile* aDatabaseFile, int64_t aDirectoryLockId,
     return rv;
   }
 
-  nsCOMPtr<nsIFileURL> fileUrl;
-
   // aDirectoryLockId should only be -1 when we are called from
   // FileManager::InitDirectory when the temporary storage hasn't been
   // initialized yet. At that time, the in-memory objects (e.g. OriginInfo) are
@@ -3934,12 +3934,11 @@ nsresult GetDatabaseFileURL(nsIFile* aDatabaseFile, int64_t aDirectoryLockId,
   rv = NS_MutateURI(mutator)
            .SetQuery(NS_LITERAL_CSTRING("cache=private") +
                      directoryLockIdClause + telemetryFilenameClause)
-           .Finalize(fileUrl);
+           .Finalize(*aResult);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
 
-  fileUrl.forget(aResult);
   return NS_OK;
 }
 
@@ -4067,8 +4066,9 @@ template <>
 struct StorageOpenTraits<nsIFileURL*> {
   static nsresult Open(mozIStorageService* aStorageService,
                        nsIFileURL* aFileURL,
-                       mozIStorageConnection** aConnection) {
-    return aStorageService->OpenDatabaseWithFileURL(aFileURL, aConnection);
+                       nsCOMPtr<mozIStorageConnection>* aConnection) {
+    return aStorageService->OpenDatabaseWithFileURL(
+        aFileURL, getter_AddRefs(*aConnection));
   }
 
 #ifdef DEBUG
@@ -4081,8 +4081,9 @@ struct StorageOpenTraits<nsIFileURL*> {
 template <>
 struct StorageOpenTraits<nsIFile*> {
   static nsresult Open(mozIStorageService* aStorageService, nsIFile* aFile,
-                       mozIStorageConnection** aConnection) {
-    return aStorageService->OpenUnsharedDatabase(aFile, aConnection);
+                       nsCOMPtr<mozIStorageConnection>* aConnection) {
+    return aStorageService->OpenUnsharedDatabase(aFile,
+                                                 getter_AddRefs(*aConnection));
   }
 
 #ifdef DEBUG
@@ -4100,9 +4101,9 @@ struct StorageOpenTraits<SmartPtr<FileOrURLType>>
     : public StorageOpenTraits<FileOrURLType*> {};
 
 template <class FileOrURLType>
-nsresult OpenDatabaseAndHandleBusy(mozIStorageService* aStorageService,
-                                   FileOrURLType aFileOrURL,
-                                   mozIStorageConnection** aConnection) {
+nsresult OpenDatabaseAndHandleBusy(
+    mozIStorageService* aStorageService, FileOrURLType aFileOrURL,
+    nsCOMPtr<mozIStorageConnection>* aConnection) {
   MOZ_ASSERT(!NS_IsMainThread());
   MOZ_ASSERT(!IsOnBackgroundThread());
   MOZ_ASSERT(aStorageService);
@@ -4110,8 +4111,8 @@ nsresult OpenDatabaseAndHandleBusy(mozIStorageService* aStorageService,
   MOZ_ASSERT(aConnection);
 
   nsCOMPtr<mozIStorageConnection> connection;
-  nsresult rv = StorageOpenTraits<FileOrURLType>::Open(
-      aStorageService, aFileOrURL, getter_AddRefs(connection));
+  nsresult rv = StorageOpenTraits<FileOrURLType>::Open(aStorageService,
+                                                       aFileOrURL, &connection);
 
   if (rv == NS_ERROR_STORAGE_BUSY) {
 #ifdef DEBUG
@@ -4136,7 +4137,7 @@ nsresult OpenDatabaseAndHandleBusy(mozIStorageService* aStorageService,
       PR_Sleep(PR_MillisecondsToInterval(100));
 
       rv = StorageOpenTraits<FileOrURLType>::Open(aStorageService, aFileOrURL,
-                                                  getter_AddRefs(connection));
+                                                  &connection);
       if (rv != NS_ERROR_STORAGE_BUSY ||
           TimeStamp::NowLoRes() - start > TimeDuration::FromSeconds(10)) {
         break;
@@ -4148,7 +4149,7 @@ nsresult OpenDatabaseAndHandleBusy(mozIStorageService* aStorageService,
     return rv;
   }
 
-  connection.forget(aConnection);
+  *aConnection = std::move(connection);
   return NS_OK;
 }
 
@@ -4170,8 +4171,7 @@ nsresult CreateStorageConnection(nsIFile* aDBFile, nsIFile* aFMDirectory,
   bool exists;
 
   nsCOMPtr<nsIFileURL> dbFileUrl;
-  rv = GetDatabaseFileURL(aDBFile, aDirectoryLockId, aTelemetryId,
-                          getter_AddRefs(dbFileUrl));
+  rv = GetDatabaseFileURL(aDBFile, aDirectoryLockId, aTelemetryId, &dbFileUrl);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -4183,7 +4183,7 @@ nsresult CreateStorageConnection(nsIFile* aDBFile, nsIFile* aFMDirectory,
   }
 
   nsCOMPtr<mozIStorageConnection> connection;
-  rv = OpenDatabaseAndHandleBusy(ss, dbFileUrl, getter_AddRefs(connection));
+  rv = OpenDatabaseAndHandleBusy(ss, dbFileUrl, &connection);
   if (rv == NS_ERROR_FILE_CORRUPTED) {
     // If we're just opening the database during origin initialization, then
     // we don't want to erase any files. The failure here will fail origin
@@ -4220,7 +4220,7 @@ nsresult CreateStorageConnection(nsIFile* aDBFile, nsIFile* aFMDirectory,
       }
     }
 
-    rv = OpenDatabaseAndHandleBusy(ss, dbFileUrl, getter_AddRefs(connection));
+    rv = OpenDatabaseAndHandleBusy(ss, dbFileUrl, &connection);
   }
 
   if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -4618,7 +4618,7 @@ nsCOMPtr<nsIFile> GetFileForPath(const nsAString& aPath) {
 
 nsresult GetStorageConnection(nsIFile* aDatabaseFile, int64_t aDirectoryLockId,
                               uint32_t aTelemetryId,
-                              mozIStorageConnection** aConnection) {
+                              nsCOMPtr<mozIStorageConnection>* aConnection) {
   MOZ_ASSERT(!NS_IsMainThread());
   MOZ_ASSERT(!IsOnBackgroundThread());
   MOZ_ASSERT(aDatabaseFile);
@@ -4640,7 +4640,7 @@ nsresult GetStorageConnection(nsIFile* aDatabaseFile, int64_t aDirectoryLockId,
 
   nsCOMPtr<nsIFileURL> dbFileUrl;
   rv = GetDatabaseFileURL(aDatabaseFile, aDirectoryLockId, aTelemetryId,
-                          getter_AddRefs(dbFileUrl));
+                          &dbFileUrl);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -4652,7 +4652,7 @@ nsresult GetStorageConnection(nsIFile* aDatabaseFile, int64_t aDirectoryLockId,
   }
 
   nsCOMPtr<mozIStorageConnection> connection;
-  rv = OpenDatabaseAndHandleBusy(ss, dbFileUrl, getter_AddRefs(connection));
+  rv = OpenDatabaseAndHandleBusy(ss, dbFileUrl, &connection);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -4667,13 +4667,13 @@ nsresult GetStorageConnection(nsIFile* aDatabaseFile, int64_t aDirectoryLockId,
     return rv;
   }
 
-  connection.forget(aConnection);
+  *aConnection = std::move(connection);
   return NS_OK;
 }
 
 nsresult GetStorageConnection(const nsAString& aDatabaseFilePath,
                               int64_t aDirectoryLockId, uint32_t aTelemetryId,
-                              mozIStorageConnection** aConnection) {
+                              nsCOMPtr<mozIStorageConnection>* aConnection) {
   MOZ_ASSERT(!NS_IsMainThread());
   MOZ_ASSERT(!IsOnBackgroundThread());
   MOZ_ASSERT(!aDatabaseFilePath.IsEmpty());
@@ -4972,7 +4972,7 @@ class ConnectionPool final {
   struct IdleDatabaseInfo;
   struct IdleResource;
   struct IdleThreadInfo;
-  struct ThreadInfo;
+  class ThreadInfo;
   class ThreadRunnable;
   class TransactionInfo;
   struct TransactionInfoPair;
@@ -4994,7 +4994,7 @@ class ConnectionPool final {
   nsClassHashtable<nsUint64HashKey, TransactionInfo> mTransactions;
   nsTArray<TransactionInfo*> mQueuedTransactions;
 
-  nsTArray<nsAutoPtr<DatabasesCompleteCallback>> mCompleteCallbacks;
+  nsTArray<UniquePtr<DatabasesCompleteCallback>> mCompleteCallbacks;
 
   uint64_t mNextTransactionId;
   uint32_t mTotalThreadCount;
@@ -5009,7 +5009,7 @@ class ConnectionPool final {
   }
 
   nsresult GetOrCreateConnection(const Database* aDatabase,
-                                 DatabaseConnection** aConnection);
+                                 RefPtr<DatabaseConnection>* aConnection);
 
   uint64_t Start(const nsID& aBackgroundChildLoggingId,
                  const nsACString& aDatabaseId, int64_t aLoggingSerialNumber,
@@ -5043,7 +5043,7 @@ class ConnectionPool final {
 
   void CancelIdleTimer();
 
-  void ShutdownThread(ThreadInfo& aThreadInfo);
+  void ShutdownThread(ThreadInfo aThreadInfo);
 
   void CloseIdleDatabases();
 
@@ -5110,11 +5110,17 @@ class ConnectionPool::CloseConnectionRunnable final
   NS_DECL_NSIRUNNABLE
 };
 
-struct ConnectionPool::ThreadInfo {
-  nsCOMPtr<nsIThread> mThread;
-  RefPtr<ThreadRunnable> mRunnable;
-
+class ConnectionPool::ThreadInfo {
+ public:
   ThreadInfo();
+
+  ThreadInfo(nsCOMPtr<nsIThread> aThread, RefPtr<ThreadRunnable> aRunnable)
+      : mThread{std::move(aThread)}, mRunnable{std::move(aRunnable)} {
+    AssertIsOnBackgroundThread();
+    AssertValid();
+
+    MOZ_COUNT_CTOR(ConnectionPool::ThreadInfo);
+  }
 
   ThreadInfo(const ThreadInfo& aOther) = delete;
   ThreadInfo& operator=(const ThreadInfo& aOther) = delete;
@@ -5122,7 +5128,46 @@ struct ConnectionPool::ThreadInfo {
   ThreadInfo(ThreadInfo&& aOther) noexcept;
   ThreadInfo& operator=(ThreadInfo&& aOther) = default;
 
+  bool IsValid() const {
+    const bool res = mThread;
+    if (res) {
+      AssertValid();
+    } else {
+      AssertEmpty();
+    }
+    return res;
+  }
+
+  void AssertValid() const {
+    MOZ_ASSERT(mThread);
+    MOZ_ASSERT(mRunnable);
+  }
+
+  void AssertEmpty() const {
+    MOZ_ASSERT(!mThread);
+    MOZ_ASSERT(!mRunnable);
+  }
+
+  nsIThread& ThreadRef() {
+    AssertValid();
+    return *mThread;
+  }
+
+  std::tuple<nsCOMPtr<nsIThread>, RefPtr<ThreadRunnable>> Forget() {
+    AssertValid();
+
+    return {std::move(mThread), std::move(mRunnable)};
+  }
+
   ~ThreadInfo();
+
+  bool operator==(const ThreadInfo& aOther) const {
+    return mThread == aOther.mThread && mRunnable == aOther.mRunnable;
+  }
+
+ private:
+  nsCOMPtr<nsIThread> mThread;
+  RefPtr<ThreadRunnable> mRunnable;
 };
 
 struct ConnectionPool::DatabaseInfo final {
@@ -5166,7 +5211,7 @@ struct ConnectionPool::DatabaseInfo final {
 };
 
 struct ConnectionPool::DatabasesCompleteCallback final {
-  friend class nsAutoPtr<DatabasesCompleteCallback>;
+  friend class DefaultDelete<DatabasesCompleteCallback>;
 
   nsTArray<nsCString> mDatabaseIds;
   nsCOMPtr<nsIRunnable> mCallback;
@@ -5270,8 +5315,7 @@ struct ConnectionPool::IdleThreadInfo final : public IdleResource {
       : IdleResource(std::move(aOther)),
         mThreadInfo(std::move(aOther.mThreadInfo)) {
     AssertIsOnBackgroundThread();
-    MOZ_ASSERT(mThreadInfo.mRunnable);
-    MOZ_ASSERT(mThreadInfo.mThread);
+    mThreadInfo.AssertValid();
 
     MOZ_COUNT_CTOR(ConnectionPool::IdleThreadInfo);
   }
@@ -5281,8 +5325,7 @@ struct ConnectionPool::IdleThreadInfo final : public IdleResource {
   ~IdleThreadInfo();
 
   bool operator==(const IdleThreadInfo& aOther) const {
-    return mThreadInfo.mRunnable == aOther.mThreadInfo.mRunnable &&
-           mThreadInfo.mThread == aOther.mThreadInfo.mThread;
+    return mThreadInfo == aOther.mThreadInfo;
   }
 
   bool operator<(const IdleThreadInfo& aOther) const {
@@ -5839,13 +5882,13 @@ class Database final
 
  public:
   // Created by OpenDatabaseOp.
-  Database(Factory* aFactory, const PrincipalInfo& aPrincipalInfo,
+  Database(RefPtr<Factory> aFactory, const PrincipalInfo& aPrincipalInfo,
            const Maybe<ContentParentId>& aOptionalContentParentId,
            const nsACString& aGroup, const nsACString& aOrigin,
-           uint32_t aTelemetryId, FullDatabaseMetadata* aMetadata,
-           FileManager* aFileManager,
-           already_AddRefed<DirectoryLock> aDirectoryLock,
-           bool aFileHandleDisabled, bool aChromeWriteAccessAllowed);
+           uint32_t aTelemetryId, RefPtr<FullDatabaseMetadata> aMetadata,
+           RefPtr<FileManager> aFileManager,
+           RefPtr<DirectoryLock> aDirectoryLock, bool aFileHandleDisabled,
+           bool aChromeWriteAccessAllowed);
 
   void AssertIsOnConnectionThread() const {
 #ifdef DEBUG
@@ -5974,7 +6017,7 @@ class Database final
                     mFactory.forget());
   }
 
-  already_AddRefed<FileInfo> GetBlob(const IPCBlob& aID);
+  MOZ_MUST_USE RefPtr<FileInfo> GetBlob(const IPCBlob& aID);
 
   void UnmapBlob(const nsID& aID);
 
@@ -6077,9 +6120,7 @@ class Database::UnmapBlobCallback final
     AssertIsOnBackgroundThread();
     MOZ_ASSERT(mDatabase);
 
-    RefPtr<Database> database;
-    mDatabase.swap(database);
-
+    const RefPtr<Database> database = std::move(mDatabase);
     database->UnmapBlob(aID);
   }
 
@@ -6749,7 +6790,7 @@ class FactoryOp
   void Stringify(nsACString& aResult) const;
 
  protected:
-  FactoryOp(Factory* aFactory, already_AddRefed<ContentParent> aContentParent,
+  FactoryOp(RefPtr<Factory> aFactory, RefPtr<ContentParent> aContentParent,
             const CommonFactoryRequestParams& aCommonParams, bool aDeleting);
 
   ~FactoryOp() override {
@@ -6877,8 +6918,7 @@ class OpenDatabaseOp final : public FactoryOp {
   uint32_t mTelemetryId;
 
  public:
-  OpenDatabaseOp(Factory* aFactory,
-                 already_AddRefed<ContentParent> aContentParent,
+  OpenDatabaseOp(RefPtr<Factory> aFactory, RefPtr<ContentParent> aContentParent,
                  const CommonFactoryRequestParams& aParams);
 
  private:
@@ -6965,10 +7005,10 @@ class DeleteDatabaseOp final : public FactoryOp {
   uint64_t mPreviousVersion;
 
  public:
-  DeleteDatabaseOp(Factory* aFactory,
-                   already_AddRefed<ContentParent> aContentParent,
+  DeleteDatabaseOp(RefPtr<Factory> aFactory,
+                   RefPtr<ContentParent> aContentParent,
                    const CommonFactoryRequestParams& aParams)
-      : FactoryOp(aFactory, std::move(aContentParent), aParams,
+      : FactoryOp(std::move(aFactory), std::move(aContentParent), aParams,
                   /* aDeleting */ true),
         mPreviousVersion(0) {}
 
@@ -7080,7 +7120,7 @@ class CreateFileOp final : public DatabaseOp {
  private:
   ~CreateFileOp() override = default;
 
-  nsresult CreateMutableFile(MutableFile** aMutableFile);
+  nsresult CreateMutableFile(RefPtr<MutableFile>* aMutableFile);
 
   nsresult DoDatabaseWork() override;
 
@@ -7552,7 +7592,7 @@ class IndexRequestOpBase : public NormalTransactionOp {
   ~IndexRequestOpBase() override = default;
 
  private:
-  static already_AddRefed<FullIndexMetadata> IndexMetadataForParams(
+  static RefPtr<FullIndexMetadata> IndexMetadataForParams(
       const TransactionBase& aTransaction, const RequestParams& aParams);
 };
 
@@ -8284,13 +8324,11 @@ class Maintenance final : public Runnable, public OpenDirectoryListener {
 
   void UnregisterDatabaseMaintenance(DatabaseMaintenance* aDatabaseMaintenance);
 
-  already_AddRefed<DatabaseMaintenance> GetDatabaseMaintenance(
+  RefPtr<DatabaseMaintenance> GetDatabaseMaintenance(
       const nsAString& aDatabasePath) const {
     AssertIsOnBackgroundThread();
 
-    RefPtr<DatabaseMaintenance> result =
-        mDatabaseMaintenances.Get(aDatabasePath);
-    return result.forget();
+    return mDatabaseMaintenances.Get(aDatabasePath);
   }
 
   void Stringify(nsACString& aResult) const;
@@ -8656,7 +8694,7 @@ nsresult DeserializeStructuredCloneFile(const FileManager& aFileManager,
     return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
   }
 
-  aFile->mFileInfo.swap(fileInfo);
+  aFile->mFileInfo = std::move(fileInfo);
   aFile->mType = type;
 
   return NS_OK;
@@ -8937,7 +8975,7 @@ nsresult DeleteFilesNoQuota(nsIFile* aDirectory, const nsAString& aFilename) {
 // be checked before executing the next operation or initialization.
 nsresult CreateMarkerFile(nsIFile* aBaseDirectory,
                           const nsAString& aDatabaseNameBase,
-                          nsIFile** aMarkerFileOut) {
+                          nsCOMPtr<nsIFile>* aMarkerFileOut) {
   AssertIsOnIOThread();
   MOZ_ASSERT(aBaseDirectory);
   MOZ_ASSERT(!aDatabaseNameBase.IsEmpty());
@@ -8958,8 +8996,7 @@ nsresult CreateMarkerFile(nsIFile* aBaseDirectory,
     return rv;
   }
 
-  markerFile.forget(aMarkerFileOut);
-
+  *aMarkerFileOut = std::move(markerFile);
   return NS_OK;
 }
 
@@ -9002,8 +9039,7 @@ nsresult RemoveDatabaseFilesAndDirectory(nsIFile* aBaseDirectory,
   AUTO_PROFILER_LABEL("RemoveDatabaseFilesAndDirectory", DOM);
 
   nsCOMPtr<nsIFile> markerFile;
-  nsresult rv = CreateMarkerFile(aBaseDirectory, aFilenameBase,
-                                 getter_AddRefs(markerFile));
+  nsresult rv = CreateMarkerFile(aBaseDirectory, aFilenameBase, &markerFile);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -9736,11 +9772,10 @@ bool RecvFlushPendingFileDeletions() {
   return true;
 }
 
-already_AddRefed<mozilla::dom::quota::Client> CreateQuotaClient() {
+RefPtr<mozilla::dom::quota::Client> CreateQuotaClient() {
   AssertIsOnBackgroundThread();
 
-  RefPtr<QuotaClient> client = new QuotaClient();
-  return client.forget();
+  return MakeRefPtr<QuotaClient>();
 }
 
 FileHandleThreadPool* GetFileHandleThreadPool() {
@@ -9914,7 +9949,7 @@ nsresult DatabaseConnection::BeginWriteTransaction() {
       return rv;
     }
 
-    mUpdateRefcountFunction.swap(function);
+    mUpdateRefcountFunction = std::move(function);
   }
 
   // This one cannot obviously use ExecuteCachedStatement because of the custom
@@ -11185,11 +11220,10 @@ void ConnectionPool::IdleTimerCallback(nsITimer* aTimer, void* aClosure) {
 
   for (uint32_t count = self->mIdleThreads.Length(); index < count; index++) {
     IdleThreadInfo& info = self->mIdleThreads[index];
-    MOZ_ASSERT(info.mThreadInfo.mThread);
-    MOZ_ASSERT(info.mThreadInfo.mRunnable);
+    info.mThreadInfo.AssertValid();
 
     if (now >= info.mIdleTime) {
-      self->ShutdownThread(info.mThreadInfo);
+      self->ShutdownThread(std::move(info.mThreadInfo));
     } else {
       break;
     }
@@ -11203,10 +11237,11 @@ void ConnectionPool::IdleTimerCallback(nsITimer* aTimer, void* aClosure) {
 }
 
 nsresult ConnectionPool::GetOrCreateConnection(
-    const Database* aDatabase, DatabaseConnection** aConnection) {
+    const Database* aDatabase, RefPtr<DatabaseConnection>* aConnection) {
   MOZ_ASSERT(!NS_IsMainThread());
   MOZ_ASSERT(!IsOnBackgroundThread());
   MOZ_ASSERT(aDatabase);
+  MOZ_ASSERT(aConnection);
 
   AUTO_PROFILER_LABEL("ConnectionPool::GetOrCreateConnection", DOM);
 
@@ -11226,7 +11261,7 @@ nsresult ConnectionPool::GetOrCreateConnection(
     nsCOMPtr<mozIStorageConnection> storageConnection;
     nsresult rv = GetStorageConnection(
         aDatabase->FilePath(), aDatabase->DirectoryLockId(),
-        aDatabase->TelemetryId(), getter_AddRefs(storageConnection));
+        aDatabase->TelemetryId(), &storageConnection);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
@@ -11252,7 +11287,7 @@ nsresult ConnectionPool::GetOrCreateConnection(
 
   dbInfo->AssertIsOnConnectionThread();
 
-  connection.forget(aConnection);
+  *aConnection = std::move(connection);
   return NS_OK;
 }
 
@@ -11355,14 +11390,13 @@ void ConnectionPool::Dispatch(uint64_t aTransactionId, nsIRunnable* aRunnable) {
   if (transactionInfo->mRunning) {
     DatabaseInfo* dbInfo = transactionInfo->mDatabaseInfo;
     MOZ_ASSERT(dbInfo);
-    MOZ_ASSERT(dbInfo->mThreadInfo.mThread);
-    MOZ_ASSERT(dbInfo->mThreadInfo.mRunnable);
+    dbInfo->mThreadInfo.AssertValid();
     MOZ_ASSERT(!dbInfo->mClosing);
     MOZ_ASSERT_IF(transactionInfo->mIsWriteTransaction,
                   dbInfo->mRunningWriteTransaction == transactionInfo);
 
-    MOZ_ALWAYS_SUCCEEDS(
-        dbInfo->mThreadInfo.mThread->Dispatch(aRunnable, NS_DISPATCH_NORMAL));
+    MOZ_ALWAYS_SUCCEEDS(dbInfo->mThreadInfo.ThreadRef().Dispatch(
+        aRunnable, NS_DISPATCH_NORMAL));
   } else {
     transactionInfo->mQueuedRunnables.AppendElement(aRunnable);
   }
@@ -11413,8 +11447,8 @@ void ConnectionPool::WaitForDatabasesToComplete(
     return;
   }
 
-  mCompleteCallbacks.EmplaceBack(
-      new DatabasesCompleteCallback(std::move(aDatabaseIds), aCallback));
+  mCompleteCallbacks.EmplaceBack(MakeUnique<DatabasesCompleteCallback>(
+      std::move(aDatabaseIds), aCallback));
 }
 
 void ConnectionPool::Shutdown() {
@@ -11550,17 +11584,12 @@ void ConnectionPool::CancelIdleTimer() {
   }
 }
 
-void ConnectionPool::ShutdownThread(ThreadInfo& aThreadInfo) {
+void ConnectionPool::ShutdownThread(ThreadInfo aThreadInfo) {
   AssertIsOnOwningThread();
-  MOZ_ASSERT(aThreadInfo.mThread);
-  MOZ_ASSERT(aThreadInfo.mRunnable);
   MOZ_ASSERT(mTotalThreadCount);
 
-  RefPtr<ThreadRunnable> runnable;
-  aThreadInfo.mRunnable.swap(runnable);
-
-  nsCOMPtr<nsIThread> thread;
-  aThreadInfo.mThread.swap(thread);
+  // We need to move thread and runnable separately.
+  auto [thread, runnable] = aThreadInfo.Forget();
 
   IDB_DEBUG_LOG(("ConnectionPool shutting down thread %" PRIu32,
                  runnable->SerialNumber()));
@@ -11603,7 +11632,7 @@ void ConnectionPool::ShutdownIdleThreads() {
   AUTO_PROFILER_LABEL("ConnectionPool::ShutdownIdleThreads", DOM);
 
   for (auto& idleThread : mIdleThreads) {
-    ShutdownThread(idleThread.mThreadInfo);
+    ShutdownThread(std::move(idleThread.mThreadInfo));
   }
   mIdleThreads.Clear();
 }
@@ -11629,9 +11658,7 @@ bool ConnectionPool::ScheduleTransaction(TransactionInfo* aTransactionInfo,
     return true;
   }
 
-  if (!dbInfo->mThreadInfo.mThread) {
-    MOZ_ASSERT(!dbInfo->mThreadInfo.mRunnable);
-
+  if (!dbInfo->mThreadInfo.IsValid()) {
     if (mIdleThreads.IsEmpty()) {
       bool created = false;
 
@@ -11650,8 +11677,8 @@ bool ConnectionPool::ScheduleTransaction(TransactionInfo* aTransactionInfo,
           IDB_DEBUG_LOG(("ConnectionPool created thread %" PRIu32,
                          runnable->SerialNumber()));
 
-          dbInfo->mThreadInfo.mThread.swap(newThread);
-          dbInfo->mThreadInfo.mRunnable.swap(runnable);
+          dbInfo->mThreadInfo =
+              ThreadInfo{std::move(newThread), std::move(runnable)};
 
           mTotalThreadCount++;
           created = true;
@@ -11674,9 +11701,9 @@ bool ConnectionPool::ScheduleTransaction(TransactionInfo* aTransactionInfo,
              index > 0; index--) {
           DatabaseInfo* dbInfo = mDatabasesPerformingIdleMaintenance[index - 1];
           MOZ_ASSERT(dbInfo);
-          MOZ_ASSERT(dbInfo->mThreadInfo.mThread);
+          dbInfo->mThreadInfo.AssertValid();
 
-          MOZ_ALWAYS_SUCCEEDS(dbInfo->mThreadInfo.mThread->Dispatch(
+          MOZ_ALWAYS_SUCCEEDS(dbInfo->mThreadInfo.ThreadRef().Dispatch(
               runnable, NS_DISPATCH_NORMAL));
         }
       }
@@ -11691,10 +11718,7 @@ bool ConnectionPool::ScheduleTransaction(TransactionInfo* aTransactionInfo,
     } else {
       const uint32_t lastIndex = mIdleThreads.Length() - 1;
 
-      ThreadInfo& threadInfo = mIdleThreads[lastIndex].mThreadInfo;
-
-      dbInfo->mThreadInfo.mRunnable.swap(threadInfo.mRunnable);
-      dbInfo->mThreadInfo.mThread.swap(threadInfo.mThread);
+      dbInfo->mThreadInfo = std::move(mIdleThreads[lastIndex].mThreadInfo);
 
       mIdleThreads.RemoveElementAt(lastIndex);
 
@@ -11702,8 +11726,7 @@ bool ConnectionPool::ScheduleTransaction(TransactionInfo* aTransactionInfo,
     }
   }
 
-  MOZ_ASSERT(dbInfo->mThreadInfo.mThread);
-  MOZ_ASSERT(dbInfo->mThreadInfo.mRunnable);
+  dbInfo->mThreadInfo.AssertValid();
 
   if (aTransactionInfo->mIsWriteTransaction) {
     if (dbInfo->mRunningWriteTransaction) {
@@ -11728,7 +11751,7 @@ bool ConnectionPool::ScheduleTransaction(TransactionInfo* aTransactionInfo,
 
   if (!queuedRunnables.IsEmpty()) {
     for (auto& queuedRunnable : queuedRunnables) {
-      MOZ_ALWAYS_SUCCEEDS(dbInfo->mThreadInfo.mThread->Dispatch(
+      MOZ_ALWAYS_SUCCEEDS(dbInfo->mThreadInfo.ThreadRef().Dispatch(
           queuedRunnable.forget(), NS_DISPATCH_NORMAL));
     }
 
@@ -11753,8 +11776,7 @@ void ConnectionPool::NoteFinishedTransaction(uint64_t aTransactionId) {
   DatabaseInfo* dbInfo = transactionInfo->mDatabaseInfo;
   MOZ_ASSERT(dbInfo);
   MOZ_ASSERT(mDatabases.Get(transactionInfo->mDatabaseId) == dbInfo);
-  MOZ_ASSERT(dbInfo->mThreadInfo.mThread);
-  MOZ_ASSERT(dbInfo->mThreadInfo.mRunnable);
+  dbInfo->mThreadInfo.AssertValid();
 
   // Schedule the next write transaction if there are any queued.
   if (dbInfo->mRunningWriteTransaction == transactionInfo) {
@@ -11815,8 +11837,7 @@ void ConnectionPool::NoteFinishedTransaction(uint64_t aTransactionId) {
 
 void ConnectionPool::ScheduleQueuedTransactions(ThreadInfo aThreadInfo) {
   AssertIsOnOwningThread();
-  MOZ_ASSERT(aThreadInfo.mThread);
-  MOZ_ASSERT(aThreadInfo.mRunnable);
+  aThreadInfo.AssertValid();
   MOZ_ASSERT(!mQueuedTransactions.IsEmpty());
 
   AUTO_PROFILER_LABEL("ConnectionPool::ScheduleQueuedTransactions", DOM);
@@ -11841,8 +11862,7 @@ void ConnectionPool::NoteIdleDatabase(DatabaseInfo* aDatabaseInfo) {
   AssertIsOnOwningThread();
   MOZ_ASSERT(aDatabaseInfo);
   MOZ_ASSERT(!aDatabaseInfo->TotalTransactionCount());
-  MOZ_ASSERT(aDatabaseInfo->mThreadInfo.mThread);
-  MOZ_ASSERT(aDatabaseInfo->mThreadInfo.mRunnable);
+  aDatabaseInfo->mThreadInfo.AssertValid();
   MOZ_ASSERT(!mIdleDatabases.Contains(aDatabaseInfo));
 
   AUTO_PROFILER_LABEL("ConnectionPool::NoteIdleDatabase", DOM);
@@ -11862,7 +11882,7 @@ void ConnectionPool::NoteIdleDatabase(DatabaseInfo* aDatabaseInfo) {
       // If there are no other databases that need to run then we can shut this
       // thread down immediately instead of going through the idle thread
       // mechanism.
-      ShutdownThread(aDatabaseInfo->mThreadInfo);
+      ShutdownThread(std::move(aDatabaseInfo->mThreadInfo));
     }
 
     return;
@@ -11895,15 +11915,13 @@ void ConnectionPool::NoteClosedDatabase(DatabaseInfo* aDatabaseInfo) {
   //   4. Finally, if nothing above took the thread then we can add it to our
   //      list of idle threads. It may be reused or it may time out. If we have
   //      too many idle threads then we will shut down the oldest.
-  if (aDatabaseInfo->mThreadInfo.mThread) {
-    MOZ_ASSERT(aDatabaseInfo->mThreadInfo.mRunnable);
-
+  if (aDatabaseInfo->mThreadInfo.IsValid()) {
     if (!mQueuedTransactions.IsEmpty()) {
       // Give the thread to another database.
       ScheduleQueuedTransactions(std::move(aDatabaseInfo->mThreadInfo));
     } else if (!aDatabaseInfo->TotalTransactionCount()) {
       if (mShutdownRequested) {
-        ShutdownThread(aDatabaseInfo->mThreadInfo);
+        ShutdownThread(std::move(aDatabaseInfo->mThreadInfo));
       } else {
         auto idleThreadInfo =
             IdleThreadInfo{std::move(aDatabaseInfo->mThreadInfo)};
@@ -11912,7 +11930,7 @@ void ConnectionPool::NoteClosedDatabase(DatabaseInfo* aDatabaseInfo) {
         mIdleThreads.InsertElementSorted(std::move(idleThreadInfo));
 
         if (mIdleThreads.Length() > kMaxIdleConnectionThreadCount) {
-          ShutdownThread(mIdleThreads[0].mThreadInfo);
+          ShutdownThread(std::move(mIdleThreads[0].mThreadInfo));
           mIdleThreads.RemoveElementAt(0);
         }
 
@@ -11957,7 +11975,7 @@ void ConnectionPool::NoteClosedDatabase(DatabaseInfo* aDatabaseInfo) {
   mCompleteCallbacks.RemoveElementsAt(
       std::remove_if(mCompleteCallbacks.begin(), mCompleteCallbacks.end(),
                      [& me = *this](const auto& completeCallback) {
-                       return me.MaybeFireCallback(completeCallback);
+                       return me.MaybeFireCallback(completeCallback.get());
                      }),
       mCompleteCallbacks.end());
 
@@ -11996,8 +12014,7 @@ void ConnectionPool::PerformIdleDatabaseMaintenance(
   AssertIsOnOwningThread();
   MOZ_ASSERT(aDatabaseInfo);
   MOZ_ASSERT(!aDatabaseInfo->TotalTransactionCount());
-  MOZ_ASSERT(aDatabaseInfo->mThreadInfo.mThread);
-  MOZ_ASSERT(aDatabaseInfo->mThreadInfo.mRunnable);
+  aDatabaseInfo->mThreadInfo.AssertValid();
   MOZ_ASSERT(aDatabaseInfo->mIdle);
   MOZ_ASSERT(!aDatabaseInfo->mCloseOnIdle);
   MOZ_ASSERT(!aDatabaseInfo->mClosing);
@@ -12011,7 +12028,7 @@ void ConnectionPool::PerformIdleDatabaseMaintenance(
 
   mDatabasesPerformingIdleMaintenance.AppendElement(aDatabaseInfo);
 
-  MOZ_ALWAYS_SUCCEEDS(aDatabaseInfo->mThreadInfo.mThread->Dispatch(
+  MOZ_ALWAYS_SUCCEEDS(aDatabaseInfo->mThreadInfo.ThreadRef().Dispatch(
       MakeAndAddRef<IdleConnectionRunnable>(aDatabaseInfo, neededCheckpoint),
       NS_DISPATCH_NORMAL));
 }
@@ -12020,15 +12037,14 @@ void ConnectionPool::CloseDatabase(DatabaseInfo* aDatabaseInfo) {
   AssertIsOnOwningThread();
   MOZ_ASSERT(aDatabaseInfo);
   MOZ_DIAGNOSTIC_ASSERT(!aDatabaseInfo->TotalTransactionCount());
-  MOZ_ASSERT(aDatabaseInfo->mThreadInfo.mThread);
-  MOZ_ASSERT(aDatabaseInfo->mThreadInfo.mRunnable);
+  aDatabaseInfo->mThreadInfo.AssertValid();
   MOZ_ASSERT(!aDatabaseInfo->mClosing);
 
   aDatabaseInfo->mIdle = false;
   aDatabaseInfo->mNeedsCheckpoint = false;
   aDatabaseInfo->mClosing = true;
 
-  MOZ_ALWAYS_SUCCEEDS(aDatabaseInfo->mThreadInfo.mThread->Dispatch(
+  MOZ_ALWAYS_SUCCEEDS(aDatabaseInfo->mThreadInfo.ThreadRef().Dispatch(
       MakeAndAddRef<CloseConnectionRunnable>(aDatabaseInfo),
       NS_DISPATCH_NORMAL));
 }
@@ -12072,8 +12088,7 @@ ConnectionPool::IdleConnectionRunnable::Run() {
   MOZ_ASSERT(mDatabaseInfo);
   MOZ_ASSERT(!mDatabaseInfo->mIdle);
 
-  nsCOMPtr<nsIEventTarget> owningThread;
-  mOwningEventTarget.swap(owningThread);
+  const nsCOMPtr<nsIEventTarget> owningThread = std::move(mOwningEventTarget);
 
   if (owningThread) {
     mDatabaseInfo->AssertIsOnConnectionThread();
@@ -12116,8 +12131,7 @@ ConnectionPool::CloseConnectionRunnable::Run() {
   if (mOwningEventTarget) {
     MOZ_ASSERT(mDatabaseInfo->mClosing);
 
-    nsCOMPtr<nsIEventTarget> owningThread;
-    mOwningEventTarget.swap(owningThread);
+    const nsCOMPtr<nsIEventTarget> owningThread = std::move(mOwningEventTarget);
 
     // The connection could be null if EnsureConnection() didn't run or was not
     // successful in TransactionDatabaseOperationBase::RunOnConnectionThread().
@@ -12175,8 +12189,7 @@ ConnectionPool::DatabaseInfo::~DatabaseInfo() {
   MOZ_ASSERT(!mConnection);
   MOZ_ASSERT(mScheduledWriteTransactions.IsEmpty());
   MOZ_ASSERT(!mRunningWriteTransaction);
-  MOZ_ASSERT(!mThreadInfo.mThread);
-  MOZ_ASSERT(!mThreadInfo.mRunnable);
+  mThreadInfo.AssertEmpty();
   MOZ_ASSERT(!TotalTransactionCount());
 
   MOZ_COUNT_DTOR(ConnectionPool::DatabaseInfo);
@@ -12387,8 +12400,7 @@ ConnectionPool::IdleThreadInfo::IdleThreadInfo(ThreadInfo aThreadInfo)
                    TimeDuration::FromMilliseconds(kConnectionThreadIdleMS)),
       mThreadInfo(std::move(aThreadInfo)) {
   AssertIsOnBackgroundThread();
-  MOZ_ASSERT(mThreadInfo.mRunnable);
-  MOZ_ASSERT(mThreadInfo.mThread);
+  mThreadInfo.AssertValid();
 
   MOZ_COUNT_CTOR(ConnectionPool::IdleThreadInfo);
 }
@@ -12712,10 +12724,10 @@ Factory::AllocPBackgroundIDBFactoryRequestParent(
 
   auto actor = [&]() -> RefPtr<FactoryOp> {
     if (aParams.type() == FactoryRequestParams::TOpenDatabaseRequestParams) {
-      return MakeRefPtr<OpenDatabaseOp>(this, contentParent.forget(),
+      return MakeRefPtr<OpenDatabaseOp>(this, std::move(contentParent),
                                         *commonParams);
     } else {
-      return MakeRefPtr<DeleteDatabaseOp>(this, contentParent.forget(),
+      return MakeRefPtr<DeleteDatabaseOp>(this, std::move(contentParent),
                                           *commonParams);
     }
   }();
@@ -12823,8 +12835,7 @@ void WaitForTransactionsHelper::CallCallback() {
              mState == State::WaitingForTransactions ||
              mState == State::WaitingForFileHandles);
 
-  nsCOMPtr<nsIRunnable> callback;
-  mCallback.swap(callback);
+  const nsCOMPtr<nsIRunnable> callback = std::move(mCallback);
 
   callback->Run();
 
@@ -12860,27 +12871,29 @@ WaitForTransactionsHelper::Run() {
  * Database
  ******************************************************************************/
 
-Database::Database(Factory* aFactory, const PrincipalInfo& aPrincipalInfo,
+Database::Database(RefPtr<Factory> aFactory,
+                   const PrincipalInfo& aPrincipalInfo,
                    const Maybe<ContentParentId>& aOptionalContentParentId,
                    const nsACString& aGroup, const nsACString& aOrigin,
-                   uint32_t aTelemetryId, FullDatabaseMetadata* aMetadata,
-                   FileManager* aFileManager,
-                   already_AddRefed<DirectoryLock> aDirectoryLock,
+                   uint32_t aTelemetryId,
+                   RefPtr<FullDatabaseMetadata> aMetadata,
+                   RefPtr<FileManager> aFileManager,
+                   RefPtr<DirectoryLock> aDirectoryLock,
                    bool aFileHandleDisabled, bool aChromeWriteAccessAllowed)
-    : mFactory(aFactory),
-      mMetadata(aMetadata),
-      mFileManager(aFileManager),
+    : mFactory(std::move(aFactory)),
+      mMetadata(std::move(aMetadata)),
+      mFileManager(std::move(aFileManager)),
       mDirectoryLock(std::move(aDirectoryLock)),
       mPrincipalInfo(aPrincipalInfo),
       mOptionalContentParentId(aOptionalContentParentId),
       mGroup(aGroup),
       mOrigin(aOrigin),
-      mId(aMetadata->mDatabaseId),
-      mFilePath(aMetadata->mFilePath),
+      mId(mMetadata->mDatabaseId),
+      mFilePath(mMetadata->mFilePath),
       mActiveMutableFileCount(0),
       mPendingCreateFileOpCount(0),
       mTelemetryId(aTelemetryId),
-      mPersistenceType(aMetadata->mCommonMetadata.persistenceType()),
+      mPersistenceType(mMetadata->mCommonMetadata.persistenceType()),
       mFileHandleDisabled(aFileHandleDisabled),
       mChromeWriteAccessAllowed(aChromeWriteAccessAllowed),
       mBackgroundThread(GetCurrentThreadEventTarget())
@@ -12890,9 +12903,9 @@ Database::Database(Factory* aFactory, const PrincipalInfo& aPrincipalInfo,
 #endif
 {
   AssertIsOnBackgroundThread();
-  MOZ_ASSERT(aFactory);
-  MOZ_ASSERT(aMetadata);
-  MOZ_ASSERT(aFileManager);
+  MOZ_ASSERT(mFactory);
+  MOZ_ASSERT(mMetadata);
+  MOZ_ASSERT(mFileManager);
   MOZ_ASSERT_IF(aChromeWriteAccessAllowed,
                 aPrincipalInfo.type() == PrincipalInfo::TSystemPrincipalInfo);
 
@@ -13003,8 +13016,7 @@ nsresult Database::EnsureConnection() {
   AUTO_PROFILER_LABEL("Database::EnsureConnection", DOM);
 
   if (!mConnection || !mConnection->GetStorageConnection()) {
-    nsresult rv = gConnectionPool->GetOrCreateConnection(
-        this, getter_AddRefs(mConnection));
+    nsresult rv = gConnectionPool->GetOrCreateConnection(this, &mConnection);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
@@ -13162,7 +13174,7 @@ void Database::Stringify(nsACString& aResult) const {
   aResult.AppendInt(mActorDestroyed);
 }
 
-already_AddRefed<FileInfo> Database::GetBlob(const IPCBlob& aIPCBlob) {
+RefPtr<FileInfo> Database::GetBlob(const IPCBlob& aIPCBlob) {
   AssertIsOnBackgroundThread();
 
   const IPCBlobStream& stream = aIPCBlob.inputStream();
@@ -13183,7 +13195,7 @@ already_AddRefed<FileInfo> Database::GetBlob(const IPCBlob& aIPCBlob) {
     return nullptr;
   }
 
-  return fileInfo.forget();
+  return fileInfo;
 }
 
 void Database::UnmapBlob(const nsID& aID) {
@@ -14171,7 +14183,7 @@ bool TransactionBase::VerifyRequestParams(
   if (objMetadata->mCommonMetadata.autoIncrement() &&
       objMetadata->mCommonMetadata.keyPath().IsValid() &&
       aParams.key().IsUnset()) {
-    const SerializedStructuredCloneWriteInfo cloneInfo = aParams.cloneInfo();
+    const SerializedStructuredCloneWriteInfo& cloneInfo = aParams.cloneInfo();
 
     if (NS_WARN_IF(!cloneInfo.offsetToKeyProp())) {
       ASSERT_UNLESS_FUZZING();
@@ -14706,8 +14718,8 @@ bool VersionChangeTransaction::CopyDatabaseMetadata() {
   MOZ_ASSERT(!info->mLiveDatabases.IsEmpty());
   MOZ_ASSERT(info->mMetadata == origMetadata);
 
-  mOldMetadata = info->mMetadata.forget();
-  info->mMetadata.swap(newMetadata);
+  mOldMetadata = std::move(info->mMetadata);
+  info->mMetadata = std::move(newMetadata);
 
   // Replace metadata pointers for all live databases.
   for (const auto& liveDatabase : info->mLiveDatabases) {
@@ -14728,8 +14740,7 @@ void VersionChangeTransaction::UpdateMetadata(nsresult aResult) {
     return;
   }
 
-  RefPtr<FullDatabaseMetadata> oldMetadata;
-  mOldMetadata.swap(oldMetadata);
+  RefPtr<FullDatabaseMetadata> oldMetadata = std::move(mOldMetadata);
 
   DatabaseActorInfo* info;
   if (!gLiveDatabaseHashtable->Get(oldMetadata->mDatabaseId, &info)) {
@@ -14766,7 +14777,7 @@ void VersionChangeTransaction::UpdateMetadata(nsresult aResult) {
     info->mMetadata->mObjectStores.MarkImmutable();
   } else {
     // Replace metadata pointers for all live databases.
-    info->mMetadata = oldMetadata.forget();
+    info->mMetadata = std::move(oldMetadata);
 
     for (auto& liveDatabase : info->mLiveDatabases) {
       liveDatabase->mMetadata = info->mMetadata;
@@ -14781,8 +14792,7 @@ void VersionChangeTransaction::SendCompleteNotification(nsresult aResult) {
   MOZ_ASSERT_IF(!mActorWasAlive, mOpenDatabaseOp->mState >
                                      OpenDatabaseOp::State::SendingResults);
 
-  RefPtr<OpenDatabaseOp> openDatabaseOp;
-  mOpenDatabaseOp.swap(openDatabaseOp);
+  const RefPtr<OpenDatabaseOp> openDatabaseOp = std::move(mOpenDatabaseOp);
 
   if (!mActorWasAlive) {
     return;
@@ -17928,9 +17938,9 @@ void DatabaseMaintenance::PerformMaintenanceOnDatabase() {
   MOZ_ASSERT(databaseFile);
 
   nsCOMPtr<mozIStorageConnection> connection;
-  nsresult rv = GetStorageConnection(databaseFile, mDirectoryLockId,
-                                     TelemetryIdForFile(databaseFile),
-                                     getter_AddRefs(connection));
+  nsresult rv =
+      GetStorageConnection(databaseFile, mDirectoryLockId,
+                           TelemetryIdForFile(databaseFile), &connection);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return;
   }
@@ -18493,7 +18503,7 @@ nsresult UpgradeFileIdsFunction::Init(nsIFile* aFMDirectory,
     return rv;
   }
 
-  mFileManager.swap(fileManager);
+  mFileManager = std::move(fileManager);
   return NS_OK;
 }
 
@@ -19594,13 +19604,13 @@ mozilla::ipc::IPCResult MutableFile::RecvGetFileId(int64_t* aFileId) {
   return IPC_OK();
 }
 
-FactoryOp::FactoryOp(Factory* aFactory,
-                     already_AddRefed<ContentParent> aContentParent,
+FactoryOp::FactoryOp(RefPtr<Factory> aFactory,
+                     RefPtr<ContentParent> aContentParent,
                      const CommonFactoryRequestParams& aCommonParams,
                      bool aDeleting)
     : DatabaseOperationBase(aFactory->GetLoggingInfo()->Id(),
                             aFactory->GetLoggingInfo()->NextRequestSN()),
-      mFactory(aFactory),
+      mFactory(std::move(aFactory)),
       mContentParent(std::move(aContentParent)),
       mCommonParams(aCommonParams),
       mDirectoryLockId(-1),
@@ -19611,7 +19621,7 @@ FactoryOp::FactoryOp(Factory* aFactory,
       mChromeWriteAccessAllowed(false),
       mFileHandleDisabled(false) {
   AssertIsOnBackgroundThread();
-  MOZ_ASSERT(aFactory);
+  MOZ_ASSERT(mFactory);
   MOZ_ASSERT(!QuotaClient::IsShuttingDownOnBackgroundThread());
 }
 
@@ -19700,9 +19710,8 @@ nsresult FactoryOp::Open() {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(mState == State::Initial);
 
-  // Swap this to the stack now to ensure that we release it on this thread.
-  RefPtr<ContentParent> contentParent;
-  mContentParent.swap(contentParent);
+  // Move this to the stack now to ensure that we release it on this thread.
+  const RefPtr<ContentParent> contentParent = std::move(mContentParent);
 
   if (NS_WARN_IF(QuotaClient::IsShuttingDownOnNonBackgroundThread()) ||
       !OperationMayProceed()) {
@@ -19797,9 +19806,8 @@ nsresult FactoryOp::RetryCheckPermission() {
   MOZ_ASSERT(mCommonParams.principalInfo().type() ==
              PrincipalInfo::TContentPrincipalInfo);
 
-  // Swap this to the stack now to ensure that we release it on this thread.
-  RefPtr<ContentParent> contentParent;
-  mContentParent.swap(contentParent);
+  // Move this to the stack now to ensure that we release it on this thread.
+  const RefPtr<ContentParent> contentParent = std::move(mContentParent);
 
   if (NS_WARN_IF(QuotaClient::IsShuttingDownOnNonBackgroundThread()) ||
       !OperationMayProceed()) {
@@ -19940,11 +19948,10 @@ void FactoryOp::FinishSendResults() {
   MOZ_ASSERT(mState == State::SendingResults);
   MOZ_ASSERT(mFactory);
 
-  // Make sure to release the factory on this thread.
-  RefPtr<Factory> factory;
-  mFactory.swap(factory);
-
   mState = State::Completed;
+
+  // Make sure to release the factory on this thread.
+  mFactory = nullptr;
 }
 
 nsresult FactoryOp::CheckPermission(
@@ -20412,10 +20419,10 @@ mozilla::ipc::IPCResult FactoryOp::RecvPermissionRetry() {
   return IPC_OK();
 }
 
-OpenDatabaseOp::OpenDatabaseOp(Factory* aFactory,
-                               already_AddRefed<ContentParent> aContentParent,
+OpenDatabaseOp::OpenDatabaseOp(RefPtr<Factory> aFactory,
+                               RefPtr<ContentParent> aContentParent,
                                const CommonFactoryRequestParams& aParams)
-    : FactoryOp(aFactory, std::move(aContentParent), aParams,
+    : FactoryOp(std::move(aFactory), std::move(aContentParent), aParams,
                 /* aDeleting */ false),
       mMetadata(new FullDatabaseMetadata(aParams.metadata())),
       mRequestedVersion(aParams.metadata().version()),
@@ -21141,7 +21148,7 @@ nsresult OpenDatabaseOp::BeginVersionChange() {
     return rv;
   }
 
-  mVersionChangeTransaction.swap(transaction);
+  mVersionChangeTransaction = std::move(transaction);
 
   if (mMaybeBlockedDatabases.IsEmpty()) {
     // We don't need to wait on any databases, just jump to the transaction
@@ -21282,8 +21289,8 @@ nsresult OpenDatabaseOp::SendUpgradeNeeded() {
     return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
   }
 
-  RefPtr<VersionChangeTransaction> transaction;
-  mVersionChangeTransaction.swap(transaction);
+  const RefPtr<VersionChangeTransaction> transaction =
+      std::move(mVersionChangeTransaction);
 
   nsresult rv = EnsureDatabaseActorIsAlive();
   if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -21429,12 +21436,11 @@ void OpenDatabaseOp::EnsureDatabaseActor() {
     mMetadata = info->mMetadata;
   }
 
-  auto factory = static_cast<Factory*>(Manager());
-
   mDatabase = MakeRefPtr<Database>(
-      factory, mCommonParams.principalInfo(), mOptionalContentParentId, mGroup,
-      mOrigin, mTelemetryId, mMetadata, mFileManager, mDirectoryLock.forget(),
-      mFileHandleDisabled, mChromeWriteAccessAllowed);
+      static_cast<Factory*>(Manager()), mCommonParams.principalInfo(),
+      mOptionalContentParentId, mGroup, mOrigin, mTelemetryId, mMetadata,
+      mFileManager, std::move(mDirectoryLock), mFileHandleDisabled,
+      mChromeWriteAccessAllowed);
 
   if (info) {
     info->mLiveDatabases.AppendElement(mDatabase);
@@ -21683,7 +21689,14 @@ void OpenDatabaseOp::VersionChangeOp::Cleanup() {
   // A bit hacky but the VersionChangeOp is not generated in response to a
   // child request like most other database operations. Do this to make our
   // assertions happy.
-  NoteActorDestroyed();
+  //
+  // XXX: Depending on timing, in most cases, NoteActorDestroyed will not have
+  // been destroyed before, but in some cases it has. This should be reworked in
+  // a way this hack is not necessary. There are also several similar cases in
+  // other *Op classes.
+  if (!IsActorDestroyed()) {
+    NoteActorDestroyed();
+  }
 #endif
 
   TransactionDatabaseOperationBase::Cleanup();
@@ -21706,7 +21719,7 @@ void DeleteDatabaseOp::LoadPreviousVersion(nsIFile* aDatabaseFile) {
   }
 
   nsCOMPtr<mozIStorageConnection> connection;
-  rv = OpenDatabaseAndHandleBusy(ss, aDatabaseFile, getter_AddRefs(connection));
+  rv = OpenDatabaseAndHandleBusy(ss, aDatabaseFile, &connection);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return;
   }
@@ -21768,9 +21781,10 @@ nsresult DeleteDatabaseOp::DatabaseOpen() {
   AssertIsOnOwningThread();
   MOZ_ASSERT(mState == State::DatabaseOpenPending);
 
-  // Swap this to the stack now to ensure that we release it on this thread.
-  RefPtr<ContentParent> contentParent;
-  mContentParent.swap(contentParent);
+  // The content parent must be kept alive until SendToIOThread completed.
+  // Move this to the stack now to ensure that we release it on this thread.
+  const RefPtr<ContentParent> contentParent = std::move(mContentParent);
+  Unused << contentParent;  // XXX see Bug 1605075
 
   nsresult rv = SendToIOThread();
   if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -22052,8 +22066,7 @@ void DeleteDatabaseOp::VersionChangeOp::RunOnOwningThread() {
   AssertIsOnOwningThread();
   MOZ_ASSERT(mDeleteDatabaseOp->mState == State::DatabaseWorkVersionChange);
 
-  RefPtr<DeleteDatabaseOp> deleteOp;
-  mDeleteDatabaseOp.swap(deleteOp);
+  const RefPtr<DeleteDatabaseOp> deleteOp = std::move(mDeleteDatabaseOp);
 
   if (deleteOp->IsActorDestroyed()) {
     IDB_REPORT_INTERNAL_ERR();
@@ -22748,7 +22761,7 @@ CreateFileOp::CreateFileOp(Database* aDatabase,
   MOZ_ASSERT(aParams.type() == DatabaseRequestParams::TCreateFileParams);
 }
 
-nsresult CreateFileOp::CreateMutableFile(MutableFile** aMutableFile) {
+nsresult CreateFileOp::CreateMutableFile(RefPtr<MutableFile>* aMutableFile) {
   nsCOMPtr<nsIFile> file = FileInfo::GetFileForFileInfo(mFileInfo);
   if (NS_WARN_IF(!file)) {
     IDB_REPORT_INTERNAL_ERR();
@@ -22771,7 +22784,7 @@ nsresult CreateFileOp::CreateMutableFile(MutableFile** aMutableFile) {
     return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
   }
 
-  mutableFile.forget(aMutableFile);
+  *aMutableFile = std::move(mutableFile);
   return NS_OK;
 }
 
@@ -22851,7 +22864,7 @@ void CreateFileOp::SendResults() {
 
     if (!HasFailed()) {
       RefPtr<MutableFile> mutableFile;
-      nsresult rv = CreateMutableFile(getter_AddRefs(mutableFile));
+      nsresult rv = CreateMutableFile(&mutableFile);
       if (NS_SUCCEEDED(rv)) {
         // We successfully created a mutable file so use its actor as the
         // success result for this request.
@@ -24322,8 +24335,6 @@ mozilla::ipc::IPCResult NormalTransactionOp::RecvContinue(
       break;
 
     case PreprocessResponse::TObjectStoreGetPreprocessResponse:
-      break;
-
     case PreprocessResponse::TObjectStoreGetAllPreprocessResponse:
       break;
 
@@ -24581,9 +24592,9 @@ nsresult ObjectStoreAddOrPutRequestOp::DoDatabaseWork(
   // if we allow overwrite or not. By not allowing overwrite we raise
   // detectable errors rather than corrupting data.
   DatabaseConnection::CachedStatement stmt;
-  const auto& optReplaceDirective = (!mOverwrite || keyUnset)
-                                        ? NS_LITERAL_CSTRING("")
-                                        : NS_LITERAL_CSTRING("OR REPLACE ");
+  const auto optReplaceDirective = (!mOverwrite || keyUnset)
+                                       ? NS_LITERAL_CSTRING("")
+                                       : NS_LITERAL_CSTRING("OR REPLACE ");
   rv = aConnection->GetCachedStatement(
       NS_LITERAL_CSTRING("INSERT ") + optReplaceDirective +
           NS_LITERAL_CSTRING("INTO object_data "
@@ -24728,9 +24739,9 @@ nsresult ObjectStoreAddOrPutRequestOp::DoDatabaseWork(
       MOZ_ASSERT(storedFileInfo.mInputStream || storedFileInfo.mFileActor ||
                  storedFileInfo.mType == StructuredCloneFile::eMutableFile);
 
-      nsCOMPtr<nsIInputStream> inputStream;
       // Check for an explicit stream, like a structured clone stream.
-      storedFileInfo.mInputStream.swap(inputStream);
+      nsCOMPtr<nsIInputStream> inputStream =
+          std::move(storedFileInfo.mInputStream);
       // Check for a blob-backed stream otherwise.
       if (!inputStream && storedFileInfo.mFileActor) {
         ErrorResult streamRv;
@@ -25480,7 +25491,7 @@ nsresult ObjectStoreCountRequestOp::DoDatabaseWork(
 }
 
 // static
-already_AddRefed<FullIndexMetadata> IndexRequestOpBase::IndexMetadataForParams(
+RefPtr<FullIndexMetadata> IndexRequestOpBase::IndexMetadataForParams(
     const TransactionBase& aTransaction, const RequestParams& aParams) {
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(aParams.type() == RequestParams::TIndexGetParams ||
@@ -25540,7 +25551,7 @@ already_AddRefed<FullIndexMetadata> IndexRequestOpBase::IndexMetadataForParams(
       aTransaction.GetMetadataForIndexId(objectStoreMetadata, indexId);
   MOZ_ASSERT(indexMetadata);
 
-  return indexMetadata.forget();
+  return indexMetadata;
 }
 
 IndexGetRequestOp::IndexGetRequestOp(RefPtr<TransactionBase> aTransaction,
@@ -26425,9 +26436,9 @@ nsresult Cursor::OpenOp::DoIndexDatabaseWork(DatabaseConnection* aConnection) {
 
   const bool usingKeyRange = mOptionalKeyRange.isSome();
 
-  const auto& indexTable = mCursor->mUniqueIndex
-                               ? NS_LITERAL_CSTRING("unique_index_data")
-                               : NS_LITERAL_CSTRING("index_data");
+  const auto indexTable = mCursor->mUniqueIndex
+                              ? NS_LITERAL_CSTRING("unique_index_data")
+                              : NS_LITERAL_CSTRING("index_data");
 
   // The result of MakeColumnPairSelectionList is stored in a local variable,
   // since inlining it into the next statement causes a crash on some Mac OS X
@@ -26531,9 +26542,9 @@ nsresult Cursor::OpenOp::DoIndexKeyDatabaseWork(
 
   const bool usingKeyRange = mOptionalKeyRange.isSome();
 
-  const auto& table = mCursor->mUniqueIndex
-                          ? NS_LITERAL_CSTRING("unique_index_data")
-                          : NS_LITERAL_CSTRING("index_data");
+  const auto table = mCursor->mUniqueIndex
+                         ? NS_LITERAL_CSTRING("unique_index_data")
+                         : NS_LITERAL_CSTRING("index_data");
 
   // The result of MakeColumnPairSelectionList is stored in a local variable,
   // since inlining it into the next statement causes a crash on some Mac OS X

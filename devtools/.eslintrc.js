@@ -90,6 +90,12 @@ module.exports = {
     // For all server files, prevent requiring devtools/client modules.
     "files": [
       "server/**",
+      // The rule also applies to all `shared` files, with the exception of
+      // shared/fronts.
+      // This first pattern matches files in a shared subfolder other than "fronts".
+      "shared/!(fronts)/**",
+      // This second pattern matches files directly under shared.
+      "shared/*.**",
     ],
     "rules": {
       "mozilla/reject-some-requires": ["error", "^(resource\://)?devtools/client"],
@@ -127,7 +133,23 @@ module.exports = {
     "rules": {
       "mozilla/no-define-cc-etc": "off",
     }
-  }, ],
+  }, {
+    // All DevTools files should avoid relative paths.
+    "files": [
+      "**"
+    ],
+    "excludedFiles": [
+      // Debugger modules have a custom bundling logic which relies on relative
+      // paths.
+      "client/debugger/**",
+      // `client/shared/build` contains node helpers to build the debugger and
+      // not devtools modules.
+      "client/shared/build/**",
+    ],
+    "rules": {
+      "mozilla/reject-relative-requires": "error",
+    }
+  }],
   "rules": {
     // These are the rules that have been configured so far to match the
     // devtools coding style.

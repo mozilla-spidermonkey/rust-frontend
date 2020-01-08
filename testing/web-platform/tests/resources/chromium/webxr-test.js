@@ -209,6 +209,12 @@ class MockRuntime {
     "bounded-floor": device.mojom.XRSessionFeature.REF_SPACE_BOUNDED_FLOOR,
     "unbounded": device.mojom.XRSessionFeature.REF_SPACE_UNBOUNDED };
 
+  static sessionModeToMojoMap = {
+    "inline": device.mojom.XRSessionMode.kInline,
+    "immersive-vr": device.mojom.XRSessionMode.kImmersiveVr,
+    "immersive-ar": device.mojom.XRSessionMode.kImmersiveAr,
+  };
+
   constructor(fakeDeviceInit, service) {
     this.sessionClient_ = new device.mojom.XRSessionClientPtr();
     this.presentation_provider_ = new MockXRPresentationProvider();
@@ -222,19 +228,41 @@ class MockRuntime {
 
     this.framesOfReference = {};
 
-    this.input_sources_ = [];
+    this.input_sources_ = new Map();
     this.next_input_source_index_ = 1;
+
+    let supportedModes = [];
+    if (fakeDeviceInit.supportedModes) {
+      supportedModes = fakeDeviceInit.supportedModes.slice();
+      if(fakeDeviceInit.supportedModes.length === 0) {
+        supportedModes = ["inline"];
+      }
+    } else {
+      // Back-compat mode.
+      console.warn("Please use `supportedModes` to signal which modes are supported by this device.");
+      if(fakeDeviceInit.supportsImmersive == null) {
+        throw new TypeError("'supportsImmersive' must be set");
+      }
+
+      supportedModes = ["inline"];
+      if(fakeDeviceInit.supportsImmersive) {
+        supportedModes.push("immersive-vr");
+      }
+    }
+
+    this.supportedModes_ = this._convertModesToEnum(supportedModes);
 
     // Initialize DisplayInfo first to set the defaults, then override with
     // anything from the deviceInit
-    if (fakeDeviceInit.supportsImmersive) {
+    if(this.supportedModes_.includes(device.mojom.XRSessionMode.kImmersiveVr)
+    || this.supportedModes_.includes(device.mojom.XRSessionMode.kImmersiveAr)) {
       this.displayInfo_ = this.getImmersiveDisplayInfo();
-    } else {
+    } else if (this.supportedModes_.includes(device.mojom.XRSessionMode.kInline)) {
       this.displayInfo_ = this.getNonImmersiveDisplayInfo();
-    }
-
-    if (fakeDeviceInit.supportsEnvironmentIntegration) {
-      this.displayInfo_.capabilities.canProvideEnvironmentIntegration = true;
+    } else {
+      // This should never happen!
+      console.error("Device has empty supported modes array!");
+      throw new InvalidStateError();
     }
 
     if (fakeDeviceInit.viewerOrigin != null) {
@@ -245,6 +273,10 @@ class MockRuntime {
       this.setFloorOrigin(fakeDeviceInit.floorOrigin);
     }
 
+    if (fakeDeviceInit.world) {
+      this.world_ = fakeDeviceInit.world;
+    }
+
     // This appropriately handles if the coordinates are null
     this.setBoundsGeometry(fakeDeviceInit.boundsCoordinates);
 
@@ -252,6 +284,17 @@ class MockRuntime {
 
     // Need to support webVR which doesn't have a notion of features
     this.setFeatures(fakeDeviceInit.supportedFeatures || []);
+  }
+
+  _convertModeToEnum(sessionMode) {
+    if(sessionMode in MockRuntime.sessionModeToMojoMap)
+      return MockRuntime.sessionModeToMojoMap[sessionMode];
+
+    throw new TypeError("Unrecognized value for XRSessionMode enum: " + sessionMode);
+  }
+
+  _convertModesToEnum(sessionModes) {
+    return sessionModes.map(mode => this._convertModeToEnum(mode));
   }
 
   // Test API methods.
@@ -378,7 +421,7 @@ class MockRuntime {
     this.next_input_source_index_++;
 
     let source = new MockXRInputSource(fakeInputSourceInit, index, this);
-    this.input_sources_.push(source);
+    this.input_sources_.set(index, source);
     return source;
   }
 
@@ -497,17 +540,13 @@ class MockRuntime {
 
   // These methods are intended to be used by MockXRInputSource only.
   addInputSource(source) {
-    let index = this.input_sources_.indexOf(source);
-    if (index == -1) {
-      this.input_sources_.push(source);
+    if(!this.input_sources_.has(source.source_id_)) {
+      this.input_sources_.set(source.source_id_, source);
     }
   }
 
   removeInputSource(source) {
-    let index = this.input_sources_.indexOf(source);
-    if (index >= 0) {
-      this.input_sources_.splice(index, 1);
-    }
+    this.input_sources_.delete(source.source_id_);
   }
 
   // Mojo function implementations.
@@ -518,7 +557,6 @@ class MockRuntime {
     this.send_mojo_space_reset_ = false;
     if (this.pose_) {
       this.pose_.poseIndex++;
-
     }
 
     // Setting the input_state to null tests a slightly different path than
@@ -526,10 +564,10 @@ class MockRuntime {
     // code always sends up an empty array, but it's also valid mojom to send
     // up a null array.
     let input_state = null;
-    if (this.input_sources_.length > 0) {
+    if (this.input_sources_.size > 0) {
       input_state = [];
-      for (let i = 0; i < this.input_sources_.length; i++) {
-        input_state.push(this.input_sources_[i].getInputSourceState());
+      for (let input_source of this.input_sources_.values()) {
+        input_state.push(input_source.getInputSourceState());
       }
     }
 
@@ -633,10 +671,9 @@ class MockRuntime {
 
   runtimeSupportsSession(options) {
     return Promise.resolve({
-      supportsSession:
-          !options.immersive || this.displayInfo_.capabilities.canPresent
+      supportsSession: this.supportedModes_.includes(options.mode)
     });
-  };
+  }
 }
 
 class MockXRSessionMetricsRecorder {
@@ -697,12 +734,14 @@ class MockXRInputSource {
   }
 
   setGripOrigin(transform, emulatedPosition = false) {
+    // grip_origin was renamed to mojo_from_input in mojo
     this.mojo_from_input_ = new gfx.mojom.Transform();
     this.mojo_from_input_.matrix = getMatrixFromTransform(transform);
     this.emulated_position_ = emulatedPosition;
   }
 
   clearGripOrigin() {
+    // grip_origin was renamed to mojo_from_input in mojo
     if (this.mojo_from_input_ != null) {
       this.mojo_from_input_ = null;
       this.emulated_position_ = false;
@@ -710,6 +749,7 @@ class MockXRInputSource {
   }
 
   setPointerOrigin(transform, emulatedPosition = false) {
+    // pointer_origin was renamed to input_from_pointer in mojo
     this.desc_dirty_ = true;
     this.input_from_pointer_ = new gfx.mojom.Transform();
     this.input_from_pointer_.matrix = getMatrixFromTransform(transform);
@@ -830,6 +870,10 @@ class MockXRInputSource {
 
     input_state.primaryInputPressed = this.primary_input_pressed_;
     input_state.primaryInputClicked = this.primary_input_clicked_;
+    // Setting the input source's "clicked" state should generate one "select"
+    // event. Reset the input value to prevent it from continuously generating
+    // events.
+    this.primary_input_clicked_ = false;
 
     input_state.mojoFromInput = this.mojo_from_input_;
 

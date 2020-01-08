@@ -21,6 +21,7 @@
 #include "mozilla/StateWatching.h"
 #include "mozilla/WeakPtr.h"
 #include "mozilla/dom/HTMLMediaElementBinding.h"
+#include "mozilla/dom/MediaControlKeysEvent.h"
 #include "mozilla/dom/MediaDebugInfoBinding.h"
 #include "mozilla/dom/MediaKeys.h"
 #include "mozilla/dom/TextTrackManager.h"
@@ -533,6 +534,10 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   }
 
   already_AddRefed<Promise> Play(ErrorResult& aRv);
+  void Play() {
+    IgnoredErrorResult dummy;
+    RefPtr<Promise> toBeIgnored = Play(dummy);
+  }
 
   void Pause(ErrorResult& aRv);
   void Pause() { Pause(IgnoreErrors()); }
@@ -754,6 +759,7 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   class MediaStreamTrackListener;
   class FirstFrameListener;
   class ShutdownObserver;
+  class MediaControlEventListener;
 
   MediaDecoderOwner::NextFrameStatus NextFrameStatus();
 
@@ -1331,6 +1337,10 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // front-end side to show blocking icon.
   void MaybeNotifyAutoplayBlocked();
 
+  // When playing state change, we have to notify MediaControl in the chrome
+  // process in order to keep its playing state correct.
+  void NotifyMediaControlPlaybackStateChanged();
+
   // The current decoder. Load() has been called on this decoder.
   // At most one of mDecoder and mSrcStream can be non-null.
   RefPtr<MediaDecoder> mDecoder;
@@ -1831,7 +1841,8 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   bool mInitialized = false;
 
   // True if user has called load(), seek() or element has started playing
-  // before. It's *only* use for checking autoplay policy
+  // before. It's *only* use for `click-to-play` blocking autoplay policy.
+  // In addition, we would reset this once media aborts current load.
   bool mIsBlessed = false;
 
   // True if the first frame has been successfully loaded.
@@ -1902,6 +1913,12 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   RefPtr<ResumeDelayedPlaybackAgent> mResumeDelayedPlaybackAgent;
   MozPromiseRequestHolder<ResumeDelayedPlaybackAgent::ResumePromise>
       mResumePlaybackRequest;
+
+  // We use MediaControlEventListener to listen media control keys event, which
+  // would play or pause media element according to different events.
+  void StartListeningMediaControlEventIfNeeded();
+  void StopListeningMediaControlEventIfNeeded();
+  RefPtr<MediaControlEventListener> mMediaControlEventListener;
 };
 
 // Check if the context is chrome or has the debugger or tabs permission

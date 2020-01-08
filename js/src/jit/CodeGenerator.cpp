@@ -4055,16 +4055,6 @@ void CodeGenerator::visitGetPropertyPolymorphicT(
   emitGetPropertyPolymorphic(ins, obj, temp, output);
 }
 
-template <typename T>
-static void EmitUnboxedPreBarrier(MacroAssembler& masm, T address,
-                                  JSValueType type) {
-  if (type == JSVAL_TYPE_OBJECT) {
-    masm.guardedCallPreBarrier(address, MIRType::Object);
-  } else if (type == JSVAL_TYPE_STRING) {
-    masm.guardedCallPreBarrier(address, MIRType::String);
-  }
-}
-
 void CodeGenerator::emitSetPropertyPolymorphic(
     LInstruction* ins, Register obj, Register scratch,
     const ConstantOrRegister& value) {
@@ -4558,9 +4548,11 @@ void CodeGenerator::visitPostWriteBarrierCommon(LPostBarrierType* lir,
     } else {
       MOZ_ASSERT(lir->mir()->value()->type() == MIRType::Object);
     }
-  } else {
-    MOZ_ASSERT(nurseryType == MIRType::String);
+  } else if (nurseryType == MIRType::String) {
     MOZ_ASSERT(lir->mir()->value()->type() == MIRType::String);
+  } else {
+    MOZ_ASSERT(nurseryType == MIRType::BigInt);
+    MOZ_ASSERT(lir->mir()->value()->type() == MIRType::BigInt);
   }
   masm.branchPtrInNurseryChunk(Assembler::Equal, value, temp, ool->entry());
 
@@ -4586,8 +4578,8 @@ void CodeGenerator::visitPostWriteBarrierCommonV(LPostBarrierType* lir,
   maybeEmitGlobalBarrierCheck(lir->object(), ool);
 
   ValueOperand value = ToValue(lir, LPostBarrierType::Input);
-  // Bug 1386094 - most callers only need to check for object or string, not
-  // both.
+  // Bug 1386094 - most callers only need to check for object, string, or
+  // bigint, not all three.
   masm.branchValueIsNurseryCell(Assembler::Equal, value, temp, ool->entry());
 
   masm.bind(ool->rejoin());
@@ -4601,6 +4593,11 @@ void CodeGenerator::visitPostWriteBarrierO(LPostWriteBarrierO* lir) {
 void CodeGenerator::visitPostWriteBarrierS(LPostWriteBarrierS* lir) {
   auto ool = new (alloc()) OutOfLineCallPostWriteBarrier(lir, lir->object());
   visitPostWriteBarrierCommon<LPostWriteBarrierS, MIRType::String>(lir, ool);
+}
+
+void CodeGenerator::visitPostWriteBarrierBI(LPostWriteBarrierBI* lir) {
+  auto ool = new (alloc()) OutOfLineCallPostWriteBarrier(lir, lir->object());
+  visitPostWriteBarrierCommon<LPostWriteBarrierBI, MIRType::BigInt>(lir, ool);
 }
 
 void CodeGenerator::visitPostWriteBarrierV(LPostWriteBarrierV* lir) {
@@ -4680,6 +4677,14 @@ void CodeGenerator::visitPostWriteElementBarrierS(
       OutOfLineCallPostWriteElementBarrier(lir, lir->object(), lir->index());
   visitPostWriteBarrierCommon<LPostWriteElementBarrierS, MIRType::String>(lir,
                                                                           ool);
+}
+
+void CodeGenerator::visitPostWriteElementBarrierBI(
+    LPostWriteElementBarrierBI* lir) {
+  auto ool = new (alloc())
+      OutOfLineCallPostWriteElementBarrier(lir, lir->object(), lir->index());
+  visitPostWriteBarrierCommon<LPostWriteElementBarrierBI, MIRType::BigInt>(lir,
+                                                                           ool);
 }
 
 void CodeGenerator::visitPostWriteElementBarrierV(
@@ -5006,31 +5011,29 @@ void CodeGenerator::visitCallGeneric(LCallGeneric* call) {
                             nargsreg, calleereg, &invoke);
   }
 
-  // Guard that calleereg is an interpreted function with a JSScript or a
-  // wasm function.
-  // If we are constructing, also ensure the callee is a constructor.
+  // Guard that callee allows the [[Call]] or [[Construct]] operation required.
   if (call->mir()->isConstructing()) {
-    masm.branchIfNotInterpretedConstructor(calleereg, nargsreg, &invoke);
+    masm.branchTestFunctionFlags(calleereg, FunctionFlags::CONSTRUCTOR,
+                                 Assembler::Zero, &invoke);
   } else {
-    // See visitCallKnown.
-    if (call->mir()->needsArgCheck()) {
-      masm.branchIfFunctionHasNoJitEntry(calleereg, /* isConstructing */ false,
-                                         &invoke);
-    } else {
-      masm.branchIfFunctionHasNoScript(calleereg, &invoke);
-    }
     masm.branchFunctionKind(Assembler::Equal, FunctionFlags::ClassConstructor,
                             calleereg, objreg, &invoke);
   }
 
-  if (call->mir()->maybeCrossRealm()) {
-    masm.switchToObjectRealm(calleereg, objreg);
-  }
-
+  // Load jitCodeRaw for callee if exists. See visitCallKnown.
   if (call->mir()->needsArgCheck()) {
+    masm.branchIfFunctionHasNoJitEntry(calleereg, call->mir()->isConstructing(),
+                                       &invoke);
     masm.loadJitCodeRaw(calleereg, objreg);
   } else {
-    masm.loadJitCodeNoArgCheck(calleereg, objreg);
+    // If we are using the jitCodeNoArgCheck entry point, the canonical targets
+    // are known, but due to lambda cloning we may still see lazy versions.
+    masm.loadJitCodeMaybeNoArgCheck(calleereg, objreg);
+  }
+
+  // Target may be a different realm even if same compartment.
+  if (call->mir()->maybeCrossRealm()) {
+    masm.switchToObjectRealm(calleereg, nargsreg);
   }
 
   // Nestle the StackPointer up to the argument vector.
@@ -5101,23 +5104,6 @@ void CodeGenerator::visitCallGeneric(LCallGeneric* call) {
   }
 }
 
-void CodeGenerator::emitCallInvokeFunctionShuffleNewTarget(
-    LCallKnown* call, Register calleeReg, uint32_t numFormals,
-    uint32_t unusedStack) {
-  masm.freeStack(unusedStack);
-
-  pushArg(masm.getStackPointer());
-  pushArg(Imm32(numFormals));
-  pushArg(Imm32(call->numActualArgs()));
-  pushArg(calleeReg);
-
-  using Fn = bool (*)(JSContext*, HandleObject, uint32_t, uint32_t, Value*,
-                      MutableHandleValue);
-  callVM<Fn, InvokeFunctionShuffleNewTarget>(call);
-
-  masm.reserveStack(unusedStack);
-}
-
 void CodeGenerator::visitCallKnown(LCallKnown* call) {
   Register calleereg = ToRegister(call->getFunction());
   Register objreg = ToRegister(call->getTempObject());
@@ -5158,15 +5144,7 @@ void CodeGenerator::visitCallKnown(LCallKnown* call) {
     // NOTE: We checked that canonical function script had a valid JitScript.
     // This will not be tossed without all Ion code being tossed first.
 
-    Label uncompiled, end;
-    masm.branchIfFunctionHasNoScript(calleereg, &uncompiled);
-    masm.loadJitCodeNoArgCheck(calleereg, objreg);
-    masm.jump(&end);
-
-    // jitCodeRaw is still valid even if uncompiled.
-    masm.bind(&uncompiled);
-    masm.loadJitCodeRaw(calleereg, objreg);
-    masm.bind(&end);
+    masm.loadJitCodeMaybeNoArgCheck(calleereg, objreg);
   }
 
   // Nestle the StackPointer up to the argument vector.
@@ -5942,8 +5920,9 @@ void CodeGenerator::branchIfInvalidated(Register temp, Label* invalidated) {
 }
 
 #ifdef DEBUG
-void CodeGenerator::emitAssertGCThingResult(Register input, MIRType type,
-                                            const TemporaryTypeSet* typeset) {
+void CodeGenerator::emitAssertGCThingResult(Register input,
+                                            const MDefinition* mir) {
+  MIRType type = mir->type();
   MOZ_ASSERT(type == MIRType::Object || type == MIRType::ObjectOrNull ||
              type == MIRType::String || type == MIRType::Symbol ||
              type == MIRType::BigInt);
@@ -5959,6 +5938,7 @@ void CodeGenerator::emitAssertGCThingResult(Register input, MIRType type,
   Label done;
   branchIfInvalidated(temp, &done);
 
+  const TemporaryTypeSet* typeset = mir->resultTypeSet();
   if ((type == MIRType::Object || type == MIRType::ObjectOrNull) && typeset &&
       !typeset->unknownObject()) {
     // We have a result TypeSet, assert this object is in it.
@@ -5976,8 +5956,15 @@ void CodeGenerator::emitAssertGCThingResult(Register input, MIRType type,
     masm.bind(&miss);
     masm.guardTypeSetMightBeIncomplete(typeset, input, temp, &ok);
 
-    masm.assumeUnreachable(
-        "MIR instruction returned object with unexpected type");
+    switch (mir->op()) {
+#  define MIR_OP(op)                                                \
+    case MDefinition::Opcode::op:                                   \
+      masm.assumeUnreachable(                                       \
+          #op " instruction returned object with unexpected type"); \
+      break;
+      MIR_OPCODE_LIST(MIR_OP)
+#  undef MIR_OP
+    }
 
     masm.bind(&ok);
   }
@@ -6022,7 +6009,7 @@ void CodeGenerator::emitAssertGCThingResult(Register input, MIRType type,
 }
 
 void CodeGenerator::emitAssertResultV(const ValueOperand input,
-                                      const TemporaryTypeSet* typeset) {
+                                      const MDefinition* mir) {
   AllocatableGeneralRegisterSet regs(GeneralRegisterSet::All());
   regs.take(input);
 
@@ -6036,6 +6023,7 @@ void CodeGenerator::emitAssertResultV(const ValueOperand input,
   Label done;
   branchIfInvalidated(temp1, &done);
 
+  const TemporaryTypeSet* typeset = mir->resultTypeSet();
   if (typeset && !typeset->unknown()) {
     // We have a result TypeSet, assert this value is in it.
     Label miss, ok;
@@ -6053,8 +6041,15 @@ void CodeGenerator::emitAssertResultV(const ValueOperand input,
     masm.guardTypeSetMightBeIncomplete(typeset, payload, temp1, &ok);
     masm.bind(&realMiss);
 
-    masm.assumeUnreachable(
-        "MIR instruction returned value with unexpected type");
+    switch (mir->op()) {
+#  define MIR_OP(op)                                               \
+    case MDefinition::Opcode::op:                                  \
+      masm.assumeUnreachable(                                      \
+          #op " instruction returned value with unexpected type"); \
+      break;
+      MIR_OPCODE_LIST(MIR_OP)
+#  undef MIR_OP
+    }
 
     masm.bind(&ok);
   }
@@ -6092,7 +6087,7 @@ void CodeGenerator::emitGCThingResultChecks(LInstruction* lir,
   }
 
   Register output = ToRegister(lir->getDef(0));
-  emitAssertGCThingResult(output, mir->type(), mir->resultTypeSet());
+  emitAssertGCThingResult(output, mir);
 }
 
 void CodeGenerator::emitValueResultChecks(LInstruction* lir, MDefinition* mir) {
@@ -6107,7 +6102,7 @@ void CodeGenerator::emitValueResultChecks(LInstruction* lir, MDefinition* mir) {
 
   ValueOperand output = ToOutValue(lir);
 
-  emitAssertResultV(output, mir->resultTypeSet());
+  emitAssertResultV(output, mir);
 }
 
 void CodeGenerator::emitDebugResultChecks(LInstruction* ins) {
@@ -10438,7 +10433,7 @@ static bool CreateStackMapFromLSafepoint(LSafepoint& safepoint,
 // MacroAssembler::wasmReserveStackChecked, in the case where the frame is
 // "small", as determined by that function.
 static bool CreateStackMapForFunctionEntryTrap(
-    const wasm::ValTypeVector& argTypes, const MachineState& trapExitLayout,
+    const wasm::ArgTypeVector& argTypes, const MachineState& trapExitLayout,
     size_t trapExitLayoutWords, size_t nBytesReservedBeforeTrap,
     size_t nInboundStackArgBytes, wasm::StackMap** result) {
   // Ensure this is defined on all return paths.
@@ -10500,18 +10495,16 @@ static bool CreateStackMapForFunctionEntryTrap(
     return false;
   }
 
-  for (ABIArgIter<const wasm::ValTypeVector> i(argTypes); !i.done(); i++) {
+  for (ABIArgIter i(argTypes); !i.done(); i++) {
     ABIArg argLoc = *i;
-    const wasm::ValType& ty = argTypes[i.index()];
-    MOZ_ASSERT(ToMIRType(ty) != MIRType::Pointer);
-    if (argLoc.kind() != ABIArg::Stack || !ty.isReference()) {
-      continue;
+    if (argLoc.kind() == ABIArg::Stack &&
+        argTypes[i.index()] == MIRType::RefOrNull) {
+      uint32_t offset = argLoc.offsetFromArgBase();
+      MOZ_ASSERT(offset < nInboundStackArgBytes);
+      MOZ_ASSERT(offset % sizeof(void*) == 0);
+      vec[wordsSoFar + offset / sizeof(void*)] = true;
+      hasRefs = true;
     }
-    uint32_t offset = argLoc.offsetFromArgBase();
-    MOZ_ASSERT(offset < nInboundStackArgBytes);
-    MOZ_ASSERT(offset % sizeof(void*) == 0);
-    vec[wordsSoFar + offset / sizeof(void*)] = true;
-    hasRefs = true;
   }
 
 #ifndef DEBUG
@@ -10545,7 +10538,7 @@ static bool CreateStackMapForFunctionEntryTrap(
 
 bool CodeGenerator::generateWasm(wasm::FuncTypeIdDesc funcTypeId,
                                  wasm::BytecodeOffset trapOffset,
-                                 const wasm::ValTypeVector& argTypes,
+                                 const wasm::ArgTypeVector& argTypes,
                                  const MachineState& trapExitLayout,
                                  size_t trapExitLayoutNumWords,
                                  wasm::FuncOffsets* offsets,
@@ -12752,12 +12745,13 @@ void CodeGenerator::emitIsCallableOrConstructor(Register object,
   if (mode == Callable) {
     masm.move32(Imm32(1), output);
   } else {
-    static_assert(mozilla::IsPowerOfTwo(unsigned(FunctionFlags::CONSTRUCTOR)),
+    static_assert(mozilla::IsPowerOfTwo(uint32_t(FunctionFlags::CONSTRUCTOR)),
                   "FunctionFlags::CONSTRUCTOR has only one bit set");
 
     masm.load16ZeroExtend(Address(object, JSFunction::offsetOfFlags()), output);
-    masm.rshift32(Imm32(mozilla::FloorLog2(FunctionFlags::CONSTRUCTOR)),
-                  output);
+    masm.rshift32(
+        Imm32(mozilla::FloorLog2(uint32_t(FunctionFlags::CONSTRUCTOR))),
+        output);
     masm.and32(Imm32(1), output);
   }
   masm.jump(&done);
@@ -13240,7 +13234,7 @@ void CodeGenerator::emitAssertRangeD(const Range* r, FloatRegister input,
 void CodeGenerator::visitAssertResultV(LAssertResultV* ins) {
 #ifdef DEBUG
   const ValueOperand value = ToValue(ins, LAssertResultV::Input);
-  emitAssertResultV(value, ins->mirRaw()->resultTypeSet());
+  emitAssertResultV(value, ins->mirRaw());
 #else
   MOZ_CRASH("LAssertResultV is debug only");
 #endif
@@ -13249,8 +13243,7 @@ void CodeGenerator::visitAssertResultV(LAssertResultV* ins) {
 void CodeGenerator::visitAssertResultT(LAssertResultT* ins) {
 #ifdef DEBUG
   Register input = ToRegister(ins->input());
-  MDefinition* mir = ins->mirRaw();
-  emitAssertGCThingResult(input, mir->type(), mir->resultTypeSet());
+  emitAssertGCThingResult(input, ins->mirRaw());
 #else
   MOZ_CRASH("LAssertResultT is debug only");
 #endif
@@ -13721,6 +13714,77 @@ void CodeGenerator::visitNaNToZero(LNaNToZero* lir) {
   masm.bind(ool->rejoin());
 }
 
+static void BoundFunctionLength(MacroAssembler& masm, Register target,
+                                Register targetFlags, Register argCount,
+                                Register output, Label* slowPath) {
+  masm.loadFunctionLength(target, targetFlags, output, slowPath);
+
+  // Compute the bound function length: Max(0, target.length - argCount).
+  Label nonNegative;
+  masm.sub32(argCount, output);
+  masm.branch32(Assembler::GreaterThanOrEqual, output, Imm32(0), &nonNegative);
+  masm.move32(Imm32(0), output);
+  masm.bind(&nonNegative);
+}
+
+static void BoundFunctionName(MacroAssembler& masm, Register target,
+                              Register targetFlags, Register output,
+                              const JSAtomState& names, Label* slowPath) {
+  Label notBoundTarget, loadName;
+  masm.branchTest32(Assembler::Zero, targetFlags,
+                    Imm32(FunctionFlags::BOUND_FUN), &notBoundTarget);
+  {
+    // Call into the VM if the target's name atom contains the bound
+    // function prefix.
+    masm.branchTest32(Assembler::NonZero, targetFlags,
+                      Imm32(FunctionFlags::HAS_BOUND_FUNCTION_NAME_PREFIX),
+                      slowPath);
+
+    // Bound functions reuse HAS_GUESSED_ATOM for
+    // HAS_BOUND_FUNCTION_NAME_PREFIX, so skip the guessed atom check below.
+    static_assert(
+        FunctionFlags::HAS_BOUND_FUNCTION_NAME_PREFIX ==
+            FunctionFlags::HAS_GUESSED_ATOM,
+        "HAS_BOUND_FUNCTION_NAME_PREFIX is shared with HAS_GUESSED_ATOM");
+    masm.jump(&loadName);
+  }
+  masm.bind(&notBoundTarget);
+
+  Label guessed, hasName;
+  masm.branchTest32(Assembler::NonZero, targetFlags,
+                    Imm32(FunctionFlags::HAS_GUESSED_ATOM), &guessed);
+  masm.bind(&loadName);
+  masm.loadPtr(Address(target, JSFunction::offsetOfAtom()), output);
+  masm.branchTestPtr(Assembler::NonZero, output, output, &hasName);
+  {
+    masm.bind(&guessed);
+
+    // An absent name property defaults to the empty string.
+    masm.movePtr(ImmGCPtr(names.empty), output);
+  }
+  masm.bind(&hasName);
+}
+
+static void BoundFunctionFlags(MacroAssembler& masm, Register targetFlags,
+                               Register bound, Register output) {
+  // Set the BOUND_FN flag and, if the target is a constructor, the
+  // CONSTRUCTOR flag.
+  Label isConstructor, boundFlagsComputed;
+  masm.load16ZeroExtend(Address(bound, JSFunction::offsetOfFlags()), output);
+  masm.branchTest32(Assembler::NonZero, targetFlags,
+                    Imm32(FunctionFlags::CONSTRUCTOR), &isConstructor);
+  {
+    masm.or32(Imm32(FunctionFlags::BOUND_FUN), output);
+    masm.jump(&boundFlagsComputed);
+  }
+  masm.bind(&isConstructor);
+  {
+    masm.or32(Imm32(FunctionFlags::BOUND_FUN | FunctionFlags::CONSTRUCTOR),
+              output);
+  }
+  masm.bind(&boundFlagsComputed);
+}
+
 void CodeGenerator::visitFinishBoundFunctionInit(
     LFinishBoundFunctionInit* lir) {
   Register bound = ToRegister(lir->bound());
@@ -13758,108 +13822,18 @@ void CodeGenerator::visitFinishBoundFunctionInit(
             FunctionFlags::RESOLVED_LENGTH),
       slowPath);
 
-  Label notBoundTarget, loadName;
-  masm.branchTest32(Assembler::Zero, temp1, Imm32(FunctionFlags::BOUND_FUN),
-                    &notBoundTarget);
-  {
-    // Call into the VM if the target's name atom contains the bound
-    // function prefix.
-    masm.branchTest32(Assembler::NonZero, temp1,
-                      Imm32(FunctionFlags::HAS_BOUND_FUNCTION_NAME_PREFIX),
-                      slowPath);
-
-    // We also take the slow path when target's length isn't an int32.
-    masm.branchTestInt32(Assembler::NotEqual,
-                         Address(target, boundLengthOffset), slowPath);
-
-    // Bound functions reuse HAS_GUESSED_ATOM for
-    // HAS_BOUND_FUNCTION_NAME_PREFIX, so skip the guessed atom check below.
-    static_assert(
-        FunctionFlags::HAS_BOUND_FUNCTION_NAME_PREFIX ==
-            FunctionFlags::HAS_GUESSED_ATOM,
-        "HAS_BOUND_FUNCTION_NAME_PREFIX is shared with HAS_GUESSED_ATOM");
-    masm.jump(&loadName);
-  }
-  masm.bind(&notBoundTarget);
-
-  Label guessed, hasName;
-  masm.branchTest32(Assembler::NonZero, temp1,
-                    Imm32(FunctionFlags::HAS_GUESSED_ATOM), &guessed);
-  masm.bind(&loadName);
-  masm.loadPtr(Address(target, JSFunction::offsetOfAtom()), temp2);
-  masm.branchTestPtr(Assembler::NonZero, temp2, temp2, &hasName);
-  {
-    masm.bind(&guessed);
-
-    // Unnamed class expression don't have a name property. To avoid
-    // looking it up from the prototype chain, we take the slow path here.
-    masm.branchFunctionKind(Assembler::Equal, FunctionFlags::ClassConstructor,
-                            target, temp2, slowPath);
-
-    // An absent name property defaults to the empty string.
-    const JSAtomState& names = gen->runtime->names();
-    masm.movePtr(ImmGCPtr(names.empty), temp2);
-  }
-  masm.bind(&hasName);
+  // Store the bound function's length into the extended slot.
+  BoundFunctionLength(masm, target, temp1, argCount, temp2, slowPath);
+  masm.storeValue(JSVAL_TYPE_INT32, temp2, Address(bound, boundLengthOffset));
 
   // Store the target's name atom in the bound function as is.
+  BoundFunctionName(masm, target, temp1, temp2, gen->runtime->names(),
+                    slowPath);
   masm.storePtr(temp2, Address(bound, JSFunction::offsetOfAtom()));
 
-  // Set the BOUND_FN flag and, if the target is a constructor, the
-  // CONSTRUCTOR flag.
-  Label isConstructor, boundFlagsComputed;
-  masm.load16ZeroExtend(Address(bound, JSFunction::offsetOfFlags()), temp2);
-  masm.branchTest32(Assembler::NonZero, temp1,
-                    Imm32(FunctionFlags::CONSTRUCTOR), &isConstructor);
-  {
-    masm.or32(Imm32(FunctionFlags::BOUND_FUN), temp2);
-    masm.jump(&boundFlagsComputed);
-  }
-  masm.bind(&isConstructor);
-  {
-    masm.or32(Imm32(FunctionFlags::BOUND_FUN | FunctionFlags::CONSTRUCTOR),
-              temp2);
-  }
-  masm.bind(&boundFlagsComputed);
+  // Update the bound function's flags.
+  BoundFunctionFlags(masm, temp1, bound, temp2);
   masm.store16(temp2, Address(bound, JSFunction::offsetOfFlags()));
-
-  // Load the target function's length.
-  Label isInterpreted, isBound, lengthLoaded;
-  masm.branchTest32(Assembler::NonZero, temp1, Imm32(FunctionFlags::BOUND_FUN),
-                    &isBound);
-  masm.branchTest32(Assembler::NonZero, temp1,
-                    Imm32(FunctionFlags::INTERPRETED), &isInterpreted);
-  {
-    // Load the length property of a native function.
-    masm.load16ZeroExtend(Address(target, JSFunction::offsetOfNargs()), temp1);
-    masm.jump(&lengthLoaded);
-  }
-  masm.bind(&isBound);
-  {
-    // Load the length property of a bound function.
-    masm.unboxInt32(Address(target, boundLengthOffset), temp1);
-    masm.jump(&lengthLoaded);
-  }
-  masm.bind(&isInterpreted);
-  {
-    // Load the length property of an interpreted function.
-    masm.loadPtr(Address(target, JSFunction::offsetOfScript()), temp1);
-    masm.loadPtr(Address(temp1, JSScript::offsetOfSharedData()), temp1);
-    masm.loadPtr(Address(temp1, RuntimeScriptData::offsetOfISD()), temp1);
-    masm.load16ZeroExtend(
-        Address(temp1, ImmutableScriptData::offsetOfFunLength()), temp1);
-  }
-  masm.bind(&lengthLoaded);
-
-  // Compute the bound function length: Max(0, target.length - argCount).
-  Label nonNegative;
-  masm.sub32(argCount, temp1);
-  masm.branch32(Assembler::GreaterThanOrEqual, temp1, Imm32(0), &nonNegative);
-  masm.move32(Imm32(0), temp1);
-  masm.bind(&nonNegative);
-
-  // Store the bound function's length into the extended slot.
-  masm.storeValue(JSVAL_TYPE_INT32, temp1, Address(bound, boundLengthOffset));
 
   masm.bind(ool->rejoin());
 }

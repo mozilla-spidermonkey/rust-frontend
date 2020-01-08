@@ -1797,7 +1797,7 @@ mozilla::ipc::IPCResult BackgroundFactoryRequestChild::RecvBlocked(
 
 BackgroundDatabaseChild::BackgroundDatabaseChild(
     const DatabaseSpec& aSpec, BackgroundFactoryRequestChild* aOpenRequestActor)
-    : mSpec(new DatabaseSpec(aSpec)),
+    : mSpec(MakeUnique<DatabaseSpec>(aSpec)),
       mOpenRequestActor(aOpenRequestActor),
       mDatabase(nullptr) {
   // Can't assert owning thread here because IPDL has not yet set our manager!
@@ -1849,13 +1849,13 @@ void BackgroundDatabaseChild::EnsureDOMObject() {
       static_cast<BackgroundFactoryChild*>(Manager())->GetDOMObject();
   MOZ_ASSERT(factory);
 
-  mTemporaryStrongDatabase = IDBDatabase::Create(request, factory, this, mSpec);
+  mTemporaryStrongDatabase =
+      IDBDatabase::Create(request, factory, this, std::move(mSpec));
 
   MOZ_ASSERT(mTemporaryStrongDatabase);
   mTemporaryStrongDatabase->AssertIsOnOwningThread();
 
   mDatabase = mTemporaryStrongDatabase;
-  mSpec.forget();
 
   mOpenRequestActor->SetDatabaseActor(this);
 }
@@ -2864,9 +2864,6 @@ mozilla::ipc::IPCResult BackgroundRequestChild::Recv__delete__(
         break;
 
       case RequestResponse::TObjectStoreDeleteResponse:
-        HandleResponse(JS::UndefinedHandleValue);
-        break;
-
       case RequestResponse::TObjectStoreClearResponse:
         HandleResponse(JS::UndefinedHandleValue);
         break;
@@ -4055,13 +4052,7 @@ mozilla::ipc::IPCResult BackgroundFileRequestChild::Recv__delete__(
         break;
 
       case FileRequestResponse::TFileRequestWriteResponse:
-        HandleResponse(JS::UndefinedHandleValue);
-        break;
-
       case FileRequestResponse::TFileRequestTruncateResponse:
-        HandleResponse(JS::UndefinedHandleValue);
-        break;
-
       case FileRequestResponse::TFileRequestFlushResponse:
         HandleResponse(JS::UndefinedHandleValue);
         break;

@@ -467,7 +467,22 @@ class ValType {
     return PackedTypeCodeToBits(tc_);
   }
 
-  bool isRef() const {
+  bool isAnyRef() const { return UnpackTypeCodeType(tc_) == TypeCode::AnyRef; }
+
+  bool isNullRef() const {
+    return UnpackTypeCodeType(tc_) == TypeCode::NullRef;
+  }
+
+  bool isFuncRef() const {
+    return UnpackTypeCodeType(tc_) == TypeCode::FuncRef;
+  }
+
+  bool isNullable() const {
+    MOZ_ASSERT(isReference());
+    return true;
+  }
+
+  bool isTypeIndex() const {
     MOZ_ASSERT(isValid());
     return UnpackTypeCodeType(tc_) == TypeCode::Ref;
   }
@@ -933,7 +948,7 @@ class MOZ_NON_PARAM Val : public LitVal {
     u.ref_ = val;
   }
   explicit Val(ValType type, FuncRef val) : LitVal(type, AnyRef::null()) {
-    MOZ_ASSERT(type == RefType::func());
+    MOZ_ASSERT(type.isFuncRef());
     u.ref_ = val.asAnyRef();
   }
   void trace(JSTracer* trc);
@@ -1020,12 +1035,12 @@ class FuncType {
   // as are all reference types apart from TypeIndex.
   bool temporarilyUnsupportedReftypeForEntry() const {
     for (ValType arg : args()) {
-      if (arg.isReference() && arg != RefType::any()) {
+      if (arg.isReference() && !arg.isAnyRef()) {
         return true;
       }
     }
     for (ValType result : results()) {
-      if (result.isRef()) {
+      if (result.isTypeIndex()) {
         return true;
       }
     }
@@ -1035,12 +1050,12 @@ class FuncType {
   // allowed, as are all reference types apart from TypeIndex.
   bool temporarilyUnsupportedReftypeForInlineEntry() const {
     for (ValType arg : args()) {
-      if (arg.isReference() && arg != RefType::any()) {
+      if (arg.isReference() && !arg.isAnyRef()) {
         return true;
       }
     }
     for (ValType result : results()) {
-      if (result.isRef()) {
+      if (result.isTypeIndex()) {
         return true;
       }
     }
@@ -1050,12 +1065,12 @@ class FuncType {
   // reference type parameters of all types except TypeIndex.
   bool temporarilyUnsupportedReftypeForExit() const {
     for (ValType arg : args()) {
-      if (arg.isRef()) {
+      if (arg.isTypeIndex()) {
         return true;
       }
     }
     for (ValType result : results()) {
-      if (result.isReference() && result != RefType::any()) {
+      if (result.isReference() && !result.isAnyRef()) {
         return true;
       }
     }
@@ -1070,14 +1085,14 @@ class FuncType {
     return false;
   }
 #ifdef WASM_PRIVATE_REFTYPES
-  bool exposesRef() const {
+  bool exposesTypeIndex() const {
     for (const ValType& arg : args()) {
-      if (arg.isRef()) {
+      if (arg.isTypeIndex()) {
         return true;
       }
     }
     for (const ValType& result : results()) {
-      if (result.isRef()) {
+      if (result.isTypeIndex()) {
         return true;
       }
     }
@@ -1092,6 +1107,60 @@ struct FuncTypeHashPolicy {
   typedef const FuncType& Lookup;
   static HashNumber hash(Lookup ft) { return ft.hash(); }
   static bool match(const FuncType* lhs, Lookup rhs) { return *lhs == rhs; }
+};
+
+// ArgTypeVector type.
+//
+// Functions usually receive one ABI argument per WebAssembly argument.  However
+// if a function has multiple results and some of those results go to the stack,
+// then it additionally receives a synthetic ABI argument holding a pointer to
+// the stack result area.
+//
+// Given the presence of synthetic arguments, sometimes we need a name for
+// non-synthetic arguments.  We call those "natural" arguments.
+
+enum class StackResults { HasStackResults, NoStackResults };
+
+class ArgTypeVector {
+  const ValTypeVector& args_;
+  bool hasStackResults_;
+
+ public:
+  ArgTypeVector(const ValTypeVector& args, StackResults stackResults)
+      : args_(args),
+        hasStackResults_(stackResults == StackResults::HasStackResults) {}
+  explicit ArgTypeVector(const FuncType& funcType);
+
+  bool hasSyntheticStackResultPointerArg() const { return hasStackResults_; }
+  StackResults stackResults() const {
+    return hasSyntheticStackResultPointerArg() ? StackResults::HasStackResults
+                                               : StackResults::NoStackResults;
+  }
+  size_t lengthWithoutStackResults() const { return args_.length(); }
+  bool isSyntheticStackResultPointerArg(size_t idx) const {
+    // The pointer to stack results area, if present, is a synthetic argument
+    // tacked on at the end.
+    MOZ_ASSERT(idx < length());
+    return idx == args_.length();
+  }
+  bool isNaturalArg(size_t idx) const {
+    return !isSyntheticStackResultPointerArg(idx);
+  }
+  size_t naturalIndex(size_t idx) const {
+    MOZ_ASSERT(isNaturalArg(idx));
+    // Because the synthetic argument, if present, is tacked on the end, an
+    // argument index that isn't synthetic is natural.
+    return idx;
+  }
+
+  size_t length() const { return args_.length() + size_t(hasStackResults_); }
+  jit::MIRType operator[](size_t i) const {
+    MOZ_ASSERT(i < length());
+    if (isSyntheticStackResultPointerArg(i)) {
+      return jit::MIRType::Pointer;
+    }
+    return ToMIRType(args_[naturalIndex(i)]);
+  }
 };
 
 // Structure type.
@@ -2227,12 +2296,16 @@ struct Limits {
 };
 
 // TableDesc describes a table as well as the offset of the table's base pointer
-// in global memory. The TableKind determines the representation:
+// in global memory.
+//
+// The TableKind determines the representation:
 //  - AnyRef: a wasm anyref word (wasm::AnyRef)
 //  - NullRef: as AnyRef
 //  - FuncRef: a two-word FunctionTableElem (wasm indirect call ABI)
 //  - AsmJS: a two-word FunctionTableElem (asm.js ABI)
 // Eventually there should be a single unified AnyRef representation.
+//
+// TableKind::NullRef is a reasonable default initializer, if one is needed.
 
 enum class TableKind { AnyRef, NullRef, FuncRef, AsmJS };
 

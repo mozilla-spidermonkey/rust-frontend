@@ -186,6 +186,7 @@ void nsSplittableFrame::RemoveFromFlow(nsIFrame* aFrame) {
 
 nscoord nsSplittableFrame::ConsumedBSize(WritingMode aWM) const {
   nscoord bSize = 0;
+
   for (nsIFrame* prev = GetPrevContinuation(); prev;
        prev = prev->GetPrevContinuation()) {
     bSize += prev->ContentBSize(aWM);

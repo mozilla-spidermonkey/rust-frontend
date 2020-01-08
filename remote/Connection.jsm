@@ -6,11 +6,11 @@
 
 var EXPORTED_SYMBOLS = ["Connection"];
 
-const { Log } = ChromeUtils.import("chrome://remote/content/Log.jsm");
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
+const { Log } = ChromeUtils.import("chrome://remote/content/Log.jsm");
 const { UnknownMethodError } = ChromeUtils.import(
   "chrome://remote/content/Error.jsm"
 );
@@ -61,9 +61,10 @@ class Connection {
     this.sessions.set(session.id, session);
   }
 
-  send(message) {
-    log.trace(`<-(connection ${this.id}) ${JSON.stringify(message)}`);
-    this.transport.send(message);
+  send(body) {
+    const payload = JSON.stringify(body, null, Log.verbose ? "\t" : null);
+    log.trace(`<-(connection ${this.id}) ${payload}`);
+    this.transport.send(JSON.parse(payload));
   }
 
   /**
@@ -223,7 +224,6 @@ class Connection {
       const result = await session.execute(id, domain, command, params);
       this.onResult(id, result, sessionId);
     } catch (e) {
-      log.warn(e);
       this.onError(packet.id, e, packet.sessionId);
     }
   }

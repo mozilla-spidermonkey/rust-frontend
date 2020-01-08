@@ -39,9 +39,9 @@ enum class StyleDisplay : uint16_t {
   Contents =
       StyleDisplayFrom(StyleDisplayOutside::None, StyleDisplayInside::Contents),
   Inline =
-      StyleDisplayFrom(StyleDisplayOutside::Inline, StyleDisplayInside::Inline),
+      StyleDisplayFrom(StyleDisplayOutside::Inline, StyleDisplayInside::Flow),
   Block =
-      StyleDisplayFrom(StyleDisplayOutside::Block, StyleDisplayInside::Block),
+      StyleDisplayFrom(StyleDisplayOutside::Block, StyleDisplayInside::Flow),
   FlowRoot = StyleDisplayFrom(StyleDisplayOutside::Block,
                               StyleDisplayInside::FlowRoot),
   Flex = StyleDisplayFrom(StyleDisplayOutside::Block, StyleDisplayInside::Flex),
@@ -51,7 +51,7 @@ enum class StyleDisplay : uint16_t {
   InlineTable =
       StyleDisplayFrom(StyleDisplayOutside::Inline, StyleDisplayInside::Table),
   TableCaption = StyleDisplayFrom(StyleDisplayOutside::TableCaption,
-                                  StyleDisplayInside::Block),
+                                  StyleDisplayInside::Flow),
   Ruby =
       StyleDisplayFrom(StyleDisplayOutside::Inline, StyleDisplayInside::Ruby),
   WebkitBox = StyleDisplayFrom(StyleDisplayOutside::Block,
@@ -88,9 +88,9 @@ enum class StyleDisplay : uint16_t {
 
   /// XUL boxes.
   MozBox =
-      StyleDisplayFrom(StyleDisplayOutside::XUL, StyleDisplayInside::MozBox),
-  MozInlineBox = StyleDisplayFrom(StyleDisplayOutside::XUL,
-                                  StyleDisplayInside::MozInlineBox),
+      StyleDisplayFrom(StyleDisplayOutside::Block, StyleDisplayInside::MozBox),
+  MozInlineBox = StyleDisplayFrom(StyleDisplayOutside::Inline,
+                                  StyleDisplayInside::MozBox),
   MozGrid =
       StyleDisplayFrom(StyleDisplayOutside::XUL, StyleDisplayInside::MozGrid),
   MozGridGroup = StyleDisplayFrom(StyleDisplayOutside::XUL,
@@ -184,21 +184,6 @@ enum class StyleColumnFill : uint8_t {
 enum class StyleColumnSpan : uint8_t {
   None,
   All,
-};
-
-// Counters and generated content.
-enum class StyleContentType : uint8_t {
-  String = 1,
-  Image = 10,
-  Attr = 20,
-  Counter = 30,
-  Counters = 31,
-  OpenQuote = 40,
-  CloseQuote = 41,
-  NoOpenQuote = 42,
-  NoCloseQuote = 43,
-  AltContent = 50,
-  Uninitialized,
 };
 
 // Define geometry box for clip-path's reference-box, background-clip,
@@ -347,15 +332,6 @@ enum class StyleBorderCollapse : uint8_t { Collapse, Separate };
 
 // border-image-repeat
 enum class StyleBorderImageRepeat : uint8_t { Stretch, Repeat, Round, Space };
-
-// See nsStyleContent
-enum class StyleContent : uint8_t {
-  OpenQuote,
-  CloseQuote,
-  NoOpenQuote,
-  NoCloseQuote,
-  AltContent
-};
 
 // See nsStyleVisibility
 #define NS_STYLE_DIRECTION_LTR 0

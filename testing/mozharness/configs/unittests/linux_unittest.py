@@ -47,7 +47,6 @@ config = {
         "cppunittest": "runcppunittests.py",
         "gtest": "rungtests.py",
         "jittest": "jit_test.py",
-        "mozmill": "runtestlist.py",
     },
     "minimum_tests_zip_dirs": [
         "bin/*",
@@ -103,16 +102,6 @@ config = {
             ],
             "run_filename": "runtests.py",
             "testsdir": "mochitest"
-        },
-        "mozmill": {
-            "options": [
-                "--binary=%(binary_path)s",
-                "--testing-modules-dir=tests/modules",
-                "--plugins-path=%(test_plugin_path)s",
-                "--symbols-path=%(symbols_path)s"
-            ],
-            "run_filename": "runtestlist.py",
-            "testsdir": "mozmill"
         },
         "reftest": {
             "options": [
@@ -171,6 +160,7 @@ config = {
         "mochitest-webgl2-core": ["--subsuite=webgl2-core"],
         "mochitest-webgl2-ext": ["--subsuite=webgl2-ext"],
         "mochitest-webgl2-deqp": ["--subsuite=webgl2-deqp"],
+        "mochitest-webgpu": ["--subsuite=webgpu"],
         "mochitest-devtools-chrome": ["--flavor=browser", "--subsuite=devtools", "--chunk-by-runtime"],
         "mochitest-devtools-chrome-coverage": ["--flavor=browser", "--subsuite=devtools", "--chunk-by-runtime", "--timeout=1200"],
         "mochitest-a11y": ["--flavor=a11y", "--disable-e10s"],
@@ -249,7 +239,6 @@ config = {
     "minidump_save_path": "%(abs_work_dir)s/../minidumps",
     "unstructured_flavors": {"xpcshell": [],
                              "gtest": [],
-                             "mozmill": [],
                              "cppunittest": [],
                              "jittest": [],
                              },

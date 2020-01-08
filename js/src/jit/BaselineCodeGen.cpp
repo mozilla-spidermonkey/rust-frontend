@@ -95,7 +95,7 @@ BaselineInterpreterGenerator::BaselineInterpreterGenerator(JSContext* cx)
     : BaselineCodeGen(cx /* no handlerArgs */) {}
 
 bool BaselineCompilerHandler::init(JSContext* cx) {
-  if (!analysis_.init(alloc_, cx->caches().gsnCache)) {
+  if (!analysis_.init(alloc_)) {
     return false;
   }
 
@@ -962,14 +962,18 @@ void BaselineInterpreterCodeGen::loadScriptGCThing(ScriptGCThingType type,
       static_assert(uintptr_t(TraceKind::Object) == 0,
                     "Unexpected tag bits for object GCCellPtr");
       break;
-    case ScriptGCThingType::Scope:
     case ScriptGCThingType::BigInt:
+      // Use xorPtr with a 32-bit immediate because it's more efficient than
+      // andPtr on 64-bit.
+      static_assert(uintptr_t(TraceKind::BigInt) == 1,
+                    "Unexpected tag bits for BigInt GCCellPtr");
+      masm.xorPtr(Imm32(1), dest);
+      break;
+    case ScriptGCThingType::Scope:
       // Use xorPtr with a 32-bit immediate because it's more efficient than
       // andPtr on 64-bit.
       static_assert(uintptr_t(TraceKind::Scope) >= JS::OutOfLineTraceKindMask,
                     "Expected Scopes to have OutOfLineTraceKindMask tag");
-      static_assert(uintptr_t(TraceKind::BigInt) >= JS::OutOfLineTraceKindMask,
-                    "Expected BigInts to have OutOfLineTraceKindMask tag");
       masm.xorPtr(Imm32(JS::OutOfLineTraceKindMask), dest);
       break;
   }
@@ -1062,25 +1066,15 @@ bool BaselineCodeGen<Handler>::emitDebugPrologue() {
     masm.loadBaselineFramePtr(BaselineFrameReg, R0.scratchReg());
 
     prepareVMCall();
-    pushBytecodePCArg();
     pushArg(R0.scratchReg());
 
     const RetAddrEntry::Kind kind = RetAddrEntry::Kind::DebugPrologue;
 
-    using Fn = bool (*)(JSContext*, BaselineFrame*, jsbytecode*, bool*);
+    using Fn = bool (*)(JSContext*, BaselineFrame*);
     if (!callVM<Fn, jit::DebugPrologue>(kind)) {
       return false;
     }
 
-    // If the stub returns |true|, we have to return the value stored in the
-    // frame's return value slot.
-    Label done;
-    masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, &done);
-    {
-      masm.loadValue(frame.addressOfReturnValue(), JSReturnOperand);
-      masm.jump(&returnNoDebugEpilogue_);
-    }
-    masm.bind(&done);
     return true;
   };
   return emitDebugInstrumentation(ifDebuggee);
@@ -2359,15 +2353,12 @@ bool BaselineCodeGen<Handler>::emitCheckThis(ValueOperand val, bool reinit) {
 
   if (reinit) {
     using Fn = bool (*)(JSContext*);
-    if (!callVM<Fn, BaselineThrowInitializedThis>()) {
+    if (!callVM<Fn, ThrowInitializedThis>()) {
       return false;
     }
   } else {
-    masm.loadBaselineFramePtr(BaselineFrameReg, val.scratchReg());
-    pushArg(val.scratchReg());
-
-    using Fn = bool (*)(JSContext*, BaselineFrame*);
-    if (!callVM<Fn, BaselineThrowUninitializedThis>()) {
+    using Fn = bool (*)(JSContext*);
+    if (!callVM<Fn, ThrowUninitializedThis>()) {
       return false;
     }
   }
@@ -5139,25 +5130,16 @@ bool BaselineCodeGen<Handler>::emit_JSOP_EXCEPTION() {
 template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_JSOP_DEBUGGER() {
   prepareVMCall();
-  pushBytecodePCArg();
 
   frame.assertSyncedStack();
   masm.loadBaselineFramePtr(BaselineFrameReg, R0.scratchReg());
   pushArg(R0.scratchReg());
 
-  using Fn = bool (*)(JSContext*, BaselineFrame*, jsbytecode*, bool*);
+  using Fn = bool (*)(JSContext*, BaselineFrame*);
   if (!callVM<Fn, jit::OnDebuggerStatement>()) {
     return false;
   }
 
-  // If the stub returns |true|, return the frame's return value.
-  Label done;
-  masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, &done);
-  {
-    masm.loadValue(frame.addressOfReturnValue(), JSReturnOperand);
-    masm.jump(&returnNoDebugEpilogue_);
-  }
-  masm.bind(&done);
   return true;
 }
 
@@ -5868,7 +5850,13 @@ bool BaselineCodeGen<Handler>::emit_JSOP_INITIALYIELD() {
   masm.bind(&skipBarrier);
 
   masm.tagValue(JSVAL_TYPE_OBJECT, genObj, JSReturnOperand);
-  return emitReturn();
+  if (!emitReturn()) {
+    return false;
+  }
+
+  // Two extra stack values will be pushed when resuming the generator.
+  frame.incStackDepth(2);
+  return true;
 }
 
 template <typename Handler>
@@ -5924,7 +5912,13 @@ bool BaselineCodeGen<Handler>::emit_JSOP_YIELD() {
   }
 
   masm.loadValue(frame.addressOfStackValue(-1), JSReturnOperand);
-  return emitReturn();
+  if (!emitReturn()) {
+    return false;
+  }
+
+  // Two extra stack values will be pushed when resuming the generator.
+  frame.incStackDepth(2);
+  return true;
 }
 
 template <typename Handler>
@@ -5978,23 +5972,15 @@ bool BaselineCodeGen<Handler>::emit_JSOP_AFTERYIELD() {
     frame.assertSyncedStack();
     masm.loadBaselineFramePtr(BaselineFrameReg, R0.scratchReg());
     prepareVMCall();
-    pushBytecodePCArg();
     pushArg(R0.scratchReg());
 
     const RetAddrEntry::Kind kind = RetAddrEntry::Kind::DebugAfterYield;
 
-    using Fn = bool (*)(JSContext*, BaselineFrame*, jsbytecode*, bool*);
+    using Fn = bool (*)(JSContext*, BaselineFrame*);
     if (!callVM<Fn, jit::DebugAfterYield>(kind)) {
       return false;
     }
 
-    Label done;
-    masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, &done);
-    {
-      masm.loadValue(frame.addressOfReturnValue(), JSReturnOperand);
-      masm.jump(&returnNoDebugEpilogue_);
-    }
-    masm.bind(&done);
     return true;
   };
   return emitAfterYieldDebugInstrumentation(ifDebuggee, R0.scratchReg());
@@ -6017,54 +6003,6 @@ bool BaselineCodeGen<Handler>::emit_JSOP_FINALYIELDRVAL() {
 
   masm.loadValue(frame.addressOfReturnValue(), JSReturnOperand);
   return emitReturn();
-}
-
-template <>
-bool BaselineInterpreterCodeGen::emitGeneratorThrowOrReturnCallVM() {
-  // Record the offset for the Baseline JIT code below.
-  handler.setGeneratorThrowOrReturnCallOffset(masm.currentOffset());
-
-  using Fn = bool (*)(JSContext*, BaselineFrame*,
-                      Handle<AbstractGeneratorObject*>, HandleValue, uint32_t);
-  if (!callVM<Fn, jit::GeneratorThrowOrReturn>()) {
-    return false;
-  }
-
-  // Control only flows out of GeneratorThrowOrReturn if the debugger
-  // overrode the function resumption with an explicit return value, so here
-  // we want to do all of the cleanup on the baseline frame that _would_ have
-  // happened inside the epilogue of the baseline frame execution.
-
-  // Save the frame's return value to return from resume.
-  masm.loadValue(frame.addressOfReturnValue(), JSReturnOperand);
-
-  // Remove the baseline frame from the stack.
-  masm.moveToStackPtr(BaselineFrameReg);
-  masm.pop(BaselineFrameReg);
-
-  masm.ret();
-
-  return true;
-}
-
-template <>
-bool BaselineCompilerCodeGen::emitGeneratorThrowOrReturnCallVM() {
-  // Jump to the interpreter code where we call GeneratorThrowOrReturn. This way
-  // we ensure we have a sane return address (into the interpreter code instead
-  // of the self-hosted code's BaselineScript) because we turn the generator
-  // frame into an interpreter frame in jit::GeneratorThrowOrReturn.
-  const BaselineInterpreter& interp =
-      cx->runtime()->jitRuntime()->baselineInterpreter();
-  TrampolinePtr code = interp.generatorThrowOrReturnCallAddr();
-  masm.jump(code);
-
-  // Update masm.framePushed() to prevent assertion failures.
-  using Fn = bool (*)(JSContext*, BaselineFrame*,
-                      Handle<AbstractGeneratorObject*>, HandleValue, uint32_t);
-  VMFunctionId id = VMFunctionToId<Fn, jit::GeneratorThrowOrReturn>::id;
-  const VMFunctionData& fun = GetVMFunction(id);
-  masm.implicitPop(GetVMFunctionArgSize(fun));
-  return true;
 }
 
 template <>
@@ -6116,8 +6054,7 @@ bool BaselineCodeGen<Handler>::emitEnterGeneratorCode(Register script,
 }
 
 template <typename Handler>
-bool BaselineCodeGen<Handler>::emitGeneratorResume(
-    GeneratorResumeKind resumeKind) {
+bool BaselineCodeGen<Handler>::emit_JSOP_RESUME() {
   frame.syncStack(0);
   masm.assertStackAlignment(sizeof(Value), 0);
 
@@ -6127,18 +6064,20 @@ bool BaselineCodeGen<Handler>::emitGeneratorResume(
     regs.take(InterpreterPCReg);
   }
 
+  saveInterpreterPCReg();
+
   // Load generator object.
   Register genObj = regs.takeAny();
-  masm.unboxObject(frame.addressOfStackValue(-2), genObj);
+  masm.unboxObject(frame.addressOfStackValue(-3), genObj);
 
   // Load callee.
   Register callee = regs.takeAny();
   masm.unboxObject(
       Address(genObj, AbstractGeneratorObject::offsetOfCalleeSlot()), callee);
 
-  // Load the return value.
-  ValueOperand retVal = regs.takeAnyValue();
-  masm.loadValue(frame.addressOfStackValue(-1), retVal);
+  // Save a pointer to the JSOP_RESUME operand stack Values.
+  Register callerStackPtr = regs.takeAny();
+  masm.computeEffectiveAddress(frame.addressOfStackValue(-1), callerStackPtr);
 
   // Branch to |interpret| to resume the generator in the C++ interpreter if the
   // script does not have a JitScript. Note that we don't relazify generator
@@ -6289,43 +6228,28 @@ bool BaselineCodeGen<Handler>::emitGeneratorResume(
   }
 
   masm.bind(&noExprStack);
-  masm.pushValue(retVal);
+
+  // Push arg, generator, resumeKind stack Values, in that order.
+  masm.pushValue(Address(callerStackPtr, sizeof(Value)));
+  masm.pushValue(JSVAL_TYPE_OBJECT, genObj);
+  masm.pushValue(Address(callerStackPtr, 0));
 
   masm.switchToObjectRealm(genObj, scratch2);
 
-  if (resumeKind == GeneratorResumeKind::Next) {
-    // Load script in scratch1.
-    masm.unboxObject(
-        Address(genObj, AbstractGeneratorObject::offsetOfCalleeSlot()),
-        scratch1);
-    masm.loadPtr(Address(scratch1, JSFunction::offsetOfScript()), scratch1);
+  // Load script in scratch1.
+  masm.unboxObject(
+      Address(genObj, AbstractGeneratorObject::offsetOfCalleeSlot()), scratch1);
+  masm.loadPtr(Address(scratch1, JSFunction::offsetOfScript()), scratch1);
 
-    // Load resume index in scratch2 and mark generator as running.
-    Address resumeIndexSlot(genObj,
-                            AbstractGeneratorObject::offsetOfResumeIndexSlot());
-    masm.unboxInt32(resumeIndexSlot, scratch2);
-    masm.storeValue(Int32Value(AbstractGeneratorObject::RESUME_INDEX_RUNNING),
-                    resumeIndexSlot);
+  // Load resume index in scratch2 and mark generator as running.
+  Address resumeIndexSlot(genObj,
+                          AbstractGeneratorObject::offsetOfResumeIndexSlot());
+  masm.unboxInt32(resumeIndexSlot, scratch2);
+  masm.storeValue(Int32Value(AbstractGeneratorObject::RESUME_INDEX_RUNNING),
+                  resumeIndexSlot);
 
-    if (!emitEnterGeneratorCode(scratch1, scratch2, regs.getAny())) {
-      return false;
-    }
-  } else {
-    MOZ_ASSERT(resumeKind == GeneratorResumeKind::Throw ||
-               resumeKind == GeneratorResumeKind::Return);
-
-    masm.loadBaselineFramePtr(BaselineFrameReg, scratch2);
-
-    prepareVMCall();
-
-    pushArg(Imm32(int32_t(resumeKind)));
-    pushArg(retVal);
-    pushArg(genObj);
-    pushArg(scratch2);
-
-    if (!emitGeneratorThrowOrReturnCallVM()) {
-      return false;
-    }
+  if (!emitEnterGeneratorCode(scratch1, scratch2, regs.getAny())) {
+    return false;
   }
 
   // Call into the VM to resume the generator in the C++ interpreter if there's
@@ -6333,21 +6257,11 @@ bool BaselineCodeGen<Handler>::emitGeneratorResume(
   masm.bind(&interpret);
 
   prepareVMCall();
-  if (resumeKind == GeneratorResumeKind::Next) {
-    pushArg(ImmGCPtr(cx->names().next));
-  } else if (resumeKind == GeneratorResumeKind::Throw) {
-    pushArg(ImmGCPtr(cx->names().throw_));
-  } else {
-    MOZ_ASSERT(resumeKind == GeneratorResumeKind::Return);
-    pushArg(ImmGCPtr(cx->names().return_));
-  }
 
-  masm.loadValue(frame.addressOfStackValue(-1), retVal);
-  pushArg(retVal);
+  pushArg(callerStackPtr);
   pushArg(genObj);
 
-  using Fn = bool (*)(JSContext*, HandleObject, HandleValue, HandlePropertyName,
-                      MutableHandleValue);
+  using Fn = bool (*)(JSContext*, HandleObject, Value*, MutableHandleValue);
   if (!callVM<Fn, jit::InterpretResume>()) {
     return false;
   }
@@ -6363,54 +6277,64 @@ bool BaselineCodeGen<Handler>::emitGeneratorResume(
     masm.switchToBaselineFrameRealm(R2.scratchReg());
   }
   restoreInterpreterPCReg();
-  frame.popn(2);
+  frame.popn(3);
   frame.push(R0);
   return true;
 }
 
-template <>
-bool BaselineCompilerCodeGen::emit_JSOP_RESUME() {
-  auto resumeKind = AbstractGeneratorObject::getResumeKind(handler.pc());
-  return emitGeneratorResume(resumeKind);
-}
-
-template <>
-bool BaselineInterpreterCodeGen::emit_JSOP_RESUME() {
-  Register scratch = R0.scratchReg();
-  LoadUint8Operand(masm, scratch);
-
-  saveInterpreterPCReg();
-
-  Label throw_, return_, done;
-  masm.branch32(Assembler::Equal, scratch,
-                Imm32(int32_t(GeneratorResumeKind::Throw)), &throw_);
-  masm.branch32(Assembler::Equal, scratch,
-                Imm32(int32_t(GeneratorResumeKind::Return)), &return_);
+template <typename Handler>
+bool BaselineCodeGen<Handler>::emit_JSOP_CHECK_RESUMEKIND() {
+  // Load resumeKind in R1, generator in R0.
+  frame.popRegsAndSync(2);
 
 #ifdef DEBUG
   Label ok;
-  masm.branch32(Assembler::Equal, scratch,
-                Imm32(int32_t(GeneratorResumeKind::Next)), &ok);
-  masm.assumeUnreachable("JSOP_RESUME invalid ResumeKind");
+  masm.branchTestInt32(Assembler::Equal, R1, &ok);
+  masm.assumeUnreachable("Expected int32 resumeKind");
   masm.bind(&ok);
 #endif
-  if (!emitGeneratorResume(GeneratorResumeKind::Next)) {
-    return false;
-  }
-  masm.jump(&done);
 
-  masm.bind(&throw_);
-  if (!emitGeneratorResume(GeneratorResumeKind::Throw)) {
-    return false;
-  }
-  masm.jump(&done);
+  // If resumeKind is 'next' we don't have to do anything.
+  Label done;
+  masm.unboxInt32(R1, R1.scratchReg());
+  masm.branch32(Assembler::Equal, R1.scratchReg(),
+                Imm32(int32_t(GeneratorResumeKind::Next)), &done);
 
-  masm.bind(&return_);
-  if (!emitGeneratorResume(GeneratorResumeKind::Return)) {
+  prepareVMCall();
+
+  pushArg(R1.scratchReg());  // resumeKind
+
+  masm.loadValue(frame.addressOfStackValue(-1), R2);
+  pushArg(R2);  // arg
+
+  masm.unboxObject(R0, R0.scratchReg());
+  pushArg(R0.scratchReg());  // genObj
+
+  masm.loadBaselineFramePtr(BaselineFrameReg, R2.scratchReg());
+  pushArg(R2.scratchReg());  // frame
+
+  using Fn = bool (*)(JSContext*, BaselineFrame*,
+                      Handle<AbstractGeneratorObject*>, HandleValue, int32_t);
+  if (!callVM<Fn, jit::GeneratorThrowOrReturn>()) {
     return false;
   }
 
   masm.bind(&done);
+  return true;
+}
+
+template <>
+bool BaselineCompilerCodeGen::emit_JSOP_RESUMEKIND() {
+  GeneratorResumeKind resumeKind = ResumeKindFromPC(handler.pc());
+  frame.push(Int32Value(int32_t(resumeKind)));
+  return true;
+}
+
+template <>
+bool BaselineInterpreterCodeGen::emit_JSOP_RESUMEKIND() {
+  LoadUint8Operand(masm, R0.scratchReg());
+  masm.tagValue(JSVAL_TYPE_INT32, R0.scratchReg(), R0);
+  frame.push(R0);
   return true;
 }
 
@@ -6763,6 +6687,18 @@ bool BaselineInterpreterCodeGen::emit_JSOP_INSTRUMENTATION_SCRIPT_ID() {
   return true;
 }
 
+template <>
+bool BaselineCompilerCodeGen::emit_JSOP_FORCEINTERPRETER() {
+  // Caller is responsible for checking script->hasForceInterpreterOp().
+  MOZ_CRASH("JSOP_FORCEINTERPRETER in baseline");
+}
+
+template <>
+bool BaselineInterpreterCodeGen::emit_JSOP_FORCEINTERPRETER() {
+  masm.assumeUnreachable("JSOP_FORCEINTERPRETER");
+  return true;
+}
+
 template <typename Handler>
 bool BaselineCodeGen<Handler>::emitPrologue() {
 #ifdef JS_USE_LINK_REGISTER
@@ -6849,7 +6785,6 @@ bool BaselineCodeGen<Handler>::emitEpilogue() {
       return false;
     }
   }
-  masm.bind(&returnNoDebugEpilogue_);
 
 #ifdef JS_TRACE_LOGGING
   if (JS::TraceLoggerSupported() && !emitTraceLoggerExit()) {
@@ -6926,24 +6861,18 @@ MethodStatus BaselineCompiler::emitBody() {
       return Method_Error;
     }
 
-    switch (op) {
-      case JSOP_FORCEINTERPRETER:
-        // Caller must have checked script->hasForceInterpreterOp().
-      case JSOP_UNUSED71:
-      case JSOP_UNUSED106:
-      case JSOP_UNUSED120:
-      case JSOP_UNUSED149:
-      case JSOP_UNUSED227:
-      case JSOP_LIMIT:
-        MOZ_CRASH("Unexpected op");
-
-#define EMIT_OP(OP)                                            \
+#define EMIT_OP(OP, ...)                                       \
   case OP:                                                     \
     if (MOZ_UNLIKELY(!this->emit_##OP())) return Method_Error; \
     break;
-        OPCODE_LIST(EMIT_OP)
-#undef EMIT_OP
+
+    switch (op) {
+      FOR_EACH_OPCODE(EMIT_OP)
+      default:
+        MOZ_CRASH("Unexpected op");
     }
+
+#undef EMIT_OP
 
     MOZ_ASSERT(masm.framePushed() == 0);
 
@@ -7050,7 +6979,7 @@ bool BaselineInterpreterGenerator::emitInterpreterLoop() {
 
   // Emit code for each bytecode op.
   Label opLabels[JSOP_LIMIT];
-#define EMIT_OP(OP)                     \
+#define EMIT_OP(OP, ...)                \
   {                                     \
     masm.bind(&opLabels[OP]);           \
     handler.setCurrentOp(OP);           \
@@ -7062,7 +6991,7 @@ bool BaselineInterpreterGenerator::emitInterpreterLoop() {
     }                                   \
     handler.resetCurrentOp();           \
   }
-  OPCODE_LIST(EMIT_OP)
+  FOR_EACH_OPCODE(EMIT_OP)
 #undef EMIT_OP
 
   // External entry point to start interpreting bytecode ops. This is used for
@@ -7098,11 +7027,6 @@ bool BaselineInterpreterGenerator::emitInterpreterLoop() {
     masm.jump(handlerCode);
   }
 
-  // Emit code for JSOP_UNUSED* ops.
-  Label invalidOp;
-  masm.bind(&invalidOp);
-  masm.assumeUnreachable("Invalid op");
-
   // Emit the table.
   masm.haltingAlign(sizeof(void*));
 
@@ -7114,13 +7038,11 @@ bool BaselineInterpreterGenerator::emitInterpreterLoop() {
   tableOffset_ = masm.currentOffset();
 
   for (size_t i = 0; i < JSOP_LIMIT; i++) {
-    // Store a pointer to the code for the current op. If the op's label is not
-    // bound it must be a JSOP_UNUSED* op and we use |invalidOp| instead.
     const Label& opLabel = opLabels[i];
-    uint32_t opOffset = opLabel.bound() ? opLabel.offset() : invalidOp.offset();
+    MOZ_ASSERT(opLabel.bound());
     CodeLabel cl;
     masm.writeCodePointer(&cl);
-    cl.target()->bind(opOffset);
+    cl.target()->bind(opLabel.offset());
     masm.addCodeLabel(cl);
   }
 
@@ -7226,7 +7148,6 @@ bool BaselineInterpreterGenerator::generate(BaselineInterpreter& interpreter) {
     interpreter.init(
         code, interpretOpOffset_, interpretOpNoDebugTrapOffset_,
         bailoutPrologueOffset_.offset(),
-        handler.generatorThrowOrReturnCallOffset(),
         profilerEnterFrameToggleOffset_.offset(),
         profilerExitFrameToggleOffset_.offset(), debugTrapHandlerOffset_,
         std::move(handler.debugInstrumentationOffsets()),
@@ -7298,7 +7219,7 @@ JitCode* JitRuntime::generateDebugTrapHandler(JSContext* cx,
   masm.movePtr(ImmPtr(nullptr), ICStubReg);
   EmitBaselineEnterStubFrame(masm, scratch3);
 
-  using Fn = bool (*)(JSContext*, BaselineFrame*, uint8_t*, bool*);
+  using Fn = bool (*)(JSContext*, BaselineFrame*, uint8_t*);
   VMFunctionId id = VMFunctionToId<Fn, jit::HandleDebugTrap>::id;
   TrampolinePtr code = cx->runtime()->jitRuntime()->getVMWrapper(id);
 
@@ -7308,12 +7229,6 @@ JitCode* JitRuntime::generateDebugTrapHandler(JSContext* cx,
 
   EmitBaselineLeaveStubFrame(masm);
 
-  // If the stub returns |true|, we have to perform a forced return
-  // (return from the JS frame). If the stub returns |false|, just return
-  // from the trap stub so that execution continues at the current pc.
-  Label forcedReturn;
-  masm.branchIfTrueBool(ReturnReg, &forcedReturn);
-
   if (kind == DebugTrapHandlerKind::Interpreter) {
     // We have to reload the bytecode pc register.
     Address pcAddr(BaselineFrameReg,
@@ -7321,27 +7236,6 @@ JitCode* JitRuntime::generateDebugTrapHandler(JSContext* cx,
     masm.loadPtr(pcAddr, InterpreterPCRegAtDispatch);
   }
   masm.abiret();
-
-  masm.bind(&forcedReturn);
-  masm.loadValue(
-      Address(BaselineFrameReg, BaselineFrame::reverseOffsetOfReturnValue()),
-      JSReturnOperand);
-  masm.moveToStackPtr(BaselineFrameReg);
-  masm.pop(BaselineFrameReg);
-
-  // Before returning, if profiling is turned on, make sure that
-  // lastProfilingFrame is set to the correct caller frame.
-  {
-    Label skipProfilingInstrumentation;
-    AbsoluteAddress addressOfEnabled(
-        cx->runtime()->geckoProfiler().addressOfEnabled());
-    masm.branch32(Assembler::Equal, addressOfEnabled, Imm32(0),
-                  &skipProfilingInstrumentation);
-    masm.profilerExitFrame();
-    masm.bind(&skipProfilingInstrumentation);
-  }
-
-  masm.ret();
 
   Linker linker(masm);
   JitCode* handlerCode = linker.newCode(cx, CodeKind::Other);

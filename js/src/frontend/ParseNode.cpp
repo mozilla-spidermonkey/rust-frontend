@@ -399,11 +399,20 @@ ObjectBox::ObjectBox(JSObject* obj, TraceListNode* traceLink,
                      TraceListNode::NodeType type)
     : TraceListNode(obj, traceLink, type), emitLink(nullptr) {}
 
+BigInt* BigIntLiteral::getOrCreate(JSContext* cx) {
+  if (data_.is<BigIntBox*>()) {
+    return value();
+  }
+  Deferred& deferred = data_.as<Deferred>();
+  return deferred.parseInfo.bigIntData[deferred.index].createBigInt(cx);
+}
+
 bool BigIntLiteral::isZero() {
   if (data_.is<BigIntBox*>()) {
     return box()->value()->isZero();
   }
-  return data_.as<BigIntCreationData>().isZero();
+  Deferred& deferred = data_.as<Deferred>();
+  return deferred.parseInfo.bigIntData[deferred.index].isZero();
 }
 
 BigInt* BigIntLiteral::value() { return box()->value(); }
@@ -414,11 +423,12 @@ RegExpObject* RegExpCreationData::createRegExp(JSContext* cx) const {
                                            TenuredObject);
 }
 
-RegExpObject* RegExpLiteral::getOrCreate(JSContext* cx) const {
+RegExpObject* RegExpLiteral::getOrCreate(JSContext* cx,
+                                         ParseInfo& parseInfo) const {
   if (data_.is<ObjectBox*>()) {
     return &objbox()->object()->as<RegExpObject>();
   }
-  return data_.as<RegExpCreationData>().createRegExp(cx);
+  return parseInfo.regExpData[data_.as<RegExpIndex>()].createRegExp(cx);
 }
 
 FunctionBox* ObjectBox::asFunctionBox() {

@@ -244,11 +244,23 @@ template <XDRMode mode>
 /* static */
 XDRResult LazyScript::XDRScriptData(XDRState<mode>* xdr,
                                     HandleScriptSourceObject sourceObject,
-                                    Handle<LazyScript*> lazy) {
+                                    Handle<LazyScript*> lazy,
+                                    bool hasFieldInitializers) {
   JSContext* cx = xdr->cx();
 
   RootedAtom atom(cx);
   RootedFunction func(cx);
+
+  if (hasFieldInitializers) {
+    uint32_t numFieldInitializers;
+    if (mode == XDR_ENCODE) {
+      numFieldInitializers = lazy->getFieldInitializers().numFieldInitializers;
+    }
+    MOZ_TRY(xdr->codeUint32(&numFieldInitializers));
+    if (mode == XDR_DECODE) {
+      lazy->setFieldInitializers(FieldInitializers(numFieldInitializers));
+    }
+  }
 
   mozilla::Span<JS::GCCellPtr> gcThings =
       lazy->data_ ? lazy->data_->gcthings() : mozilla::Span<JS::GCCellPtr>();
@@ -325,7 +337,6 @@ static XDRResult XDRRelazificationInfo(XDRState<mode>* xdr, HandleFunction fun,
     uint32_t toStringEnd = script->toStringEnd();
     uint32_t lineno = script->lineno();
     uint32_t column = script->column();
-    uint32_t numFieldInitializers;
 
     if (mode == XDR_ENCODE) {
       immutableFlags = lazy->immutableFlags();
@@ -336,16 +347,9 @@ static XDRResult XDRRelazificationInfo(XDRState<mode>* xdr, HandleFunction fun,
       MOZ_ASSERT(toStringEnd == lazy->toStringEnd());
       MOZ_ASSERT(lineno == lazy->lineno());
       MOZ_ASSERT(column == lazy->column());
-      if (fun->kind() == FunctionFlags::FunctionKind::ClassConstructor) {
-        numFieldInitializers =
-            (uint32_t)lazy->getFieldInitializers().numFieldInitializers;
-      } else {
-        numFieldInitializers = UINT32_MAX;
-      }
     }
 
     MOZ_TRY(xdr->codeUint32(&immutableFlags));
-    MOZ_TRY(xdr->codeUint32(&numFieldInitializers));
     MOZ_TRY(xdr->codeUint32(&ngcthings));
 
     if (mode == XDR_DECODE) {
@@ -356,11 +360,6 @@ static XDRResult XDRRelazificationInfo(XDRState<mode>* xdr, HandleFunction fun,
       if (!lazy) {
         return xdr->fail(JS::TranscodeResult_Throw);
       }
-
-      if (numFieldInitializers != UINT32_MAX) {
-        lazy->setFieldInitializers(
-            FieldInitializers((size_t)numFieldInitializers));
-      }
     }
   }
 
@@ -368,7 +367,10 @@ static XDRResult XDRRelazificationInfo(XDRState<mode>* xdr, HandleFunction fun,
   // with inner functions. See JSFunction::delazifyLazilyInterpretedFunction.
   MOZ_ASSERT(!lazy->hasInnerFunctions());
 
-  MOZ_TRY(LazyScript::XDRScriptData(xdr, sourceObject, lazy));
+  bool hasFieldInitializers = fun->isClassConstructor();
+
+  MOZ_TRY(
+      LazyScript::XDRScriptData(xdr, sourceObject, lazy, hasFieldInitializers));
 
   return Ok();
 }
@@ -603,30 +605,15 @@ static XDRResult XDRScriptGCThing(XDRState<mode>* xdr, PrivateScriptData* data,
                                   JS::GCCellPtr* thingp) {
   JSContext* cx = xdr->cx();
 
-  enum class GCThingTag { Object, Scope, BigInt };
+  JS::TraceKind kind = thingp->kind();
 
-  JS::GCCellPtr thing;
+  MOZ_TRY(xdr->codeEnum32(&kind));
 
-  GCThingTag tag;
-  if (mode == XDR_ENCODE) {
-    thing = *thingp;
-    if (thing.is<JSObject>()) {
-      tag = GCThingTag::Object;
-    } else if (thing.is<Scope>()) {
-      tag = GCThingTag::Scope;
-    } else {
-      MOZ_ASSERT(thing.is<BigInt>());
-      tag = GCThingTag::BigInt;
-    }
-  }
-
-  MOZ_TRY(xdr->codeEnum32(&tag));
-
-  switch (tag) {
-    case GCThingTag::Object: {
+  switch (kind) {
+    case JS::TraceKind::Object: {
       RootedObject obj(cx);
       if (mode == XDR_ENCODE) {
-        obj = &thing.as<JSObject>();
+        obj = &thingp->as<JSObject>();
       }
       MOZ_TRY(XDRInnerObject(xdr, data, sourceObject, &obj));
       if (mode == XDR_DECODE) {
@@ -634,10 +621,11 @@ static XDRResult XDRScriptGCThing(XDRState<mode>* xdr, PrivateScriptData* data,
       }
       break;
     }
-    case GCThingTag::Scope: {
+
+    case JS::TraceKind::Scope: {
       RootedScope scope(cx);
       if (mode == XDR_ENCODE) {
-        scope = &thing.as<Scope>();
+        scope = &thingp->as<Scope>();
       }
       MOZ_TRY(XDRScope(xdr, data, scriptEnclosingScope, funOrMod, *isFirstScope,
                        &scope));
@@ -647,10 +635,11 @@ static XDRResult XDRScriptGCThing(XDRState<mode>* xdr, PrivateScriptData* data,
       *isFirstScope = false;
       break;
     }
-    case GCThingTag::BigInt: {
+
+    case JS::TraceKind::BigInt: {
       RootedBigInt bi(cx);
       if (mode == XDR_ENCODE) {
-        bi = &thing.as<BigInt>();
+        bi = &thingp->as<BigInt>();
       }
       MOZ_TRY(XDRBigInt(xdr, &bi));
       if (mode == XDR_DECODE) {
@@ -658,9 +647,10 @@ static XDRResult XDRScriptGCThing(XDRState<mode>* xdr, PrivateScriptData* data,
       }
       break;
     }
+
     default:
       // Fail in debug, but only soft-fail in release.
-      MOZ_ASSERT(false, "Bad XDR GCThingTag");
+      MOZ_ASSERT(false, "Bad XDR class kind");
       return xdr->fail(JS::TranscodeResult_Failure_BadDecode);
   }
   return Ok();
@@ -691,12 +681,43 @@ void js::BaseScript::setEnclosingScope(Scope* enclosingScope) {
 }
 
 void js::BaseScript::finalize(JSFreeOp* fop) {
+  // Scripts with bytecode may have optional data stored in per-runtime or
+  // per-zone maps. Note that a failed compilation must not have entries since
+  // the script itself will not be marked as having bytecode.
+  if (hasBytecode()) {
+    JSScript* script = static_cast<JSScript*>(this);
+
+    if (coverage::IsLCovEnabled()) {
+      coverage::CollectScriptCoverage(script, true);
+    }
+
+    fop->runtime()->geckoProfiler().onScriptFinalized(script);
+
+    script->destroyScriptCounts();
+
+    DebugAPI::destroyDebugScript(fop, script);
+
+#ifdef MOZ_VTUNE
+    if (zone()->scriptVTuneIdMap) {
+      // Note: we should only get here if the VTune JIT profiler is running.
+      zone()->scriptVTuneIdMap->remove(script);
+    }
+#endif
+  }
+
+  if (warmUpData_.isJitScript()) {
+    JSScript* script = static_cast<JSScript*>(this);
+    script->releaseJitScriptOnFinalize(fop);
+  }
+
   if (data_) {
     size_t size = data_->allocationSize();
     AlwaysPoison(data_, JS_POISONED_JSSCRIPT_DATA_PATTERN, size,
                  MemCheckKind::MakeNoAccess);
     fop->free_(this, data_, size, MemoryUse::ScriptPrivateData);
   }
+
+  freeSharedData();
 }
 
 template <XDRMode mode>
@@ -724,6 +745,19 @@ XDRResult js::PrivateScriptData::XDR(XDRState<mode>* xdr, HandleScript script,
     }
 
     data = script->data_;
+  }
+
+  // Code the field initilizer data.
+  if (funOrMod && funOrMod->is<JSFunction>() &&
+      funOrMod->as<JSFunction>().isClassConstructor()) {
+    uint32_t numFieldInitializers;
+    if (mode == XDR_ENCODE) {
+      numFieldInitializers = data->getFieldInitializers().numFieldInitializers;
+    }
+    MOZ_TRY(xdr->codeUint32(&numFieldInitializers));
+    if (mode == XDR_DECODE) {
+      data->setFieldInitializers(FieldInitializers(numFieldInitializers));
+    }
   }
 
   bool isFirstScope = true;
@@ -1061,29 +1095,26 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
   /* NB: Keep this in sync with CopyScript. */
 
   enum XDRScriptFlags {
-    OwnSource,
-    HasLazyScript,
+    OwnSource = 1 << 0,
+    HasLazyScript = 1 << 1,
   };
 
-  uint8_t xdrScriptFlags = 0;
+  uint8_t xdrFlags = 0;
 
-  uint32_t lineno = 0;
-  uint32_t column = 0;
-  uint32_t mainOffset = 0;
-  uint32_t nfixed = 0;
-  uint32_t nslots = 0;
-  uint32_t bodyScopeIndex = 0;
   uint32_t sourceStart = 0;
   uint32_t sourceEnd = 0;
   uint32_t toStringStart = 0;
   uint32_t toStringEnd = 0;
+  uint32_t lineno = 0;
+  uint32_t column = 0;
   uint32_t immutableFlags = 0;
 
   // NOTE: |mutableFlags| are not preserved by XDR.
 
   JSContext* cx = xdr->cx();
   RootedScript script(cx);
-  bool isInnerFunction = funOrMod && funOrMod->is<JSFunction>();
+
+  bool isFunctionScript = funOrMod && funOrMod->is<JSFunction>();
 
   // Instrumented scripts cannot be encoded, as they have extra instructions
   // which are not normally present. Globals with instrumentation enabled must
@@ -1097,13 +1128,9 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
   if (mode == XDR_ENCODE) {
     script = scriptp.get();
 
-    RootedFunction fun(cx);
-    if (isInnerFunction) {
-      MOZ_ASSERT(script->function() == funOrMod);
-      fun.set(&funOrMod->as<JSFunction>());
-    }
+    MOZ_ASSERT_IF(isFunctionScript, script->function() == funOrMod);
 
-    if (!fun && script->treatAsRunOnce() && script->hasRunOnce()) {
+    if (!isFunctionScript && script->treatAsRunOnce() && script->hasRunOnce()) {
       // This is a toplevel or eval script that's runOnce.  We want to
       // make sure that we're not XDR-saving an object we emitted for
       // JSOP_OBJECT that then got modified.  So throw if we're not
@@ -1117,42 +1144,32 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
     }
 
     if (!sourceObjectArg) {
-      xdrScriptFlags |= (1 << OwnSource);
+      xdrFlags |= OwnSource;
     }
     if (script->maybeLazyScript()) {
-      xdrScriptFlags |= (1 << HasLazyScript);
+      xdrFlags |= HasLazyScript;
     }
   }
 
-  MOZ_TRY(xdr->codeUint8(&xdrScriptFlags));
+  MOZ_TRY(xdr->codeUint8(&xdrFlags));
 
   if (mode == XDR_ENCODE) {
-    lineno = script->lineno();
-    column = script->column();
-    mainOffset = script->mainOffset();
-    nfixed = script->nfixed();
-    nslots = script->nslots();
-    bodyScopeIndex = script->bodyScopeIndex();
-
     sourceStart = script->sourceStart();
     sourceEnd = script->sourceEnd();
     toStringStart = script->toStringStart();
     toStringEnd = script->toStringEnd();
-
     immutableFlags = script->immutableFlags();
+    lineno = script->lineno();
+    column = script->column();
   }
 
-  MOZ_TRY(xdr->codeUint32(&lineno));
-  MOZ_TRY(xdr->codeUint32(&column));
-  MOZ_TRY(xdr->codeUint32(&mainOffset));
-  MOZ_TRY(xdr->codeUint32(&nfixed));
-  MOZ_TRY(xdr->codeUint32(&nslots));
-  MOZ_TRY(xdr->codeUint32(&bodyScopeIndex));
   MOZ_TRY(xdr->codeUint32(&sourceStart));
   MOZ_TRY(xdr->codeUint32(&sourceEnd));
   MOZ_TRY(xdr->codeUint32(&toStringStart));
   MOZ_TRY(xdr->codeUint32(&toStringEnd));
   MOZ_TRY(xdr->codeUint32(&immutableFlags));
+  MOZ_TRY(xdr->codeUint32(&lineno));
+  MOZ_TRY(xdr->codeUint32(&column));
 
   RootedScriptSourceObject sourceObject(cx, sourceObjectArg);
   Maybe<CompileOptions> options;
@@ -1165,7 +1182,7 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
     bool noScriptRval =
         !!(immutableFlags & uint32_t(ImmutableFlags::NoScriptRval));
     bool selfHosted = !!(immutableFlags & uint32_t(ImmutableFlags::SelfHosted));
-    if (xdr->hasOptions() && (xdrScriptFlags & (1 << OwnSource))) {
+    if (xdr->hasOptions() && (xdrFlags & OwnSource)) {
       options.emplace(xdr->cx(), xdr->options());
       if (options->noScriptRval != noScriptRval ||
           options->selfHostingMode != selfHosted) {
@@ -1177,7 +1194,7 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
     }
   }
 
-  if (xdrScriptFlags & (1 << OwnSource)) {
+  if (xdrFlags & OwnSource) {
     Rooted<ScriptSourceHolder> ssHolder(cx);
 
     // We are relying on the script's ScriptSource so the caller should not
@@ -1215,8 +1232,8 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
 
   if (mode == XDR_DECODE) {
     RootedObject functionOrGlobal(
-        cx, isInnerFunction ? static_cast<JSObject*>(funOrMod)
-                            : static_cast<JSObject*>(cx->global()));
+        cx, isFunctionScript ? static_cast<JSObject*>(funOrMod)
+                             : static_cast<JSObject*>(cx->global()));
 
     script = JSScript::Create(cx, functionOrGlobal, *options, sourceObject,
                               sourceStart, sourceEnd, toStringStart,
@@ -1236,18 +1253,17 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
 
     // Set the script in its function now so that inner scripts to be
     // decoded may iterate the static scope chain.
-    if (isInnerFunction) {
+    if (isFunctionScript) {
       funOrMod->as<JSFunction>().initScript(script);
     }
   }
 
-  // If XDR operation fails, we must call JSScript::freeScriptData in order
-  // to neuter the script. Various things that iterate raw scripts in a GC
-  // arena use the presense of this data to detect if initialization is
-  // complete.
+  // If XDR operation fails, we must call BaseScript::freeSharedData in order to
+  // neuter the script. Various things that iterate raw scripts in a GC arena
+  // use the presense of this data to detect if initialization is complete.
   auto scriptDataGuard = mozilla::MakeScopeExit([&] {
     if (mode == XDR_DECODE) {
-      script->freeScriptData();
+      script->freeSharedData();
     }
   });
 
@@ -1256,23 +1272,19 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
                                        scriptEnclosingScope, funOrMod));
   MOZ_TRY(RuntimeScriptData::XDR<mode>(xdr, script));
 
-  RootedFunction fun(cx);
-  if (isInnerFunction) {
-    fun.set(&funOrMod->as<JSFunction>());
-  }
-
   if (mode == XDR_DECODE) {
     if (!script->shareScriptData(cx)) {
       return xdr->fail(JS::TranscodeResult_Throw);
     }
   }
 
-  if (xdrScriptFlags & (1 << HasLazyScript)) {
+  if (xdrFlags & HasLazyScript) {
     Rooted<LazyScript*> lazy(cx);
     if (mode == XDR_ENCODE) {
       lazy = script->maybeLazyScript();
     }
 
+    RootedFunction fun(cx, &funOrMod->as<JSFunction>());
     MOZ_TRY(
         XDRRelazificationInfo(xdr, fun, script, scriptEnclosingScope, &lazy));
 
@@ -1289,7 +1301,7 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
     }
 
     /* see BytecodeEmitter::tellDebuggerAboutCompiledScript */
-    if (!fun && !cx->isHelperThreadContext()) {
+    if (!isFunctionScript && !cx->isHelperThreadContext()) {
       DebugAPI::onNewScript(cx, script);
     }
   }
@@ -1324,7 +1336,6 @@ XDRResult js::XDRLazyScript(XDRState<mode>* xdr, HandleScope enclosingScope,
     uint32_t lineno;
     uint32_t column;
     uint32_t immutableFlags;
-    uint32_t numFieldInitializers;
     uint32_t ngcthings;
 
     if (mode == XDR_ENCODE) {
@@ -1341,12 +1352,6 @@ XDRResult js::XDRLazyScript(XDRState<mode>* xdr, HandleScope enclosingScope,
       lineno = lazy->lineno();
       column = lazy->column();
       immutableFlags = lazy->immutableFlags();
-      if (fun->kind() == FunctionFlags::FunctionKind::ClassConstructor) {
-        numFieldInitializers =
-            (uint32_t)lazy->getFieldInitializers().numFieldInitializers;
-      } else {
-        numFieldInitializers = UINT32_MAX;
-      }
       ngcthings = lazy->gcthings().size();
     }
 
@@ -1357,7 +1362,6 @@ XDRResult js::XDRLazyScript(XDRState<mode>* xdr, HandleScope enclosingScope,
     MOZ_TRY(xdr->codeUint32(&lineno));
     MOZ_TRY(xdr->codeUint32(&column));
     MOZ_TRY(xdr->codeUint32(&immutableFlags));
-    MOZ_TRY(xdr->codeUint32(&numFieldInitializers));
     MOZ_TRY(xdr->codeUint32(&ngcthings));
 
     if (mode == XDR_DECODE) {
@@ -1369,16 +1373,14 @@ XDRResult js::XDRLazyScript(XDRState<mode>* xdr, HandleScope enclosingScope,
         return xdr->fail(JS::TranscodeResult_Throw);
       }
 
-      if (numFieldInitializers != UINT32_MAX) {
-        lazy->setFieldInitializers(
-            FieldInitializers((size_t)numFieldInitializers));
-      }
-
       fun->initLazyScript(lazy);
     }
   }
 
-  MOZ_TRY(LazyScript::XDRScriptData(xdr, sourceObject, lazy));
+  bool hasFieldInitializers = fun->isClassConstructor();
+
+  MOZ_TRY(
+      LazyScript::XDRScriptData(xdr, sourceObject, lazy, hasFieldInitializers));
 
   return Ok();
 }
@@ -1452,6 +1454,8 @@ bool JSScript::initScriptCounts(JSContext* cx) {
     ReportOutOfMemory(cx);
     return false;
   }
+
+  MOZ_ASSERT(this->hasBytecode());
 
   // Register the current ScriptCounts in the zone's map.
   if (!zone()->scriptCountsMap->putNew(this, std::move(sc))) {
@@ -1700,17 +1704,18 @@ void ScriptSourceObject::trace(JSTracer* trc, JSObject* obj) {
 }
 
 static const JSClassOps ScriptSourceObjectClassOps = {
-    nullptr, /* addProperty */
-    nullptr, /* delProperty */
-    nullptr, /* enumerate */
-    nullptr, /* newEnumerate */
-    nullptr, /* resolve */
-    nullptr, /* mayResolve */
-    ScriptSourceObject::finalize,
-    nullptr, /* call */
-    nullptr, /* hasInstance */
-    nullptr, /* construct */
-    ScriptSourceObject::trace};
+    nullptr,                       // addProperty
+    nullptr,                       // delProperty
+    nullptr,                       // enumerate
+    nullptr,                       // newEnumerate
+    nullptr,                       // resolve
+    nullptr,                       // mayResolve
+    ScriptSourceObject::finalize,  // finalize
+    nullptr,                       // call
+    nullptr,                       // hasInstance
+    nullptr,                       // construct
+    ScriptSourceObject::trace,     // trace
+};
 
 const JSClass ScriptSourceObject::class_ = {
     "ScriptSource",
@@ -4154,8 +4159,6 @@ bool JSScript::createImmutableScriptData(JSContext* cx, uint32_t codeLength,
   return true;
 }
 
-void JSScript::freeScriptData() { sharedData_ = nullptr; }
-
 // Takes owndership of the script's sharedData_ and either adds it into the
 // runtime's RuntimeScriptDataTable or frees it if a matching entry already
 // exists.
@@ -4238,8 +4241,6 @@ PrivateScriptData::PrivateScriptData(uint32_t ngcthings)
 
   // Layout and initialize the gcthings array.
   {
-    MOZ_ASSERT(ngcthings > 0);
-
     static_assert(alignof(PrivateScriptData) >= alignof(JS::GCCellPtr),
                   "Incompatible alignment");
     initElements<JS::GCCellPtr>(cursor, ngcthings);
@@ -4276,7 +4277,8 @@ PrivateScriptData* PrivateScriptData::new_(JSContext* cx, uint32_t ngcthings) {
 
   js::PrivateScriptData* data = script->data_;
   if (ngcthings) {
-    if (!bce->perScriptData().gcThingList().finish(cx, data->gcthings())) {
+    if (!bce->perScriptData().gcThingList().finish(cx, bce->parseInfo,
+                                                   data->gcthings())) {
       return false;
     }
   }
@@ -4392,6 +4394,8 @@ uint32_t JSScript::vtuneMethodID() {
     return p->value();
   }
 
+  MOZ_ASSERT(this->hasBytecode());
+
   uint32_t id = vtune::GenerateUniqueMethodID();
   if (!zone()->scriptVTuneIdMap->add(p, this, id)) {
     MOZ_CRASH("Failed to add vtune method id");
@@ -4482,11 +4486,11 @@ bool JSScript::fullyInitFromEmitter(JSContext* cx, HandleScript script,
                                     frontend::BytecodeEmitter* bce) {
   MOZ_ASSERT(!script->data_, "JSScript already initialized");
 
-  // If initialization fails, we must call JSScript::freeScriptData in order to
-  // neuter the script. Various things that iterate raw scripts in a GC arena
+  // If initialization fails, we must call BaseScript::freeSharedData in order
+  // to neuter the script. Various things that iterate raw scripts in a GC arena
   // use the presense of this data to detect if initialization is complete.
   auto scriptDataGuard =
-      mozilla::MakeScopeExit([&] { script->freeScriptData(); });
+      mozilla::MakeScopeExit([&] { script->freeSharedData(); });
 
   /* The counts of indexed things must be checked during code generation. */
   MOZ_ASSERT(bce->perScriptData().atomIndices()->count() <= INDEX_LIMIT);
@@ -4507,7 +4511,7 @@ bool JSScript::fullyInitFromEmitter(JSContext* cx, HandleScript script,
   script->setFlag(ImmutableFlags::Strict, bce->sc->strict());
   script->setFlag(ImmutableFlags::BindingsAccessedDynamically,
                   bce->sc->bindingsAccessedDynamically());
-  script->setFlag(ImmutableFlags::HasCallSiteObj, bce->hasCallSiteObj);
+  script->setFlag(ImmutableFlags::HasCallSiteObj, bce->sc->hasCallSiteObj());
   script->setFlag(ImmutableFlags::IsForEval, bce->sc->isEvalContext());
   script->setFlag(ImmutableFlags::IsModule, bce->sc->isModuleContext());
   script->setFlag(ImmutableFlags::IsFunction, bce->sc->isFunctionBox());
@@ -4515,8 +4519,7 @@ bool JSScript::fullyInitFromEmitter(JSContext* cx, HandleScript script,
                   bce->outermostScope().hasOnChain(ScopeKind::NonSyntactic));
   script->setFlag(ImmutableFlags::NeedsFunctionEnvironmentObjects,
                   NeedsFunctionEnvironmentObjects(bce));
-  script->setFlag(ImmutableFlags::HasModuleGoal,
-                  bce->outermostScope().hasOnChain(ScopeKind::Module));
+  script->setFlag(ImmutableFlags::HasModuleGoal, bce->sc->hasModuleGoal());
 
   // Initialize script flags from FunctionBox
   if (bce->sc->isFunctionBox()) {
@@ -4591,6 +4594,12 @@ void JSScript::assertValidJumpTargets() const {
       MOZ_ASSERT_IF(target < loc, target.is(JSOP_LOOPHEAD));
       MOZ_ASSERT_IF(target < loc, IsBackedgePC(loc.toRawBytecode()));
 
+      // All forward jumps must be to a JSOP_JUMPTARGET op.
+      MOZ_ASSERT_IF(target > loc, target.is(JSOP_JUMPTARGET));
+
+      // Jumps must not cross scope boundaries.
+      MOZ_ASSERT(loc.innermostScope(this) == target.innermostScope(this));
+
       // Check fallthrough of conditional jump instructions.
       if (loc.fallsThrough()) {
         BytecodeLocation fallthrough = loc.next();
@@ -4605,7 +4614,7 @@ void JSScript::assertValidJumpTargets() const {
 
       // Default target.
       MOZ_ASSERT(mainLoc <= target && target < endLoc);
-      MOZ_ASSERT(target.isJumpTarget());
+      MOZ_ASSERT(target.is(JSOP_JUMPTARGET));
 
       int32_t low = loc.getTableSwitchLow();
       int32_t high = loc.getTableSwitchHigh();
@@ -4614,25 +4623,23 @@ void JSScript::assertValidJumpTargets() const {
         BytecodeLocation switchCase(this,
                                     tableSwitchCasePC(loc.toRawBytecode(), i));
         MOZ_ASSERT(mainLoc <= switchCase && switchCase < endLoc);
-        MOZ_ASSERT(switchCase.isJumpTarget());
+        MOZ_ASSERT(switchCase.is(JSOP_JUMPTARGET));
       }
     }
   }
 
   // Check catch/finally blocks as jump targets.
   for (const JSTryNote& tn : trynotes()) {
-    jsbytecode* end = codeEnd();
-    jsbytecode* mainEntry = main();
-
-    jsbytecode* tryStart = offsetToPC(tn.start);
-    jsbytecode* tryPc = tryStart - 1;
     if (tn.kind != JSTRY_CATCH && tn.kind != JSTRY_FINALLY) {
       continue;
     }
 
+    jsbytecode* tryStart = offsetToPC(tn.start);
+    jsbytecode* tryPc = tryStart - JSOP_TRY_LENGTH;
     MOZ_ASSERT(JSOp(*tryPc) == JSOP_TRY);
+
     jsbytecode* tryTarget = tryStart + tn.length;
-    MOZ_ASSERT(mainEntry <= tryTarget && tryTarget < end);
+    MOZ_ASSERT(main() <= tryTarget && tryTarget < codeEnd());
     MOZ_ASSERT(BytecodeIsJumpTarget(JSOp(*tryTarget)));
   }
 }
@@ -4654,46 +4661,6 @@ void JSScript::addSizeOfJitScript(mozilla::MallocSizeOf mallocSizeOf,
 }
 
 js::GlobalObject& JSScript::uninlinedGlobal() const { return global(); }
-
-void JSScript::finalize(JSFreeOp* fop) {
-  // NOTE: this JSScript may be partially initialized at this point.  E.g. we
-  // may have created it and partially initialized it with
-  // JSScript::Create(), but not yet finished initializing it with
-  // fullyInitFromEmitter().
-
-  if (coverage::IsLCovEnabled()) {
-    coverage::CollectScriptCoverage(this);
-  }
-
-  fop->runtime()->geckoProfiler().onScriptFinalized(this);
-
-  // Finalize the base-script fields.
-  BaseScript::finalize(fop);
-
-  if (hasJitScript()) {
-    releaseJitScriptOnFinalize(fop);
-  }
-
-  destroyScriptCounts();
-  DebugAPI::destroyDebugScript(fop, this);
-
-#ifdef MOZ_VTUNE
-  if (zone()->scriptVTuneIdMap) {
-    // Note: we should only get here if the VTune JIT profiler is running.
-    zone()->scriptVTuneIdMap->remove(this);
-  }
-#endif
-
-  freeScriptData();
-
-  // In most cases, our LazyScript's script pointer will reference this
-  // script, and thus be nulled out by normal weakref processing. However, if
-  // we unlazified the LazyScript during incremental sweeping, it will have a
-  // completely different JSScript.
-  MOZ_ASSERT_IF(
-      lazyScript && !IsAboutToBeFinalizedUnbarriered(&lazyScript),
-      !lazyScript->hasScript() || lazyScript->maybeScriptUnbarriered() != this);
-}
 
 static const uint32_t GSN_CACHE_THRESHOLD = 100;
 
@@ -4997,7 +4964,7 @@ static JSObject* CloneScriptObject(JSContext* cx, PrivateScriptData* srcData,
       }
     }
 
-    Scope* enclosing = innerFun->nonLazyScript()->enclosingScope();
+    Scope* enclosing = innerFun->enclosingScope();
     uint32_t scopeIndex = FindScopeIndex(srcData->gcthings(), *enclosing);
     RootedScope enclosingClone(cx, &gcThings[scopeIndex].get().as<Scope>());
     return CloneInnerInterpretedFunction(cx, enclosingClone, innerFun,
@@ -5052,7 +5019,7 @@ bool PrivateScriptData::Clone(JSContext* cx, HandleScript src, HandleScript dst,
       bigint = &gcThing.as<BigInt>();
       BigInt* clone = bigint;
       if (cx->zone() != bigint->zone()) {
-        clone = BigInt::copy(cx, bigint);
+        clone = BigInt::copy(cx, bigint, gc::TenuredHeap);
         if (!clone) {
           return false;
         }
@@ -5348,24 +5315,10 @@ void ScriptWarmUpData::trace(JSTracer* trc) {
 }
 
 void JSScript::traceChildren(JSTracer* trc) {
-  // NOTE: this JSScript may be partially initialized at this point.  E.g. we
-  // may have created it and partially initialized it with
-  // JSScript::Create(), but not yet finished initializing it with
-  // fullyInitFromEmitter().
-
-  // Trace base class fields.
   BaseScript::traceChildren(trc);
 
-  if (sharedData()) {
-    sharedData()->traceChildren(trc);
-  }
-
-  if (maybeLazyScript()) {
+  if (lazyScript) {
     TraceManuallyBarrieredEdge(trc, &lazyScript, "lazyScript");
-  }
-
-  if (hasDebugScript()) {
-    DebugAPI::traceDebugScript(trc, this);
   }
 
   if (trc->isMarkingTracer()) {
@@ -5405,7 +5358,7 @@ size_t JSScript::calculateLiveFixed(jsbytecode* pc) {
   return nlivefixed;
 }
 
-Scope* JSScript::lookupScope(jsbytecode* pc) {
+Scope* JSScript::lookupScope(jsbytecode* pc) const {
   MOZ_ASSERT(containsPC(pc));
 
   size_t offset = pc - code();
@@ -5454,14 +5407,14 @@ Scope* JSScript::lookupScope(jsbytecode* pc) {
   return scope;
 }
 
-Scope* JSScript::innermostScope(jsbytecode* pc) {
+Scope* JSScript::innermostScope(jsbytecode* pc) const {
   if (Scope* scope = lookupScope(pc)) {
     return scope;
   }
   return bodyScope();
 }
 
-void JSScript::setArgumentsHasVarBinding() {
+void BaseScript::setArgumentsHasVarBinding() {
   setFlag(ImmutableFlags::ArgumentsHasVarBinding);
   setFlag(MutableFlags::NeedsArgsAnalysis);
 }
@@ -5646,7 +5599,7 @@ LazyScript* LazyScript::Create(
     const frontend::AtomVector& closedOverBindings,
     const frontend::FunctionBoxVector& innerFunctionBoxes, uint32_t sourceStart,
     uint32_t sourceEnd, uint32_t toStringStart, uint32_t toStringEnd,
-    uint32_t lineno, uint32_t column, frontend::ParseGoal parseGoal) {
+    uint32_t lineno, uint32_t column) {
   uint32_t ngcthings =
       innerFunctionBoxes.length() + closedOverBindings.length();
 
@@ -5657,9 +5610,8 @@ LazyScript* LazyScript::Create(
     return nullptr;
   }
 
-  lazy->setFlag(ImmutableFlags::HasModuleGoal,
-                (parseGoal == frontend::ParseGoal::Module));
   lazy->setFlag(ImmutableFlags::HasInnerFunctions, !innerFunctionBoxes.empty());
+  lazy->setFlag(ImmutableFlags::IsFunction);
 
   // Fill in gcthing data with inner functions followed by binding data.
   mozilla::Span<JS::GCCellPtr> gcThings =

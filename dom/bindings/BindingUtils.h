@@ -1853,7 +1853,8 @@ static inline bool ConvertJSValueToString(JSContext* cx,
 
 MOZ_MUST_USE bool NormalizeUSVString(nsAString& aString);
 
-MOZ_MUST_USE bool NormalizeUSVString(binding_detail::FakeString& aString);
+MOZ_MUST_USE bool NormalizeUSVString(
+    binding_detail::FakeString<char16_t>& aString);
 
 template <typename T>
 static inline bool ConvertJSValueToUSVString(JSContext* cx,
@@ -2389,29 +2390,34 @@ const T& NonNullHelper(const OwningNonNull<T>& aArg) {
   return aArg;
 }
 
-inline void NonNullHelper(NonNull<binding_detail::FakeString>& aArg) {
+template <typename CharT>
+inline void NonNullHelper(NonNull<binding_detail::FakeString<CharT>>& aArg) {
   // This overload is here to make sure that we never end up applying
   // NonNullHelper to a NonNull<binding_detail::FakeString>. If we
   // try to, it should fail to compile, since presumably the caller will try to
   // use our nonexistent return value.
 }
 
-inline void NonNullHelper(const NonNull<binding_detail::FakeString>& aArg) {
+template <typename CharT>
+inline void NonNullHelper(
+    const NonNull<binding_detail::FakeString<CharT>>& aArg) {
   // This overload is here to make sure that we never end up applying
   // NonNullHelper to a NonNull<binding_detail::FakeString>. If we
   // try to, it should fail to compile, since presumably the caller will try to
   // use our nonexistent return value.
 }
 
-inline void NonNullHelper(binding_detail::FakeString& aArg) {
+template <typename CharT>
+inline void NonNullHelper(binding_detail::FakeString<CharT>& aArg) {
   // This overload is here to make sure that we never end up applying
   // NonNullHelper to a FakeString before we've constified it.  If we
   // try to, it should fail to compile, since presumably the caller will try to
   // use our nonexistent return value.
 }
 
-MOZ_ALWAYS_INLINE
-const nsAString& NonNullHelper(const binding_detail::FakeString& aArg) {
+template <typename CharT>
+MOZ_ALWAYS_INLINE const nsTSubstring<CharT>& NonNullHelper(
+    const binding_detail::FakeString<CharT>& aArg) {
   return aArg;
 }
 
@@ -2498,6 +2504,29 @@ inline bool ByteStringToJsval(JSContext* cx, const nsACString& str,
     return true;
   }
   return NonVoidByteStringToJsval(cx, str, rval);
+}
+
+// Convert an utf-8 encoded nsCString to jsval, returning true on success.
+//
+// TODO(bug 1606957): This could probably be better.
+inline bool NonVoidUTF8StringToJsval(JSContext* cx, const nsACString& str,
+                                     JS::MutableHandle<JS::Value> rval) {
+  JSString* jsStr =
+      JS_NewStringCopyUTF8N(cx, {str.BeginReading(), str.Length()});
+  if (!jsStr) {
+    return false;
+  }
+  rval.setString(jsStr);
+  return true;
+}
+
+inline bool UTF8StringToJsval(JSContext* cx, const nsACString& str,
+                              JS::MutableHandle<JS::Value> rval) {
+  if (str.IsVoid()) {
+    rval.setNull();
+    return true;
+  }
+  return NonVoidUTF8StringToJsval(cx, str, rval);
 }
 
 template <class T, bool isISupports = IsBaseOf<nsISupports, T>::value>

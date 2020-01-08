@@ -2374,13 +2374,14 @@ setterLevel:                                                                  \
   IMMUTABLE_FLAG_GETTER(selfHosted, SelfHosted)
   IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(bindingsAccessedDynamically,
                                       BindingsAccessedDynamically)
-  IMMUTABLE_FLAG_GETTER(funHasExtensibleScope, FunHasExtensibleScope)
-  IMMUTABLE_FLAG_GETTER(hasCallSiteObj, HasCallSiteObj)
-  IMMUTABLE_FLAG_GETTER(hasModuleGoal, HasModuleGoal)
+  IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(funHasExtensibleScope,
+                                      FunHasExtensibleScope)
+  IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(hasCallSiteObj, HasCallSiteObj)
+  IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(hasModuleGoal, HasModuleGoal)
   IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(functionHasThisBinding,
                                       FunctionHasThisBinding)
   // FunctionHasExtraBodyVarScope: custom logic below.
-  IMMUTABLE_FLAG_GETTER(hasMappedArgsObj, HasMappedArgsObj)
+  IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(hasMappedArgsObj, HasMappedArgsObj)
   IMMUTABLE_FLAG_GETTER(hasInnerFunctions, HasInnerFunctions)
   IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(needsHomeObject, NeedsHomeObject)
   IMMUTABLE_FLAG_GETTER_SETTER_PUBLIC(isDerivedClassConstructor,
@@ -2467,6 +2468,8 @@ setterLevel:                                                                  \
                            : frontend::ParseGoal::Script;
   }
 
+  void setArgumentsHasVarBinding();
+
   bool hasEnclosingLazyScript() const {
     return warmUpData_.isEnclosingScript();
   }
@@ -2512,13 +2515,24 @@ setterLevel:                                                                  \
     return data_->getFieldInitializers();
   }
 
-  RuntimeScriptData* sharedData() { return sharedData_; }
+  RuntimeScriptData* sharedData() const { return sharedData_; }
+  void freeSharedData() { sharedData_ = nullptr; }
+
+  bool hasBytecode() const {
+    if (sharedData_) {
+      MOZ_ASSERT(data_);
+      MOZ_ASSERT(warmUpData_.isWarmUpCount() || warmUpData_.isJitScript());
+      return true;
+    }
+    return false;
+  }
 
  protected:
   void traceChildren(JSTracer* trc);
-  void finalize(JSFreeOp* fop);
 
  public:
+  void finalize(JSFreeOp* fop);
+
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) {
     return mallocSizeOf(data_);
   }
@@ -2801,7 +2815,6 @@ class JSScript : public js::BaseScript {
     clearFlag(MutableFlags::HasRunOnce);
   }
 
-  void setArgumentsHasVarBinding();
   bool argumentsAliasesFormals() const {
     return argumentsHasVarBinding() && hasMappedArgsObj();
   }
@@ -3011,7 +3024,6 @@ class JSScript : public js::BaseScript {
                                  uint32_t noteLength, uint32_t numResumeOffsets,
                                  uint32_t numScopeNotes, uint32_t numTryNotes);
   bool shareScriptData(JSContext* cx);
-  void freeScriptData();
 
  public:
   inline uint32_t getWarmUpCount() const;
@@ -3168,6 +3180,7 @@ class JSScript : public js::BaseScript {
   inline js::RegExpObject* getRegExp(jsbytecode* pc);
 
   js::BigInt* getBigInt(size_t index) {
+    MOZ_ASSERT(gcthings()[index].asCell()->isTenured());
     return &gcthings()[index].as<js::BigInt>();
   }
 
@@ -3180,10 +3193,10 @@ class JSScript : public js::BaseScript {
   // The following 3 functions find the static scope just before the
   // execution of the instruction pointed to by pc.
 
-  js::Scope* lookupScope(jsbytecode* pc);
+  js::Scope* lookupScope(jsbytecode* pc) const;
 
-  js::Scope* innermostScope(jsbytecode* pc);
-  js::Scope* innermostScope() { return innermostScope(main()); }
+  js::Scope* innermostScope(jsbytecode* pc) const;
+  js::Scope* innermostScope() const { return innermostScope(main()); }
 
   /*
    * The isEmpty method tells whether this script has code that computes any
@@ -3208,8 +3221,6 @@ class JSScript : public js::BaseScript {
   // See comment above 'debugMode' in Realm.h for explanation of
   // invariants of debuggee compartments, scripts, and frames.
   inline bool isDebuggee() const;
-
-  void finalize(JSFreeOp* fop);
 
   static const JS::TraceKind TraceKind = JS::TraceKind::Script;
 
@@ -3368,8 +3379,7 @@ class LazyScript : public BaseScript {
       const frontend::AtomVector& closedOverBindings,
       const frontend::FunctionBoxVector& innerFunctionBoxes,
       uint32_t sourceStart, uint32_t sourceEnd, uint32_t toStringStart,
-      uint32_t toStringEnd, uint32_t lineno, uint32_t column,
-      frontend::ParseGoal parseGoal);
+      uint32_t toStringEnd, uint32_t lineno, uint32_t column);
 
   // Create a LazyScript and initialize the closedOverBindings and the
   // innerFunctions with dummy values to be replaced in a later initialization
@@ -3392,7 +3402,8 @@ class LazyScript : public BaseScript {
   template <XDRMode mode>
   static XDRResult XDRScriptData(XDRState<mode>* xdr,
                                  HandleScriptSourceObject sourceObject,
-                                 Handle<LazyScript*> lazy);
+                                 Handle<LazyScript*> lazy,
+                                 bool hasFieldInitializer);
 
   void initScript(JSScript* script);
 
@@ -3414,7 +3425,6 @@ class LazyScript : public BaseScript {
 
   friend class GCMarker;
   void traceChildren(JSTracer* trc);
-  void finalize(JSFreeOp* fop) { BaseScript::finalize(fop); }
 
   static const JS::TraceKind TraceKind = JS::TraceKind::LazyScript;
 };

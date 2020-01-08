@@ -231,6 +231,58 @@ static inline void NukeDebuggerWrapper(NativeObject* wrapper) {
   wrapper->setPrivate(nullptr);
 }
 
+static void PropagateForcedReturn(JSContext* cx, AbstractFramePtr frame,
+                                  HandleValue rval) {
+  // The Debugger's hooks may return a value that affects the completion
+  // value of the given frame. For example, a hook may return `{ return: 42 }`
+  // to terminate the frame and return `42` as the final frame result.
+  // To accomplish this, the debugger treats these return values as if
+  // execution of the JS function has been terminated without a pending
+  // exception, but with a special flag. When the error is handled by the
+  // interpreter or JIT, the special flag and the error state will be cleared
+  // and execution will continue from the end of the frame.
+  MOZ_ASSERT(!cx->isExceptionPending());
+  cx->setPropagatingForcedReturn();
+  frame.setReturnValue(rval);
+}
+
+static bool ApplyFrameResumeMode(JSContext* cx, AbstractFramePtr frame,
+                                 ResumeMode resumeMode, HandleValue rval,
+                                 HandleSavedFrame exnStack) {
+  switch (resumeMode) {
+    case ResumeMode::Continue:
+      break;
+
+    case ResumeMode::Throw:
+      // If we have a stack from the original throw, use it instead of
+      // associating the throw with the current execution point.
+      if (exnStack) {
+        cx->setPendingException(rval, exnStack);
+      } else {
+        cx->setPendingExceptionAndCaptureStack(rval);
+      }
+      return false;
+
+    case ResumeMode::Terminate:
+      cx->clearPendingException();
+      return false;
+
+    case ResumeMode::Return:
+      PropagateForcedReturn(cx, frame, rval);
+      return false;
+
+    default:
+      MOZ_CRASH("bad Debugger::onEnterFrame resume mode");
+  }
+
+  return true;
+}
+static bool ApplyFrameResumeMode(JSContext* cx, AbstractFramePtr frame,
+                                 ResumeMode resumeMode, HandleValue rval) {
+  RootedSavedFrame nullStack(cx);
+  return ApplyFrameResumeMode(cx, frame, resumeMode, rval, nullStack);
+}
+
 bool js::ValueToStableChars(JSContext* cx, const char* fnname,
                             HandleValue value,
                             AutoStableStringChars& stableChars) {
@@ -714,8 +766,7 @@ bool Debugger::hasAnyLiveHooks() const {
 }
 
 /* static */
-ResumeMode DebugAPI::slowPathOnEnterFrame(JSContext* cx,
-                                          AbstractFramePtr frame) {
+bool DebugAPI::slowPathOnEnterFrame(JSContext* cx, AbstractFramePtr frame) {
   RootedValue rval(cx);
   ResumeMode resumeMode = Debugger::dispatchHook(
       cx,
@@ -726,32 +777,11 @@ ResumeMode DebugAPI::slowPathOnEnterFrame(JSContext* cx,
         return dbg->fireEnterFrame(cx, &rval);
       });
 
-  switch (resumeMode) {
-    case ResumeMode::Continue:
-      break;
-
-    case ResumeMode::Throw:
-      cx->setPendingExceptionAndCaptureStack(rval);
-      break;
-
-    case ResumeMode::Terminate:
-      cx->clearPendingException();
-      break;
-
-    case ResumeMode::Return:
-      frame.setReturnValue(rval);
-      break;
-
-    default:
-      MOZ_CRASH("bad Debugger::onEnterFrame resume mode");
-  }
-
-  return resumeMode;
+  return ApplyFrameResumeMode(cx, frame, resumeMode, rval);
 }
 
 /* static */
-ResumeMode DebugAPI::slowPathOnResumeFrame(JSContext* cx,
-                                           AbstractFramePtr frame) {
+bool DebugAPI::slowPathOnResumeFrame(JSContext* cx, AbstractFramePtr frame) {
   // Don't count on this method to be called every time a generator is
   // resumed! This is called only if the frame's debuggee bit is set,
   // i.e. the script has breakpoints or the frame is stepping.
@@ -773,16 +803,16 @@ ResumeMode DebugAPI::slowPathOnResumeFrame(JSContext* cx,
       MOZ_ASSERT(&frameObj->unwrappedGenerator() == genObj);
       if (!dbg->frames.putNew(frame, frameObj)) {
         ReportOutOfMemory(cx);
-        return ResumeMode::Throw;
+        return false;
       }
 
       FrameIter iter(cx);
       MOZ_ASSERT(iter.abstractFramePtr() == frame);
       if (!frameObj->resume(iter)) {
-        return ResumeMode::Throw;
+        return false;
       }
       if (!Debugger::ensureExecutionObservabilityOfFrame(cx, frame)) {
-        return ResumeMode::Throw;
+        return false;
       }
     }
   }
@@ -791,8 +821,9 @@ ResumeMode DebugAPI::slowPathOnResumeFrame(JSContext* cx,
 }
 
 /* static */
-ResumeMode DebugAPI::slowPathOnNativeCall(JSContext* cx, const CallArgs& args,
-                                          CallReason reason) {
+NativeResumeMode DebugAPI::slowPathOnNativeCall(JSContext* cx,
+                                                const CallArgs& args,
+                                                CallReason reason) {
   RootedValue rval(cx);
   ResumeMode resumeMode = Debugger::dispatchHook(
       cx,
@@ -810,18 +841,18 @@ ResumeMode DebugAPI::slowPathOnNativeCall(JSContext* cx, const CallArgs& args,
 
     case ResumeMode::Throw:
       cx->setPendingExceptionAndCaptureStack(rval);
-      break;
+      return NativeResumeMode::Abort;
 
     case ResumeMode::Terminate:
       cx->clearPendingException();
-      break;
+      return NativeResumeMode::Abort;
 
     case ResumeMode::Return:
       args.rval().set(rval);
-      break;
+      return NativeResumeMode::Override;
   }
 
-  return resumeMode;
+  return NativeResumeMode::Continue;
 }
 
 /*
@@ -982,29 +1013,18 @@ bool DebugAPI::slowPathOnLeaveFrame(JSContext* cx, AbstractFramePtr frame,
   RootedSavedFrame exnStack(cx);
   completion.get().toResumeMode(resumeMode, &value, &exnStack);
 
-  switch (resumeMode) {
-    case ResumeMode::Return:
-      frame.setReturnValue(value);
-      success = true;
-      return true;
-
-    case ResumeMode::Throw:
-      // If we have a stack from the original throw, use it instead of
-      // associating the throw with the current execution point.
-      if (exnStack) {
-        cx->setPendingException(value, exnStack);
-      } else {
-        cx->setPendingExceptionAndCaptureStack(value);
-      }
+  if (!ApplyFrameResumeMode(cx, frame, resumeMode, value, exnStack)) {
+    if (!cx->isPropagatingForcedReturn()) {
+      // If this is an exception or termination, we just propagate that along.
       return false;
+    }
 
-    case ResumeMode::Terminate:
-      MOZ_ASSERT(!cx->isExceptionPending());
-      return false;
-
-    default:
-      MOZ_CRASH("bad final onLeaveFrame resume mode");
+    // Since we are leaving the frame here, we can convert a forced return
+    // into a normal return right away.
+    cx->clearPropagatingForcedReturn();
   }
+  success = true;
+  return true;
 }
 
 /* static */
@@ -1039,8 +1059,8 @@ bool DebugAPI::slowPathOnNewGenerator(JSContext* cx, AbstractFramePtr frame,
 }
 
 /* static */
-ResumeMode DebugAPI::slowPathOnDebuggerStatement(JSContext* cx,
-                                                 AbstractFramePtr frame) {
+bool DebugAPI::slowPathOnDebuggerStatement(JSContext* cx,
+                                           AbstractFramePtr frame) {
   RootedValue rval(cx);
   ResumeMode resumeMode = Debugger::dispatchHook(
       cx,
@@ -1051,38 +1071,21 @@ ResumeMode DebugAPI::slowPathOnDebuggerStatement(JSContext* cx,
         return dbg->fireDebuggerStatement(cx, &rval);
       });
 
-  switch (resumeMode) {
-    case ResumeMode::Continue:
-    case ResumeMode::Terminate:
-      break;
-
-    case ResumeMode::Return:
-      frame.setReturnValue(rval);
-      break;
-
-    case ResumeMode::Throw:
-      cx->setPendingExceptionAndCaptureStack(rval);
-      break;
-
-    default:
-      MOZ_CRASH("Invalid onDebuggerStatement resume mode");
-  }
-
-  return resumeMode;
+  return ApplyFrameResumeMode(cx, frame, resumeMode, rval);
 }
 
 /* static */
-ResumeMode DebugAPI::slowPathOnExceptionUnwind(JSContext* cx,
-                                               AbstractFramePtr frame) {
+bool DebugAPI::slowPathOnExceptionUnwind(JSContext* cx,
+                                         AbstractFramePtr frame) {
   // Invoking more JS on an over-recursed stack or after OOM is only going
   // to result in more of the same error.
   if (cx->isThrowingOverRecursed() || cx->isThrowingOutOfMemory()) {
-    return ResumeMode::Continue;
+    return true;
   }
 
   // The Debugger API mustn't muck with frames from self-hosted scripts.
   if (frame.hasScript() && frame.script()->selfHosted()) {
-    return ResumeMode::Continue;
+    return true;
   }
 
   RootedValue rval(cx);
@@ -1095,28 +1098,7 @@ ResumeMode DebugAPI::slowPathOnExceptionUnwind(JSContext* cx,
         return dbg->fireExceptionUnwind(cx, &rval);
       });
 
-  switch (resumeMode) {
-    case ResumeMode::Continue:
-      break;
-
-    case ResumeMode::Throw:
-      cx->setPendingExceptionAndCaptureStack(rval);
-      break;
-
-    case ResumeMode::Terminate:
-      cx->clearPendingException();
-      break;
-
-    case ResumeMode::Return:
-      cx->clearPendingException();
-      frame.setReturnValue(rval);
-      break;
-
-    default:
-      MOZ_CRASH("Invalid onExceptionUnwind resume mode");
-  }
-
-  return resumeMode;
+  return ApplyFrameResumeMode(cx, frame, resumeMode, rval);
 }
 
 // TODO: Remove Remove this function when all properties/methods returning a
@@ -1458,7 +1440,7 @@ static bool CheckResumptionValue(JSContext* cx, AbstractFramePtr frame,
       // Forcing return from a class constructor. There are rules.
       if (vp.isUndefined()) {
         if (thisv.isMagic(JS_UNINITIALIZED_LEXICAL)) {
-          return ThrowUninitializedThis(cx, frame);
+          return ThrowUninitializedThis(cx);
         }
 
         vp.set(thisv);
@@ -1606,7 +1588,7 @@ static void AdjustGeneratorResumptionValue(JSContext* cx,
   }
 }
 
-ResumeMode Debugger::reportUncaughtException(Maybe<AutoRealm>& ar) {
+void Debugger::reportUncaughtException(Maybe<AutoRealm>& ar) {
   JSContext* cx = ar->context();
 
   // Uncaught exceptions arise from Debugger code, and so we must already be
@@ -1635,7 +1617,6 @@ ResumeMode Debugger::reportUncaughtException(Maybe<AutoRealm>& ar) {
   }
 
   ar.reset();
-  return ResumeMode::Terminate;
 }
 
 ResumeMode Debugger::handleUncaughtExceptionHelper(
@@ -1662,7 +1643,8 @@ ResumeMode Debugger::handleUncaughtExceptionHelper(
         if (vp) {
           ResumeMode resumeMode = ResumeMode::Continue;
           if (!ParseResumptionValue(cx, rv, resumeMode, *vp)) {
-            return reportUncaughtException(ar);
+            reportUncaughtException(ar);
+            return ResumeMode::Terminate;
           }
           return leaveDebugger(ar, frame, thisVForCheck,
                                CallUncaughtExceptionHook::No, resumeMode, *vp);
@@ -1675,7 +1657,8 @@ ResumeMode Debugger::handleUncaughtExceptionHelper(
       }
     }
 
-    return reportUncaughtException(ar);
+    reportUncaughtException(ar);
+    return ResumeMode::Terminate;
   }
 
   ar.reset();
@@ -1704,7 +1687,8 @@ ResumeMode Debugger::leaveDebugger(Maybe<AutoRealm>& ar, AbstractFramePtr frame,
     if (callHook == CallUncaughtExceptionHook::Yes) {
       return handleUncaughtException(ar, vp, maybeThisv, frame);
     }
-    return reportUncaughtException(ar);
+    reportUncaughtException(ar);
+    return ResumeMode::Terminate;
   }
 
   ar.reset();
@@ -2074,7 +2058,8 @@ ResumeMode Debugger::fireDebuggerStatement(JSContext* cx,
   ScriptFrameIter iter(cx);
   RootedValue scriptFrame(cx);
   if (!getFrame(cx, iter, &scriptFrame)) {
-    return reportUncaughtException(ar);
+    reportUncaughtException(ar);
+    return ResumeMode::Terminate;
   }
 
   RootedValue fval(cx, ObjectValue(*hook));
@@ -2105,7 +2090,8 @@ ResumeMode Debugger::fireExceptionUnwind(JSContext* cx, MutableHandleValue vp) {
   FrameIter iter(cx);
   if (!getFrame(cx, iter, &scriptFrame) ||
       !wrapDebuggeeValue(cx, &wrappedExc)) {
-    return reportUncaughtException(ar);
+    reportUncaughtException(ar);
+    return ResumeMode::Terminate;
   }
 
   RootedValue fval(cx, ObjectValue(*hook));
@@ -2140,7 +2126,8 @@ ResumeMode Debugger::fireEnterFrame(JSContext* cx, MutableHandleValue vp) {
   ar.emplace(cx, object);
 
   if (!getFrame(cx, iter, &scriptFrame)) {
-    return reportUncaughtException(ar);
+    reportUncaughtException(ar);
+    return ResumeMode::Terminate;
   }
 
   RootedValue fval(cx, ObjectValue(*hook));
@@ -2163,7 +2150,8 @@ ResumeMode Debugger::fireNativeCall(JSContext* cx, const CallArgs& args,
   RootedValue fval(cx, ObjectValue(*hook));
   RootedValue calleeval(cx, args.calleev());
   if (!wrapDebuggeeValue(cx, &calleeval)) {
-    return reportUncaughtException(ar);
+    reportUncaughtException(ar);
+    return ResumeMode::Terminate;
   }
 
   JSAtom* reasonAtom = nullptr;
@@ -2385,7 +2373,7 @@ void DebugAPI::slowPathOnNewWasmInstance(
 }
 
 /* static */
-ResumeMode DebugAPI::onTrap(JSContext* cx, MutableHandleValue vp) {
+bool DebugAPI::onTrap(JSContext* cx) {
   FrameIter iter(cx);
   JS::AutoSaveExceptionState savedExc(cx);
   Rooted<GlobalObject*> global(cx);
@@ -2418,7 +2406,7 @@ ResumeMode DebugAPI::onTrap(JSContext* cx, MutableHandleValue vp) {
   Vector<Breakpoint*> triggered(cx);
   for (Breakpoint* bp = site->firstBreakpoint(); bp; bp = bp->nextInSite()) {
     if (!triggered.append(bp)) {
-      return ResumeMode::Terminate;
+      return false;
     }
   }
 
@@ -2428,7 +2416,7 @@ ResumeMode DebugAPI::onTrap(JSContext* cx, MutableHandleValue vp) {
     // microtasks, and vice versa.
     JS::AutoDebuggerJobQueueInterruption adjqi;
     if (!adjqi.init(cx)) {
-      return ResumeMode::Terminate;
+      return false;
     }
 
     for (Breakpoint* bp : triggered) {
@@ -2454,7 +2442,8 @@ ResumeMode DebugAPI::onTrap(JSContext* cx, MutableHandleValue vp) {
 
         RootedValue scriptFrame(cx);
         if (!dbg->getFrame(cx, iter, &scriptFrame)) {
-          return dbg->reportUncaughtException(ar);
+          dbg->reportUncaughtException(ar);
+          return false;
         }
 
         // Re-wrap the breakpoint's handler for the Debugger's compartment. When
@@ -2463,19 +2452,22 @@ ResumeMode DebugAPI::onTrap(JSContext* cx, MutableHandleValue vp) {
         // be in the same compartment, so we can't be sure.
         Rooted<JSObject*> handler(cx, bp->handler);
         if (!cx->compartment()->wrap(cx, &handler)) {
-          return dbg->reportUncaughtException(ar);
+          dbg->reportUncaughtException(ar);
+          return false;
         }
 
         RootedValue rv(cx);
+        RootedValue rval(cx);
         bool ok = CallMethodIfPresent(cx, handler, "hit", 1,
                                       scriptFrame.address(), &rv);
         ResumeMode resumeMode = dbg->processHandlerResult(
-            ar, ok, rv, iter.abstractFramePtr(), iter.pc(), vp);
+            ar, ok, rv, iter.abstractFramePtr(), iter.pc(), &rval);
         adjqi.runJobs();
 
-        if (resumeMode != ResumeMode::Continue) {
+        if (!ApplyFrameResumeMode(cx, iter.abstractFramePtr(), resumeMode,
+                                  rval)) {
           savedExc.drop();
-          return resumeMode;
+          return false;
         }
 
         // Calling JS code invalidates site. Reload it.
@@ -2488,18 +2480,11 @@ ResumeMode DebugAPI::onTrap(JSContext* cx, MutableHandleValue vp) {
     }
   }
 
-  // By convention, return the true op to the interpreter in vp, and return
-  // undefined in vp to the wasm debug trap.
-  if (isJS) {
-    vp.setInt32(JSOp(*pc));
-  } else {
-    vp.set(UndefinedValue());
-  }
-  return ResumeMode::Continue;
+  return true;
 }
 
 /* static */
-ResumeMode DebugAPI::onSingleStep(JSContext* cx, MutableHandleValue vp) {
+bool DebugAPI::onSingleStep(JSContext* cx) {
   FrameIter iter(cx);
 
   // We may be stepping over a JSOP_EXCEPTION, that pushes the context's
@@ -2512,7 +2497,7 @@ ResumeMode DebugAPI::onSingleStep(JSContext* cx, MutableHandleValue vp) {
   Rooted<Debugger::DebuggerFrameVector> frames(
       cx, Debugger::DebuggerFrameVector(cx));
   if (!Debugger::getDebuggerFrames(iter.abstractFramePtr(), &frames)) {
-    return ResumeMode::Terminate;
+    return false;
   }
 
 #ifdef DEBUG
@@ -2559,8 +2544,8 @@ ResumeMode DebugAPI::onSingleStep(JSContext* cx, MutableHandleValue vp) {
         // it had better be suspended.
         MOZ_ASSERT(genObj.isSuspended());
 
-        if (!genObj.callee().isInterpretedLazy() &&
-            genObj.callee().nonLazyScript() == trappingScript &&
+        if (genObj.callee().hasScript() &&
+            genObj.callee().baseScript() == trappingScript &&
             !frameObj.getReservedSlot(DebuggerFrame::ONSTEP_HANDLER_SLOT)
                  .isUndefined()) {
           suspendedStepperCount++;
@@ -2579,7 +2564,7 @@ ResumeMode DebugAPI::onSingleStep(JSContext* cx, MutableHandleValue vp) {
     // microtasks, and vice versa.
     JS::AutoDebuggerJobQueueInterruption adjqi;
     if (!adjqi.init(cx)) {
-      return ResumeMode::Terminate;
+      return false;
     }
 
     // Call onStep for frames that have the handler set.
@@ -2596,21 +2581,22 @@ ResumeMode DebugAPI::onSingleStep(JSContext* cx, MutableHandleValue vp) {
       Maybe<AutoRealm> ar;
       ar.emplace(cx, dbg->object);
 
+      RootedValue rval(cx);
       ResumeMode resumeMode = ResumeMode::Continue;
-      bool success = handler->onStep(cx, frame, resumeMode, vp);
+      bool success = handler->onStep(cx, frame, resumeMode, &rval);
       resumeMode = dbg->processParsedHandlerResult(
-          ar, iter.abstractFramePtr(), iter.pc(), success, resumeMode, vp);
+          ar, iter.abstractFramePtr(), iter.pc(), success, resumeMode, &rval);
       adjqi.runJobs();
 
-      if (resumeMode != ResumeMode::Continue) {
+      if (!ApplyFrameResumeMode(cx, iter.abstractFramePtr(), resumeMode,
+                                rval)) {
         savedExc.drop();
-        return resumeMode;
+        return false;
       }
     }
   }
 
-  vp.setUndefined();
-  return ResumeMode::Continue;
+  return true;
 }
 
 ResumeMode Debugger::fireNewGlobalObject(JSContext* cx,
@@ -2625,7 +2611,8 @@ ResumeMode Debugger::fireNewGlobalObject(JSContext* cx,
 
   RootedValue wrappedGlobal(cx, ObjectValue(*global));
   if (!wrapDebuggeeValue(cx, &wrappedGlobal)) {
-    return reportUncaughtException(ar);
+    reportUncaughtException(ar);
+    return ResumeMode::Terminate;
   }
 
   // onNewGlobalObject is infallible, and thus is only allowed to return
@@ -2856,7 +2843,8 @@ ResumeMode Debugger::firePromiseHook(JSContext* cx, Hook hook,
 
   RootedValue dbgObj(cx, ObjectValue(*promise));
   if (!wrapDebuggeeValue(cx, &dbgObj)) {
-    return reportUncaughtException(ar);
+    reportUncaughtException(ar);
+    return ResumeMode::Terminate;
   }
 
   // Like onNewGlobalObject, the Promise hooks are infallible and the comments
@@ -3935,17 +3923,19 @@ bool DebuggerWeakMap<UnbarrieredKey, Wrapper,
   return true;
 }
 
-const JSClassOps Debugger::classOps_ = {nullptr, /* addProperty */
-                                        nullptr, /* delProperty */
-                                        nullptr, /* enumerate   */
-                                        nullptr, /* newEnumerate */
-                                        nullptr, /* resolve     */
-                                        nullptr, /* mayResolve  */
-                                        nullptr, /* finalize    */
-                                        nullptr, /* call        */
-                                        nullptr, /* hasInstance */
-                                        nullptr, /* construct   */
-                                        Debugger::traceObject};
+const JSClassOps Debugger::classOps_ = {
+    nullptr,                // addProperty
+    nullptr,                // delProperty
+    nullptr,                // enumerate
+    nullptr,                // newEnumerate
+    nullptr,                // resolve
+    nullptr,                // mayResolve
+    nullptr,                // finalize
+    nullptr,                // call
+    nullptr,                // hasInstance
+    nullptr,                // construct
+    Debugger::traceObject,  // trace
+};
 
 const JSClass Debugger::class_ = {
     "Debugger",
@@ -5927,8 +5917,7 @@ bool Debugger::isCompilableUnit(JSContext* cx, unsigned argc, Value* vp) {
   JS::AutoSuppressWarningReporter suppressWarnings(cx);
   frontend::Parser<frontend::FullParseHandler, char16_t> parser(
       cx, options, chars.twoByteChars(), length,
-      /* foldConstants = */ true, parseInfo, nullptr, nullptr, sourceObject,
-      frontend::ParseGoal::Script);
+      /* foldConstants = */ true, parseInfo, nullptr, nullptr, sourceObject);
   if (!parser.checkOptions() || !parser.parse()) {
     // We ran into an error. If it was because we ran out of memory we report
     // it in the usual way.
@@ -6484,23 +6473,6 @@ void DebugAPI::handleUnrecoverableIonBailoutError(
   // honor any further Debugger hooks on the frame, and need to ensure that
   // its Debugger.Frame entry is cleaned up.
   Debugger::removeFromFrameMapsAndClearBreakpointsIn(cx, frame);
-}
-
-/* static */
-void DebugAPI::propagateForcedReturn(JSContext* cx, AbstractFramePtr frame,
-                                     HandleValue rval) {
-  // Invoking the interrupt handler is considered a step and invokes the
-  // youngest frame's onStep handler, if any. However, we cannot handle
-  // { return: ... } resumption values straightforwardly from the interrupt
-  // handler. Instead, we set the intended return value in the frame's rval
-  // slot and set the propagating-forced-return flag on the JSContext.
-  //
-  // The interrupt handler then returns false with no exception set,
-  // signaling an uncatchable exception. In the exception handlers, we then
-  // check for the special propagating-forced-return flag.
-  MOZ_ASSERT(!cx->isExceptionPending());
-  cx->setPropagatingForcedReturn();
-  frame.setReturnValue(rval);
 }
 
 /*** JS::dbg::Builder *******************************************************/

@@ -267,7 +267,7 @@ linux64-base-toolchains/opt:
         toolchain:
             - linux64-clang-5.0
             - linux64-gcc-7
-            - linux64-rust-1.37
+            - linux64-rust-1.39
             - linux64-cbindgen
             - linux64-sccache
             - linux64-nasm-2.13.02
@@ -306,7 +306,7 @@ linux64-base-toolchains/debug:
         toolchain:
             - linux64-clang-5.0
             - linux64-gcc-7
-            - linux64-rust-1.37
+            - linux64-rust-1.39
             - linux64-cbindgen
             - linux64-sccache
             - linux64-nasm-2.13.02
@@ -343,7 +343,7 @@ linux64-base-toolchains-clang/opt:
         toolchain:
             - linux64-binutils
             - linux64-clang-5.0
-            - linux64-rust-1.37
+            - linux64-rust-1.39
             - linux64-cbindgen
             - linux64-nasm-2.13.02
             - linux64-node
@@ -381,7 +381,7 @@ linux64-base-toolchains-clang/debug:
         toolchain:
             - linux64-binutils
             - linux64-clang-5.0
-            - linux64-rust-1.37
+            - linux64-rust-1.39
             - linux64-cbindgen
             - linux64-nasm-2.13.02
             - linux64-node
@@ -493,7 +493,7 @@ linux-rusttests/opt:
         mozconfig-variant: rusttests
         tooltool-downloads: public
         keep-artifacts: false
-    run-on-projects: ['trunk', 'try']
+    run-on-projects: ['mozilla-central', 'try']
     fetches:
         toolchain:
             - linux64-binutils
@@ -533,7 +533,7 @@ linux-rusttests/debug:
         mozconfig-variant: rusttests-debug
         tooltool-downloads: public
         keep-artifacts: false
-    run-on-projects: ['trunk', 'try']
+    run-on-projects: ['mozilla-central', 'try']
     fetches:
         toolchain:
             - linux64-binutils
@@ -622,6 +622,7 @@ linux-shippable/opt:
         secrets: true
         tooltool-downloads: public
         need-xvfb: true
+    run-on-projects: ['mozilla-central', 'try']
     fetches:
         toolchain:
             - linux64-binutils
@@ -1106,7 +1107,7 @@ linux64-rusttests/opt:
         mozconfig-variant: rusttests
         tooltool-downloads: public
         keep-artifacts: false
-    run-on-projects: ['trunk', 'try']
+    run-on-projects: ['mozilla-central', 'try']
     fetches:
         toolchain:
             - linux64-binutils

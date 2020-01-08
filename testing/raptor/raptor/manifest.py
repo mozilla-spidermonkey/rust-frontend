@@ -5,6 +5,7 @@ from __future__ import absolute_import
 
 import json
 import os
+import re
 
 from six.moves.urllib.parse import parse_qs, urlsplit, urlunsplit, urlencode, unquote
 
@@ -115,20 +116,40 @@ def validate_test_ini(test_details):
 
         # support with or without spaces, i.e. 'measure = fcp, loadtime' or '= fcp,loadtime'
         # convert to a list; and remove any spaces
+        # this can also have regexes inside
         test_details['alert_on'] = [_item.strip() for _item in test_details['alert_on'].split(',')]
+
+        # this variable will store all the concrete values for alert_on elements
+        # that have a match in "measure" list
+        valid_alerts = []
 
         # if test is raptor-youtube-playback and measure is empty, use all the tests
         if test_details.get('measure') is None \
                 and 'youtube-playback' in test_details.get('name', ''):
             test_details['measure'] = YOUTUBE_PLAYBACK_MEASURE
 
+        # convert "measure" to string, so we can use it inside a regex
+        measure_as_string = ' '.join(test_details['measure'])
+
         # now make sure each alert_on value provided is valid
         for alert_on_value in test_details['alert_on']:
-            if alert_on_value not in test_details['measure']:
+            # replace the '*' with a valid regex pattern
+            alert_on_value_pattern = alert_on_value.replace('*', '[a-zA-Z0-9.@_%]*')
+            # store all elements that have been found in "measure_as_string"
+            matches = re.findall(alert_on_value_pattern, measure_as_string)
+
+            if len(matches) == 0:
                 LOG.error("The 'alert_on' value of '%s' is not valid because "
                           "it doesn't exist in the 'measure' test setting!"
                           % alert_on_value)
                 valid_settings = False
+            else:
+                # add the matched elements to valid_alerts
+                valid_alerts.extend(matches)
+
+        # replace old alert_on values with valid elements (no more regexes inside)
+        # and also remove duplicates if any, by converting valid_alerts to a 'set' first
+        test_details['alert_on'] = sorted(set(valid_alerts))
 
     return valid_settings
 
@@ -312,6 +333,7 @@ def get_raptor_test_list(args, oskey):
     for next_test in tests_to_run:
         LOG.info("configuring settings for test %s" % next_test['name'])
         max_page_cycles = next_test.get('page_cycles', 1)
+        max_browser_cycles = next_test.get('browser_cycles', 1)
 
         # if using playback, the playback recording info may need to be transformed
         if next_test.get('playback') is not None:
@@ -326,6 +348,7 @@ def get_raptor_test_list(args, oskey):
             next_test['gecko_profile'] = True
             LOG.info('gecko-profiling enabled')
             max_page_cycles = 3
+            max_browser_cycles = 3
 
             if 'gecko_profile_entries' in args and args.gecko_profile_entries is not None:
                 next_test['gecko_profile_entries'] = str(args.gecko_profile_entries)
@@ -352,23 +375,32 @@ def get_raptor_test_list(args, oskey):
             LOG.info("debug-mode enabled")
             max_page_cycles = 2
 
+        # if --page-cycles was provided on the command line, use that instead of INI
+        # if just provided in the INI use that but cap at 3 if gecko-profiling is enabled
         if args.page_cycles is not None:
             next_test['page_cycles'] = args.page_cycles
-            LOG.info("set page-cycles to %d as specified on cmd line" % args.page_cycles)
+            LOG.info("setting page-cycles to %d as specified on cmd line" % args.page_cycles)
         else:
             if int(next_test.get('page_cycles', 1)) > max_page_cycles:
                 next_test['page_cycles'] = max_page_cycles
-                LOG.info("page-cycles set to %d" % next_test['page_cycles'])
+                LOG.info("setting page-cycles to %d because gecko-profling is enabled"
+                         % next_test['page_cycles'])
+
+        # if --browser-cycles was provided on the command line, use that instead of INI
+        # if just provided in the INI use that but cap at 3 if gecko-profiling is enabled
+        if args.browser_cycles is not None:
+            next_test['browser_cycles'] = args.browser_cycles
+            LOG.info("setting browser-cycles to %d as specified on cmd line" % args.browser_cycles)
+        else:
+            if int(next_test.get('browser_cycles', 1)) > max_browser_cycles:
+                next_test['browser_cycles'] = max_browser_cycles
+                LOG.info("setting browser-cycles to %d because gecko-profilng is enabled"
+                         % next_test['browser_cycles'])
 
         # if --page-timeout was provided on the command line, use that instead of INI
         if args.page_timeout is not None:
             LOG.info("setting page-timeout to %d as specified on cmd line" % args.page_timeout)
             next_test['page_timeout'] = args.page_timeout
-
-        # if --browser-cycles was provided on the command line, use that instead of INI
-        if args.browser_cycles is not None:
-            LOG.info("setting browser-cycles to %d as specified on cmd line" % args.browser_cycles)
-            next_test['browser_cycles'] = args.browser_cycles
 
         # for browsertime jobs, cold page-load mode is determined by command line argument; for
         # raptor-webext jobs cold page-load is determined by the 'cold' key in test manifest INI

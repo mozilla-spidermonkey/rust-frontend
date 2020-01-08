@@ -1254,6 +1254,12 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
   }
 #endif
 
+  // ColumnSetWrapper's children depend on ColumnSetWrapper's block-size or
+  // max-block-size because both affect the children's available block-size.
+  if (IsColumnSetWrapperFrame()) {
+    AddStateBits(NS_FRAME_CONTAINS_RELATIVE_BSIZE);
+  }
+
   const ReflowInput* reflowInput = &aReflowInput;
   WritingMode wm = aReflowInput.GetWritingMode();
   nscoord consumedBSize = ConsumedBSize(wm);
@@ -1887,7 +1893,8 @@ void nsBlockFrame::ComputeFinalSize(const ReflowInput& aReflowInput,
     // its reflow method, because that method just resolves "auto" BSize values
     // to one line-height rather than by measuring its contents' BSize.)
     nscoord contentBSize = 0;
-    nscoord autoBSize = aReflowInput.ApplyMinMaxBSize(contentBSize);
+    nscoord autoBSize =
+        aReflowInput.ApplyMinMaxBSize(contentBSize, aState.mConsumedBSize);
     aMetrics.mCarriedOutBEndMargin.Zero();
     autoBSize += borderPadding.BStartEnd(wm);
     finalSize.BSize(wm) = autoBSize;
@@ -1895,23 +1902,53 @@ void nsBlockFrame::ComputeFinalSize(const ReflowInput& aReflowInput,
     nscoord contentBSize = blockEndEdgeOfChildren - borderPadding.BStart(wm);
     nscoord lineClampedContentBSize =
         ApplyLineClamp(aReflowInput, this, contentBSize);
-    nscoord autoBSize = aReflowInput.ApplyMinMaxBSize(lineClampedContentBSize);
+    nscoord autoBSize = aReflowInput.ApplyMinMaxBSize(lineClampedContentBSize,
+                                                      aState.mConsumedBSize);
     if (autoBSize != contentBSize) {
       // Our min-block-size, max-block-size, or -webkit-line-clamp value made
       // our bsize change.  Don't carry out our kids' block-end margins.
       aMetrics.mCarriedOutBEndMargin.Zero();
     }
-    autoBSize += borderPadding.BStart(wm) + borderPadding.BEnd(wm);
-    finalSize.BSize(wm) = autoBSize;
+    nscoord bSize = autoBSize + borderPadding.BStartEnd(wm);
+    if (MOZ_UNLIKELY(autoBSize > contentBSize &&
+                     bSize > aReflowInput.AvailableBSize() &&
+                     aReflowInput.AvailableBSize() != NS_UNCONSTRAINEDSIZE)) {
+      // Applying `min-size` made us overflow our available size.
+      // Clamp it and report that we're Incomplete.
+      bSize = aReflowInput.AvailableBSize();
+      aState.mReflowStatus.SetIncomplete();
+    }
+    finalSize.BSize(wm) = bSize;
   } else {
     NS_ASSERTION(aReflowInput.AvailableBSize() != NS_UNCONSTRAINEDSIZE,
                  "Shouldn't be incomplete if availableBSize is UNCONSTRAINED.");
-    finalSize.BSize(wm) =
-        std::max(aState.mBCoord, aReflowInput.AvailableBSize());
+    if (aState.mBCoord == nscoord_MAX) {
+      // FIXME bug 1574046.
+      // This should never happen, but it does. nsFloatManager::ClearFloats
+      // returns |nscoord_MAX| when DONT_CLEAR_PUSHED_FLOATS is false.
+      blockEndEdgeOfChildren = aState.mBCoord = aReflowInput.AvailableBSize();
+    }
+    nscoord bSize = std::max(aState.mBCoord, aReflowInput.AvailableBSize());
     if (aReflowInput.AvailableBSize() == NS_UNCONSTRAINEDSIZE) {
       // This should never happen, but it does. See bug 414255
-      finalSize.BSize(wm) = aState.mBCoord;
+      bSize = aState.mBCoord;
     }
+    const nscoord maxBSize = aReflowInput.ComputedMaxBSize();
+    if (maxBSize != NS_UNCONSTRAINEDSIZE &&
+        aState.mConsumedBSize + bSize - borderPadding.BStart(wm) > maxBSize) {
+      nscoord bEnd = std::max(0, maxBSize - aState.mConsumedBSize) +
+                     borderPadding.BStart(wm);
+      // Note that |borderPadding| has GetSkipSides applied, so we ask
+      // aReflowInput for the actual value we'd use on a last fragment here:
+      bEnd += aReflowInput.ComputedLogicalBorderPadding().BEnd(wm);
+      if (bEnd <= aReflowInput.AvailableBSize()) {
+        // We actually fit after applying `max-size` so we should be
+        // Overflow-Incomplete instead.
+        bSize = bEnd;
+        aState.mReflowStatus.SetOverflowIncomplete();
+      }
+    }
+    finalSize.BSize(wm) = bSize;
   }
 
   if (IS_TRUE_OVERFLOW_CONTAINER(this)) {
@@ -3638,9 +3675,7 @@ void nsBlockFrame::ReflowBlockFrame(BlockReflowInput& aState,
       // Calculate the multicol containing block's block size so that the
       // children with percentage block size get correct percentage basis.
       const ReflowInput* cbReflowInput =
-          StaticPrefs::layout_css_column_span_enabled()
-              ? aState.mReflowInput.mParentReflowInput->mCBReflowInput
-              : aState.mReflowInput.mCBReflowInput;
+          aState.mReflowInput.mParentReflowInput->mCBReflowInput;
       MOZ_ASSERT(cbReflowInput->mFrame->StyleColumn()->IsColumnContainerStyle(),
                  "Get unexpected reflow input of multicol containing block!");
 
@@ -7187,6 +7222,21 @@ void nsBlockFrame::ChildIsDirty(nsIFrame* aChild) {
 
 void nsBlockFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
                         nsIFrame* aPrevInFlow) {
+  // These are all the block specific frame bits, they are copied from
+  // the prev-in-flow to a newly created next-in-flow, except for the
+  // NS_BLOCK_FLAGS_NON_INHERITED_MASK bits below.
+  constexpr nsFrameState NS_BLOCK_FLAGS_MASK =
+      NS_BLOCK_FORMATTING_CONTEXT_STATE_BITS |
+      NS_BLOCK_CLIP_PAGINATED_OVERFLOW | NS_BLOCK_HAS_FIRST_LETTER_STYLE |
+      NS_BLOCK_FRAME_HAS_OUTSIDE_MARKER | NS_BLOCK_HAS_FIRST_LETTER_CHILD |
+      NS_BLOCK_FRAME_HAS_INSIDE_MARKER;
+
+  // This is the subset of NS_BLOCK_FLAGS_MASK that is NOT inherited
+  // by default.  They should only be set on the first-in-flow.
+  constexpr nsFrameState NS_BLOCK_FLAGS_NON_INHERITED_MASK =
+      NS_BLOCK_FRAME_HAS_OUTSIDE_MARKER | NS_BLOCK_HAS_FIRST_LETTER_CHILD |
+      NS_BLOCK_FRAME_HAS_INSIDE_MARKER;
+
   if (aPrevInFlow) {
     // Copy over the inherited block frame bits from the prev-in-flow.
     RemoveStateBits(NS_BLOCK_FLAGS_MASK);
@@ -7220,7 +7270,7 @@ void nsBlockFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
         GetWritingMode().IsVerticalSideways() !=
             GetParent()->GetWritingMode().IsVerticalSideways())) ||
       StyleDisplay()->IsContainPaint() || StyleDisplay()->IsContainLayout() ||
-      (StaticPrefs::layout_css_column_span_enabled() && IsColumnSpan())) {
+      IsColumnSpan()) {
     AddStateBits(NS_BLOCK_FORMATTING_CONTEXT_STATE_BITS);
   }
 

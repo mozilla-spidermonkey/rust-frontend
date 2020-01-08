@@ -1059,8 +1059,12 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
       pasteFromClipboard: false,
       attributionParameters: {
         source: "addons.mozilla.org",
+        medium: "referral",
         campaign: "non-fx-button",
-        content: "iridium@particlecore.github.io"
+        content: "iridium@particlecore.github.io",
+        experiment: "ua-onboarding",
+        variation: "chrome",
+        ua: "Google Chrome 123"
       }
     };
   }
@@ -1137,6 +1141,16 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
   resetPref() {
     _asrouter_asrouter_content__WEBPACK_IMPORTED_MODULE_1__["ASRouterUtils"].sendMessage({
       type: "RESET_PROVIDER_PREF"
+    });
+  }
+
+  toggleGroups(id, value) {
+    _asrouter_asrouter_content__WEBPACK_IMPORTED_MODULE_1__["ASRouterUtils"].sendMessage({
+      type: "SET_GROUP_STATE",
+      data: {
+        id,
+        value
+      }
     });
   }
 
@@ -1301,7 +1315,11 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
   }
 
   renderMessageItem(msg) {
-    const isBlocked = this.state.messageBlockList.includes(msg.id) || this.state.messageBlockList.includes(msg.campaign);
+    const isBlockedByGroup = this.state.groups.filter(group => msg.groups.includes(group.id)).some(group => !group.enabled);
+    const msgProvider = this.state.providers.find(provider => provider.id === msg.provider);
+    const isProviderExcluded = msgProvider.exclude && msgProvider.exclude.includes(msg.id);
+    const isMessageBlocked = this.state.messageBlockList.includes(msg.id) || this.state.messageBlockList.includes(msg.campaign);
+    const isBlocked = isMessageBlocked || isBlockedByGroup || isProviderExcluded;
     const impressions = this.state.messageImpressions[msg.id] ? this.state.messageImpressions[msg.id].length : 0;
     let itemClassName = "message-item";
 
@@ -1322,6 +1340,28 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
       onClick: this.handleOverride(msg.id)
     }, "Show"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("br", null), "(", impressions, " impressions)"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", {
       className: "message-summary"
+    }, isBlocked && react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tr", null, "Block reason:", isBlockedByGroup && " Blocked by group", isProviderExcluded && " Excluded by provider", isMessageBlocked && " Message blocked"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tr", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("pre", null, JSON.stringify(msg, null, 2)))));
+  }
+
+  renderWNMessageItem(msg) {
+    const isBlocked = this.state.messageBlockList.includes(msg.id) || this.state.messageBlockList.includes(msg.campaign);
+    const impressions = this.state.messageImpressions[msg.id] ? this.state.messageImpressions[msg.id].length : 0;
+    let itemClassName = "message-item";
+
+    if (isBlocked) {
+      itemClassName += " blocked";
+    }
+
+    return react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tr", {
+      className: itemClassName,
+      key: `${msg.id}-${msg.provider}`
+    }, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", {
+      className: "message-id"
+    }, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("span", null, msg.id, " ", react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("br", null), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("br", null), "(", impressions, " impressions)")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("input", {
+      type: "checkbox",
+      value: "Show"
+    })), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", {
+      className: "message-summary"
     }, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("pre", null, JSON.stringify(msg, null, 2))));
   }
 
@@ -1332,6 +1372,15 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
 
     const messagesToShow = this.state.messageFilter === "all" ? this.state.messages : this.state.messages.filter(message => message.provider === this.state.messageFilter);
     return react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("table", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tbody", null, messagesToShow.map(msg => this.renderMessageItem(msg))));
+  }
+
+  renderWNMessages() {
+    if (!this.state.messages) {
+      return null;
+    }
+
+    const messagesToShow = this.state.messages.filter(message => message.provider === "whats-new-panel");
+    return react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("table", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tbody", null, messagesToShow.map(msg => this.renderWNMessageItem(msg))));
   }
 
   renderMessageFilter() {
@@ -1515,6 +1564,14 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
     });
   }
 
+  _getGroupImpressionsCount(id, frequency) {
+    if (frequency) {
+      return this.state.groupImpressions[id] ? this.state.groupImpressions[id].length : 0;
+    }
+
+    return "n/a";
+  }
+
   renderPocketStory(story) {
     return react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tr", {
       className: "message-item",
@@ -1555,6 +1612,12 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
       placeholder: "addons.mozilla.org",
       value: this.state.attributionParameters.source,
       onChange: this.onChangeAttributionParameters
+    }), " ")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tr", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("b", null, " Medium ")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, " ", react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("input", {
+      type: "text",
+      name: "medium",
+      placeholder: "referral",
+      value: this.state.attributionParameters.medium,
+      onChange: this.onChangeAttributionParameters
     }), " ")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tr", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("b", null, " Campaign ")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, " ", react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("input", {
       type: "text",
       name: "campaign",
@@ -1566,6 +1629,24 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
       name: "content",
       placeholder: "iridium@particlecore.github.io",
       value: this.state.attributionParameters.content,
+      onChange: this.onChangeAttributionParameters
+    }), " ")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tr", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("b", null, " Experiment ")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, " ", react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("input", {
+      type: "text",
+      name: "experiment",
+      placeholder: "ua-onboarding",
+      value: this.state.attributionParameters.experiment,
+      onChange: this.onChangeAttributionParameters
+    }), " ")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tr", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("b", null, " Variation ")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, " ", react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("input", {
+      type: "text",
+      name: "variation",
+      placeholder: "chrome",
+      value: this.state.attributionParameters.variation,
+      onChange: this.onChangeAttributionParameters
+    }), " ")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tr", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("b", null, " User Agent ")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, " ", react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("input", {
+      type: "text",
+      name: "ua",
+      placeholder: "Google Chrome 123",
+      value: this.state.attributionParameters.ua,
       onChange: this.onChangeAttributionParameters
     }), " ")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tr", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, " ", react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("button", {
       className: "ASRouterButton primary button",
@@ -1611,15 +1692,37 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
     }, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tbody", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tr", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, "Interrupt branch"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, trailheadInterrupt)), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tr", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, "Triplet branch"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, trailheadTriplet))));
   }
 
+  renderWNPTests() {
+    return react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("div", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("button", null, "Force What's New Panel"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("h2", null, "Messages"), this.renderWNMessages());
+  }
+
   getSection() {
     const [section] = this.props.location.routes;
 
     switch (section) {
+      case "wnpanel":
+        return react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement(react__WEBPACK_IMPORTED_MODULE_4___default.a.Fragment, null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("h2", null, "What's New Panel"), this.renderWNPTests());
+
       case "targeting":
         return react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement(react__WEBPACK_IMPORTED_MODULE_4___default.a.Fragment, null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("h2", null, "Targeting Utilities"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("button", {
           className: "button",
           onClick: this.expireCache
         }, "Expire Cache"), " ", "(This expires the cache in ASR Targeting for bookmarks and top sites)", this.renderTargetingParameters(), this.renderAttributionParamers());
+
+      case "groups":
+        return react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement(react__WEBPACK_IMPORTED_MODULE_4___default.a.Fragment, null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("h2", null, "Message Groups"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("table", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("thead", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("tr", {
+          className: "message-item"
+        }, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, "Enabled"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, "Impressions count"), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, "Custom frequency"))), this.state.groups && this.state.groups.map(({
+          id,
+          enabled,
+          frequency
+        }, index) => react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement(Row, {
+          key: id
+        }, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement(TogglePrefCheckbox, {
+          checked: enabled,
+          pref: id,
+          onChange: this.toggleGroups
+        })), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, this._getGroupImpressionsCount(id, frequency)), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("td", null, JSON.stringify(frequency, null, 2))))));
 
       case "pocket":
         return react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement(react__WEBPACK_IMPORTED_MODULE_4___default.a.Fragment, null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("h2", null, "Pocket"), this.renderPocketStories());
@@ -1651,8 +1754,12 @@ class ASRouterAdminInner extends react__WEBPACK_IMPORTED_MODULE_4___default.a.Pu
     }, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("ul", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("li", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("a", {
       href: "#devtools"
     }, "General")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("li", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("a", {
+      href: "#devtools-wnpanel"
+    }, "What's New Panel")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("li", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("a", {
       href: "#devtools-targeting"
     }, "Targeting")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("li", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("a", {
+      href: "#devtools-groups"
+    }, "Message Groups")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("li", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("a", {
       href: "#devtools-pocket"
     }, "Pocket")), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("li", null, react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("a", {
       href: "#devtools-ds"
@@ -10286,7 +10393,7 @@ __webpack_require__.r(__webpack_exports__);
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* globals ContentSearchUIController */
+/* globals ContentSearchUIController, ContentSearchHandoffUIController */
 
 
 
@@ -10301,6 +10408,7 @@ class _Search extends react__WEBPACK_IMPORTED_MODULE_3___default.a.PureComponent
     this.onSearchHandoffPaste = this.onSearchHandoffPaste.bind(this);
     this.onSearchHandoffDrop = this.onSearchHandoffDrop.bind(this);
     this.onInputMount = this.onInputMount.bind(this);
+    this.onInputMountHandoff = this.onInputMountHandoff.bind(this);
     this.onSearchHandoffButtonMount = this.onSearchHandoffButtonMount.bind(this);
   }
 
@@ -10390,6 +10498,14 @@ class _Search extends react__WEBPACK_IMPORTED_MODULE_3___default.a.PureComponent
     }
   }
 
+  onInputMountHandoff(input) {
+    if (input) {
+      // The handoff UI controller helps usset the search icon and reacts to
+      // changes to default engine to keep everything in sync.
+      this._handoffSearchController = new ContentSearchHandoffUIController();
+    }
+  }
+
   onSearchHandoffButtonMount(button) {
     // Keep a reference to the button for use during "paste" event handling.
     this._searchHandoffButton = button;
@@ -10441,16 +10557,11 @@ class _Search extends react__WEBPACK_IMPORTED_MODULE_3___default.a.PureComponent
       tabIndex: "-1",
       "aria-hidden": "true",
       onDrop: this.onSearchHandoffDrop,
-      onPaste: this.onSearchHandoffPaste
+      onPaste: this.onSearchHandoffPaste,
+      ref: this.onInputMountHandoff
     }), react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("div", {
       className: "fake-caret"
-    })), react__WEBPACK_IMPORTED_MODULE_3___default.a.createElement("input", {
-      type: "search",
-      style: {
-        display: "none"
-      },
-      ref: this.onInputMount
-    })));
+    }))));
   }
 
 }
@@ -14958,23 +15069,6 @@ var addUtmParams = __webpack_require__(23);
 const TRANSITION_LENGTH = 500;
 const FLUENT_FILES = ["branding/brand.ftl", "browser/branding/brandings.ftl", "browser/branding/sync-brand.ftl", "browser/newtab/onboarding.ftl"];
 const helpers = {
-  selectInterruptAndTriplets(message = {}, interruptCleared) {
-    const hasInterrupt = interruptCleared === true ? false : Boolean(message.content);
-    const hasTriplets = Boolean(message.bundle && message.bundle.length); // Allow 1) falsy to not render a header 2) default welcome 3) custom header
-
-    const tripletsHeaderId = message.tripletsHeaderId === undefined ? "onboarding-welcome-header" : message.tripletsHeaderId;
-    let UTMTerm = message.utm_term || "";
-    UTMTerm = message.utm_term && message.trailheadTriplet ? `${message.utm_term}-${message.trailheadTriplet}` : UTMTerm;
-    return {
-      hasTriplets,
-      hasInterrupt,
-      interrupt: hasInterrupt ? message : null,
-      triplets: hasTriplets ? message.bundle : null,
-      tripletsHeaderId,
-      UTMTerm
-    };
-  },
-
   addFluent(document) {
     FLUENT_FILES.forEach(file => {
       const link = document.head.appendChild(document.createElement("link"));
@@ -14989,16 +15083,8 @@ class FirstRun_FirstRun extends external_React_default.a.PureComponent {
     super(props);
     this.didLoadFlowParams = false;
     this.state = {
-      prevMessage: undefined,
-      hasInterrupt: false,
-      hasTriplets: false,
-      interrupt: undefined,
-      triplets: undefined,
-      tripletsHeaderId: "",
-      isInterruptVisible: false,
-      isTripletsContainerVisible: false,
-      isTripletsContentVisible: false,
-      UTMTerm: "",
+      didUserClearInterrupt: false,
+      didUserClearTriplets: false,
       flowParams: undefined
     };
     this.closeInterrupt = this.closeInterrupt.bind(this);
@@ -15011,39 +15097,13 @@ class FirstRun_FirstRun extends external_React_default.a.PureComponent {
     }
   }
 
-  static getDerivedStateFromProps(props, state) {
+  get UTMTerm() {
     const {
-      message,
-      interruptCleared
-    } = props;
-    const cardIds = message && message.bundle && message.bundle.map(card => card.id).join(",");
-
-    if (interruptCleared !== state.prevInterruptCleared || message && message.id !== state.prevMessageId || cardIds !== state.prevCardIds) {
-      const {
-        hasTriplets,
-        hasInterrupt,
-        interrupt,
-        triplets,
-        tripletsHeaderId,
-        UTMTerm
-      } = helpers.selectInterruptAndTriplets(message, interruptCleared);
-      return {
-        prevMessageId: message.id,
-        prevInterruptCleared: interruptCleared,
-        prevCardIds: cardIds,
-        hasInterrupt,
-        hasTriplets,
-        interrupt,
-        triplets,
-        tripletsHeaderId,
-        isInterruptVisible: hasInterrupt,
-        isTripletsContainerVisible: hasTriplets,
-        isTripletsContentVisible: !(hasInterrupt || !hasTriplets),
-        UTMTerm
-      };
-    }
-
-    return null;
+      message
+    } = this.props;
+    let UTMTerm = message.utm_term || "";
+    UTMTerm = message.utm_term && message.trailheadTriplet ? `${message.utm_term}-${message.trailheadTriplet}` : UTMTerm;
+    return UTMTerm;
   }
 
   async fetchFlowParams() {
@@ -15051,16 +15111,13 @@ class FirstRun_FirstRun extends external_React_default.a.PureComponent {
       fxaEndpoint,
       fetchFlowParams
     } = this.props;
-    const {
-      UTMTerm
-    } = this.state;
 
-    if (fxaEndpoint && UTMTerm && !this.didLoadFlowParams) {
+    if (fxaEndpoint && this.UTMTerm && !this.didLoadFlowParams) {
       this.didLoadFlowParams = true;
       const flowParams = await fetchFlowParams({ ...addUtmParams["BASE_PARAMS"],
         entrypoint: "activity-stream-firstrun",
         form_type: "email",
-        utm_term: UTMTerm
+        utm_term: this.UTMTerm
       });
       this.setState({
         flowParams
@@ -15069,10 +15126,26 @@ class FirstRun_FirstRun extends external_React_default.a.PureComponent {
   }
 
   removeHideMain() {
-    if (!this.state.hasInterrupt) {
+    if (!this.isInterruptVisible) {
       // We need to remove hide-main since we should show it underneath everything that has rendered
       this.props.document.body.classList.remove("hide-main", "welcome");
     }
+  } // Is there any interrupt content? This is false for new tab triplets.
+
+
+  get hasInterrupt() {
+    const {
+      message
+    } = this.props;
+    return Boolean(message && message.content);
+  } // Are all conditions met for the interrupt to actually be visible?
+  // 1. hasInterrupt - Is there interrupt content?
+  // 2. state.didUserClearInterrupt - Was it cleared by the user?
+  // 3. props.interruptCleared - Was it cleared externally?
+
+
+  get isInterruptVisible() {
+    return this.hasInterrupt && !this.state.didUserClearInterrupt && !this.props.interruptCleared;
   }
 
   componentDidMount() {
@@ -15087,16 +15160,14 @@ class FirstRun_FirstRun extends external_React_default.a.PureComponent {
   }
 
   closeInterrupt() {
-    this.setState(prevState => ({
-      isInterruptVisible: false,
-      isTripletsContainerVisible: prevState.hasTriplets,
-      isTripletsContentVisible: prevState.hasTriplets
-    }));
+    this.setState({
+      didUserClearInterrupt: true
+    });
   }
 
   closeTriplets() {
     this.setState({
-      isTripletsContainerVisible: false
+      didUserClearTriplets: true
     }); // Closing triplets should prevent any future extended triplets from showing up
 
     setTimeout(() => {
@@ -15106,26 +15177,28 @@ class FirstRun_FirstRun extends external_React_default.a.PureComponent {
 
   render() {
     const {
-      props
+      props,
+      state,
+      UTMTerm
     } = this;
     const {
       sendUserActionTelemetry,
       fxaEndpoint,
       dispatch,
-      executeAction
+      executeAction,
+      message
     } = props;
     const {
-      interrupt,
-      triplets,
-      tripletsHeaderId,
-      isInterruptVisible,
-      isTripletsContainerVisible,
-      isTripletsContentVisible,
-      hasTriplets,
-      UTMTerm,
+      didUserClearTriplets,
       flowParams
-    } = this.state;
-    return external_React_default.a.createElement(external_React_default.a.Fragment, null, isInterruptVisible ? external_React_default.a.createElement(Interrupt_Interrupt, {
+    } = state;
+    const hasTriplets = Boolean(message.bundle && message.bundle.length);
+    const interrupt = this.hasInterrupt ? message : null;
+    const triplets = hasTriplets ? message.bundle : null;
+    const isTripletsContainerVisible = hasTriplets && !didUserClearTriplets; // Allow 1) falsy to not render a header 2) default welcome 3) custom header
+
+    const tripletsHeaderId = message.tripletsHeaderId === undefined ? "onboarding-welcome-header" : message.tripletsHeaderId;
+    return external_React_default.a.createElement(external_React_default.a.Fragment, null, this.isInterruptVisible ? external_React_default.a.createElement(Interrupt_Interrupt, {
       document: props.document,
       cards: triplets,
       message: interrupt,
@@ -15143,7 +15216,7 @@ class FirstRun_FirstRun extends external_React_default.a.PureComponent {
       cards: triplets,
       headerId: tripletsHeaderId,
       showCardPanel: isTripletsContainerVisible,
-      showContent: isTripletsContentVisible,
+      showContent: !this.isInterruptVisible,
       hideContainer: this.closeTriplets,
       sendUserActionTelemetry: sendUserActionTelemetry,
       UTMTerm: `${UTMTerm}-card`,

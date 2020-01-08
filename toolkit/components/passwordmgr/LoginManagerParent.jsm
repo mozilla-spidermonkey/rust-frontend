@@ -33,6 +33,13 @@ ChromeUtils.defineModuleGetter(
   "resource://gre/modules/PrivateBrowsingUtils.jsm"
 );
 
+XPCOMUtils.defineLazyServiceGetter(
+  this,
+  "prompterSvc",
+  "@mozilla.org/login-manager/prompter;1",
+  Ci.nsILoginManagerPrompter
+);
+
 XPCOMUtils.defineLazyGetter(this, "log", () => {
   let logger = LoginHelper.createLogger("LoginManagerParent");
   return logger.log.bind(logger);
@@ -553,18 +560,10 @@ class LoginManagerParent extends JSWindowActorParent {
     return generatedPW.value;
   }
 
-  _getPrompter(browser) {
-    let prompterSvc = Cc[
-      "@mozilla.org/login-manager/prompter;1"
-    ].createInstance(Ci.nsILoginManagerPrompter);
-    prompterSvc.init(browser.ownerGlobal);
-    prompterSvc.browser = browser;
-
-    let opener = this.browsingContext.opener;
-    if (opener) {
-      prompterSvc.openerBrowser = opener.top.embedderElement;
-    }
-
+  /**
+   * Used for stubbing by tests.
+   */
+  _getPrompter() {
     return prompterSvc;
   }
 
@@ -572,6 +571,7 @@ class LoginManagerParent extends JSWindowActorParent {
     browser,
     {
       origin,
+      browsingContextId,
       formActionOrigin,
       autoFilledLoginGuid,
       usernameField,
@@ -603,6 +603,11 @@ class LoginManagerParent extends JSWindowActorParent {
       log("(form submission ignored -- saving is disabled for:", origin, ")");
       return;
     }
+
+    let browsingContext = BrowsingContext.get(browsingContextId);
+    let framePrincipalOrigin =
+      browsingContext.currentWindowGlobal.documentPrincipal.origin;
+    log("onFormSubmit, got framePrincipalOrigin: ", framePrincipalOrigin);
 
     let formLogin = new LoginInfo(
       origin,
@@ -636,7 +641,9 @@ class LoginManagerParent extends JSWindowActorParent {
       formActionOrigin,
     });
 
-    let generatedPW = gGeneratedPasswordsByPrincipalOrigin.get(origin);
+    let generatedPW = gGeneratedPasswordsByPrincipalOrigin.get(
+      framePrincipalOrigin
+    );
     let autoSavedStorageGUID = "";
     if (generatedPW && generatedPW.storageGUID) {
       autoSavedStorageGUID = generatedPW.storageGUID;
@@ -647,7 +654,7 @@ class LoginManagerParent extends JSWindowActorParent {
     // logins to update the password for.
     if (!usernameField && oldPasswordField && logins.length) {
       let prompter = this._getPrompter(browser);
-
+      let promptBrowser = LoginHelper.getBrowserForPrompt(browser);
       if (logins.length == 1) {
         let oldLogin = logins[0];
 
@@ -664,6 +671,7 @@ class LoginManagerParent extends JSWindowActorParent {
         formLogin.usernameField = oldLogin.usernameField;
 
         prompter.promptToChangePassword(
+          promptBrowser,
           oldLogin,
           formLogin,
           dismissedPrompt,
@@ -675,7 +683,11 @@ class LoginManagerParent extends JSWindowActorParent {
         // Note: It's possible that that we already have the correct u+p saved
         // but since we don't have the username, we don't know if the user is
         // changing a second account to the new password so we ask anyways.
-        prompter.promptToChangePasswordWithUsernames(logins, formLogin);
+        prompter.promptToChangePasswordWithUsernames(
+          promptBrowser,
+          logins,
+          formLogin
+        );
         return;
       }
     }
@@ -717,6 +729,7 @@ class LoginManagerParent extends JSWindowActorParent {
       }
     }
 
+    let promptBrowser = LoginHelper.getBrowserForPrompt(browser);
     if (existingLogin) {
       log("Found an existing login matching this form submission");
 
@@ -725,6 +738,7 @@ class LoginManagerParent extends JSWindowActorParent {
         log("...passwords differ, prompting to change.");
         let prompter = this._getPrompter(browser);
         prompter.promptToChangePassword(
+          promptBrowser,
           existingLogin,
           formLogin,
           dismissedPrompt,
@@ -735,6 +749,7 @@ class LoginManagerParent extends JSWindowActorParent {
         log("...empty username update, prompting to change.");
         let prompter = this._getPrompter(browser);
         prompter.promptToChangePassword(
+          promptBrowser,
           existingLogin,
           formLogin,
           dismissedPrompt,
@@ -750,7 +765,7 @@ class LoginManagerParent extends JSWindowActorParent {
 
     // Prompt user to save login (via dialog or notification bar)
     let prompter = this._getPrompter(browser);
-    prompter.promptToSavePassword(formLogin, dismissedPrompt);
+    prompter.promptToSavePassword(promptBrowser, formLogin, dismissedPrompt);
   }
 
   async _onGeneratedPasswordFilledOrEdited({
@@ -942,6 +957,7 @@ class LoginManagerParent extends JSWindowActorParent {
     }
     let browser = this.getRootBrowser();
     let prompter = this._getPrompter(browser);
+    let promptBrowser = LoginHelper.getBrowserForPrompt(browser);
 
     if (loginToChange) {
       // Show a change doorhanger to allow modifying an already-saved login
@@ -959,6 +975,7 @@ class LoginManagerParent extends JSWindowActorParent {
           autoSavedStorageGUID
       );
       prompter.promptToChangePassword(
+        promptBrowser,
         loginToChange,
         formLogin,
         true, // dismissed prompt
@@ -969,6 +986,7 @@ class LoginManagerParent extends JSWindowActorParent {
     }
     log("_onGeneratedPasswordFilledOrEdited: no matching login to save/update");
     prompter.promptToSavePassword(
+      promptBrowser,
       formLogin,
       true, // dismissed prompt
       shouldAutoSaveLogin // notifySaved

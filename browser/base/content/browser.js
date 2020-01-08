@@ -69,6 +69,9 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   SimpleServiceDiscovery: "resource://gre/modules/SimpleServiceDiscovery.jsm",
   SiteDataManager: "resource:///modules/SiteDataManager.jsm",
   SitePermissions: "resource:///modules/SitePermissions.jsm",
+  SiteSpecificBrowser: "resource:///modules/SiteSpecificBrowserService.jsm",
+  SiteSpecificBrowserService:
+    "resource:///modules/SiteSpecificBrowserService.jsm",
   TabModalPrompt: "chrome://global/content/tabprompts.jsm",
   TabCrashHandler: "resource:///modules/ContentCrashHandlers.jsm",
   TelemetryEnvironment: "resource://gre/modules/TelemetryEnvironment.jsm",
@@ -641,10 +644,6 @@ function updateFxaToolbarMenu(enable, isInitialUpdate = false) {
     let hideSvcs = !gFxaSendLoginUrl && !gFxaMonitorLoginUrl;
     document.getElementById("fxa-menu-service-separator").hidden = hideSvcs;
     document.getElementById("fxa-menu-service-label").hidden = hideSvcs;
-
-    document.getElementById(
-      "fxa-menu-device-name-label"
-    ).value = gFxaDeviceName;
   } else {
     mainWindowEl.removeAttribute("fxatoolbarmenu");
   }
@@ -1975,6 +1974,8 @@ var gBrowserInit = {
     FullZoom.init();
     PanelUI.init();
 
+    SiteSpecificBrowserUI.init();
+
     UpdateUrlbarSearchSplitterState();
 
     BookmarkingUI.init();
@@ -2521,6 +2522,108 @@ var gBrowserInit = {
 gBrowserInit.idleTasksFinishedPromise = new Promise(resolve => {
   gBrowserInit.idleTaskPromiseResolve = resolve;
 });
+
+const SiteSpecificBrowserUI = {
+  menuInitialized: false,
+
+  init() {
+    if (!SiteSpecificBrowserService.isEnabled) {
+      return;
+    }
+
+    XPCOMUtils.defineLazyGetter(this, "panelBody", () => {
+      return document.querySelector("#appMenu-SSBView .panel-subview-body");
+    });
+
+    let initializeMenu = async () => {
+      let list = await SiteSpecificBrowserService.list();
+
+      for (let ssb of list) {
+        this.addSSBToMenu(ssb);
+      }
+
+      if (!list.length) {
+        document.getElementById("appMenu-ssb-button").hidden = true;
+      }
+
+      this.menuInitialized = true;
+      Services.obs.addObserver(this, "site-specific-browser-install", true);
+      Services.obs.addObserver(this, "site-specific-browser-uninstall", true);
+    };
+
+    document.getElementById("appMenu-popup").addEventListener(
+      "popupshowing",
+      () => {
+        let blocker = initializeMenu();
+        document.getElementById("appMenu-SSBView").addEventListener(
+          "ViewShowing",
+          event => {
+            event.detail.addBlocker(blocker);
+          },
+          { once: true }
+        );
+      },
+      { once: true }
+    );
+  },
+
+  observe(subject, topic, id) {
+    let ssb = SiteSpecificBrowser.get(id);
+    switch (topic) {
+      case "site-specific-browser-install":
+        this.addSSBToMenu(ssb);
+        break;
+      case "site-specific-browser-uninstall":
+        this.removeSSBFromMenu(ssb);
+        break;
+    }
+  },
+
+  removeSSBFromMenu(ssb) {
+    let button = document.getElementById("ssb-button-" + ssb.id);
+    if (!button) {
+      return;
+    }
+
+    if (!button.nextElementSibling && !button.previousElementSibling) {
+      document.getElementById("appMenu-ssb-button").hidden = true;
+    }
+
+    let uri = button.getAttribute("image");
+    if (uri) {
+      URL.revokeObjectURL(uri);
+    }
+
+    button.remove();
+  },
+
+  addSSBToMenu(ssb) {
+    let menu = document.createXULElement("toolbarbutton");
+    menu.id = "ssb-button-" + ssb.id;
+    menu.className = "subviewbutton subviewbutton-iconic";
+    menu.setAttribute("label", ssb.name);
+
+    ssb.getScaledIcon(16 * devicePixelRatio).then(
+      icon => {
+        if (icon) {
+          menu.setAttribute("image", URL.createObjectURL(icon));
+        }
+      },
+      error => {
+        console.error(error);
+      }
+    );
+
+    menu.addEventListener("command", () => {
+      ssb.launch();
+    });
+
+    this.panelBody.append(menu);
+    document.getElementById("appMenu-ssb-button").hidden = false;
+  },
+
+  QueryInterface: ChromeUtils.generateQI([Ci.nsISupportsWeakReference]),
+};
 
 function HandleAppCommandEvent(evt) {
   switch (evt.command) {
@@ -3939,11 +4042,7 @@ var newTabButtonObserver = {
   },
   onDragExit(aEvent) {},
   async onDrop(aEvent) {
-    let shiftKey = aEvent.shiftKey;
     let links = browserDragAndDrop.dropLinks(aEvent);
-    let triggeringPrincipal = browserDragAndDrop.getTriggeringPrincipal(aEvent);
-    let csp = browserDragAndDrop.getCSP(aEvent);
-
     if (
       links.length >=
       Services.prefs.getIntPref("browser.tabs.maxOpenBeforeWarn")
@@ -3958,14 +4057,14 @@ var newTabButtonObserver = {
       }
     }
 
+    let where = aEvent.shiftKey ? "tabshifted" : "tab";
+    let triggeringPrincipal = browserDragAndDrop.getTriggeringPrincipal(aEvent);
+    let csp = browserDragAndDrop.getCSP(aEvent);
     for (let link of links) {
       if (link.url) {
         let data = await UrlbarUtils.getShortcutOrURIAndPostData(link.url);
         // Allow third-party services to fixup this URL.
-        openNewTabWith(data.url, shiftKey, {
-          // TODO fix allowInheritPrincipal
-          // (this is required by javascript: drop to the new window) Bug 1475201
-          allowInheritPrincipal: true,
+        openLinkIn(data.url, where, {
           postData: data.postData,
           allowThirdPartyFixup: true,
           triggeringPrincipal,
@@ -3983,9 +4082,6 @@ var newWindowButtonObserver = {
   onDragExit(aEvent) {},
   async onDrop(aEvent) {
     let links = browserDragAndDrop.dropLinks(aEvent);
-    let triggeringPrincipal = browserDragAndDrop.getTriggeringPrincipal(aEvent);
-    let csp = browserDragAndDrop.getCSP(aEvent);
-
     if (
       links.length >=
       Services.prefs.getIntPref("browser.tabs.maxOpenBeforeWarn")
@@ -4000,11 +4096,13 @@ var newWindowButtonObserver = {
       }
     }
 
+    let triggeringPrincipal = browserDragAndDrop.getTriggeringPrincipal(aEvent);
+    let csp = browserDragAndDrop.getCSP(aEvent);
     for (let link of links) {
       if (link.url) {
         let data = await UrlbarUtils.getShortcutOrURIAndPostData(link.url);
         // Allow third-party services to fixup this URL.
-        openNewWindowWith(data.url, {
+        openLinkIn(data.url, "window", {
           // TODO fix allowInheritPrincipal
           // (this is required by javascript: drop to the new window) Bug 1475201
           allowInheritPrincipal: true,

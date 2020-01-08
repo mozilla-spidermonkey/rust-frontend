@@ -3137,7 +3137,6 @@ void nsIFrame::BuildDisplayListForStackingContext(
   bool allowAsyncAnimation = false;
   bool inTransform = aBuilder->IsInTransform();
   if (isTransformed) {
-    const nsRect overflow = GetVisualOverflowRectRelativeToSelf();
     nsDisplayTransform::PrerenderDecision decision =
         nsDisplayTransform::ShouldPrerenderTransformedContent(aBuilder, this,
                                                               &dirtyRect);
@@ -3149,15 +3148,18 @@ void nsIFrame::BuildDisplayListForStackingContext(
       case nsDisplayTransform::PartialPrerender:
         allowAsyncAnimation = true;
         visibleRect = dirtyRect;
-        MOZ_FALLTHROUGH;
+        [[fallthrough]];
         // fall through to the NoPrerender case
-      case nsDisplayTransform::NoPrerender:
+      case nsDisplayTransform::NoPrerender: {
+        const nsRect overflow = GetVisualOverflowRectRelativeToSelf();
         if (overflow.IsEmpty() && !extend3DContext) {
           return;
         }
 
         // If we're in preserve-3d then grab the dirty rect that was given to
         // the root and transform using the combined transform.
+        // FIXME: Could we remove this after making transform animations with
+        // preserve-3d run on the compositor?
         if (combines3DTransformWithAncestors) {
           visibleRect = dirtyRect = aBuilder->GetPreserves3DRect();
         }
@@ -3174,6 +3176,7 @@ void nsIFrame::BuildDisplayListForStackingContext(
           dirtyRect.SetEmpty();
           visibleRect.SetEmpty();
         }
+      }
     }
     inTransform = true;
   } else if (IsFixedPosContainingBlock()) {
@@ -8603,7 +8606,7 @@ nsresult nsIFrame::PeekOffset(nsPeekOffsetStruct* aPos) {
         aPos->mWordMovementType = eEndWord;
       }
       // Intentionally fall through the eSelectWord case.
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case eSelectWord: {
       // wordSelectEatSpace means "are we looking for a boundary between
       // whitespace and non-whitespace (in the direction we're moving in)". It

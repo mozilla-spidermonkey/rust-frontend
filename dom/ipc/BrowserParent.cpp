@@ -98,7 +98,7 @@
 #include "nsAuthInformationHolder.h"
 #include "nsICancelable.h"
 #include "gfxUtils.h"
-#include "nsILoginManagerPrompter.h"
+#include "nsILoginManagerAuthPrompter.h"
 #include "nsPIWindowRoot.h"
 #include "nsIAuthPrompt2.h"
 #include "gfxDrawable.h"
@@ -470,11 +470,13 @@ BrowserBridgeParent* BrowserParent::GetBrowserBridgeParent() const {
 
 BrowserHost* BrowserParent::GetBrowserHost() const { return mBrowserHost; }
 
-ShowInfo BrowserParent::GetShowInfo() {
+ParentShowInfo BrowserParent::GetShowInfo() {
   TryCacheDPIAndScale();
   if (mFrameElement) {
     nsAutoString name;
     mFrameElement->GetAttr(kNameSpaceID_None, nsGkAtoms::name, name);
+    // FIXME(emilio, bug 1606660): allowfullscreen should probably move to
+    // OwnerShowInfo.
     bool allowFullscreen =
         mFrameElement->HasAttr(kNameSpaceID_None, nsGkAtoms::allowfullscreen) ||
         mFrameElement->HasAttr(kNameSpaceID_None,
@@ -484,12 +486,12 @@ ShowInfo BrowserParent::GetShowInfo() {
     bool isTransparent =
         nsContentUtils::IsChromeDoc(mFrameElement->OwnerDoc()) &&
         mFrameElement->HasAttr(kNameSpaceID_None, nsGkAtoms::transparent);
-    return ShowInfo(name, allowFullscreen, isPrivate, false, isTransparent,
-                    mDPI, mRounding, mDefaultScale.scale);
+    return ParentShowInfo(name, allowFullscreen, isPrivate, false,
+                          isTransparent, mDPI, mRounding, mDefaultScale.scale);
   }
 
-  return ShowInfo(EmptyString(), false, false, false, false, mDPI, mRounding,
-                  mDefaultScale.scale);
+  return ParentShowInfo(EmptyString(), false, false, false, false, mDPI,
+                        mRounding, mDefaultScale.scale);
 }
 
 already_AddRefed<nsIPrincipal> BrowserParent::GetContentPrincipal() const {
@@ -955,7 +957,8 @@ bool BrowserParent::Show(const ScreenIntSize& size, bool aParentIsActive) {
   baseWindow->GetMainWidget(getter_AddRefs(mainWidget));
   mSizeMode = mainWidget ? mainWidget->SizeMode() : nsSizeMode_Normal;
 
-  Unused << SendShow(size, GetShowInfo(), aParentIsActive, mSizeMode);
+  OwnerShowInfo ownerInfo(size, aParentIsActive, mSizeMode);
+  Unused << SendShow(GetShowInfo(), ownerInfo);
   return true;
 }
 
@@ -3163,7 +3166,7 @@ BrowserParent::GetAuthPrompt(uint32_t aPromptReason, const nsIID& iid,
   rv = wwatch->GetPrompt(window, iid, getter_AddRefs(prompt));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsILoginManagerPrompter> prompter = do_QueryInterface(prompt);
+  nsCOMPtr<nsILoginManagerAuthPrompter> prompter = do_QueryInterface(prompt);
   if (prompter) {
     prompter->SetBrowser(mFrameElement);
   }
@@ -3620,12 +3623,15 @@ class FakeChannel final : public nsIChannel,
   NS_IMETHOD IsPending(bool*) NO_IMPL;
   NS_IMETHOD GetStatus(nsresult*) NO_IMPL;
   NS_IMETHOD Cancel(nsresult) NO_IMPL;
+  NS_IMETHOD GetCanceled(bool* aCanceled) NO_IMPL;
   NS_IMETHOD Suspend() NO_IMPL;
   NS_IMETHOD Resume() NO_IMPL;
   NS_IMETHOD GetLoadGroup(nsILoadGroup**) NO_IMPL;
   NS_IMETHOD SetLoadGroup(nsILoadGroup*) NO_IMPL;
   NS_IMETHOD SetLoadFlags(nsLoadFlags) NO_IMPL;
   NS_IMETHOD GetLoadFlags(nsLoadFlags*) NO_IMPL;
+  NS_IMETHOD GetTRRMode(nsIRequest::TRRMode* aTRRMode) NO_IMPL;
+  NS_IMETHOD SetTRRMode(nsIRequest::TRRMode aMode) NO_IMPL;
   NS_IMETHOD GetIsDocument(bool*) NO_IMPL;
   NS_IMETHOD GetOriginalURI(nsIURI**) NO_IMPL;
   NS_IMETHOD SetOriginalURI(nsIURI*) NO_IMPL;
@@ -3696,7 +3702,7 @@ class FakeChannel final : public nsIChannel,
 #undef NO_IMPL
 
  protected:
-  ~FakeChannel() {}
+  ~FakeChannel() = default;
 
   nsCOMPtr<nsIURI> mUri;
   uint64_t mCallbackId;

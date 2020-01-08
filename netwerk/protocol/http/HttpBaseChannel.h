@@ -139,6 +139,8 @@ class HttpBaseChannel : public nsHashPropertyBag,
   NS_IMETHOD SetLoadGroup(nsILoadGroup* aLoadGroup) override;
   NS_IMETHOD GetLoadFlags(nsLoadFlags* aLoadFlags) override;
   NS_IMETHOD SetLoadFlags(nsLoadFlags aLoadFlags) override;
+  NS_IMETHOD GetTRRMode(nsIRequest::TRRMode* aTRRMode) override;
+  NS_IMETHOD SetTRRMode(nsIRequest::TRRMode aTRRMode) override;
   NS_IMETHOD SetDocshellUserAgentOverride();
 
   // nsIChannel
@@ -171,6 +173,7 @@ class HttpBaseChannel : public nsHashPropertyBag,
   NS_IMETHOD Open(nsIInputStream** aResult) override;
   NS_IMETHOD GetBlockAuthPrompt(bool* aValue) override;
   NS_IMETHOD SetBlockAuthPrompt(bool aValue) override;
+  NS_IMETHOD GetCanceled(bool* aCanceled) override;
 
   // nsIEncodedChannel
   NS_IMETHOD GetApplyConversion(bool* value) override;
@@ -253,7 +256,6 @@ class HttpBaseChannel : public nsHashPropertyBag,
   NS_IMETHOD SetThirdPartyFlags(uint32_t aForce) override;
   NS_IMETHOD GetForceAllowThirdPartyCookie(bool* aForce) override;
   NS_IMETHOD SetForceAllowThirdPartyCookie(bool aForce) override;
-  NS_IMETHOD GetCanceled(bool* aCanceled) override;
   NS_IMETHOD GetChannelIsForDownload(bool* aChannelIsForDownload) override;
   NS_IMETHOD SetChannelIsForDownload(bool aChannelIsForDownload) override;
   NS_IMETHOD SetCacheKeysRedirectChain(nsTArray<nsCString>* cacheKeys) override;

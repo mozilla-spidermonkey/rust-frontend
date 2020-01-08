@@ -50,10 +50,14 @@ DCLayerTree::DCLayerTree(gl::GLContext* aGL, EGLConfig aEGLConfig,
       mDevice(aDevice),
       mCompositionDevice(aCompositionDevice),
       mDebugCounter(false),
-      mDebugVisualRedrawRegions(false) {}
+      mDebugVisualRedrawRegions(false),
+      mEGLImage(EGL_NO_IMAGE),
+      mColorRBO(0) {}
 
 DCLayerTree::~DCLayerTree() {
   const auto gl = GetGLContext();
+
+  DestroyEGLSurface();
 
   // Delete any cached FBO objects
   for (auto it = mFrameBuffers.begin(); it != mFrameBuffers.end(); ++it) {
@@ -102,6 +106,12 @@ bool DCLayerTree::Initialize(HWND aHwnd) {
   mRootVisual->SetBitmapInterpolationMode(
       DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
   return true;
+}
+
+DCSurface* DCLayerTree::GetSurface(wr::NativeSurfaceId aId) const {
+  auto surface_it = mDCSurfaces.find(aId);
+  MOZ_RELEASE_ASSERT(surface_it != mDCSurfaces.end());
+  return surface_it->second.get();
 }
 
 void DCLayerTree::SetDefaultSwapChain(IDXGISwapChain1* aSwapChain) {
@@ -176,16 +186,21 @@ bool DCLayerTree::MaybeUpdateDebugVisualRedrawRegions() {
 void DCLayerTree::CompositorBeginFrame() {}
 
 void DCLayerTree::CompositorEndFrame() {
+  // Check if the visual tree of surfaces is the same as last frame.
   bool same = mPrevLayers == mCurrentLayers;
 
   if (!same) {
+    // If not, we need to rebuild the visual tree. Note that addition or
+    // removal of tiles no longer needs to rebuild the main visual tree
+    // here, since they are added as children of the surface visual.
     mRootVisual->RemoveAllVisuals();
 
+    // Add surfaces in z-order they were added to the scene.
     for (auto it = mCurrentLayers.begin(); it != mCurrentLayers.end(); ++it) {
-      auto layer_it = mDCLayers.find(*it);
-      MOZ_ASSERT(layer_it != mDCLayers.end());
-      const auto layer = layer_it->second.get();
-      const auto visual = layer->GetVisual();
+      auto surface_it = mDCSurfaces.find(*it);
+      MOZ_RELEASE_ASSERT(surface_it != mDCSurfaces.end());
+      const auto surface = surface_it->second.get();
+      const auto visual = surface->GetVisual();
       mRootVisual->AddVisual(visual, FALSE, nullptr);
     }
   }
@@ -196,92 +211,106 @@ void DCLayerTree::CompositorEndFrame() {
   mCompositionDevice->Commit();
 }
 
-void DCLayerTree::Bind(wr::NativeSurfaceId aId, wr::DeviceIntPoint* aOffset,
+void DCLayerTree::Bind(wr::NativeTileId aId, wr::DeviceIntPoint* aOffset,
                        uint32_t* aFboId, wr::DeviceIntRect aDirtyRect) {
-  auto it = mDCLayers.find(wr::AsUint64(aId));
-  MOZ_ASSERT(it != mDCLayers.end());
-  if (it == mDCLayers.end()) {
-    gfxCriticalNote << "Failed to get DCLayer for bind: " << wr::AsUint64(aId);
-    return;
-  }
+  auto surface = GetSurface(aId.surface_id);
+  wr::DeviceIntPoint targetOffset{0, 0};
 
-  const auto layer = it->second.get();
+#ifdef USE_VIRTUAL_SURFACES
+  wr::DeviceIntSize tileSize = surface->GetTileSize();
+  RefPtr<IDCompositionSurface> compositionSurface =
+      surface->GetCompositionSurface();
+  targetOffset.x = VIRTUAL_OFFSET + tileSize.width * aId.x;
+  targetOffset.y = VIRTUAL_OFFSET + tileSize.height * aId.y;
+#else
+  auto layer = surface->GetLayer(aId.x, aId.y);
+  RefPtr<IDCompositionSurface> compositionSurface =
+      layer->GetCompositionSurface();
+#endif
 
-  *aFboId = layer->CreateEGLSurfaceForCompositionSurface(aDirtyRect, aOffset);
-
-  mCurrentId = Some(aId);
+  *aFboId = CreateEGLSurfaceForCompositionSurface(
+      aDirtyRect, aOffset, compositionSurface, targetOffset);
+  mCurrentSurface = Some(compositionSurface);
 }
 
 void DCLayerTree::Unbind() {
-  if (mCurrentId.isNothing()) {
+  if (mCurrentSurface.isNothing()) {
     return;
   }
 
-  auto it = mDCLayers.find(wr::AsUint64(mCurrentId.ref()));
-  MOZ_RELEASE_ASSERT(it != mDCLayers.end());
+  RefPtr<IDCompositionSurface> surface = mCurrentSurface.ref();
+  surface->EndDraw();
 
-  const auto layer = it->second.get();
-
-  layer->EndDraw();
-  mCurrentId = Nothing();
+  mCurrentSurface = Nothing();
 }
 
 void DCLayerTree::CreateSurface(wr::NativeSurfaceId aId,
-                                wr::DeviceIntSize aSize, bool aIsOpaque) {
-  auto it = mDCLayers.find(wr::AsUint64(aId));
-  MOZ_RELEASE_ASSERT(it == mDCLayers.end());
-  MOZ_ASSERT(it == mDCLayers.end());
-  if (it != mDCLayers.end()) {
-    // DCLayer already exists.
+                                wr::DeviceIntSize aTileSize, bool aIsOpaque) {
+  auto it = mDCSurfaces.find(aId);
+  MOZ_RELEASE_ASSERT(it == mDCSurfaces.end());
+  if (it != mDCSurfaces.end()) {
+    // DCSurface already exists.
     return;
   }
 
-  auto layer = MakeUnique<DCLayer>(this);
-  if (!layer->Initialize(aSize, aIsOpaque)) {
-    gfxCriticalNote << "Failed to initialize DCLayer: " << wr::AsUint64(aId);
+  auto surface = MakeUnique<DCSurface>(aTileSize, aIsOpaque, this);
+  if (!surface->Initialize()) {
+    gfxCriticalNote << "Failed to initialize DCSurface: " << wr::AsUint64(aId);
     return;
   }
 
-  mDCLayers[wr::AsUint64(aId)] = std::move(layer);
+  mDCSurfaces[aId] = std::move(surface);
 }
 
 void DCLayerTree::DestroySurface(NativeSurfaceId aId) {
-  auto it = mDCLayers.find(wr::AsUint64(aId));
-  MOZ_ASSERT(it != mDCLayers.end());
-  if (it == mDCLayers.end()) {
-    return;
-  }
-  mDCLayers.erase(it);
+  auto surface_it = mDCSurfaces.find(aId);
+  MOZ_RELEASE_ASSERT(surface_it != mDCSurfaces.end());
+  auto surface = surface_it->second.get();
+
+  mRootVisual->RemoveVisual(surface->GetVisual());
+  mDCSurfaces.erase(surface_it);
+}
+
+void DCLayerTree::CreateTile(wr::NativeSurfaceId aId, int aX, int aY) {
+  auto surface = GetSurface(aId);
+  surface->CreateTile(aX, aY);
+}
+
+void DCLayerTree::DestroyTile(wr::NativeSurfaceId aId, int aX, int aY) {
+  auto surface = GetSurface(aId);
+  surface->DestroyTile(aX, aY);
 }
 
 void DCLayerTree::AddSurface(wr::NativeSurfaceId aId,
                              wr::DeviceIntPoint aPosition,
                              wr::DeviceIntRect aClipRect) {
-  auto it = mDCLayers.find(wr::AsUint64(aId));
-  MOZ_ASSERT(it != mDCLayers.end());
-  if (it == mDCLayers.end()) {
-    return;
-  }
+  auto it = mDCSurfaces.find(aId);
+  MOZ_RELEASE_ASSERT(it != mDCSurfaces.end());
   const auto layer = it->second.get();
   const auto visual = layer->GetVisual();
 
+#ifdef USE_VIRTUAL_SURFACES
+  layer->UpdateAllocatedRect();
+
+  aPosition.x -= VIRTUAL_OFFSET;
+  aPosition.y -= VIRTUAL_OFFSET;
+#endif
+
   // Place the visual - this changes frame to frame based on scroll position
   // of the slice.
-  int offset_x = aPosition.x;
-  int offset_y = aPosition.y;
-  visual->SetOffsetX(offset_x);
-  visual->SetOffsetY(offset_y);
+  visual->SetOffsetX(aPosition.x);
+  visual->SetOffsetY(aPosition.y);
 
   // Set the clip rect - converting from world space to the pre-offset space
   // that DC requires for rectangle clips.
   D2D_RECT_F clip_rect;
-  clip_rect.left = aClipRect.origin.x - offset_x;
-  clip_rect.top = aClipRect.origin.y - offset_y;
+  clip_rect.left = aClipRect.origin.x - aPosition.x;
+  clip_rect.top = aClipRect.origin.y - aPosition.y;
   clip_rect.right = clip_rect.left + aClipRect.size.width;
   clip_rect.bottom = clip_rect.top + aClipRect.size.height;
   visual->SetClip(clip_rect);
 
-  mCurrentLayers.push_back(wr::AsUint64(aId));
+  mCurrentLayers.push_back(aId);
 }
 
 GLuint DCLayerTree::GetOrCreateFbo(int aWidth, int aHeight) {
@@ -327,17 +356,114 @@ GLuint DCLayerTree::GetOrCreateFbo(int aWidth, int aHeight) {
   return fboId;
 }
 
-DCLayer::DCLayer(DCLayerTree* aDCLayerTree)
-    : mDCLayerTree(aDCLayerTree), mEGLImage(EGL_NO_IMAGE), mColorRBO(0) {}
+DCSurface::DCSurface(wr::DeviceIntSize aTileSize, bool aIsOpaque,
+                     DCLayerTree* aDCLayerTree)
+    : mDCLayerTree(aDCLayerTree),
+      mTileSize(aTileSize),
+      mIsOpaque(aIsOpaque),
+      mAllocatedRectDirty(true) {}
 
-DCLayer::~DCLayer() { DestroyEGLSurface(); }
+DCSurface::~DCSurface() {}
 
-bool DCLayer::Initialize(wr::DeviceIntSize aSize, bool aIsOpaque) {
+bool DCSurface::Initialize() {
+  HRESULT hr;
+  const auto dCompDevice = mDCLayerTree->GetCompositionDevice();
+  hr = dCompDevice->CreateVisual(getter_AddRefs(mVisual));
+  if (FAILED(hr)) {
+    gfxCriticalNote << "Failed to create DCompositionVisual: " << gfx::hexa(hr);
+    return false;
+  }
+
+#ifdef USE_VIRTUAL_SURFACES
+  DXGI_ALPHA_MODE alpha_mode =
+      mIsOpaque ? DXGI_ALPHA_MODE_IGNORE : DXGI_ALPHA_MODE_PREMULTIPLIED;
+
+  hr = dCompDevice->CreateVirtualSurface(VIRTUAL_OFFSET * 2, VIRTUAL_OFFSET * 2,
+                                         DXGI_FORMAT_B8G8R8A8_UNORM, alpha_mode,
+                                         getter_AddRefs(mVirtualSurface));
+  MOZ_ASSERT(SUCCEEDED(hr));
+
+  // Bind the surface memory to this visual
+  hr = mVisual->SetContent(mVirtualSurface);
+  MOZ_ASSERT(SUCCEEDED(hr));
+#endif
+
+  return true;
+}
+
+void DCSurface::CreateTile(int aX, int aY) {
+  TileKey key(aX, aY);
+  MOZ_RELEASE_ASSERT(mDCLayers.find(key) == mDCLayers.end());
+
+  auto layer = MakeUnique<DCLayer>(mDCLayerTree);
+  if (!layer->Initialize(aX, aY, mTileSize, mIsOpaque)) {
+    gfxCriticalNote << "Failed to initialize DCLayer: " << aX << aY;
+    return;
+  }
+
+#ifdef USE_VIRTUAL_SURFACES
+  mAllocatedRectDirty = true;
+#else
+  mVisual->AddVisual(layer->GetVisual(), FALSE, NULL);
+#endif
+
+  mDCLayers[key] = std::move(layer);
+}
+
+void DCSurface::DestroyTile(int aX, int aY) {
+  TileKey key(aX, aY);
+#ifdef USE_VIRTUAL_SURFACES
+  mAllocatedRectDirty = true;
+#else
+  auto layer = GetLayer(aX, aY);
+  mVisual->RemoveVisual(layer->GetVisual());
+#endif
+  mDCLayers.erase(key);
+}
+
+#ifdef USE_VIRTUAL_SURFACES
+void DCSurface::UpdateAllocatedRect() {
+  if (mAllocatedRectDirty) {
+    // The virtual surface may have holes in it (for example, an empty tile
+    // that has no primitives). Instead of trimming to a single bounding
+    // rect, supply the rect of each valid tile to handle this case.
+    std::vector<RECT> validRects;
+
+    for (auto it = mDCLayers.begin(); it != mDCLayers.end(); ++it) {
+      RECT rect;
+
+      rect.left = (LONG) (VIRTUAL_OFFSET + it->first.mX * mTileSize.width);
+      rect.top = (LONG) (VIRTUAL_OFFSET + it->first.mY * mTileSize.height);
+      rect.right = rect.left + mTileSize.width;
+      rect.bottom = rect.top + mTileSize.height;
+
+      validRects.push_back(rect);
+    }
+
+    mVirtualSurface->Trim(validRects.data(), validRects.size());
+    mAllocatedRectDirty = false;
+  }
+}
+#endif
+
+DCLayer* DCSurface::GetLayer(int aX, int aY) const {
+  TileKey key(aX, aY);
+  auto layer_it = mDCLayers.find(key);
+  MOZ_RELEASE_ASSERT(layer_it != mDCLayers.end());
+  return layer_it->second.get();
+}
+
+DCLayer::DCLayer(DCLayerTree* aDCLayerTree) : mDCLayerTree(aDCLayerTree) {}
+
+DCLayer::~DCLayer() {}
+
+bool DCLayer::Initialize(int aX, int aY, wr::DeviceIntSize aSize,
+                         bool aIsOpaque) {
   if (aSize.width <= 0 || aSize.height <= 0) {
     return false;
   }
-  mBufferSize = LayoutDeviceIntSize(aSize.width, aSize.height);
 
+#ifndef USE_VIRTUAL_SURFACES
   HRESULT hr;
   const auto dCompDevice = mDCLayerTree->GetCompositionDevice();
   hr = dCompDevice->CreateVisual(getter_AddRefs(mVisual));
@@ -357,9 +483,16 @@ bool DCLayer::Initialize(wr::DeviceIntSize aSize, bool aIsOpaque) {
     return false;
   }
 
+  // Position this tile at a local space offset within the parent visual
+  // Scroll offsets get applied to the parent visual only.
+  mVisual->SetOffsetX(aX * aSize.width);
+  mVisual->SetOffsetY(aY * aSize.height);
+#endif
+
   return true;
 }
 
+#ifndef USE_VIRTUAL_SURFACES
 RefPtr<IDCompositionSurface> DCLayer::CreateCompositionSurface(
     wr::DeviceIntSize aSize, bool aIsOpaque) {
   HRESULT hr;
@@ -378,45 +511,38 @@ RefPtr<IDCompositionSurface> DCLayer::CreateCompositionSurface(
   }
   return compositionSurface;
 }
+#endif
 
-GLuint DCLayer::CreateEGLSurfaceForCompositionSurface(
-    wr::DeviceIntRect aDirtyRect, wr::DeviceIntPoint* aOffset) {
-  MOZ_ASSERT(mCompositionSurface.get());
+GLuint DCLayerTree::CreateEGLSurfaceForCompositionSurface(
+    wr::DeviceIntRect aDirtyRect, wr::DeviceIntPoint* aOffset,
+    RefPtr<IDCompositionSurface> aCompositionSurface,
+    wr::DeviceIntPoint aSurfaceOffset) {
+  MOZ_ASSERT(aCompositionSurface.get());
 
   HRESULT hr;
-  const auto gl = mDCLayerTree->GetGLContext();
+  const auto gl = GetGLContext();
   RefPtr<ID3D11Texture2D> backBuf;
   POINT offset;
 
-  LayoutDeviceIntRect dirtyRect(aDirtyRect.origin.x, aDirtyRect.origin.y,
-                                aDirtyRect.size.width, aDirtyRect.size.height);
-
   RECT update_rect;
-  update_rect.left = dirtyRect.X();
-  update_rect.top = dirtyRect.Y();
-  update_rect.right = dirtyRect.XMost();
-  update_rect.bottom = dirtyRect.YMost();
+  update_rect.left = aSurfaceOffset.x + aDirtyRect.origin.x;
+  update_rect.top = aSurfaceOffset.y + aDirtyRect.origin.y;
+  update_rect.right = update_rect.left + aDirtyRect.size.width;
+  update_rect.bottom = update_rect.top + aDirtyRect.size.height;
 
-  RECT* rect = &update_rect;
-  if (StaticPrefs::gfx_webrender_compositor_max_update_rects_AtStartup() <= 0) {
-    // Update entire surface
-    rect = nullptr;
-  }
-
-  hr = mCompositionSurface->BeginDraw(rect, __uuidof(ID3D11Texture2D),
+  hr = aCompositionSurface->BeginDraw(&update_rect, __uuidof(ID3D11Texture2D),
                                       (void**)getter_AddRefs(backBuf), &offset);
   if (FAILED(hr)) {
     gfxCriticalNote << "DCompositionSurface::BeginDraw failed: "
-                    << gfx::hexa(hr) << "dirtyRect: " << dirtyRect;
+                    << gfx::hexa(hr);
     return false;
   }
 
   // DC includes the origin of the dirty / update rect in the draw offset,
   // undo that here since WR expects it to be an absolute offset.
-  offset.x -= dirtyRect.X();
-  offset.y -= dirtyRect.Y();
+  offset.x -= aDirtyRect.origin.x;
+  offset.y -= aDirtyRect.origin.y;
 
-  // Texture size could be diffrent from mBufferSize.
   D3D11_TEXTURE2D_DESC desc;
   backBuf->GetDesc(&desc);
 
@@ -441,7 +567,7 @@ GLuint DCLayer::CreateEGLSurfaceForCompositionSurface(
   gl->fEGLImageTargetRenderbufferStorage(LOCAL_GL_RENDERBUFFER, mEGLImage);
 
   // Get or create an FBO for the specified dimensions
-  GLuint fboId = mDCLayerTree->GetOrCreateFbo(desc.Width, desc.Height);
+  GLuint fboId = GetOrCreateFbo(desc.Width, desc.Height);
 
   // Attach the new renderbuffer to the FBO
   gl->fBindFramebuffer(LOCAL_GL_DRAW_FRAMEBUFFER, fboId);
@@ -459,8 +585,8 @@ GLuint DCLayer::CreateEGLSurfaceForCompositionSurface(
   return fboId;
 }
 
-void DCLayer::DestroyEGLSurface() {
-  const auto gl = mDCLayerTree->GetGLContext();
+void DCLayerTree::DestroyEGLSurface() {
+  const auto gl = GetGLContext();
 
   if (mColorRBO) {
     gl->fDeleteRenderbuffers(1, &mColorRBO);
@@ -473,16 +599,6 @@ void DCLayer::DestroyEGLSurface() {
     egl->fDestroyImage(egl->Display(), mEGLImage);
     mEGLImage = EGL_NO_IMAGE;
   }
-}
-
-void DCLayer::EndDraw() {
-  MOZ_ASSERT(mCompositionSurface.get());
-  if (!mCompositionSurface) {
-    return;
-  }
-
-  mCompositionSurface->EndDraw();
-  DestroyEGLSurface();
 }
 
 }  // namespace wr

@@ -2530,9 +2530,9 @@ bool NonVoidByteStringToJsval(JSContext* cx, const nsACString& str,
                               JS::MutableHandle<JS::Value> rval) {
   // ByteStrings are not UTF-8 encoded.
   JSString* jsStr = JS_NewStringCopyN(cx, str.Data(), str.Length());
-
-  if (!jsStr) return false;
-
+  if (!jsStr) {
+    return false;
+  }
   rval.setString(jsStr);
   return true;
 }
@@ -2541,7 +2541,7 @@ bool NormalizeUSVString(nsAString& aString) {
   return EnsureUTF16Validity(aString);
 }
 
-bool NormalizeUSVString(binding_detail::FakeString& aString) {
+bool NormalizeUSVString(binding_detail::FakeString<char16_t>& aString) {
   uint32_t upTo = Utf16ValidUpTo(aString);
   uint32_t len = aString.Length();
   if (upTo == len) {

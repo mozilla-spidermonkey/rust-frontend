@@ -72,6 +72,10 @@ class ActiveDataThread(threading.Thread):
         while attempt < MAX_ACTIVEDATA_RETRIES and not self.response:
             try:
                 self.response = self.ti.activedata_query(self.query)
+                if not self.response:
+                    self.ti.log_verbose("%s: no data received for query" % self.name)
+                    self.response = []
+                    break
             except Exception:
                 self.ti.log_verbose("%s: Exception on attempt #%d:" % (self.name, attempt))
                 traceback.print_exc()
@@ -724,6 +728,7 @@ class TestInfoReport(TestInfo):
                           [{"regex": {"result.test": ".*/tests/[a-m].*"}},
                            {"not": {"regex": {"result.test": ".*/tests/[a-m].*"}}}]),
             "web-platform-tests-wdspec": (self.path_mod_wpt, [None]),
+            "web-platform-tests-crashtests": (self.path_mod_wpt, [None]),
             "xpcshell": (None, [None]),
             "mochitest-plain": (None, [None]),
             "mochitest-browser-chrome": (None, [None]),

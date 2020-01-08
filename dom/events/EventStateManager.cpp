@@ -599,7 +599,7 @@ nsresult EventStateManager::PreHandleEvent(nsPresContext* aPresContext,
           StopTrackingDragGesture(true);
           sNormalLMouseEventInProcess = false;
           // then fall through...
-          MOZ_FALLTHROUGH;
+          [[fallthrough]];
         case MouseButton::eRight:
         case MouseButton::eMiddle:
           RefPtr<EventStateManager> esm =
@@ -654,7 +654,7 @@ nsresult EventStateManager::PreHandleEvent(nsPresContext* aPresContext,
         aEvent->mMessage = eVoidEvent;
         break;
       }
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case eMouseMove:
     case ePointerDown:
       if (aEvent->mMessage == ePointerDown) {
@@ -663,7 +663,7 @@ nsresult EventStateManager::PreHandleEvent(nsPresContext* aPresContext,
           NotifyTargetUserActivation(aEvent, aTargetContent);
         }
       }
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case ePointerMove: {
       // on the Mac, GenerateDragGesture() may not return until the drag
       // has completed and so |aTargetFrame| may have been deleted (moving
@@ -698,9 +698,21 @@ nsresult EventStateManager::PreHandleEvent(nsPresContext* aPresContext,
         KillClickHoldTimer();
       }
       break;
-    case eDragOver:
+    case eDragOver: {
+      WidgetDragEvent* dragEvent = aEvent->AsDragEvent();
+      MOZ_ASSERT(dragEvent);
+      if (dragEvent->mFlags.mIsSynthesizedForTests) {
+        dragEvent->InitDropEffectForTests();
+      }
       // Send the enter/exit events before eDrop.
-      GenerateDragDropEnterExit(aPresContext, aEvent->AsDragEvent());
+      GenerateDragDropEnterExit(aPresContext, dragEvent);
+      break;
+    }
+    case eDrop:
+      if (aEvent->mFlags.mIsSynthesizedForTests) {
+        MOZ_ASSERT(aEvent->AsDragEvent());
+        aEvent->AsDragEvent()->InitDropEffectForTests();
+      }
       break;
 
     case eKeyPress: {
@@ -739,12 +751,12 @@ nsresult EventStateManager::PreHandleEvent(nsPresContext* aPresContext,
       }
     }
       // then fall through...
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case eKeyDown:
       if (aEvent->mMessage == eKeyDown) {
         NotifyTargetUserActivation(aEvent, aTargetContent);
       }
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case eKeyUp: {
       nsIContent* content = GetFocusedContent();
       if (content) mCurrentTargetContent = content;
@@ -1126,27 +1138,6 @@ struct MOZ_STACK_CLASS AccessKeyInfo {
       : event(aEvent), charCodes(aCharCodes) {}
 };
 
-static bool HandleAccessKeyInRemoteChild(BrowserParent* aBrowserParent,
-                                         void* aArg) {
-  AccessKeyInfo* accessKeyInfo = static_cast<AccessKeyInfo*>(aArg);
-
-  // Only forward accesskeys for the active tab.
-  if (aBrowserParent->GetDocShellIsActive()) {
-    // Even if there is no target for the accesskey in this process,
-    // the event may match with a content accesskey.  If so, the keyboard
-    // event should be handled with reply event for preventing double action.
-    // (e.g., Alt+Shift+F on Windows may focus a content in remote and open
-    // "File" menu.)
-    accessKeyInfo->event->StopPropagation();
-    accessKeyInfo->event->MarkAsWaitingReplyFromRemoteProcess();
-    aBrowserParent->HandleAccessKey(*accessKeyInfo->event,
-                                    accessKeyInfo->charCodes);
-    return true;
-  }
-
-  return false;
-}
-
 bool EventStateManager::WalkESMTreeToHandleAccessKey(
     WidgetKeyboardEvent* aEvent, nsPresContext* aPresContext,
     nsTArray<uint32_t>& aAccessCharCodes, nsIDocShellTreeItem* aBubbledFrom,
@@ -1257,7 +1248,24 @@ bool EventStateManager::WalkESMTreeToHandleAccessKey(
     else if (!aEvent->IsHandledInRemoteProcess()) {
       AccessKeyInfo accessKeyInfo(aEvent, aAccessCharCodes);
       nsContentUtils::CallOnAllRemoteChildren(
-          mDocument->GetWindow(), HandleAccessKeyInRemoteChild, &accessKeyInfo);
+          mDocument->GetWindow(),
+          [&accessKeyInfo](BrowserParent* aBrowserParent) -> CallState {
+            // Only forward accesskeys for the active tab.
+            if (aBrowserParent->GetDocShellIsActive()) {
+              // Even if there is no target for the accesskey in this process,
+              // the event may match with a content accesskey.  If so, the
+              // keyboard event should be handled with reply event for
+              // preventing double action. (e.g., Alt+Shift+F on Windows may
+              // focus a content in remote and open "File" menu.)
+              accessKeyInfo.event->StopPropagation();
+              accessKeyInfo.event->MarkAsWaitingReplyFromRemoteProcess();
+              aBrowserParent->HandleAccessKey(*accessKeyInfo.event,
+                                              accessKeyInfo.charCodes);
+              return CallState::Stop;
+            }
+
+            return CallState::Continue;
+          });
     }
   }
 
@@ -1903,6 +1911,8 @@ void EventStateManager::GenerateDragGesture(nsPresContext* aPresContext,
 
   // get the widget from the target frame
   WidgetDragEvent startEvent(aEvent->IsTrusted(), eDragStart, widget);
+  startEvent.mFlags.mIsSynthesizedForTests =
+      aEvent->mFlags.mIsSynthesizedForTests;
   FillInEventFromGestureDown(&startEvent);
 
   startEvent.mDataTransfer = dataTransfer;
@@ -2080,10 +2090,14 @@ bool EventStateManager::DoDefaultDragStart(
   // service was called directly within a draggesture handler. In this case,
   // don't do anything more, as it is assumed that the handler is managing
   // drag and drop manually. Make sure to return true to indicate that a drag
-  // began.
+  // began.  However, if we're handling drag session for synthesized events,
+  // we need to initialize some information of the session.  Therefore, we
+  // need to keep going for synthesized case.
   nsCOMPtr<nsIDragSession> dragSession;
   dragService->GetCurrentSession(getter_AddRefs(dragSession));
-  if (dragSession) return true;
+  if (dragSession && !dragSession->IsSynthesizedForTests()) {
+    return true;
+  }
 
   // No drag session is currently active, so check if a handler added
   // any items to be dragged. If not, there isn't anything to drag.
@@ -2102,33 +2116,48 @@ bool EventStateManager::DoDefaultDragStart(
   nsCOMPtr<nsIContent> dragTarget = aDataTransfer->GetDragTarget();
   if (!dragTarget) {
     dragTarget = aDragTarget;
-    if (!dragTarget) return false;
+    if (!dragTarget) {
+      return false;
+    }
   }
 
   // check which drag effect should initially be used. If the effect was not
   // set, just use all actions, otherwise Windows won't allow a drop.
   uint32_t action = aDataTransfer->EffectAllowedInt();
-  if (action == nsIDragService::DRAGDROP_ACTION_UNINITIALIZED)
+  if (action == nsIDragService::DRAGDROP_ACTION_UNINITIALIZED) {
     action = nsIDragService::DRAGDROP_ACTION_COPY |
              nsIDragService::DRAGDROP_ACTION_MOVE |
              nsIDragService::DRAGDROP_ACTION_LINK;
+  }
 
   // get any custom drag image that was set
   int32_t imageX, imageY;
   RefPtr<Element> dragImage = aDataTransfer->GetDragImage(&imageX, &imageY);
 
   nsCOMPtr<nsIArray> transArray = aDataTransfer->GetTransferables(dragTarget);
-  if (!transArray) return false;
+  if (!transArray) {
+    return false;
+  }
 
-  // After this function returns, the DataTransfer will be cleared so it appears
-  // empty to content. We need to pass a DataTransfer into the Drag Session, so
-  // we need to make a copy.
   RefPtr<DataTransfer> dataTransfer;
-  aDataTransfer->Clone(aDragTarget, eDrop, aDataTransfer->MozUserCancelled(),
-                       false, getter_AddRefs(dataTransfer));
+  if (!dragSession) {
+    // After this function returns, the DataTransfer will be cleared so it
+    // appears empty to content. We need to pass a DataTransfer into the Drag
+    // Session, so we need to make a copy.
+    aDataTransfer->Clone(aDragTarget, eDrop, aDataTransfer->MozUserCancelled(),
+                         false, getter_AddRefs(dataTransfer));
 
-  // Copy over the drop effect, as Clone doesn't copy it for us.
-  dataTransfer->SetDropEffectInt(aDataTransfer->DropEffectInt());
+    // Copy over the drop effect, as Clone doesn't copy it for us.
+    dataTransfer->SetDropEffectInt(aDataTransfer->DropEffectInt());
+  } else {
+    MOZ_ASSERT(dragSession->IsSynthesizedForTests());
+    MOZ_ASSERT(aDragEvent->mFlags.mIsSynthesizedForTests);
+    // If we're initializing synthesized drag session, we should use given
+    // DataTransfer as is because it'll be used with following drag events
+    // in any tests, therefore it should be set to nsIDragSession.dataTransfer
+    // because it and DragEvent.dataTransfer should be same instance.
+    dataTransfer = aDataTransfer;
+  }
 
   // XXXndeakin don't really want to create a new drag DOM event
   // here, but we need something to pass to the InvokeDragSession
@@ -3617,7 +3646,13 @@ nsresult EventStateManager::PostHandleEvent(nsPresContext* aPresContext,
       uint32_t dropEffect = nsIDragService::DRAGDROP_ACTION_NONE;
       uint32_t action = nsIDragService::DRAGDROP_ACTION_NONE;
       if (nsEventStatus_eConsumeNoDefault == *aStatus) {
-        // if the event has a dataTransfer set, use it.
+        // If the event has initialized its mDataTransfer, use it.
+        // Or the event has not been initialized its mDataTransfer, but
+        // it's set before dispatch because of synthesized, but without
+        // testing session (e.g., emulating drag from another app), use it
+        // coming from outside.
+        // XXX Perhaps, for the latter case, we need new API because we don't
+        //     have a chance to initialize allowed effects of the session.
         if (dragEvent->mDataTransfer) {
           // get the dataTransfer and the dropEffect that was set on it
           dataTransfer = dragEvent->mDataTransfer;
@@ -3692,6 +3727,29 @@ nsresult EventStateManager::PostHandleEvent(nsPresContext* aPresContext,
     } break;
 
     case eDrop: {
+      if (aEvent->mFlags.mIsSynthesizedForTests) {
+        if (nsCOMPtr<nsIDragSession> dragSession =
+                nsContentUtils::GetDragSession()) {
+          MOZ_ASSERT(dragSession->IsSynthesizedForTests());
+          RefPtr<Document> sourceDocument;
+          DebugOnly<nsresult> rvIgnored =
+              dragSession->GetSourceDocument(getter_AddRefs(sourceDocument));
+          NS_WARNING_ASSERTION(
+              NS_SUCCEEDED(rvIgnored),
+              "nsIDragSession::GetSourceDocument() failed, but ignored");
+          // If source document hasn't been initialized, i.e., dragstart was
+          // consumed by the test, the test needs to dispatch "dragend" event
+          // instead of the drag session.  Therefore, it does not make sense
+          // to set drag end point in such case (you hit assersion if you do
+          // it).
+          if (sourceDocument) {
+            CSSIntPoint dropPointInScreen =
+                Event::GetScreenCoords(aPresContext, aEvent, aEvent->mRefPoint);
+            dragSession->SetDragEndPointForTests(dropPointInScreen.x,
+                                                 dropPointInScreen.y);
+          }
+        }
+      }
       sLastDragOverFrame = nullptr;
       ClearGlobalActiveContent(this);
       break;
@@ -4759,6 +4817,8 @@ void EventStateManager::GenerateDragDropEnterExit(nsPresContext* aPresContext,
             WidgetDragEvent remoteEvent(aDragEvent->IsTrusted(), eDragExit,
                                         aDragEvent->mWidget);
             remoteEvent.AssignDragEventData(*aDragEvent, true);
+            remoteEvent.mFlags.mIsSynthesizedForTests =
+                aDragEvent->mFlags.mIsSynthesizedForTests;
             nsEventStatus remoteStatus = nsEventStatus_eIgnore;
             HandleCrossProcessEvent(&remoteEvent, &remoteStatus);
           }
@@ -4819,6 +4879,8 @@ void EventStateManager::FireDragEnterOrExit(nsPresContext* aPresContext,
   nsEventStatus status = nsEventStatus_eIgnore;
   WidgetDragEvent event(aDragEvent->IsTrusted(), aMessage, aDragEvent->mWidget);
   event.AssignDragEventData(*aDragEvent, false);
+  event.mFlags.mIsSynthesizedForTests =
+      aDragEvent->mFlags.mIsSynthesizedForTests;
   event.mRelatedTarget = aRelatedTarget;
   mCurrentTargetContent = aTargetContent;
 

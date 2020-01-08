@@ -317,12 +317,14 @@ partial interface Document {
   attribute EventHandler onpointerlockerror;
 };
 
+// Mozilla-internal document extensions specific to error pages.
 partial interface Document {
+  [Func="Document::CallerIsTrustedAboutCertError"]
+  Promise<any> addCertException(boolean isTemporary);
+
   [Func="Document::CallerIsTrustedAboutCertError", Throws]
   FailedCertSecurityInfo getFailedCertSecurityInfo();
-};
 
-partial interface Document {
   [Func="Document::CallerIsTrustedAboutNetError", Throws]
   NetErrorInfo getNetErrorInfo();
 };
@@ -678,6 +680,6 @@ partial interface Document {
 
 // Extension for permission delegation.
 partial interface Document {
-  [Pref="permissions.delegation.enabled", ChromeOnly, Pure]
+  [ChromeOnly, Pure]
   readonly attribute nsIPermissionDelegateHandler permDelegateHandler;
 };

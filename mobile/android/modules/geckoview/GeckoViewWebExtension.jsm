@@ -240,7 +240,6 @@ class GeckoViewConnection {
 }
 
 function exportExtension(aAddon, aPermissions, aSourceURI) {
-  const { origins, permissions } = aPermissions;
   const {
     creator,
     description,
@@ -253,7 +252,7 @@ function exportExtension(aAddon, aPermissions, aSourceURI) {
     optionsBrowserStyle,
     isRecommended,
     blocklistState,
-    isActive,
+    userDisabled,
     isBuiltin,
     id,
   } = aAddon;
@@ -266,15 +265,22 @@ function exportExtension(aAddon, aPermissions, aSourceURI) {
   }
   const openOptionsPageInTab =
     optionsBrowserStyle === AddonManager.OPTIONS_TYPE_TAB;
+  const disabledFlags = [];
+  if (userDisabled) {
+    disabledFlags.push("userDisabled");
+  }
+  if (blocklistState !== Ci.nsIBlocklistService.STATE_NOT_BLOCKED) {
+    disabledFlags.push("blocklistDisabled");
+  }
   return {
     webExtensionId: id,
     locationURI: aSourceURI != null ? aSourceURI.spec : "",
-    isEnabled: isActive,
     isBuiltIn: isBuiltin,
     metaData: {
-      permissions,
-      origins,
+      permissions: aPermissions ? aPermissions.permissions : [],
+      origins: aPermissions ? aPermissions.origins : [],
       description,
+      disabledFlags,
       version,
       creatorName,
       creatorURL,
@@ -448,12 +454,12 @@ var GeckoViewWebExtension = {
   },
 
   async browserActionClick(aId) {
-    const extension = await this.extensionById(aId);
-    if (!extension) {
+    const policy = WebExtensionPolicy.getByID(aId);
+    if (!policy) {
       return;
     }
 
-    const browserAction = this.browserActions.get(extension);
+    const browserAction = this.browserActions.get(policy.extension);
     if (!browserAction) {
       return;
     }
@@ -462,12 +468,12 @@ var GeckoViewWebExtension = {
   },
 
   async pageActionClick(aId) {
-    const extension = await this.extensionById(aId);
-    if (!extension) {
+    const policy = WebExtensionPolicy.getByID(aId);
+    if (!policy) {
       return;
     }
 
-    const pageAction = this.pageActions.get(extension);
+    const pageAction = this.pageActions.get(policy.extension);
     if (!pageAction) {
       return;
     }
@@ -476,10 +482,13 @@ var GeckoViewWebExtension = {
   },
 
   async actionDelegateAttached(aId) {
-    const extension = await this.extensionById(aId);
-    if (!extension) {
+    const policy = WebExtensionPolicy.getByID(aId);
+    if (!policy) {
+      debug`Could not find extension with id=${aId}`;
       return;
     }
+
+    const { extension } = policy;
 
     const browserAction = this.browserActions.get(extension);
     if (browserAction) {
@@ -491,6 +500,30 @@ var GeckoViewWebExtension = {
     if (pageAction) {
       pageAction.updateOnChange(null);
     }
+  },
+
+  async enableWebExtension(aId, aSource) {
+    const extension = await this.extensionById(aId);
+    if (aSource === "user") {
+      extension.enable();
+    }
+    return exportExtension(
+      extension,
+      extension.userPermissions,
+      /* aSourceURI */ null
+    );
+  },
+
+  async disableWebExtension(aId, aSource) {
+    const extension = await this.extensionById(aId);
+    if (aSource === "user") {
+      extension.disable();
+    }
+    return exportExtension(
+      extension,
+      extension.userPermissions,
+      /* aSourceURI */ null
+    );
   },
 
   async onEvent(aEvent, aData, aCallback) {
@@ -627,20 +660,52 @@ var GeckoViewWebExtension = {
       }
 
       case "GeckoView:WebExtension:Enable": {
-        // TODO
-        aCallback.onError(`Not implemented`);
+        try {
+          const { source, webExtensionId } = aData;
+          if (source !== "user") {
+            throw new Error("Illegal source parameter");
+          }
+          const extension = await this.enableWebExtension(
+            webExtensionId,
+            source
+          );
+          aCallback.onSuccess({ extension });
+        } catch (ex) {
+          debug`Failed enable ${ex}`;
+          aCallback.onError(`Unexpected error: ${ex}`);
+        }
         break;
       }
 
       case "GeckoView:WebExtension:Disable": {
-        // TODO
-        aCallback.onError(`Not implemented`);
+        try {
+          const { source, webExtensionId } = aData;
+          if (source !== "user") {
+            throw new Error("Illegal source parameter");
+          }
+          const extension = await this.disableWebExtension(
+            webExtensionId,
+            source
+          );
+          aCallback.onSuccess({ extension });
+        } catch (ex) {
+          debug`Failed disable ${ex}`;
+          aCallback.onError(`Unexpected error: ${ex}`);
+        }
         break;
       }
 
       case "GeckoView:WebExtension:List": {
-        // TODO
-        aCallback.onError(`Not implemented`);
+        try {
+          const addons = await AddonManager.getAddonsByTypes(["extension"]);
+          const extensions = addons.map(addon =>
+            exportExtension(addon, addon.userPermissions, null)
+          );
+          aCallback.onSuccess({ extensions });
+        } catch (ex) {
+          debug`Failed list ${ex}`;
+          aCallback.onError(`Unexpected error: ${ex}`);
+        }
         break;
       }
 

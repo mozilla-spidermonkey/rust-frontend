@@ -33,7 +33,7 @@ use webrender::{
     BinaryRecorder, Compositor, DebugFlags, Device,
     NativeSurfaceId, PipelineInfo, ProfilerHooks, RecordedFrameHandle, Renderer, RendererOptions, RendererStats,
     SceneBuilderHooks, ShaderPrecacheFlags, Shaders, ThreadListener, UploadMethod, VertexUsageHint,
-    WrShaders, set_profiler_hooks, CompositorConfig, NativeSurfaceInfo
+    WrShaders, set_profiler_hooks, CompositorConfig, NativeSurfaceInfo, NativeTileId
 };
 use thread_profiler::register_thread_with_profiler;
 use moz2d_renderer::Moz2dBlobImageHandler;
@@ -42,12 +42,7 @@ use rayon;
 use num_cpus;
 use euclid::SideOffsets2D;
 use nsstring::nsAString;
-
-#[cfg(target_os = "linux")]
-use libc::{
-    pthread_self, pthread_setschedparam, sched_param,
-    cpu_set_t, CPU_SET, pthread_setaffinity_np
-};
+//linux only//use thread_priority::*;
 
 #[cfg(target_os = "macos")]
 use core_foundation::string::CFString;
@@ -1071,47 +1066,25 @@ pub unsafe extern "C" fn wr_thread_pool_new(low_priority: bool) -> *mut WrThread
 
     let priority_tag = if low_priority { "LP" } else { "" };
 
-    // helper function to make sure that low priority threads really are low priority.
-    // it also sets the affinity so that WRWorkerX and WRWorkerLPX are both locked to
-    // the same core X, so one or the other can run, but not both: the total number
-    // of worker threads that's running should respect num_threads above, even if
-    // they exist in two separate pools.
-    #[cfg(target_os = "windows")]
-    fn set_thread_priority_and_affinity(low_priority:bool, thread_index: usize) {
-        unsafe {
-            SetThreadPriority(
-                GetCurrentThread(),
-                if low_priority {
-                    -1 /* THREAD_PRIORITY_BELOW_NORMAL */
-                } else {
-                    0 /* THREAD_PRIORITY_NORMAL */
-                });
-            SetThreadAffinityMask(GetCurrentThread(), 1usize << thread_index);
-        }
-    }
-    #[cfg(target_os = "linux")]
-    fn set_thread_priority_and_affinity(low_priority:bool, thread_index: usize) {
-        unsafe {
-            let thread_id = pthread_self();
-            if low_priority {
-                let params = sched_param {
-                    sched_priority: 0
-                };
-                pthread_setschedparam(thread_id, 3 /* SCHED_BATCH */, &params);
-            }
-            let mut cpu_set = mem::zeroed::<cpu_set_t>();
-            CPU_SET(thread_index, &mut cpu_set);
-            pthread_setaffinity_np(thread_id, mem::size_of::<cpu_set_t>(), &cpu_set);
-        }
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "linux" )))]
-    fn set_thread_priority_and_affinity(_low_priority:bool, _thread_index: usize) { }
-
     let worker = rayon::ThreadPoolBuilder::new()
         .thread_name(move |idx|{ format!("WRWorker{}#{}", priority_tag, idx) })
         .num_threads(num_threads)
         .start_handler(move |idx| {
-            set_thread_priority_and_affinity(low_priority, idx);
+            #[cfg(target_os = "windows")]
+            {
+                SetThreadPriority(
+                    GetCurrentThread(),
+                    if low_priority {
+                        -1 /* THREAD_PRIORITY_BELOW_NORMAL */
+                    } else {
+                        0 /* THREAD_PRIORITY_NORMAL */
+                    });
+                SetThreadAffinityMask(GetCurrentThread(), 1usize << idx);
+            }
+            /*let thread_id = thread_native_id();
+            set_thread_priority(thread_id,
+                if low_priority { ThreadPriority::Min } else { ThreadPriority::Max },
+                ThreadSchedulePolicy::Normal(NormalThreadSchedulePolicy::Normal));*/
             wr_register_thread_local_arena();
             let name = format!("WRWorker{}#{}",priority_tag, idx);
             register_thread_with_profiler(name.clone());
@@ -1218,23 +1191,46 @@ fn wr_device_new(gl_context: *mut c_void, pc: Option<&mut WrProgramCache>)
       None => None,
     };
 
-    Device::new(gl, resource_override_path, upload_method, cached_programs, false, true, true, None, false)
+    Device::new(
+        gl,
+        resource_override_path,
+        upload_method,
+        cached_programs,
+        false,
+        true,
+        true,
+        None,
+        false,
+        false,
+    )
 }
 
 extern "C" {
     fn wr_compositor_create_surface(
         compositor: *mut c_void,
         id: NativeSurfaceId,
-        size: DeviceIntSize,
+        tile_size: DeviceIntSize,
         is_opaque: bool,
     );
     fn wr_compositor_destroy_surface(
         compositor: *mut c_void,
         id: NativeSurfaceId,
     );
-    fn wr_compositor_bind(
+    fn wr_compositor_create_tile(
         compositor: *mut c_void,
         id: NativeSurfaceId,
+        x: i32,
+        y: i32,
+    );
+    fn wr_compositor_destroy_tile(
+        compositor: *mut c_void,
+        id: NativeSurfaceId,
+        x: i32,
+        y: i32,
+    );
+    fn wr_compositor_bind(
+        compositor: *mut c_void,
+        id: NativeTileId,
         offset: &mut DeviceIntPoint,
         fbo_id: &mut u32,
         dirty_rect: DeviceIntRect,
@@ -1256,14 +1252,14 @@ impl Compositor for WrCompositor {
     fn create_surface(
         &mut self,
         id: NativeSurfaceId,
-        size: DeviceIntSize,
+        tile_size: DeviceIntSize,
         is_opaque: bool,
     ) {
         unsafe {
             wr_compositor_create_surface(
                 self.0,
                 id,
-                size,
+                tile_size,
                 is_opaque,
             );
         }
@@ -1281,9 +1277,37 @@ impl Compositor for WrCompositor {
         }
     }
 
+    fn create_tile(
+        &mut self,
+        id: NativeTileId,
+    ) {
+        unsafe {
+            wr_compositor_create_tile(
+                self.0,
+                id.surface_id,
+                id.x,
+                id.y,
+            );
+        }
+    }
+
+    fn destroy_tile(
+        &mut self,
+        id: NativeTileId,
+    ) {
+        unsafe {
+            wr_compositor_destroy_tile(
+                self.0,
+                id.surface_id,
+                id.x,
+                id.y,
+            );
+        }
+    }
+
     fn bind(
         &mut self,
-        id: NativeSurfaceId,
+        id: NativeTileId,
         dirty_rect: DeviceIntRect,
     ) -> NativeSurfaceInfo {
         let mut surface_info = NativeSurfaceInfo {
@@ -1373,7 +1397,8 @@ pub extern "C" fn wr_window_new(window_id: WrWindowId,
                                 out_handle: &mut *mut DocumentHandle,
                                 out_renderer: &mut *mut Renderer,
                                 out_max_texture_size: *mut i32,
-                                enable_gpu_markers: bool)
+                                enable_gpu_markers: bool,
+                                panic_on_gl_error: bool)
                                 -> bool {
     assert!(unsafe { is_in_render_thread() });
 
@@ -1479,6 +1504,7 @@ pub extern "C" fn wr_window_new(window_id: WrWindowId,
         surface_origin_is_top_left,
         compositor_config,
         enable_gpu_markers,
+        panic_on_gl_error,
         ..Default::default()
     };
 

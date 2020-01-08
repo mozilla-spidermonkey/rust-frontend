@@ -7,6 +7,8 @@
 #ifndef DOM_MEDIA_MEDIACONTROL_MEDIACONTROLLER_H_
 #define DOM_MEDIA_MEDIACONTROL_MEDIACONTROLLER_H_
 
+#include "ContentMediaController.h"
+#include "MediaControlKeysEvent.h"
 #include "nsDataHashtable.h"
 #include "nsISupportsImpl.h"
 
@@ -14,14 +16,6 @@ namespace mozilla {
 namespace dom {
 
 class BrowsingContext;
-
-enum class MediaControlActions : uint32_t {
-  ePlay,
-  ePause,
-  eStop,
-  /* do not use this, it's used to indicate the last value of enum */
-  eActionsNum,
-};
 
 /**
  * MediaController is a class, which is used to control all media within a tab.
@@ -65,15 +59,18 @@ class MediaController final {
 
   // These methods are only being used to notify the state changes of controlled
   // media in ContentParent or MediaControlUtils.
-  void NotifyMediaActiveChanged(bool aActive);
+  void NotifyMediaStateChanged(ControlledMediaState aState);
   void NotifyMediaAudibleChanged(bool aAudible);
 
  private:
   ~MediaController();
 
-  already_AddRefed<BrowsingContext> GetContext() const;
+  void UpdateMediaControlKeysEventToContentMediaIfNeeded(
+      MediaControlKeysEvent aEvent);
   void IncreaseControlledMediaNum();
   void DecreaseControlledMediaNum();
+  void IncreasePlayingControlledMediaNum();
+  void DecreasePlayingControlledMediaNum();
 
   void Activate();
   void Deactivate();
@@ -82,6 +79,7 @@ class MediaController final {
   bool mIsPlaying = false;
   bool mAudible = false;
   int64_t mControlledMediaNum = 0;
+  int64_t mPlayingControlledMediaNum = 0;
 };
 
 }  // namespace dom

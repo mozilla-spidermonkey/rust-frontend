@@ -2048,6 +2048,14 @@ BrowserGlue.prototype = {
       this._recordDataSanitizationPrefs();
     });
 
+    Services.tm.idleDispatchToMainThread(() => {
+      let siteSpecific = Services.prefs.getBoolPref(
+        "browser.zoom.siteSpecific",
+        false
+      );
+      Services.telemetry.scalarSet("a11y.sitezoom", siteSpecific);
+    });
+
     // Load the Login Manager data from disk off the main thread, some time
     // after startup.  If the data is required before this runs, for example
     // because a restored page contains a password field, it will be loaded on
@@ -2795,7 +2803,7 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
-    const UI_VERSION = 90;
+    const UI_VERSION = 91;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     if (!Services.prefs.prefHasUserValue("browser.migration.version")) {
@@ -3258,6 +3266,29 @@ BrowserGlue.prototype = {
         "chrome://browser/content/places/bookmarksSidebar.xul",
         "chrome://browser/content/places/bookmarksSidebar.xhtml"
       );
+    }
+
+    // Clear socks proxy values if they were shared from http, to prevent
+    // websocket breakage after bug 1577862 (see bug 969282).
+    if (
+      currentUIVersion < 91 &&
+      Services.prefs.getBoolPref("network.proxy.share_proxy_settings", false) &&
+      Services.prefs.getIntPref("network.proxy.type", 0) == 1
+    ) {
+      let httpProxy = Services.prefs.getCharPref("network.proxy.http", "");
+      let httpPort = Services.prefs.getIntPref("network.proxy.http_port", 0);
+      let socksProxy = Services.prefs.getCharPref("network.proxy.socks", "");
+      let socksPort = Services.prefs.getIntPref("network.proxy.socks_port", 0);
+      if (httpProxy && httpProxy == socksProxy && httpPort == socksPort) {
+        Services.prefs.setCharPref(
+          "network.proxy.socks",
+          Services.prefs.getCharPref("network.proxy.backup.socks", "")
+        );
+        Services.prefs.setIntPref(
+          "network.proxy.socks_port",
+          Services.prefs.getIntPref("network.proxy.backup.socks_port", 0)
+        );
+      }
     }
 
     // Update the migration version.

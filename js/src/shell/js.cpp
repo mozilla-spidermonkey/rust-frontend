@@ -2043,7 +2043,7 @@ static bool ConvertTranscodeResultToJSException(JSContext* cx,
       return true;
 
     default:
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case JS::TranscodeResult_Failure:
       MOZ_ASSERT(!cx->isExceptionPending());
       JS_ReportErrorASCII(cx, "generic warning");
@@ -3071,15 +3071,6 @@ static MOZ_MUST_USE bool SrcNotes(JSContext* cx, HandleScript script,
         ++lineno;
         break;
 
-      case SRC_TRY:
-        MOZ_ASSERT(JSOp(script->code()[offset]) == JSOP_TRY);
-        if (!sp->jsprintf(" offset to jump %u",
-                          unsigned(GetSrcNoteOffset(
-                              sn, SrcNote::Try::EndOfTryJumpOffset)))) {
-          return false;
-        }
-        break;
-
       default:
         MOZ_ASSERT_UNREACHABLE("unrecognized srcnote");
     }
@@ -3692,17 +3683,19 @@ static bool sandbox_resolve(JSContext* cx, HandleObject obj, HandleId id,
   return true;
 }
 
-static const JSClassOps sandbox_classOps = {nullptr,
-                                            nullptr,
-                                            nullptr,
-                                            sandbox_enumerate,
-                                            sandbox_resolve,
-                                            nullptr,
-                                            nullptr,
-                                            nullptr,
-                                            nullptr,
-                                            nullptr,
-                                            JS_GlobalObjectTraceHook};
+static const JSClassOps sandbox_classOps = {
+    nullptr,                   // addProperty
+    nullptr,                   // delProperty
+    nullptr,                   // enumerate
+    sandbox_enumerate,         // newEnumerate
+    sandbox_resolve,           // resolve
+    nullptr,                   // mayResolve
+    nullptr,                   // finalize
+    nullptr,                   // call
+    nullptr,                   // hasInstance
+    nullptr,                   // construct
+    JS_GlobalObjectTraceHook,  // trace
+};
 
 static const JSClass sandbox_class = {"sandbox", JSCLASS_GLOBAL_FLAGS,
                                       &sandbox_classOps};
@@ -4741,13 +4734,18 @@ class XDRBufferObject : public NativeObject {
 };
 
 /*static */ const JSClassOps XDRBufferObject::classOps_ = {
-    nullptr, /* addProperty */
-    nullptr, /* delProperty */
-    nullptr, /* enumerate   */
-    nullptr, /* newEnumerate */
-    nullptr, /* resolve     */
-    nullptr, /* mayResolve  */
-    XDRBufferObject::finalize};
+    nullptr,                    // addProperty
+    nullptr,                    // delProperty
+    nullptr,                    // enumerate
+    nullptr,                    // newEnumerate
+    nullptr,                    // resolve
+    nullptr,                    // mayResolve
+    XDRBufferObject::finalize,  // finalize
+    nullptr,                    // call
+    nullptr,                    // hasInstance
+    nullptr,                    // construct
+    nullptr,                    // trace
+};
 
 /*static */ const JSClass XDRBufferObject::class_ = {
     "XDRBufferObject",
@@ -4799,6 +4797,11 @@ static bool CodeModule(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   RootedModuleObject modObject(cx, &args[0].toObject().as<ModuleObject>());
+  if (modObject->status() >= MODULE_STATUS_INSTANTIATING) {
+    JS_ReportErrorASCII(cx, "cannot encode module after instantiation.");
+    return false;
+  }
+
   JS::TranscodeBuffer buf;
   XDREncoder xdrEncoder_(cx, buf);
   XDRResult res = xdrEncoder_.codeModuleObject(&modObject);
@@ -5300,10 +5303,9 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  Parser<FullParseHandler, char16_t> parser(cx, options, chars, length,
-                                            /* foldConstants = */ false,
-                                            parseInfo, nullptr, nullptr,
-                                            sourceObject, goal);
+  Parser<FullParseHandler, char16_t> parser(
+      cx, options, chars, length,
+      /* foldConstants = */ false, parseInfo, nullptr, nullptr, sourceObject);
   if (!parser.checkOptions()) {
     return false;
   }
@@ -5376,7 +5378,7 @@ static bool SyntaxParse(JSContext* cx, unsigned argc, Value* vp) {
 
   Parser<frontend::SyntaxParseHandler, char16_t> parser(
       cx, options, chars, length, false, parseInfo, nullptr, nullptr,
-      sourceObject, frontend::ParseGoal::Script);
+      sourceObject);
   if (!parser.checkOptions()) {
     return false;
   }
@@ -6473,8 +6475,17 @@ static bool CreateIsHTMLDDA(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   static const JSClassOps classOps = {
-      nullptr, nullptr, nullptr, nullptr,
-      nullptr, nullptr, nullptr, IsHTMLDDA_Call,
+      nullptr,         // addProperty
+      nullptr,         // delProperty
+      nullptr,         // enumerate
+      nullptr,         // newEnumerate
+      nullptr,         // resolve
+      nullptr,         // mayResolve
+      nullptr,         // finalize
+      IsHTMLDDA_Call,  // call
+      nullptr,         // hasInstance
+      nullptr,         // construct
+      nullptr,         // trace
   };
 
   static const JSClass cls = {
@@ -7209,13 +7220,18 @@ class StreamCacheEntryObject : public NativeObject {
 };
 
 const JSClassOps StreamCacheEntryObject::classOps_ = {
-    nullptr, /* addProperty */
-    nullptr, /* delProperty */
-    nullptr, /* enumerate */
-    nullptr, /* newEnumerate */
-    nullptr, /* resolve */
-    nullptr, /* mayResolve */
-    StreamCacheEntryObject::finalize};
+    nullptr,                           // addProperty
+    nullptr,                           // delProperty
+    nullptr,                           // enumerate
+    nullptr,                           // newEnumerate
+    nullptr,                           // resolve
+    nullptr,                           // mayResolve
+    StreamCacheEntryObject::finalize,  // finalize
+    nullptr,                           // call
+    nullptr,                           // hasInstance
+    nullptr,                           // construct
+    nullptr,                           // trace
+};
 
 const JSClass StreamCacheEntryObject::class_ = {
     "StreamCacheEntryObject",
@@ -9654,17 +9670,19 @@ static bool global_mayResolve(const JSAtomState& names, jsid id,
   return JS_MayResolveStandardClass(names, id, maybeObj);
 }
 
-static const JSClassOps global_classOps = {nullptr,
-                                           nullptr,
-                                           nullptr,
-                                           global_enumerate,
-                                           global_resolve,
-                                           global_mayResolve,
-                                           nullptr,
-                                           nullptr,
-                                           nullptr,
-                                           nullptr,
-                                           JS_GlobalObjectTraceHook};
+static const JSClassOps global_classOps = {
+    nullptr,                   // addProperty
+    nullptr,                   // delProperty
+    nullptr,                   // enumerate
+    global_enumerate,          // newEnumerate
+    global_resolve,            // resolve
+    global_mayResolve,         // mayResolve
+    nullptr,                   // finalize
+    nullptr,                   // call
+    nullptr,                   // hasInstance
+    nullptr,                   // construct
+    JS_GlobalObjectTraceHook,  // trace
+};
 
 static constexpr uint32_t DOM_PROTOTYPE_SLOT = JSCLASS_GLOBAL_SLOT_COUNT;
 static constexpr uint32_t DOM_GLOBAL_SLOTS = 1;
@@ -10193,7 +10211,10 @@ static MOZ_MUST_USE bool ProcessArgs(JSContext* cx, OptionParser* op) {
   if (filePaths.empty() && utf16FilePaths.empty() && codeChunks.empty() &&
       modulePaths.empty() && binASTPaths.empty() &&
       !op->getStringArg("script")) {
-    return Process(cx, nullptr, true, FileScript); /* Interactive. */
+    // Always use the interactive shell when -i is used. Without -i we let
+    // Process figure it out based on isatty.
+    bool forceTTY = op->getBoolOption('i');
+    return Process(cx, nullptr, forceTTY, FileScript);
   }
 
   if (const char* path = op->getStringOption("module-load-path")) {
@@ -11292,6 +11313,8 @@ int main(int argc, char** argv, char** envp) {
       !op.addBoolOption('\0', "no-incremental-gc", "Disable Incremental GC") ||
       !op.addStringOption('\0', "nursery-strings", "on/off",
                           "Allocate strings in the nursery") ||
+      !op.addStringOption('\0', "nursery-bigints", "on/off",
+                          "Allocate BigInts in the nursery") ||
       !op.addIntOption('\0', "available-memory", "SIZE",
                        "Select GC settings based on available memory (MB)",
                        0) ||
@@ -11537,6 +11560,16 @@ int main(int argc, char** argv, char** envp) {
       cx->runtime()->gc.nursery().disableStrings();
     } else {
       MOZ_CRASH("invalid option value for --nursery-strings, must be on/off");
+    }
+  }
+
+  if (const char* opt = op.getStringOption("nursery-bigints")) {
+    if (strcmp(opt, "on") == 0) {
+      cx->runtime()->gc.nursery().enableBigInts();
+    } else if (strcmp(opt, "off") == 0) {
+      cx->runtime()->gc.nursery().disableBigInts();
+    } else {
+      MOZ_CRASH("invalid option value for --nursery-bigints, must be on/off");
     }
   }
 

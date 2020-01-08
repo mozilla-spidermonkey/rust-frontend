@@ -2924,8 +2924,8 @@ bool nsDisplayList::ComputeVisibilityForSublist(
   return anyVisible;
 }
 
-static bool TriggerPendingAnimationsOnSubDocuments(Document& aDoc,
-                                                   void* aReadyTime) {
+static CallState TriggerPendingAnimationsOnSubDocuments(Document& aDoc,
+                                                        void* aReadyTime) {
   if (PendingAnimationTracker* tracker = aDoc.GetPendingAnimationTracker()) {
     PresShell* presShell = aDoc.GetPresShell();
     // If paint-suppression is in effect then we haven't finished painting
@@ -2937,7 +2937,7 @@ static bool TriggerPendingAnimationsOnSubDocuments(Document& aDoc,
   }
   aDoc.EnumerateSubDocuments(TriggerPendingAnimationsOnSubDocuments,
                              aReadyTime);
-  return true;
+  return CallState::Continue;
 }
 
 static void TriggerPendingAnimations(Document& aDocument,
@@ -8511,6 +8511,22 @@ auto nsDisplayTransform::ShouldPrerenderTransformedContent(
     return FullPrerender;
   }
 
+  // Frames participating any preserve-3d rendering context are force to
+  // full prerender here if we failed the previous if-conditions.
+  // If the current frame doesn't have animations and any of its parent has
+  // animations, we still hit this path because
+  // ActiveLayerTracker::IsTransformMaybeAnimated() catches the existing
+  // animations on the parent frames in the preserve-3d rendering context.
+  // FIXME: For now, we force all the frame in the 3D rendering context to use
+  // FullPrerender, so this may have an issue if one of the frame is too large
+  // and it has animations (which may make the calculation of visible and dirty
+  // rects not correct.).
+  if (aFrame->Extend3DContext() || aFrame->Combines3DTransformWithAncestors()) {
+    // Use overflow as dirty and force to use full prerender.
+    *aDirtyRect = overflow;
+    return FullPrerender;
+  }
+
   if (StaticPrefs::layout_animation_prerender_partial()) {
     *aDirtyRect = nsLayoutUtils::ComputePartialPrerenderArea(*aDirtyRect,
                                                              overflow, maxSize);
@@ -8682,8 +8698,12 @@ bool nsDisplayTransform::CreateWebRenderCommands(
     position.Round();
   }
 
-  uint64_t animationsId = AddAnimationsForWebRender(
-      this, aManager, aDisplayListBuilder, aBuilder.GetRenderRoot());
+  // We don't send animations for transform separator display items.
+  uint64_t animationsId =
+      mIsTransformSeparator
+          ? 0
+          : AddAnimationsForWebRender(this, aManager, aDisplayListBuilder,
+                                      aBuilder.GetRenderRoot());
   wr::WrAnimationProperty prop{
       wr::WrAnimationType::Transform,
       animationsId,
@@ -8700,7 +8720,8 @@ bool nsDisplayTransform::CreateWebRenderCommands(
   }
 
   // Determine if we're possibly animated (= would need an active layer in FLB).
-  bool animated = ActiveLayerTracker::IsTransformMaybeAnimated(Frame());
+  bool animated = !mIsTransformSeparator &&
+                  ActiveLayerTracker::IsTransformMaybeAnimated(Frame());
 
   wr::StackingContextParams params;
   params.mBoundTransform = &newTransformMatrix;
@@ -8792,8 +8813,12 @@ already_AddRefed<Layer> nsDisplayTransform::BuildLayer(
     mFrame->SetProperty(nsIFrame::RefusedAsyncAnimationProperty(), false);
   }
 
-  nsDisplayListBuilder::AddAnimationsAndTransitionsToLayer(
-      container, aBuilder, this, mFrame, GetType());
+  // We don't send animations for transform separator display items.
+  if (!mIsTransformSeparator) {
+    nsDisplayListBuilder::AddAnimationsAndTransitionsToLayer(
+        container, aBuilder, this, mFrame, GetType());
+  }
+
   if (mAllowAsyncAnimation && MayBeAnimated(aBuilder)) {
     // Only allow async updates to the transform if we're an animated layer,
     // since that's what triggers us to set the correct AGR in the constructor

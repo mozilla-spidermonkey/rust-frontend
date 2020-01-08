@@ -221,6 +221,8 @@ class BrowsingContext : public nsISupports,
   bool IsContent() const { return mType == Type::Content; }
   bool IsChrome() const { return !IsContent(); }
 
+  bool IsTop() const { return !GetParent(); }
+
   bool IsTopContent() const { return IsContent() && !GetParent(); }
 
   bool IsContentSubframe() const { return IsContent() && GetParent(); }
@@ -518,6 +520,11 @@ class BrowsingContext : public nsISupports,
 
   RefPtr<SessionStorageManager> GetSessionStorageManager();
 
+  Type GetType() const { return mType; }
+
+  bool PendingInitialization() const { return mPendingInitialization; };
+  void SetPendingInitialization(bool aVal) { mPendingInitialization = aVal; };
+
  protected:
   virtual ~BrowsingContext();
   BrowsingContext(BrowsingContext* aParent, BrowsingContextGroup* aGroup,
@@ -644,6 +651,10 @@ class BrowsingContext : public nsISupports,
   // This is true if the BrowsingContext was out of process, but is now in
   // process, and might have remote window proxies that need to be cleaned up.
   bool mDanglingRemoteOuterProxies : 1;
+
+  // If true, the docShell has not been fully initialized, and may not be used
+  // as the target of a load.
+  bool mPendingInitialization : 1;
 
   // The start time of user gesture, this is only available if the browsing
   // context is in process.

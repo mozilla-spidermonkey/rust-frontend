@@ -192,7 +192,7 @@ ParserSharedBase::~ParserSharedBase() {
 
 ParserBase::ParserBase(JSContext* cx, const ReadOnlyCompileOptions& options,
                        bool foldConstants, ParseInfo& parseInfo,
-                       ScriptSourceObject* sourceObject, ParseGoal parseGoal)
+                       ScriptSourceObject* sourceObject)
     : ParserSharedBase(cx, parseInfo, sourceObject,
                        ParserSharedBase::Kind::Parser),
       anyChars(cx, options, this),
@@ -204,7 +204,6 @@ ParserBase::ParserBase(JSContext* cx, const ReadOnlyCompileOptions& options,
       isUnexpectedEOF_(false),
       awaitHandling_(AwaitIsName),
       inParametersOfAsyncFunction_(false),
-      parseGoal_(uint8_t(parseGoal)),
       treeHolder_(parseInfo.treeHolder) {
 }
 
@@ -222,10 +221,8 @@ template <class ParseHandler>
 PerHandlerParser<ParseHandler>::PerHandlerParser(
     JSContext* cx, const ReadOnlyCompileOptions& options, bool foldConstants,
     ParseInfo& parserInfo, LazyScript* lazyOuterFunction,
-    ScriptSourceObject* sourceObject, ParseGoal parseGoal,
-    void* internalSyntaxParser)
-    : ParserBase(cx, options, foldConstants, parserInfo, sourceObject,
-                 parseGoal),
+    ScriptSourceObject* sourceObject, void* internalSyntaxParser)
+    : ParserBase(cx, options, foldConstants, parserInfo, sourceObject),
       handler_(cx, parserInfo.allocScope.alloc(), lazyOuterFunction),
       internalSyntaxParser_(internalSyntaxParser) {}
 
@@ -234,9 +231,9 @@ GeneralParser<ParseHandler, Unit>::GeneralParser(
     JSContext* cx, const ReadOnlyCompileOptions& options, const Unit* units,
     size_t length, bool foldConstants, ParseInfo& parserInfo,
     SyntaxParser* syntaxParser, LazyScript* lazyOuterFunction,
-    ScriptSourceObject* sourceObject, ParseGoal parseGoal)
+    ScriptSourceObject* sourceObject)
     : Base(cx, options, foldConstants, parserInfo, syntaxParser,
-           lazyOuterFunction, sourceObject, parseGoal),
+           lazyOuterFunction, sourceObject),
       tokenStream(cx, options, units, length) {}
 
 template <typename Unit>
@@ -797,13 +794,13 @@ bool GeneralParser<ParseHandler, Unit>::noteDeclaredName(
         return false;
       }
 
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
 
     case DeclarationKind::Import:
       // Module code is always strict, so 'let' is always a keyword and never a
       // name.
       MOZ_ASSERT(name != cx_->names().let);
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
 
     case DeclarationKind::SimpleCatchParameter:
     case DeclarationKind::CatchParameter: {
@@ -1742,6 +1739,15 @@ bool PerHandlerParser<SyntaxParseHandler>::finishFunction(
     return false;
   }
 
+  // Elide nullptr sentinels from end of binding list. These are inserted for
+  // each scope regardless of if any bindings are actually closed over.
+  {
+    AtomVector& COB = pc_->closedOverBindingsForLazy();
+    while (!COB.empty() && (COB.back() == nullptr)) {
+      COB.popBack();
+    }
+  }
+
   // There are too many bindings or inner functions to be saved into the
   // LazyScript. Do a full parse.
   if (pc_->closedOverBindingsForLazy().length() >=
@@ -1771,7 +1777,7 @@ bool PerHandlerParser<SyntaxParseHandler>::finishFunction(
   }
 
   // Eager Function tree mode, emit the lazy script now.
-  return data.create(cx_, funbox, sourceObject_, parseGoal());
+  return data.create(cx_, funbox, sourceObject_);
 }
 
 bool ParserBase::publishDeferredFunctions(FunctionTree* root) {
@@ -1800,8 +1806,7 @@ bool ParserBase::publishDeferredFunctions(FunctionTree* root) {
         return true;
       }
 
-      return data->create(parser->cx_, funbox, parser->sourceObject_,
-                          parser->parseGoal());
+      return data->create(parser->cx_, funbox, parser->sourceObject_);
     };
     return root->visitRecursively(this->cx_, this, visitor);
   }
@@ -1809,14 +1814,13 @@ bool ParserBase::publishDeferredFunctions(FunctionTree* root) {
 }
 
 bool LazyScriptCreationData::create(JSContext* cx, FunctionBox* funbox,
-                                    HandleScriptSourceObject sourceObject,
-                                    ParseGoal parseGoal) {
+                                    HandleScriptSourceObject sourceObject) {
   Rooted<JSFunction*> function(cx, funbox->function());
   MOZ_ASSERT(function);
   LazyScript* lazy = LazyScript::Create(
       cx, function, sourceObject, closedOverBindings, innerFunctionBoxes,
       funbox->sourceStart, funbox->sourceEnd, funbox->toStringStart,
-      funbox->toStringEnd, funbox->startLine, funbox->startColumn, parseGoal);
+      funbox->toStringEnd, funbox->startLine, funbox->startColumn);
   if (!lazy) {
     return false;
   }
@@ -1845,6 +1849,21 @@ bool LazyScriptCreationData::create(JSContext* cx, FunctionBox* funbox,
   }
   if (funbox->hasThisBinding()) {
     lazy->setFunctionHasThisBinding();
+  }
+  if (funbox->hasExtensibleScope()) {
+    lazy->setFunHasExtensibleScope();
+  }
+  if (funbox->hasMappedArgsObj()) {
+    lazy->setHasMappedArgsObj();
+  }
+  if (funbox->hasCallSiteObj()) {
+    lazy->setHasCallSiteObj();
+  }
+  if (funbox->argumentsHasLocalBinding()) {
+    lazy->setArgumentsHasVarBinding();
+  }
+  if (funbox->hasModuleGoal()) {
+    lazy->setHasModuleGoal();
   }
 
   // Flags that need to copied back into the parser when we do the full
@@ -2115,7 +2134,7 @@ FunctionCreationData::FunctionCreationData(HandleAtom atom,
       break;
     case FunctionSyntaxKind::ClassConstructor:
     case FunctionSyntaxKind::DerivedClassConstructor:
-      flags = FunctionFlags::INTERPRETED_CLASS_CONSTRUCTOR;
+      flags = FunctionFlags::INTERPRETED_CLASS_CTOR;
       allocKind = gc::AllocKind::FUNCTION_EXTENDED;
       break;
     case FunctionSyntaxKind::Getter:
@@ -2154,17 +2173,23 @@ JSFunction* AllocNewFunction(JSContext* cx,
   if (!GetFunctionPrototype(cx, data.generatorKind, data.asyncKind, &proto)) {
     return nullptr;
   }
-  RootedFunction fun(cx);
-
-  fun = NewFunctionWithProto(cx, nullptr, 0, data.flags, nullptr,
-                             data.getAtom(cx), proto, data.allocKind,
-                             TenuredObject);
+  RootedFunction fun(cx, NewFunctionWithProto(cx, nullptr, 0, data.flags,
+                                              nullptr, data.getAtom(cx), proto,
+                                              data.allocKind, TenuredObject));
   if (!fun) {
     return nullptr;
   }
+
   if (data.isSelfHosting) {
     fun->setIsSelfHostedBuiltin();
-    MOZ_ASSERT(!fun->isInterpretedLazy());
+    MOZ_ASSERT(fun->hasScript());
+  }
+
+  if (data.typeForScriptedFunction) {
+    if (!JSFunction::setTypeForScriptedFunction(
+            cx, fun, *data.typeForScriptedFunction)) {
+      return nullptr;
+    }
   }
   return fun;
 }
@@ -2598,7 +2623,7 @@ bool Parser<FullParseHandler, Unit>::skipLazyInnerFunction(
   }
 
   funbox->initFromLazyFunction(fun);
-  MOZ_ASSERT(fun->lazyScript()->hasEnclosingLazyScript());
+  MOZ_ASSERT(fun->baseScript()->hasEnclosingLazyScript());
 
   PropagateTransitiveParseFlags(funbox, pc_->sc());
 
@@ -2659,6 +2684,8 @@ bool GeneralParser<ParseHandler, Unit>::taggedTemplate(
     return false;
   }
   handler_.addList(tagArgsList, callSiteObjNode);
+
+  pc_->sc()->setHasCallSiteObj();
 
   while (true) {
     if (!appendToCallSiteObj(callSiteObjNode)) {
@@ -6503,7 +6530,7 @@ GeneralParser<ParseHandler, Unit>::yieldExpression(InHandling inHandling) {
     case TokenKind::Mul:
       kind = ParseNodeKind::YieldStarExpr;
       tokenStream.consumeKnownToken(TokenKind::Mul, TokenStream::SlashIsRegExp);
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     default:
       exprNode = assignExpr(inHandling, YieldIsKeyword, TripledotProhibited);
       if (!exprNode) {
@@ -8971,7 +8998,7 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::unaryExpr(
       }
     }
 
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
 
     default: {
       Node expr =
@@ -9611,22 +9638,16 @@ RegExpLiteral* Parser<FullParseHandler, Unit>::newRegExp() {
       }
     }
 
-    // With RegExpCreationData stack allocated, it is responsible for cleanup
-    // until the data is moved into, after the potentially OOMing operations
-    // are done, at which point the responsibility for cleanup becomes the
-    // deferred allocation list, stored in the ParseInfo.
-    RegExpCreationData data;
-    if (!data.init(cx_, range, flags)) {
+    RegExpIndex index(this->parseInfo_.regExpData.length());
+    if (!this->parseInfo_.regExpData.emplaceBack()) {
       return nullptr;
     }
 
-    RegExpLiteral* node = handler_.newRegExp(pos());
-    if (!node) {
+    if (!this->parseInfo_.regExpData[index].init(cx_, range, flags)) {
       return nullptr;
     }
 
-    node->init(std::move(data));
-    return node;
+    return handler_.newRegExp(index, pos());
   }
 
   Rooted<RegExpObject*> reobj(cx_);
@@ -9675,22 +9696,18 @@ BigIntLiteral* Parser<FullParseHandler, Unit>::newBigInt() {
   const auto& chars = tokenStream.getCharBuffer();
 
   if (this->parseInfo_.isDeferred()) {
-    BigIntCreationData data;
-    if (!data.init(this->cx_, chars)) {
+    BigIntIndex index(this->parseInfo_.bigIntData.length());
+    if (!this->parseInfo_.bigIntData.emplaceBack()) {
+      return null();
+    }
+
+    if (!this->parseInfo_.bigIntData[index].init(this->cx_, chars)) {
       return null();
     }
 
     // Should the operations below fail, the buffer held by data will
-    // be cleaned up by the destructor.
-    BigIntLiteral* lit = handler_.newBigInt(pos());
-    if (!lit) {
-      return null();
-    }
-    // Now that possible OOMs are done, move data into Lit. After this
-    // point responsibility for cleanup lies with the cleanup of the
-    // ParseInfo's deferred allocations list.
-    lit->init(std::move(data));
-    return lit;
+    // be cleaned up by the ParseInfo destructor.
+    return handler_.newBigInt(index, this->parseInfo_, pos());
   }
 
   mozilla::Range<const char16_t> source(chars.begin(), chars.length());

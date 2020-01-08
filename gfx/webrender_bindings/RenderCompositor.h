@@ -85,12 +85,14 @@ class RenderCompositor {
   // Interface for wr::Compositor
   virtual void CompositorBeginFrame() {}
   virtual void CompositorEndFrame() {}
-  virtual void Bind(wr::NativeSurfaceId aId, wr::DeviceIntPoint* aOffset,
+  virtual void Bind(wr::NativeTileId aId, wr::DeviceIntPoint* aOffset,
                     uint32_t* aFboId, wr::DeviceIntRect aDirtyRect) {}
   virtual void Unbind() {}
-  virtual void CreateSurface(wr::NativeSurfaceId aId, wr::DeviceIntSize aSize,
-                             bool aIsOpaque) {}
+  virtual void CreateSurface(wr::NativeSurfaceId aId,
+                             wr::DeviceIntSize aTileSize, bool aIsOpaque) {}
   virtual void DestroySurface(NativeSurfaceId aId) {}
+  virtual void CreateTile(wr::NativeSurfaceId, int32_t aX, int32_t aY) {}
+  virtual void DestroyTile(wr::NativeSurfaceId, int32_t aX, int32_t aY) {}
   virtual void AddSurface(wr::NativeSurfaceId aId, wr::DeviceIntPoint aPosition,
                           wr::DeviceIntRect aClipRect) {}
 

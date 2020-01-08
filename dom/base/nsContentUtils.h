@@ -22,6 +22,7 @@
 #include "js/RootingAPI.h"
 #include "mozilla/dom/FromParser.h"
 #include "mozilla/BasicEvents.h"
+#include "mozilla/CallState.h"
 #include "mozilla/CORSMode.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/GuardObjects.h"
@@ -132,6 +133,8 @@ class TextEditor;
 enum class StorageAccess;
 
 namespace dom {
+class BrowsingContext;
+class BrowsingContextGroup;
 class ContentFrameMessageManager;
 struct CustomElementDefinition;
 class DataTransfer;
@@ -203,9 +206,6 @@ struct EventNameMapping {
   // mMessage is eUnidentifiedEvent. See EventNameList.h
   bool mMaybeSpecialSVGorSMILEvent;
 };
-
-typedef bool (*CallOnRemoteChildFunction)(
-    mozilla::dom::BrowserParent* aBrowserParent, void* aArg);
 
 class nsContentUtils {
   friend class nsAutoScriptBlockerSuppressNodeRemoved;
@@ -467,6 +467,30 @@ class nsContentUtils {
   };
 
   /**
+   *  Utility routine to compare two "points", where a point is a node/offset
+   *  pair.
+   *  Pass a cache object as aParent1Cache if you expect to repeatedly
+   *  call this function with the same value as aParent1.
+   *
+   *  XXX aOffset1 and aOffset2 should be uint32_t since valid offset value is
+   *      between 0 - UINT32_MAX.  However, these methods work even with
+   *      negative offset values!  E.g., when aOffset1 is -1 and aOffset is 0,
+   *      these methods return -1.  Some root callers depend on this behavior.
+   *
+   *  @return -1 if point1 < point2,
+   *          1 if point1 > point2,
+   *          0 if point1 == point2.
+   *          `Nothing` if the two nodes aren't in the same connected subtree.
+   */
+  static Maybe<int32_t> ComparePoints(
+      const nsINode* aParent1, int32_t aOffset1, const nsINode* aParent2,
+      int32_t aOffset2, ComparePointsCache* aParent1Cache = nullptr);
+  template <typename FPT, typename FRT, typename SPT, typename SRT>
+  static Maybe<int32_t> ComparePoints(
+      const mozilla::RangeBoundaryBase<FPT, FRT>& aFirstBoundary,
+      const mozilla::RangeBoundaryBase<SPT, SRT>& aSecondBoundary);
+
+  /**
    *  Utility routine to compare two "points", where a point is a
    *  node/offset pair
    *  Returns -1 if point1 < point2, 1, if point1 > point2,
@@ -485,12 +509,12 @@ class nsContentUtils {
    *      On the other hand, nsINode can have ATTRCHILD_ARRAY_MAX_CHILD_COUN
    *      (0x3FFFFF) at most.  Therefore, they can be int32_t for now.
    */
-  static int32_t ComparePoints(const nsINode* aParent1, int32_t aOffset1,
-                               const nsINode* aParent2, int32_t aOffset2,
-                               bool* aDisconnected = nullptr,
-                               ComparePointsCache* aParent1Cache = nullptr);
+  static int32_t ComparePoints_Deprecated(
+      const nsINode* aParent1, int32_t aOffset1, const nsINode* aParent2,
+      int32_t aOffset2, bool* aDisconnected = nullptr,
+      ComparePointsCache* aParent1Cache = nullptr);
   template <typename FPT, typename FRT, typename SPT, typename SRT>
-  static int32_t ComparePoints(
+  static int32_t ComparePoints_Deprecated(
       const mozilla::RangeBoundaryBase<FPT, FRT>& aFirstBoundary,
       const mozilla::RangeBoundaryBase<SPT, SRT>& aSecondBoundary,
       bool* aDisconnected = nullptr);
@@ -2740,11 +2764,13 @@ class nsContentUtils {
 
   /*
    * Call the given callback on all remote children of the given top-level
-   * window. Return true from the callback to stop calling further children.
+   * window. Return Callstate::Stop from the callback to stop calling further
+   * children.
    */
-  static void CallOnAllRemoteChildren(nsPIDOMWindowOuter* aWindow,
-                                      CallOnRemoteChildFunction aCallback,
-                                      void* aArg);
+  static void CallOnAllRemoteChildren(
+      nsPIDOMWindowOuter* aWindow,
+      const std::function<mozilla::CallState(mozilla::dom::BrowserParent*)>&
+          aCallback);
 
   /*
    * Call nsPIDOMWindow::SetKeyboardIndicators all all remote children. This is
@@ -3219,9 +3245,10 @@ class nsContentUtils {
       const nsAttrValue* aAttrVal, mozilla::dom::AutocompleteInfo& aInfo,
       bool aGrantAllValidValue = false);
 
-  static bool CallOnAllRemoteChildren(
+  static mozilla::CallState CallOnAllRemoteChildren(
       mozilla::dom::MessageBroadcaster* aManager,
-      CallOnRemoteChildFunction aCallback, void* aArg);
+      const std::function<mozilla::CallState(mozilla::dom::BrowserParent*)>&
+          aCallback);
 
   static nsINode* GetCommonAncestorHelper(nsINode* aNode1, nsINode* aNode2);
   static nsIContent* GetCommonFlattenedTreeAncestorHelper(
@@ -3389,6 +3416,26 @@ class MOZ_STACK_CLASS nsAutoScriptBlockerSuppressNodeRemoved
 
 namespace mozilla {
 namespace dom {
+
+/**
+ * Suppresses event handling and suspends the active inner window for all
+ * in-process documents in a BrowsingContextGroup. This should be used while
+ * spinning the event loop for a synchronous operation (like `window.open()`)
+ * which affects operations in any other window in the same BrowsingContext
+ * group.
+ */
+
+class MOZ_RAII AutoSuppressEventHandlingAndSuspend {
+ public:
+  explicit AutoSuppressEventHandlingAndSuspend(BrowsingContextGroup* aGroup);
+  ~AutoSuppressEventHandlingAndSuspend();
+
+ private:
+  void SuppressBrowsingContext(BrowsingContext* aBC);
+
+  AutoTArray<RefPtr<Document>, 16> mDocuments;
+  AutoTArray<nsCOMPtr<nsPIDOMWindowInner>, 16> mWindows;
+};
 
 class TreeOrderComparator {
  public:

@@ -317,7 +317,7 @@
             'intel-gcm-wrap_c_lib',
           ],
         }],
-        [ 'OS=="win" and cc_is_clang==1', {
+        [ 'OS=="win" and (target_arch=="ia32" or target_arch=="x64") and cc_is_clang==1', {
           'dependencies': [
             'intel-gcm-wrap_c_lib',
           ],
@@ -447,6 +447,11 @@
             ],
           },
         },
+      }],
+      [ 'OS=="win" and (target_arch=="arm64" or target_arch=="aarch64") and disable_arm_hw_aes==0', {
+        'defines': [
+          'USE_HW_AES',
+        ],
       }],
       [ 'cc_use_gnu_ld==1 and OS=="win" and target_arch=="x64"', {
         # mingw x64

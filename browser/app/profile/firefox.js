@@ -322,15 +322,16 @@ pref("browser.urlbar.usepreloadedtopurls.expire_days", 14);
   pref("browser.urlbar.update1", true);
   // Whether the urlbar should strip https from urls in the view.
   pref("browser.urlbar.update1.view.stripHttps", true);
+  pref("browser.urlbar.openViewOnFocus", true);
 #else
   pref("browser.urlbar.update1", false);
   pref("browser.urlbar.update1.view.stripHttps", false);
+  pref("browser.urlbar.openViewOnFocus", false);
 #endif
 // Whether we expand the font size when when the urlbar is
 // focused in design update 1.
 pref("browser.urlbar.update1.expandTextOnFocus", false);
 
-pref("browser.urlbar.openViewOnFocus", false);
 pref("browser.urlbar.eventTelemetry.enabled", false);
 
 pref("browser.altClickSave", false);
@@ -405,7 +406,6 @@ pref("permissions.default.xr", 0);
 pref("permissions.default.desktop-notification", 0);
 pref("permissions.default.shortcuts", 0);
 
-pref("permissions.delegation.enabled", true);
 pref("permissions.desktop-notification.postPrompt.enabled", true);
 pref("permissions.desktop-notification.notNow.enabled", false);
 
@@ -467,6 +467,9 @@ pref("browser.tabs.tabMinWidth", 76);
 #ifndef UNIX_BUT_NOT_MAC
   pref("browser.tabs.drawInTitlebar", true);
 #endif
+
+//Control the visibility of Tab Manager Menu.
+pref("browser.tabs.tabmanager.enabled", false);
 
 // Offer additional drag space to the user. The drag space
 // will only be shown if browser.tabs.drawInTitlebar is true.
@@ -1044,10 +1047,6 @@ pref("dom.ipc.shims.enabledWarnings", false);
   // Start the Mac sandbox early during child process startup instead
   // of when messaged by the parent after the message loop is running.
   pref("security.sandbox.content.mac.earlyinit", true);
-  // Remove this pref once RDD early init is stable on Release.
-  pref("security.sandbox.rdd.mac.earlyinit", true);
-  // Remove this pref once GMP early init is stable on Release.
-  pref("security.sandbox.gmp.mac.earlyinit", true);
 
   // This pref is discussed in bug 1083344, the naming is inspired from its
   // Windows counterpart, but on Mac it's an integer which means:
@@ -1257,9 +1256,6 @@ pref("prompts.tab_modal.enabled", true);
 // Activates preloading of the new tab url.
 pref("browser.newtab.preload", true);
 
-// Indicates if about:newtab shows content (enabled) or just blank
-pref("browser.newtabpage.enabled", true);
-
 // Activity Stream prefs that control to which page to redirect
 #ifndef RELEASE_OR_BETA
   pref("browser.newtabpage.activity-stream.debug", false);
@@ -1276,10 +1272,14 @@ pref("browser.newtabpage.activity-stream.improvesearch.topSiteSearchShortcuts", 
 // ASRouter provider configuration
 pref("browser.newtabpage.activity-stream.asrouter.providers.cfr", "{\"id\":\"cfr\",\"enabled\":true,\"type\":\"remote-settings\",\"bucket\":\"cfr\",\"frequency\":{\"custom\":[{\"period\":\"daily\",\"cap\":1}]},\"categories\":[\"cfrAddons\",\"cfrFeatures\"],\"updateCycleInMs\":3600000}");
 pref("browser.newtabpage.activity-stream.asrouter.providers.whats-new-panel", "{\"id\":\"whats-new-panel\",\"enabled\":true,\"type\":\"remote-settings\",\"bucket\":\"whats-new-panel\",\"updateCycleInMs\":3600000}");
+pref("browser.newtabpage.activity-stream.asrouter.providers.message-groups", "{\"id\":\"message-groups\",\"enabled\":true,\"type\":\"remote-settings\",\"bucket\":\"message-groups\",\"updateCycleInMs\":3600000}");
 // This url, if changed, MUST continue to point to an https url. Pulling arbitrary content to inject into
 // this page over http opens us up to a man-in-the-middle attack that we'd rather not face. If you are a downstream
 // repackager of this code using an alternate snippet url, please keep your users safe
 pref("browser.newtabpage.activity-stream.asrouter.providers.snippets", "{\"id\":\"snippets\",\"enabled\":true,\"type\":\"remote\",\"url\":\"https://snippets.cdn.mozilla.net/%STARTPAGE_VERSION%/%NAME%/%VERSION%/%APPBUILDID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/\",\"updateCycleInMs\":14400000}");
+#ifdef NIGHTLY_BUILD
+  pref("browser.newtabpage.activity-stream.asrouter.useReleaseSnippets", true);
+#endif
 
 // The pref that controls if ASRouter uses the remote fluent files.
 // It's enabled by default, but could be disabled to force ASRouter to use the local files.
@@ -1703,8 +1703,6 @@ pref("view_source.tab", true);
 
 pref("dom.serviceWorkers.enabled", true);
 
-pref("dom.security.featurePolicy.enabled", true);
-
 // Enable Push API.
 pref("dom.push.enabled", true);
 
@@ -1735,7 +1733,6 @@ pref("extensions.pocket.enabled", true);
 pref("extensions.pocket.oAuthConsumerKey", "40249-e88c401e1b1f2242d9e441c4");
 pref("extensions.pocket.site", "getpocket.com");
 
-pref("signon.management.page.enabled", true);
 pref("signon.management.page.breach-alerts.enabled", true);
 pref("signon.management.page.sort", "name");
 pref("signon.management.overrideURI", "about:logins?filter=%DOMAIN%");
@@ -1905,11 +1902,14 @@ pref("devtools.toolbox.splitconsoleEnabled", false);
 pref("devtools.toolbox.splitconsoleHeight", 100);
 pref("devtools.toolbox.tabsOrder", "");
 
-// The fission pref for enabling the "Omniscient Browser Toolbox", which will
+// The fission pref for enabling the "Multiprocess Browser Toolbox", which will
 // make it possible to debug anything in Firefox (See Bug 1570639 for more
 // information).
-// ⚠ This is a work in progress. Expect weirdness when the pref is enabled. ⚠
+#if defined(NIGHTLY_BUILD)
+pref("devtools.browsertoolbox.fission", true);
+#else
 pref("devtools.browsertoolbox.fission", false);
+#endif
 
 // The fission pref for enabling Fission frame debugging directly from the
 // regular web/content toolbox.
@@ -2238,14 +2238,7 @@ pref("devtools.responsive.reloadNotification.enabled", true);
 pref("devtools.responsive.touchSimulation.enabled", false);
 // Whether or not meta viewport is enabled, if and only if touchSimulation
 // is also enabled.
-// For now this is only available in nightly, dev-edition and early betas. It is planned
-// to be gradually rolled out with release 72. Starting with 73, this pref needs to be set
-// to true on all channels.
-#if defined(EARLY_BETA_OR_EARLIER) || defined(MOZ_DEV_EDITION)
-  pref("devtools.responsive.metaViewport.enabled", true);
-#else
-  pref("devtools.responsive.metaViewport.enabled", false);
-#endif
+pref("devtools.responsive.metaViewport.enabled", true);
 // The user agent of the viewport.
 pref("devtools.responsive.userAgent", "");
 // Whether or not the RDM UI is embedded in the browser.

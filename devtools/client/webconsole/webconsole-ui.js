@@ -364,8 +364,8 @@ class WebConsoleUI {
       return;
     }
     // Ignore frame targets, except the top level one, which is handled in the previous
-    // block.
-    if (type == this.hud.targetList.TYPES.FRAME) {
+    // block. Also ignore workers as they are not supported yet. (see bug 1592584)
+    if (type != this.hud.targetList.TYPES.PROCESS) {
       return;
     }
     const proxy = new WebConsoleConnectionProxy(this, targetFront);
@@ -403,7 +403,7 @@ class WebConsoleUI {
     const WebConsoleWrapper = BrowserLoader({
       baseURI: "resource://devtools/client/webconsole/",
       window: this.window,
-    }).require("./webconsole-wrapper");
+    }).require("devtools/client/webconsole/webconsole-wrapper");
 
     this.wrapper = new WebConsoleWrapper(
       this.outputNode,
@@ -495,7 +495,7 @@ class WebConsoleUI {
   }
 
   getLongString(grip) {
-    this.getProxy().webConsoleFront.getString(grip);
+    return this.getProxy().webConsoleFront.getString(grip);
   }
 
   /**

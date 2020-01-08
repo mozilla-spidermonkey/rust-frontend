@@ -441,6 +441,12 @@ static bool GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool IsLCovEnabled(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  args.rval().setBoolean(coverage::IsLCovEnabled());
+  return true;
+}
+
 static bool ReturnStringCopy(JSContext* cx, CallArgs& args,
                              const char* message) {
   JSString* str = JS_NewStringCopyZ(cx, message);
@@ -2614,13 +2620,19 @@ static void finalize_counter_finalize(JSFreeOp* fop, JSObject* obj) {
   ++finalizeCount;
 }
 
-static const JSClassOps FinalizeCounterClassOps = {nullptr, /* addProperty */
-                                                   nullptr, /* delProperty */
-                                                   nullptr, /* enumerate */
-                                                   nullptr, /* newEnumerate */
-                                                   nullptr, /* resolve */
-                                                   nullptr, /* mayResolve */
-                                                   finalize_counter_finalize};
+static const JSClassOps FinalizeCounterClassOps = {
+    nullptr,                    // addProperty
+    nullptr,                    // delProperty
+    nullptr,                    // enumerate
+    nullptr,                    // newEnumerate
+    nullptr,                    // resolve
+    nullptr,                    // mayResolve
+    finalize_counter_finalize,  // finalize
+    nullptr,                    // call
+    nullptr,                    // hasInstance
+    nullptr,                    // construct
+    nullptr,                    // trace
+};
 
 static const JSClass FinalizeCounterClass = {
     "FinalizeCounter", JSCLASS_FOREGROUND_FINALIZE, &FinalizeCounterClassOps};
@@ -3335,13 +3347,18 @@ class CloneBufferObject : public NativeObject {
 };
 
 static const JSClassOps CloneBufferObjectClassOps = {
-    nullptr, /* addProperty */
-    nullptr, /* delProperty */
-    nullptr, /* enumerate */
-    nullptr, /* newEnumerate */
-    nullptr, /* resolve */
-    nullptr, /* mayResolve */
-    CloneBufferObject::Finalize};
+    nullptr,                      // addProperty
+    nullptr,                      // delProperty
+    nullptr,                      // enumerate
+    nullptr,                      // newEnumerate
+    nullptr,                      // resolve
+    nullptr,                      // mayResolve
+    CloneBufferObject::Finalize,  // finalize
+    nullptr,                      // call
+    nullptr,                      // hasInstance
+    nullptr,                      // construct
+    nullptr,                      // trace
+};
 
 const JSClass CloneBufferObject::class_ = {
     "CloneBuffer",
@@ -4789,6 +4806,11 @@ static bool GetLcovInfo(JSContext* cx, unsigned argc, Value* vp) {
 
   if (args.length() > 1) {
     JS_ReportErrorASCII(cx, "Wrong number of arguments");
+    return false;
+  }
+
+  if (!coverage::IsLCovEnabled()) {
+    JS_ReportErrorASCII(cx, "Coverage not enabled for process.");
     return false;
   }
 
@@ -6246,6 +6268,10 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "getBuildConfiguration()",
 "  Return an object describing some of the configuration options SpiderMonkey\n"
 "  was built with."),
+
+    JS_FN_HELP("isLcovEnabled", ::IsLCovEnabled, 0, 0,
+"getBuildConfiguration()",
+"  Return true if JS LCov support is enabled."),
 
     JS_FN_HELP("hasChild", HasChild, 0, 0,
 "hasChild(parent, child)",

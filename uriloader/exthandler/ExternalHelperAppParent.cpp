@@ -48,6 +48,7 @@ ExternalHelperAppParent::ExternalHelperAppParent(
       mIPCClosed(false),
       mLoadFlags(0),
       mStatus(NS_OK),
+      mCanceled(false),
       mContentLength(aContentLength),
       mWasFileChannel(aWasFileChannel) {
   mContentDispositionHeader = aContentDispositionHeader;
@@ -217,8 +218,15 @@ ExternalHelperAppParent::GetStatus(nsresult* aResult) {
 
 NS_IMETHODIMP
 ExternalHelperAppParent::Cancel(nsresult aStatus) {
+  mCanceled = true;
   mStatus = aStatus;
   Unused << SendCancel(aStatus);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+ExternalHelperAppParent::GetCanceled(bool* aCanceled) {
+  *aCanceled = mCanceled;
   return NS_OK;
 }
 
@@ -269,6 +277,16 @@ NS_IMETHODIMP
 ExternalHelperAppParent::SetLoadFlags(nsLoadFlags aLoadFlags) {
   mLoadFlags = aLoadFlags;
   return NS_OK;
+}
+
+NS_IMETHODIMP
+ExternalHelperAppParent::GetTRRMode(nsIRequest::TRRMode* aTRRMode) {
+  return GetTRRModeImpl(aTRRMode);
+}
+
+NS_IMETHODIMP
+ExternalHelperAppParent::SetTRRMode(nsIRequest::TRRMode aTRRMode) {
+  return SetTRRModeImpl(aTRRMode);
 }
 
 NS_IMETHODIMP

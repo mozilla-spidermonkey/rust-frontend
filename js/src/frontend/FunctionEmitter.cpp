@@ -44,7 +44,7 @@ bool FunctionEmitter::interpretedCommon() {
   // case, if the lambda runs multiple times then CloneFunctionObject will
   // make a deep clone of its contents.
   bool singleton = bce_->checkRunOnceContext();
-  if (!JSFunction::setTypeForScriptedFunction(bce_->cx, fun_, singleton)) {
+  if (!funbox_->setTypeForScriptedFunction(bce_->cx, singleton)) {
     return false;
   }
 
@@ -482,7 +482,7 @@ bool FunctionScriptEmitter::prepareForBody() {
     }
   }
 
-  if (funbox_->kind() == FunctionFlags::FunctionKind::ClassConstructor) {
+  if (funbox_->isClassConstructor()) {
     if (!funbox_->isDerivedClassConstructor()) {
       if (!bce_->emitInitializeInstanceFields()) {
         //          [stack]
@@ -746,8 +746,6 @@ bool FunctionScriptEmitter::initScript() {
   if (!JSScript::fullyInitFromEmitter(bce_->cx, bce_->script, bce_)) {
     return false;
   }
-
-  bce_->tellDebuggerAboutCompiledScript(bce_->cx);
 
 #ifdef DEBUG
   state_ = State::End;

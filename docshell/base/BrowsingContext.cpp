@@ -237,7 +237,8 @@ BrowsingContext::BrowsingContext(BrowsingContext* aParent,
       mParent(aParent),
       mIsInProcess(false),
       mIsDiscarded(false),
-      mDanglingRemoteOuterProxies(false) {
+      mDanglingRemoteOuterProxies(false),
+      mPendingInitialization(false) {
   MOZ_RELEASE_ASSERT(!mParent || mParent->Group() == mGroup);
   MOZ_RELEASE_ASSERT(mBrowsingContextId != 0);
   MOZ_RELEASE_ASSERT(mGroup);
@@ -1279,7 +1280,7 @@ void BrowsingContext::StartDelayedAutoplayMediaComponents() {
 }
 
 void BrowsingContext::ResetGVAutoplayRequestStatus() {
-  MOZ_ASSERT(!GetParent(),
+  MOZ_ASSERT(IsTop(),
              "Should only set GVAudibleAutoplayRequestStatus in the top-level "
              "browsing context");
   SetGVAudibleAutoplayRequestStatus(GVAutoplayRequestStatus::eUNKNOWN);
@@ -1287,13 +1288,13 @@ void BrowsingContext::ResetGVAutoplayRequestStatus() {
 }
 
 void BrowsingContext::DidSetGVAudibleAutoplayRequestStatus() {
-  MOZ_ASSERT(!GetParent(),
+  MOZ_ASSERT(IsTop(),
              "Should only set GVAudibleAutoplayRequestStatus in the top-level "
              "browsing context");
 }
 
 void BrowsingContext::DidSetGVInaudibleAutoplayRequestStatus() {
-  MOZ_ASSERT(!GetParent(),
+  MOZ_ASSERT(IsTop(),
              "Should only set GVAudibleAutoplayRequestStatus in the top-level "
              "browsing context");
 }

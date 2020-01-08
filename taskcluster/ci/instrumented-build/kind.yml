@@ -82,13 +82,15 @@ jobs:
                 - linux64-cbindgen
                 - linux64-nasm
                 - linux64-node
+                - lucetc
+                - wasi-sysroot
 
-    macosx64/pgo:
+    macosx64-shippable/opt:
         description: "MacOS X x64 Cross-compile Instrumented"
         shipping-phase: build
         shipping-product: firefox
         treeherder:
-            platform: osx-cross/pgo
+            platform: macosx64-shippable/opt
         worker-type: b-linux
         worker:
             max-run-time: 7200

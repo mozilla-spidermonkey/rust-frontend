@@ -1241,6 +1241,11 @@ bool nsHttpConnectionMgr::AtActiveConnectionLimit(nsConnectionEntry* ent,
                                                   uint32_t caps) {
   nsHttpConnectionInfo* ci = ent->mConnInfo;
   uint32_t totalCount = TotalActiveConnections(ent);
+
+  if (ci->IsHttp3()) {
+    return totalCount > 0;
+  }
+
   uint32_t maxPersistConns = MaxPersistConnections(ent);
 
   LOG(
@@ -4106,9 +4111,8 @@ nsresult nsHttpConnectionMgr::nsHalfOpenSocket::SetupStreams(
   uint32_t tmpFlags = 0;
   if (mCaps & NS_HTTP_REFRESH_DNS) tmpFlags = nsISocketTransport::BYPASS_CACHE;
 
-  if (mCaps & NS_HTTP_DISABLE_TRR) {
-    tmpFlags = nsISocketTransport::DISABLE_TRR;
-  }
+  tmpFlags |= nsISocketTransport::GetFlagsFromTRRMode(
+      NS_HTTP_TRR_MODE_FROM_FLAGS(mCaps));
 
   if (mCaps & NS_HTTP_LOAD_ANONYMOUS)
     tmpFlags |= nsISocketTransport::ANONYMOUS_CONNECT;

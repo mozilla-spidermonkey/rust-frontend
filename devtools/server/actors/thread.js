@@ -18,6 +18,9 @@ const {
   eventBreakpointForNotification,
   makeEventBreakpointMessage,
 } = require("devtools/server/actors/utils/event-breakpoints");
+const {
+  WatchpointMap,
+} = require("devtools/server/actors/utils/watchpoint-map");
 
 const { logEvent } = require("devtools/server/actors/utils/logEvent");
 
@@ -111,6 +114,8 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     this._activeEventPause = null;
     this._pauseOverlay = null;
     this._priorPause = null;
+
+    this._watchpointsMap = new WatchpointMap(this);
 
     this._options = {
       autoBlackBox: false,
@@ -869,7 +874,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
       if (this.dbg.replaying) {
         const offsets = findStepOffsets(frame);
         frame.setReplayingOnStep(onStep, offsets);
-      } else {
+      } else if (!this.sources.isFrameBlackBoxed(frame)) {
         frame.onStep = onStep;
       }
 
@@ -889,15 +894,11 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
         return undefined;
       }
 
-      if (thread.sources.isFrameBlackBoxed(this)) {
-        return undefined;
-      }
-
       // Note that we're popping this frame; we need to watch for
       // subsequent step events on its caller.
       this.reportedPop = true;
 
-      if (steppingType != "finish") {
+      if (steppingType != "finish" && !thread.sources.isFrameBlackBoxed(this)) {
         return pauseAndRespond(this, packet =>
           thread.createCompletionGrip(packet, completion)
         );
@@ -918,7 +919,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
             /* requireStepStart */ false
           );
           parentFrame.setReplayingOnStep(onStep, offsets);
-        } else {
+        } else if (!thread.sources.isFrameBlackBoxed(parentFrame)) {
           parentFrame.onStep = onStep;
         }
 
@@ -988,7 +989,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
 
     // Continue if:
     // 1. the location is not a valid breakpoint position
-    // 2. the source is not blackboxed
+    // 2. the source is blackboxed
     // 3. we have not moved since the last pause
     if (
       !meta.isBreakpoint ||
@@ -1114,7 +1115,9 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
               stepFrame.setReplayingOnStep(onStep, offsets);
             } else {
               stepFrame.waitingOnStep = true;
-              stepFrame.onStep = onStep;
+              if (!this.sources.isFrameBlackBoxed(stepFrame)) {
+                stepFrame.onStep = onStep;
+              }
               stepFrame.onPop = onPop;
             }
           }
@@ -1122,7 +1125,10 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
         case "finish":
           if (rewinding) {
             let olderFrame = stepFrame.older;
-            while (olderFrame && !olderFrame.script) {
+            while (
+              olderFrame &&
+              (!olderFrame.script || this.sources.isFrameBlackBoxed(olderFrame))
+            ) {
               olderFrame = olderFrame.older;
             }
             if (olderFrame) {
@@ -1461,6 +1467,18 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     }
   },
 
+  addWatchpoint(objActor, data) {
+    this._watchpointsMap.add(objActor, data);
+  },
+
+  removeWatchpoint(objActor, property) {
+    this._watchpointsMap.remove(objActor, property);
+  },
+
+  getWatchpoint(obj, property) {
+    return this._watchpointsMap.get(obj, property);
+  },
+
   /**
    * Handle a protocol request to pause the debuggee.
    */
@@ -1777,17 +1795,6 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
 
     this.threadLifetimePool.addActor(actor);
     this.threadLifetimePool.objectActors.set(actor.obj, actor);
-  },
-
-  demoteObjectGrip: function(actor) {
-    // We want to reuse the existing actor ID, so we just remove it from the
-    // current pool's weak map and then let ActorPool.addActor do the rest.
-    actor.registeredPool.objectActors.delete(actor.obj);
-
-    actor.originalRegisteredPool.addActor(actor);
-    actor.originalRegisteredPool.objectActors.set(actor.obj, actor);
-
-    delete actor.originalRegisteredPool;
   },
 
   _onWindowReady: function({ isTopLevel, isBFCache, window }) {
@@ -2275,34 +2282,6 @@ function PauseActor(pool) {
 PauseActor.prototype = {
   actorPrefix: "pause",
 };
-
-/**
- * Creates an actor for handling chrome debugging. ChromeDebuggerActor is a
- * thin wrapper over ThreadActor, slightly changing some of its behavior.
- *
- * @param connection object
- *        The DebuggerServerConnection with which this ChromeDebuggerActor
- *        is associated. (Currently unused, but required to make this
- *        constructor usable with addGlobalActor.)
- *
- * @param parent object
- *        This actor's parent actor. See ThreadActor for a list of expected
- *        properties.
- */
-function ChromeDebuggerActor(connection, parent) {
-  ThreadActor.prototype.initialize.call(this, parent);
-}
-
-ChromeDebuggerActor.prototype = Object.create(ThreadActor.prototype);
-
-Object.assign(ChromeDebuggerActor.prototype, {
-  constructor: ChromeDebuggerActor,
-
-  // A constant prefix that will be used to form the actor ID by the server.
-  actorPrefix: "chromeDebugger",
-});
-
-exports.ChromeDebuggerActor = ChromeDebuggerActor;
 
 // Utility functions.
 

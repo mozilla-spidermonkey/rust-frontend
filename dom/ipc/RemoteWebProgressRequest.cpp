@@ -202,6 +202,10 @@ NS_IMETHODIMP RemoteWebProgressRequest::Cancel(nsresult aStatus) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
+NS_IMETHODIMP RemoteWebProgressRequest::GetCanceled(bool* aCanceled) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 NS_IMETHODIMP RemoteWebProgressRequest::Suspend(void) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -220,6 +224,16 @@ NS_IMETHODIMP RemoteWebProgressRequest::SetLoadGroup(nsILoadGroup* aLoadGroup) {
 }
 
 NS_IMETHODIMP RemoteWebProgressRequest::GetLoadFlags(nsLoadFlags* aLoadFlags) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP RemoteWebProgressRequest::GetTRRMode(
+    nsIRequest::TRRMode* aTRRMode) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP RemoteWebProgressRequest::SetTRRMode(
+    nsIRequest::TRRMode aTRRMode) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 

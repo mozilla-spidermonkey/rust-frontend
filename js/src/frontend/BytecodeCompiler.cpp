@@ -31,6 +31,7 @@
 #include "vm/TraceLogging.h"
 #include "wasm/AsmJS.h"
 
+#include "debugger/DebugAPI-inl.h"  // DebugAPI
 #include "vm/EnvironmentObject-inl.h"
 #include "vm/GeckoProfiler-inl.h"
 #include "vm/JSContext-inl.h"
@@ -126,7 +127,7 @@ class MOZ_STACK_CLASS frontend::SourceAwareCompiler {
   // Call this before calling compile{Global,Eval}Script.
   MOZ_MUST_USE bool prepareScriptParse(LifoAllocScope& allocScope,
                                        BytecodeCompiler& info) {
-    return createSourceAndParser(allocScope, info, ParseGoal::Script) &&
+    return createSourceAndParser(allocScope, info) &&
            createCompleteScript(info);
   }
 
@@ -148,7 +149,7 @@ class MOZ_STACK_CLASS frontend::SourceAwareCompiler {
   }
 
   MOZ_MUST_USE bool createSourceAndParser(
-      LifoAllocScope& allocScope, BytecodeCompiler& compiler, ParseGoal goal,
+      LifoAllocScope& allocScope, BytecodeCompiler& compiler,
       const Maybe<uint32_t>& parameterListEnd = Nothing());
 
   // This assumes the created script's offsets in the source used to parse it
@@ -195,6 +196,18 @@ class MOZ_STACK_CLASS frontend::ScriptCompiler
                           SharedContext* sc);
 };
 
+/* If we're on main thread, tell the Debugger about a newly compiled script.
+ *
+ * See: finishSingleParseTask/finishMultiParseTask for the off-thread case.
+ */
+static void tellDebuggerAboutCompiledScript(JSContext* cx,
+                                            Handle<JSScript*> script) {
+  if (cx->isHelperThreadContext()) {
+    return;
+  }
+  DebugAPI::onNewScript(cx, script);
+}
+
 template <typename Unit>
 static JSScript* CreateGlobalScript(
     GlobalScriptInfo& info, JS::SourceText<Unit>& srcBuf,
@@ -209,14 +222,14 @@ static JSScript* CreateGlobalScript(
     return nullptr;
   }
 
-  JSScript* script =
-      compiler.compileScript(info, nullptr, info.sharedContext());
-  if (!script) {
+  if (!compiler.compileScript(info, nullptr, info.sharedContext())) {
     return nullptr;
   }
 
+  tellDebuggerAboutCompiledScript(info.context(), info.getScript());
+
   assertException.reset();
-  return script;
+  return info.getScript();
 }
 
 JSScript* frontend::CompileGlobalScript(
@@ -253,14 +266,14 @@ static JSScript* CreateEvalScript(frontend::EvalScriptInfo& info,
     return nullptr;
   }
 
-  JSScript* script =
-      compiler.compileScript(info, info.environment(), info.sharedContext());
-  if (!script) {
+  if (!compiler.compileScript(info, info.environment(), info.sharedContext())) {
     return nullptr;
   }
 
+  tellDebuggerAboutCompiledScript(info.context(), info.getScript());
+
   assertException.reset();
-  return script;
+  return info.getScript();
 }
 
 JSScript* frontend::CompileEvalScript(EvalScriptInfo& info,
@@ -306,8 +319,7 @@ class MOZ_STACK_CLASS frontend::StandaloneFunctionCompiler final
   MOZ_MUST_USE bool prepare(LifoAllocScope& allocScope,
                             StandaloneFunctionInfo& info,
                             const Maybe<uint32_t>& parameterListEnd) {
-    return createSourceAndParser(allocScope, info, ParseGoal::Script,
-                                 parameterListEnd);
+    return createSourceAndParser(allocScope, info, parameterListEnd);
   }
 
   FunctionNode* parse(StandaloneFunctionInfo& info, HandleFunction fun,
@@ -429,7 +441,7 @@ bool BytecodeCompiler::canLazilyParse() const {
 
 template <typename Unit>
 bool frontend::SourceAwareCompiler<Unit>::createSourceAndParser(
-    LifoAllocScope& allocScope, BytecodeCompiler& info, ParseGoal goal,
+    LifoAllocScope& allocScope, BytecodeCompiler& info,
     const Maybe<uint32_t>& parameterListEnd /* = Nothing() */) {
   if (!info.createScriptSource(parameterListEnd)) {
     return false;
@@ -450,7 +462,7 @@ bool frontend::SourceAwareCompiler<Unit>::createSourceAndParser(
     syntaxParser.emplace(info.cx, info.options, sourceBuffer_.units(),
                          sourceBuffer_.length(),
                          /* foldConstants = */ false, info.parseInfo, nullptr,
-                         nullptr, info.sourceObject, goal);
+                         nullptr, info.sourceObject);
     if (!syntaxParser->checkOptions()) {
       return false;
     }
@@ -459,7 +471,7 @@ bool frontend::SourceAwareCompiler<Unit>::createSourceAndParser(
   parser.emplace(info.cx, info.options, sourceBuffer_.units(),
                  sourceBuffer_.length(),
                  /* foldConstants = */ true, info.parseInfo,
-                 syntaxParser.ptrOr(nullptr), nullptr, info.sourceObject, goal);
+                 syntaxParser.ptrOr(nullptr), nullptr, info.sourceObject);
   parser->ss = info.scriptSource;
   return parser->checkOptions();
 }
@@ -587,8 +599,7 @@ JSScript* frontend::ScriptCompiler<Unit>::compileScript(
 template <typename Unit>
 ModuleObject* frontend::ModuleCompiler<Unit>::compile(
     LifoAllocScope& allocScope, ModuleInfo& info) {
-  if (!createSourceAndParser(allocScope, info, ParseGoal::Module) ||
-      !createCompleteScript(info)) {
+  if (!createSourceAndParser(allocScope, info) || !createCompleteScript(info)) {
     return nullptr;
   }
 
@@ -809,6 +820,8 @@ static JSScript* CompileGlobalBinASTScriptImpl(
     *sourceObjectOut = sourceObj;
   }
 
+  tellDebuggerAboutCompiledScript(cx, script);
+
   assertException.reset();
   return script;
 }
@@ -850,10 +863,12 @@ static ModuleObject* InternalParseModule(
   AutoInitializeSourceObject autoSSO(info, sourceObjectOut);
 
   ModuleCompiler<Unit> compiler(srcBuf);
-  ModuleObject* module = compiler.compile(allocScope, info);
+  Rooted<ModuleObject*> module(cx, compiler.compile(allocScope, info));
   if (!module) {
     return nullptr;
   }
+
+  tellDebuggerAboutCompiledScript(cx, info.getScript());
 
   assertException.reset();
   return module;
@@ -961,13 +976,8 @@ static void CheckFlagsOnDelazification(uint32_t lazy, uint32_t nonLazy) {
   // after a script has been compiled with the full parser.
   constexpr uint32_t NonLazyFlagsMask =
       uint32_t(BaseScript::ImmutableFlags::HasNonSyntacticScope) |
-      uint32_t(BaseScript::ImmutableFlags::FunHasExtensibleScope) |
-      uint32_t(BaseScript::ImmutableFlags::HasCallSiteObj) |
       uint32_t(BaseScript::ImmutableFlags::FunctionHasExtraBodyVarScope) |
-      uint32_t(BaseScript::ImmutableFlags::HasMappedArgsObj) |
-      uint32_t(BaseScript::ImmutableFlags::ArgumentsHasVarBinding) |
-      uint32_t(BaseScript::ImmutableFlags::NeedsFunctionEnvironmentObjects) |
-      uint32_t(BaseScript::ImmutableFlags::IsFunction);
+      uint32_t(BaseScript::ImmutableFlags::NeedsFunctionEnvironmentObjects);
 
   // These flags are computed for lazy scripts and may have a different
   // definition for non-lazy scripts.
@@ -1039,8 +1049,7 @@ static bool CompileLazyFunctionImpl(JSContext* cx, Handle<LazyScript*> lazy,
   RootedScriptSourceObject sourceObject(cx, lazy->sourceObject());
   Parser<FullParseHandler, Unit> parser(cx, options, units, length,
                                         /* foldConstants = */ true, parseInfo,
-                                        nullptr, lazy, sourceObject,
-                                        lazy->parseGoal());
+                                        nullptr, lazy, sourceObject);
   if (!parser.checkOptions()) {
     return false;
   }
@@ -1068,7 +1077,7 @@ static bool CompileLazyFunctionImpl(JSContext* cx, Handle<LazyScript*> lazy,
   }
 
   FieldInitializers fieldInitializers = FieldInitializers::Invalid();
-  if (fun->kind() == FunctionFlags::FunctionKind::ClassConstructor) {
+  if (fun->isClassConstructor()) {
     fieldInitializers = lazy->getFieldInitializers();
   }
 
@@ -1213,6 +1222,11 @@ static bool CompileStandaloneFunction(JSContext* cx, MutableHandleFunction fun,
                                                 asyncKind, parameterListEnd);
   if (!parsedFunction || !compiler.compile(fun, info, parsedFunction)) {
     return false;
+  }
+
+  // AsmJS may succeed compile, but does not create scripts.
+  if (info.getScript()) {
+    tellDebuggerAboutCompiledScript(cx, info.getScript());
   }
 
   assertException.reset();

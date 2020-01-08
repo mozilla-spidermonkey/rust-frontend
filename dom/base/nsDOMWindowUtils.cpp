@@ -184,7 +184,7 @@ class NativeInputRunnable final : public PrioritizableRunnable {
 
 NativeInputRunnable::NativeInputRunnable(already_AddRefed<nsIRunnable>&& aEvent)
     : PrioritizableRunnable(std::move(aEvent),
-                            nsIRunnablePriority::PRIORITY_INPUT) {}
+                            nsIRunnablePriority::PRIORITY_INPUT_HIGH) {}
 
 /* static */
 already_AddRefed<nsIRunnable> NativeInputRunnable::Create(
@@ -1703,13 +1703,15 @@ nsDOMWindowUtils::GetFullZoom(float* aFullZoom) {
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsDOMWindowUtils::DispatchDOMEventViaPresShell(nsINode* aTarget, Event* aEvent,
-                                               bool* aRetVal) {
+NS_IMETHODIMP nsDOMWindowUtils::DispatchDOMEventViaPresShellForTesting(
+    nsINode* aTarget, Event* aEvent, bool* aRetVal) {
   NS_ENSURE_STATE(aEvent);
   aEvent->SetTrusted(true);
   WidgetEvent* internalEvent = aEvent->WidgetEventPtr();
   NS_ENSURE_STATE(internalEvent);
+  // This API is currently used only by EventUtils.js.  Thus we should always
+  // set mIsSynthesizedForTests to true.
+  internalEvent->mFlags.mIsSynthesizedForTests = true;
   nsCOMPtr<nsIContent> content = do_QueryInterface(aTarget);
   NS_ENSURE_STATE(content);
   nsCOMPtr<nsPIDOMWindowOuter> window = do_QueryReferent(mWindow);
@@ -2014,7 +2016,8 @@ nsDOMWindowUtils::GetVisitedDependentComputedStyle(
   }
 
   static_cast<nsComputedDOMStyle*>(decl.get())->SetExposeVisitedStyle(true);
-  nsresult rv = decl->GetPropertyValue(aPropertyName, aResult);
+  nsresult rv =
+      decl->GetPropertyValue(NS_ConvertUTF16toUTF8(aPropertyName), aResult);
   static_cast<nsComputedDOMStyle*>(decl.get())->SetExposeVisitedStyle(false);
 
   return rv;
@@ -2528,7 +2531,8 @@ nsDOMWindowUtils::ComputeAnimationDistance(Element* aElement,
                                            double* aResult) {
   NS_ENSURE_ARG_POINTER(aElement);
 
-  nsCSSPropertyID property = nsCSSProps::LookupProperty(aProperty);
+  nsCSSPropertyID property =
+      nsCSSProps::LookupProperty(NS_ConvertUTF16toUTF8(aProperty));
   if (property == eCSSProperty_UNKNOWN || nsCSSProps::IsShorthand(property)) {
     return NS_ERROR_ILLEGAL_VALUE;
   }
@@ -2555,7 +2559,8 @@ nsDOMWindowUtils::GetUnanimatedComputedStyle(Element* aElement,
     return NS_ERROR_INVALID_ARG;
   }
 
-  nsCSSPropertyID propertyID = nsCSSProps::LookupProperty(aProperty);
+  nsCSSPropertyID propertyID =
+      nsCSSProps::LookupProperty(NS_ConvertUTF16toUTF8(aProperty));
   if (propertyID == eCSSProperty_UNKNOWN ||
       nsCSSProps::IsShorthand(propertyID)) {
     return NS_ERROR_INVALID_ARG;

@@ -728,9 +728,19 @@ void APZCTreeManager::SampleForWebRender(wr::TransactionWrapper& aTxn,
     LayoutDevicePoint asyncScrollDelta = -layerTranslation / zoom;
     aTxn.UpdateScrollPosition(wr::AsPipelineId(apzc->GetGuid().mLayersId),
                               apzc->GetGuid().mScrollId,
-                              wr::ToRoundedLayoutPoint(asyncScrollDelta));
+                              wr::ToLayoutPoint(asyncScrollDelta));
 
     apzc->ReportCheckerboard(aSampleTime);
+
+#if defined(MOZ_WIDGET_ANDROID)
+    // Send the root frame metrics to java through the UIController
+    RefPtr<UiCompositorControllerParent> uiController =
+        UiCompositorControllerParent::GetFromRootLayerTreeId(mRootLayersId);
+    if (uiController &&
+        apzc->UpdateRootFrameMetricsIfChanged(mLastRootMetrics)) {
+      uiController->NotifyUpdateScreenMetrics(mLastRootMetrics);
+    }
+#endif
   }
 
   // Now collect all the async transforms needed for the scrollthumbs.

@@ -15,6 +15,7 @@
 #include "mozilla/net/ParentChannelListener.h"
 #include "mozilla/net/ADocumentChannelBridge.h"
 #include "mozilla/dom/BrowserParent.h"
+#include "nsDOMNavigationTiming.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIObserver.h"
 #include "nsIParentChannel.h"
@@ -79,7 +80,7 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
             const nsString& aCustomUserAgent, const uint64_t& aChannelId,
             const TimeStamp& aAsyncOpenTime,
             const Maybe<uint32_t>& aDocumentOpenFlags, bool aPluginsAllowed,
-            nsresult* aRv);
+            nsDOMNavigationTiming* aTiming, nsresult* aRv);
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSIREQUESTOBSERVER
@@ -101,8 +102,6 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
   NS_DECLARE_STATIC_IID_ACCESSOR(DOCUMENT_LOAD_LISTENER_IID)
 
   void Cancel(const nsresult& status);
-  void Suspend();
-  void Resume();
 
   nsresult ReportSecurityMessage(const nsAString& aMessageTag,
                                  const nsAString& aMessageCategory) override {
@@ -141,12 +140,7 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
   // our reference to it.
   void DocumentChannelBridgeDisconnected();
 
-  void DisconnectChildListeners(nsresult aStatus, nsresult aLoadGroupStatus) {
-    if (mDocumentChannelBridge) {
-      mDocumentChannelBridge->DisconnectChildListeners(aStatus,
-                                                       aLoadGroupStatus);
-    }
-  }
+  void DisconnectChildListeners(nsresult aStatus, nsresult aLoadGroupStatus);
 
   base::ProcessId OtherPid() const {
     if (mDocumentChannelBridge) {
@@ -327,7 +321,16 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
   // value we need here.
   nsCOMPtr<nsIURI> mChannelCreationURI;
 
+  // The original navigation timing information containing various timestamps
+  // such as when the original load started.
+  // This will be passed back to the new content process should a process
+  // switch occurs.
+  RefPtr<nsDOMNavigationTiming> mTiming;
+
   nsTArray<DocumentChannelRedirect> mRedirects;
+
+  nsString mSrcdocData;
+  nsCOMPtr<nsIURI> mBaseURI;
 
   // Flags from nsDocShellLoadState::LoadFlags that we want to make available
   // to the new docshell if we switch processes.

@@ -25,6 +25,7 @@
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/ContentFrameMessageManager.h"
 #include "mozilla/dom/EventTarget.h"
+#include "mozilla/dom/JSWindowActorChild.h"
 #include "mozilla/dom/LocalStorage.h"
 #include "mozilla/dom/LSObject.h"
 #include "mozilla/dom/Storage.h"
@@ -2161,15 +2162,28 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
   // Add an extra ref in case we release mContext during GC.
   nsCOMPtr<nsIScriptContext> kungFuDeathGrip(mContext);
 
+  // Make sure the inner's document is set correctly before we call
+  // SetScriptGlobalObject, because that might try to examine document-dependent
+  // state.  Unfortunately, we can't do some of the other clearing/resetting
+  // work we do below until after SetScriptGlobalObject(), because it might
+  // depend on the document having the right scope object.
+  if (aState) {
+    MOZ_RELEASE_ASSERT(newInnerWindow->mDoc == aDocument);
+  } else {
+    if (reUseInnerWindow) {
+      MOZ_RELEASE_ASSERT(newInnerWindow->mDoc != aDocument);
+    }
+    newInnerWindow->mDoc = aDocument;
+  }
+
   aDocument->SetScriptGlobalObject(newInnerWindow);
   MOZ_ASSERT(newInnerWindow->mTabGroup,
              "We must have a TabGroup cached at this point");
 
+  MOZ_RELEASE_ASSERT(newInnerWindow->mDoc == aDocument);
+
   if (!aState) {
     if (reUseInnerWindow) {
-      MOZ_RELEASE_ASSERT(newInnerWindow->mDoc != aDocument);
-      newInnerWindow->mDoc = aDocument;
-
       // The storage objects contain the URL of the window. We have to
       // recreate them when the innerWindow is reused.
       newInnerWindow->mLocalStorage = nullptr;
@@ -2187,7 +2201,7 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
       rv = newInnerWindow->ExecutionReady();
       NS_ENSURE_SUCCESS(rv, rv);
     } else {
-      newInnerWindow->InnerSetNewDocument(cx, aDocument);
+      newInnerWindow->InitDocumentDependentState(cx);
 
       // Initialize DOM classes etc on the inner window.
       JS::Rooted<JSObject*> obj(cx, newInnerGlobal);
@@ -4974,69 +4988,59 @@ void nsGlobalWindowOuter::PrintOuter(ErrorResult& aError) {
     return;
   }
 
-  nsCOMPtr<nsIWebBrowserPrint> webBrowserPrint;
-  if (NS_SUCCEEDED(GetInterface(NS_GET_IID(nsIWebBrowserPrint),
-                                getter_AddRefs(webBrowserPrint)))) {
-    nsAutoSyncOperation sync(GetCurrentInnerWindowInternal()
-                                 ? GetCurrentInnerWindowInternal()->mDoc.get()
-                                 : nullptr);
+  nsCOMPtr<nsIPrintSettingsService> printSettingsService =
+      do_GetService("@mozilla.org/gfx/printsettings-service;1");
+  if (!printSettingsService) {
+    aError.Throw(NS_ERROR_NOT_AVAILABLE);
+    return;
+  }
 
-    nsCOMPtr<nsIPrintSettingsService> printSettingsService =
-        do_GetService("@mozilla.org/gfx/printsettings-service;1");
+  WindowGlobalChild* wgc = mInnerWindow->GetWindowGlobalChild();
+  if (!wgc) {
+    aError.Throw(NS_ERROR_NOT_AVAILABLE);
+    return;
+  }
 
-    nsCOMPtr<nsIPrintSettings> printSettings;
-    if (printSettingsService) {
-      bool printSettingsAreGlobal =
-          Preferences::GetBool("print.use_global_printsettings", false);
+  RefPtr<JSWindowActorChild> actor =
+      wgc->GetActor(NS_LITERAL_STRING("BrowserElement"), IgnoreErrors());
+  if (!actor) {
+    aError.Throw(NS_ERROR_NOT_AVAILABLE);
+    return;
+  }
 
-      if (printSettingsAreGlobal) {
-        printSettingsService->GetGlobalPrintSettings(
-            getter_AddRefs(printSettings));
-
-        nsAutoString printerName;
-        printSettings->GetPrinterName(printerName);
-
-        bool shouldGetDefaultPrinterName = printerName.IsEmpty();
-#  ifdef MOZ_X11
-        // In Linux, GTK backend does not support per printer settings.
-        // Calling GetDefaultPrinterName causes a sandbox violation (see Bug
-        // 1329216). The printer name is not needed anywhere else on Linux
-        // before it gets to the parent. In the parent, we will then query the
-        // default printer name if no name is set. Unless we are in the parent,
-        // we will skip this part.
-        if (!XRE_IsParentProcess()) {
-          shouldGetDefaultPrinterName = false;
-        }
-#  endif
-        if (shouldGetDefaultPrinterName) {
-          printSettingsService->GetDefaultPrinterName(printerName);
-          printSettings->SetPrinterName(printerName);
-        }
-        printSettingsService->InitPrintSettingsFromPrinter(printerName,
-                                                           printSettings);
-        printSettingsService->InitPrintSettingsFromPrefs(
-            printSettings, true, nsIPrintSettings::kInitSaveAll);
-      } else {
-        printSettingsService->GetNewPrintSettings(
-            getter_AddRefs(printSettings));
+  bool havePrintableSelection = false;
+  if (!mDoc->GetRootElement()->HasAttr(kNameSpaceID_None,
+                                       nsGkAtoms::mozdisallowselectionprint)) {
+    if (Selection* selection = GetSelectionOuter()) {
+      if (int32_t rangeCount = selection->RangeCount()) {
+        havePrintableSelection =
+            rangeCount > 1 ||
+            // check to make sure it isn't an insertion selection
+            (selection->GetRangeAt(0) && !selection->IsCollapsed());
       }
-
-      EnterModalState();
-      webBrowserPrint->Print(printSettings, nullptr);
-      LeaveModalState();
-
-      bool savePrintSettings =
-          Preferences::GetBool("print.save_print_settings", false);
-      if (printSettingsAreGlobal && savePrintSettings) {
-        printSettingsService->SavePrintSettingsToPrefs(
-            printSettings, true, nsIPrintSettings::kInitSaveAll);
-        printSettingsService->SavePrintSettingsToPrefs(
-            printSettings, false, nsIPrintSettings::kInitSavePrinterName);
-      }
-    } else {
-      webBrowserPrint->GetGlobalPrintSettings(getter_AddRefs(printSettings));
-      webBrowserPrint->Print(printSettings, nullptr);
     }
+  }
+
+  // We don't init the AutoJSAPI with ourselves because we don't want it
+  // reporting errors to our onerror handlers.
+  AutoJSAPI jsapi;
+  jsapi.Init();
+  JSContext* cx = jsapi.cx();
+  JSAutoRealm ar(cx, actor->GetParentObject()->GetGlobalJSObject());
+
+  // The frontend code doesn't yet make use of the `data` we send here, but it
+  // will do in future work in order to avoid a roundtrip to the content
+  // process.
+  // Note: if we want more complex detail, create something like
+  // DOMWindowResizeEventDetail.
+  JS::Rooted<JS::Value> msgData(cx, JS::BooleanValue(havePrintableSelection));
+
+  IgnoredErrorResult res;
+  actor->SendAsyncMessage(cx, NS_LITERAL_STRING("ContentRequestedPrint"),
+                          msgData, res);
+  if (res.Failed()) {
+    aError.Throw(NS_ERROR_NOT_AVAILABLE);
+    return;
   }
 #endif  // NS_PRINTING
 }
@@ -6742,10 +6746,10 @@ void nsGlobalWindowOuter::ActivateOrDeactivate(bool aActivate) {
   }
 }
 
-static bool NotifyDocumentTree(Document& aDocument, void*) {
+static CallState NotifyDocumentTree(Document& aDocument, void*) {
   aDocument.EnumerateSubDocuments(NotifyDocumentTree, nullptr);
   aDocument.UpdateDocumentStates(NS_DOCUMENT_STATE_WINDOW_INACTIVE, true);
-  return true;
+  return CallState::Continue;
 }
 
 void nsGlobalWindowOuter::SetActive(bool aActive) {
@@ -6806,9 +6810,6 @@ void nsGlobalWindowOuter::SetIsBackground(bool aIsBackground) {
 }
 
 void nsGlobalWindowOuter::SetIsBackgroundInternal(bool aIsBackground) {
-  if (mIsBackground != aIsBackground) {
-    TabGroup()->WindowChangedBackgroundStatus(aIsBackground);
-  }
   mIsBackground = aIsBackground;
 }
 

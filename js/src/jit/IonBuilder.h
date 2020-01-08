@@ -1149,6 +1149,7 @@ class IonBuilder : public MIRGenerator,
     rootList_ = &rootList;
   }
   void clearForBackEnd();
+  void checkNurseryCell(gc::Cell* cell);
   JSObject* checkNurseryObject(JSObject* obj);
 
   JSScript* script() const { return script_; }
@@ -1201,7 +1202,6 @@ class IonBuilder : public MIRGenerator,
   uint32_t typeArrayHint;
   uint32_t* bytecodeTypeMap;
 
-  GSNCache gsn;
   jsbytecode* pc;
   jsbytecode* nextpc = nullptr;
 

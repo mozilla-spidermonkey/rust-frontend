@@ -423,6 +423,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "bytes"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
 name = "c2-chacha"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -656,7 +661,7 @@ dependencies = [
 [[package]]
 name = "coreaudio-sys-utils"
 version = "0.1.0"
-source = "git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=5fcbd99e1b7356be1efcdc41654d495bd4c71c8c#5fcbd99e1b7356be1efcdc41654d495bd4c71c8c"
+source = "git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=acb90e9bf36e6e035ac6bbe51efa0a8825b5b6be#acb90e9bf36e6e035ac6bbe51efa0a8825b5b6be"
 dependencies = [
  "core-foundation-sys 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "coreaudio-sys 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -719,7 +724,7 @@ source = "git+https://github.com/bytecodealliance/cranelift?rev=ec787eb281bb2e18
 [[package]]
 name = "cranelift-entity"
 version = "0.41.0"
-source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler#36f0e4deb5b080dfee73042fec655d3723c7a12b"
+source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b#36f0e4deb5b080dfee73042fec655d3723c7a12b"
 
 [[package]]
 name = "cranelift-entity"
@@ -878,15 +883,16 @@ dependencies = [
 [[package]]
 name = "cubeb-coreaudio"
 version = "0.1.0"
-source = "git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=5fcbd99e1b7356be1efcdc41654d495bd4c71c8c#5fcbd99e1b7356be1efcdc41654d495bd4c71c8c"
+source = "git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=acb90e9bf36e6e035ac6bbe51efa0a8825b5b6be#acb90e9bf36e6e035ac6bbe51efa0a8825b5b6be"
 dependencies = [
  "atomic 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitflags 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "coreaudio-sys-utils 0.1.0 (git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=5fcbd99e1b7356be1efcdc41654d495bd4c71c8c)",
+ "coreaudio-sys-utils 0.1.0 (git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=acb90e9bf36e6e035ac6bbe51efa0a8825b5b6be)",
  "cubeb-backend 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.59 (registry+https://github.com/rust-lang/crates.io-index)",
  "mach 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "mixer 0.1.0 (git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=acb90e9bf36e6e035ac6bbe51efa0a8825b5b6be)",
 ]
 
 [[package]]
@@ -1530,7 +1536,7 @@ dependencies = [
  "cert_storage 0.0.1",
  "chardetng_c 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "cose-c 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "cubeb-coreaudio 0.1.0 (git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=5fcbd99e1b7356be1efcdc41654d495bd4c71c8c)",
+ "cubeb-coreaudio 0.1.0 (git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=acb90e9bf36e6e035ac6bbe51efa0a8825b5b6be)",
  "cubeb-pulse 0.3.0 (git+https://github.com/djg/cubeb-pulse-rs?rev=8069f8f4189982e0b38fa6dc8993dd4fab41f728)",
  "cubeb-sys 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "encoding_glue 0.1.0",
@@ -1555,7 +1561,7 @@ dependencies = [
  "prefs_parser 0.0.1",
  "profiler_helper 0.1.0",
  "remote 0.1.0",
- "rlbox_lucet_sandbox 0.1.0 (git+https://github.com/PLSysSec/rlbox_lucet_sandbox/?rev=997c648eb0eaeaaa7a00a9eee20431f750b4e190)",
+ "rlbox_lucet_sandbox 0.1.0 (git+https://github.com/PLSysSec/rlbox_lucet_sandbox/?rev=a31b9119bd01893ae1e930331ca4fe1738a088f7)",
  "rsdparsa_capi 0.1.0",
  "rustc_version 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "shift_or_euc_c 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1721,6 +1727,16 @@ version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "bytes 0.4.9 (registry+https://github.com/rust-lang/crates.io-index)",
+ "fnv 1.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "itoa 0.4.4 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "http"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "bytes 0.5.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "fnv 1.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "itoa 0.4.4 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -2016,11 +2032,11 @@ dependencies = [
 [[package]]
 name = "lucet-module"
 version = "0.1.1"
-source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler#36f0e4deb5b080dfee73042fec655d3723c7a12b"
+source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b#36f0e4deb5b080dfee73042fec655d3723c7a12b"
 dependencies = [
  "bincode 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "byteorder 1.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "cranelift-entity 0.41.0 (git+https://github.com/PLSysSec/lucet_sandbox_compiler)",
+ "cranelift-entity 0.41.0 (git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b)",
  "failure 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-derive 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-traits 0.2.10 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2032,12 +2048,12 @@ dependencies = [
 [[package]]
 name = "lucet-runtime"
 version = "0.1.1"
-source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler#36f0e4deb5b080dfee73042fec655d3723c7a12b"
+source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b#36f0e4deb5b080dfee73042fec655d3723c7a12b"
 dependencies = [
  "cc 1.0.47 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.59 (registry+https://github.com/rust-lang/crates.io-index)",
- "lucet-module 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler)",
- "lucet-runtime-internals 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler)",
+ "lucet-module 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b)",
+ "lucet-runtime-internals 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b)",
  "num-derive 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-traits 0.2.10 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -2045,7 +2061,7 @@ dependencies = [
 [[package]]
 name = "lucet-runtime-internals"
 version = "0.1.1"
-source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler#36f0e4deb5b080dfee73042fec655d3723c7a12b"
+source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b#36f0e4deb5b080dfee73042fec655d3723c7a12b"
 dependencies = [
  "bincode 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitflags 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2056,7 +2072,7 @@ dependencies = [
  "lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.59 (registry+https://github.com/rust-lang/crates.io-index)",
  "libloading 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "lucet-module 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler)",
+ "lucet-module 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b)",
  "memoffset 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "nix 0.13.1 (git+https://github.com/shravanrn/nix/?branch=r0.13.1)",
  "num-derive 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2067,14 +2083,14 @@ dependencies = [
 [[package]]
 name = "lucet-wasi"
 version = "0.1.1"
-source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler#36f0e4deb5b080dfee73042fec655d3723c7a12b"
+source = "git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b#36f0e4deb5b080dfee73042fec655d3723c7a12b"
 dependencies = [
  "cast 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.59 (registry+https://github.com/rust-lang/crates.io-index)",
- "lucet-module 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler)",
- "lucet-runtime 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler)",
- "lucet-runtime-internals 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler)",
+ "lucet-module 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b)",
+ "lucet-runtime 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b)",
+ "lucet-runtime-internals 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b)",
  "nix 0.13.1 (git+https://github.com/shravanrn/nix/?branch=r0.13.1)",
  "rand 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -2297,6 +2313,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "socket2 0.3.10 (registry+https://github.com/rust-lang/crates.io-index)",
  "winapi 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "mixer"
+version = "0.1.0"
+source = "git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=acb90e9bf36e6e035ac6bbe51efa0a8825b5b6be#acb90e9bf36e6e035ac6bbe51efa0a8825b5b6be"
+dependencies = [
+ "bitflags 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -3229,7 +3253,7 @@ name = "remote"
 version = "0.1.0"
 dependencies = [
  "failure 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
- "http 0.1.17 (registry+https://github.com/rust-lang/crates.io-index)",
+ "http 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.59 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "nserror 0.1.0",
@@ -3340,14 +3364,14 @@ dependencies = [
 [[package]]
 name = "rlbox_lucet_sandbox"
 version = "0.1.0"
-source = "git+https://github.com/PLSysSec/rlbox_lucet_sandbox/?rev=997c648eb0eaeaaa7a00a9eee20431f750b4e190#997c648eb0eaeaaa7a00a9eee20431f750b4e190"
+source = "git+https://github.com/PLSysSec/rlbox_lucet_sandbox/?rev=a31b9119bd01893ae1e930331ca4fe1738a088f7#a31b9119bd01893ae1e930331ca4fe1738a088f7"
 dependencies = [
  "failure 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "goblin 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "lucet-module 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler)",
- "lucet-runtime 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler)",
- "lucet-runtime-internals 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler)",
- "lucet-wasi 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler)",
+ "lucet-module 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b)",
+ "lucet-runtime 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b)",
+ "lucet-runtime-internals 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b)",
+ "lucet-wasi 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b)",
 ]
 
 [[package]]
@@ -4464,7 +4488,6 @@ dependencies = [
  "foreign-types 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "fxhash 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "gleam 0.6.17 (registry+https://github.com/rust-lang/crates.io-index)",
- "libc 0.2.59 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "nsstring 0.1.0",
  "num_cpus 1.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -4750,6 +4773,7 @@ dependencies = [
 "checksum byte-tools 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "980479e6fde23246dfb54d47580d66b4e99202e7579c5eaa9fe10ecb5ebd2182"
 "checksum byteorder 1.3.2 (registry+https://github.com/rust-lang/crates.io-index)" = "a7c3dd8985a7111efc5c80b44e23ecdd8c007de8ade3b96595387e812b957cf5"
 "checksum bytes 0.4.9 (registry+https://github.com/rust-lang/crates.io-index)" = "e178b8e0e239e844b083d5a0d4a156b2654e67f9f80144d48398fcd736a24fb8"
+"checksum bytes 0.5.3 (registry+https://github.com/rust-lang/crates.io-index)" = "10004c15deb332055f7a4a208190aed362cf9a7c2f6ab70a305fba50e1105f38"
 "checksum c2-chacha 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "214238caa1bf3a496ec3392968969cab8549f96ff30652c9e56885329315f6bb"
 "checksum cast 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "926013f2860c46252efceabb19f4a6b308197505082c609025aa6706c011d427"
 "checksum cbindgen 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)" = "3d94e15ad254cde8d71f12f8eeab1aa7ea997f02849f8eba4e81e6e7f46592b2"
@@ -4774,14 +4798,14 @@ dependencies = [
 "checksum core-graphics 0.17.3 (registry+https://github.com/rust-lang/crates.io-index)" = "56790968ab1c8a1202a102e6de05fc6e1ec87da99e4e93e9a7d13efbfc1e95a9"
 "checksum core-text 13.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "f3f46450d6f2397261af420b4ccce23807add2e45fa206410a03d66fb7f050ae"
 "checksum coreaudio-sys 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "7e8f5954c1c7ccb55340443e8b29fca24013545a5e7d72c1ca7db4fc02b982ce"
-"checksum coreaudio-sys-utils 0.1.0 (git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=5fcbd99e1b7356be1efcdc41654d495bd4c71c8c)" = "<none>"
+"checksum coreaudio-sys-utils 0.1.0 (git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=acb90e9bf36e6e035ac6bbe51efa0a8825b5b6be)" = "<none>"
 "checksum cose 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)" = "72fa26cb151d3ae4b70f63d67d0fed57ce04220feafafbae7f503bef7aae590d"
 "checksum cose-c 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)" = "49726015ab0ca765144fcca61e4a7a543a16b795a777fa53f554da2fffff9a94"
 "checksum cranelift-bforest 0.51.0 (git+https://github.com/bytecodealliance/cranelift?rev=ec787eb281bb2e18e191508c17abe694e91f0677)" = "<none>"
 "checksum cranelift-codegen 0.51.0 (git+https://github.com/bytecodealliance/cranelift?rev=ec787eb281bb2e18e191508c17abe694e91f0677)" = "<none>"
 "checksum cranelift-codegen-meta 0.51.0 (git+https://github.com/bytecodealliance/cranelift?rev=ec787eb281bb2e18e191508c17abe694e91f0677)" = "<none>"
 "checksum cranelift-codegen-shared 0.51.0 (git+https://github.com/bytecodealliance/cranelift?rev=ec787eb281bb2e18e191508c17abe694e91f0677)" = "<none>"
-"checksum cranelift-entity 0.41.0 (git+https://github.com/PLSysSec/lucet_sandbox_compiler)" = "<none>"
+"checksum cranelift-entity 0.41.0 (git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b)" = "<none>"
 "checksum cranelift-entity 0.51.0 (git+https://github.com/bytecodealliance/cranelift?rev=ec787eb281bb2e18e191508c17abe694e91f0677)" = "<none>"
 "checksum cranelift-frontend 0.51.0 (git+https://github.com/bytecodealliance/cranelift?rev=ec787eb281bb2e18e191508c17abe694e91f0677)" = "<none>"
 "checksum cranelift-wasm 0.51.0 (git+https://github.com/bytecodealliance/cranelift?rev=ec787eb281bb2e18e191508c17abe694e91f0677)" = "<none>"
@@ -4798,7 +4822,7 @@ dependencies = [
 "checksum cubeb 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)" = "3cbcdfde9ea319160af6eff068ffaa96aad3532e1b5c0ebc134614cfacacae24"
 "checksum cubeb-backend 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)" = "5a1e7add4e7642a8aebb24172922318482bed52389a12cb339f728bbd4c4ed9c"
 "checksum cubeb-core 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)" = "bfd9b2ea1cb6afed9419b0d18fc4093df552ccb2300eb57793629f8cd370b4c8"
-"checksum cubeb-coreaudio 0.1.0 (git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=5fcbd99e1b7356be1efcdc41654d495bd4c71c8c)" = "<none>"
+"checksum cubeb-coreaudio 0.1.0 (git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=acb90e9bf36e6e035ac6bbe51efa0a8825b5b6be)" = "<none>"
 "checksum cubeb-pulse 0.3.0 (git+https://github.com/djg/cubeb-pulse-rs?rev=8069f8f4189982e0b38fa6dc8993dd4fab41f728)" = "<none>"
 "checksum cubeb-sys 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)" = "309c5839c5fa03c08363bd308566cbe4654b25a9984342d7546a33d55b80a3d6"
 "checksum d3d12 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "bc7ed48e89905e5e146bcc1951cc3facb9e44aea9adf5dc01078cda1bd24b662"
@@ -4861,6 +4885,7 @@ dependencies = [
 "checksum headers-derive 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "f33cf300c485e3cbcba0235013fcc768723451c9b84d1b31aa7fec0491ac9a11"
 "checksum hibitset 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)" = "47e7292fd9f7fe89fa35c98048f2d0a69b79ed243604234d18f6f8a1aa6f408d"
 "checksum http 0.1.17 (registry+https://github.com/rust-lang/crates.io-index)" = "eed324f0f0daf6ec10c474f150505af2c143f251722bf9dbd1261bd1f2ee2c1a"
+"checksum http 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "b708cc7f06493459026f53b9a61a7a121a5d1ec6238dee58ea4941132b30156b"
 "checksum httparse 1.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "e8734b0cfd3bc3e101ec59100e101c2eecd19282202e87808b3037b442777a83"
 "checksum humantime 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "0484fda3e7007f2a4a0d9c3a703ca38c71c54c55602ce4660c419fd32e188c9e"
 "checksum hyper 0.12.19 (registry+https://github.com/rust-lang/crates.io-index)" = "f1ebec079129e43af5e234ef36ee3d7e6085687d145b7ea653b262d16c6b65f1"
@@ -4888,10 +4913,10 @@ dependencies = [
 "checksum lmdb-rkv-sys 0.9.5 (registry+https://github.com/rust-lang/crates.io-index)" = "a1e4b19a1fdf5b74bc802cc9aa7c0c86a775e8b872ba9d5a4e606ffc5d076953"
 "checksum lock_api 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)" = "f8912e782533a93a167888781b836336a6ca5da6175c05944c86cf28c31104dc"
 "checksum log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)" = "c84ec4b527950aa83a329754b01dbe3f58361d1c5efacd1f6d68c494d08a17c6"
-"checksum lucet-module 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler)" = "<none>"
-"checksum lucet-runtime 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler)" = "<none>"
-"checksum lucet-runtime-internals 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler)" = "<none>"
-"checksum lucet-wasi 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler)" = "<none>"
+"checksum lucet-module 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b)" = "<none>"
+"checksum lucet-runtime 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b)" = "<none>"
+"checksum lucet-runtime-internals 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b)" = "<none>"
+"checksum lucet-wasi 0.1.1 (git+https://github.com/PLSysSec/lucet_sandbox_compiler?rev=36f0e4deb5b080dfee73042fec655d3723c7a12b)" = "<none>"
 "checksum lzw 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)" = "7d947cbb889ed21c2a84be6ffbaebf5b4e0f4340638cba0444907e38b56be084"
 "checksum mach 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)" = "b823e83b2affd8f40a9ee8c29dbc56404c1e34cd2710921f2801e2cf29527afa"
 "checksum malloc_buf 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)" = "62bb907fe88d54d8d9ce32a3cceab4218ed2f6b7d35617cafe9adf84e43919cb"
@@ -4912,6 +4937,7 @@ dependencies = [
 "checksum mio-uds 0.6.7 (registry+https://github.com/rust-lang/crates.io-index)" = "966257a94e196b11bb43aca423754d87429960a768de9414f3691d6957abf125"
 "checksum miow 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "8c1f2f3b1cf331de6896aabf6e9d55dca90356cc9960cca7eaaf408a355ae919"
 "checksum miow 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "396aa0f2003d7df8395cb93e09871561ccc3e785f0acb369170e8cc74ddf9226"
+"checksum mixer 0.1.0 (git+https://github.com/ChunMinChang/cubeb-coreaudio-rs?rev=acb90e9bf36e6e035ac6bbe51efa0a8825b5b6be)" = "<none>"
 "checksum moz_cbor 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "20c82a57087fd5990d7122dbff1607c3b20c3d2958e9d9ad9765aab415e2c91c"
 "checksum mp4parse_fallible 0.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "6626c2aef76eb8f984eef02e475883d3fe9112e114720446c5810fc5f045cd30"
 "checksum msdos_time 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)" = "aad9dfe950c057b1bfe9c1f2aa51583a8468ef2a5baba2ebbe06d775efeb7729"
@@ -5002,7 +5028,7 @@ dependencies = [
 "checksum ringbuf 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)" = "588456c74d5ff0a5806bc084818e043e767533f743c11ee6f3ccf298599c6847"
 "checksum rkv 0.10.2 (registry+https://github.com/rust-lang/crates.io-index)" = "9aab7c645d32e977e186448b0a5c2c3139a91a7f630cfd8a8c314d1d145e78bf"
 "checksum rkv 0.11.0 (git+https://github.com/mozilla/rkv?rev=6a866fdad2ca880df9b87fcbc9921abac1e91914)" = "<none>"
-"checksum rlbox_lucet_sandbox 0.1.0 (git+https://github.com/PLSysSec/rlbox_lucet_sandbox/?rev=997c648eb0eaeaaa7a00a9eee20431f750b4e190)" = "<none>"
+"checksum rlbox_lucet_sandbox 0.1.0 (git+https://github.com/PLSysSec/rlbox_lucet_sandbox/?rev=a31b9119bd01893ae1e930331ca4fe1738a088f7)" = "<none>"
 "checksum ron 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)" = "da06feaa07f69125ab9ddc769b11de29090122170b402547f64b86fe16ebc399"
 "checksum runloop 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "5d79b4b604167921892e84afbbaad9d5ad74e091bf6c511d9dbfb0593f09fabd"
 "checksum rust-argon2 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "4ca4eaef519b494d1f2848fc602d18816fed808a981aedf4f1f00ceb7c9d32cf"

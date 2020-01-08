@@ -13,6 +13,8 @@
 namespace mozilla {
 namespace dom {
 
+using PlaybackState = MediaControlKeysEventSource::PlaybackState;
+
 // avoid redefined macro in unified build
 #undef LOG_SOURCE
 #define LOG_SOURCE(msg, ...)                 \
@@ -24,8 +26,6 @@ namespace dom {
   MOZ_LOG(gMediaControlLog, LogLevel::Debug,         \
           ("MediaControlKeysHandler=%p, " msg, this, \
            ToMediaControlKeysEventStr(key), ##__VA_ARGS__));
-
-NS_IMPL_ISUPPORTS0(MediaControlKeysHandler)
 
 void MediaControlKeysHandler::OnKeyPressed(MediaControlKeysEvent aKeyEvent) {
   LOG_KEY("OnKeyPressed '%s'", aKeyEvent);
@@ -71,8 +71,6 @@ void MediaControlKeysHandler::OnKeyPressed(MediaControlKeysEvent aKeyEvent) {
   }
 }
 
-NS_IMPL_ISUPPORTS0(MediaControlKeysEventSource)
-
 void MediaControlKeysEventSource::AddListener(
     MediaControlKeysEventListener* aListener) {
   MOZ_ASSERT(aListener);
@@ -94,6 +92,18 @@ size_t MediaControlKeysEventSource::GetListenersNum() const {
 void MediaControlKeysEventSource::Close() {
   LOG_SOURCE("Close source");
   mListeners.Clear();
+}
+
+void MediaControlKeysEventSource::SetPlaybackState(PlaybackState aState) {
+  if (mPlaybackState == aState) {
+    return;
+  }
+  LOG_SOURCE("SetPlaybackState '%s'", ToPlaybackStateEventStr(aState));
+  mPlaybackState = aState;
+}
+
+PlaybackState MediaControlKeysEventSource::GetPlaybackState() const {
+  return mPlaybackState;
 }
 
 }  // namespace dom

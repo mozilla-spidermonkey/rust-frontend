@@ -1341,13 +1341,12 @@ nsEventStatus AsyncPanZoomController::OnTouchStart(
       MOZ_ASSERT(GetCurrentTouchBlock());
       GetCurrentTouchBlock()->GetOverscrollHandoffChain()->CancelAnimations(
           ExcludeOverscroll);
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case SCROLLBAR_DRAG:
     case NOTHING: {
       ParentLayerPoint point = GetFirstTouchPoint(aEvent);
       mStartTouch = GetFirstExternalTouchPoint(aEvent);
-      mX.StartTouch(point.x, aEvent.mTime);
-      mY.StartTouch(point.y, aEvent.mTime);
+      StartTouch(point, aEvent.mTime);
       if (RefPtr<GeckoContentController> controller =
               GetGeckoContentController()) {
         MOZ_ASSERT(GetCurrentTouchBlock());
@@ -1461,7 +1460,7 @@ nsEventStatus AsyncPanZoomController::OnTouchEnd(
     case FLING:
       // Should never happen.
       NS_WARNING("Received impossible touch end in OnTouchEnd.");
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case ANIMATING_ZOOM:
     case SMOOTH_SCROLL:
     case NOTHING:
@@ -1553,8 +1552,7 @@ nsEventStatus AsyncPanZoomController::OnScaleBegin(
   // If zooming is not allowed, this is a two-finger pan.
   // Start tracking panning distance and velocity.
   if (!mZoomConstraints.mAllowZoom) {
-    mX.StartTouch(aEvent.mLocalFocusPoint.x, aEvent.mTime);
-    mY.StartTouch(aEvent.mLocalFocusPoint.y, aEvent.mTime);
+    StartTouch(aEvent.mLocalFocusPoint, aEvent.mTime);
   }
 
   // For platforms that don't support APZ zooming, dispatch a message to the
@@ -1763,8 +1761,7 @@ nsEventStatus AsyncPanZoomController::OnScaleEnd(
   if (aEvent.mLocalFocusPoint != PinchGestureInput::BothFingersLifted()) {
     if (mZoomConstraints.mAllowZoom) {
       mPanDirRestricted = false;
-      mX.StartTouch(aEvent.mLocalFocusPoint.x, aEvent.mTime);
-      mY.StartTouch(aEvent.mLocalFocusPoint.y, aEvent.mTime);
+      StartTouch(aEvent.mLocalFocusPoint, aEvent.mTime);
       SetState(TOUCHING);
     } else {
       // If zooming isn't allowed, StartTouch() was already called
@@ -2467,8 +2464,7 @@ nsEventStatus AsyncPanZoomController::OnPanMayBegin(
     const PanGestureInput& aEvent) {
   APZC_LOG("%p got a pan-maybegin in state %d\n", this, mState);
 
-  mX.StartTouch(aEvent.mLocalPanStartPoint.x, aEvent.mTime);
-  mY.StartTouch(aEvent.mLocalPanStartPoint.y, aEvent.mTime);
+  StartTouch(aEvent.mLocalPanStartPoint, aEvent.mTime);
   MOZ_ASSERT(GetCurrentPanGestureBlock());
   GetCurrentPanGestureBlock()->GetOverscrollHandoffChain()->CancelAnimations();
 
@@ -2494,8 +2490,7 @@ nsEventStatus AsyncPanZoomController::OnPanBegin(
     CancelAnimation();
   }
 
-  mX.StartTouch(aEvent.mLocalPanStartPoint.x, aEvent.mTime);
-  mY.StartTouch(aEvent.mLocalPanStartPoint.y, aEvent.mTime);
+  StartTouch(aEvent.mLocalPanStartPoint, aEvent.mTime);
 
   if (GetAxisLockMode() == FREE) {
     SetState(PANNING);
@@ -3513,10 +3508,17 @@ void AsyncPanZoomController::CallDispatchScroll(
 }
 
 void AsyncPanZoomController::RecordScrollPayload(const TimeStamp& aTimeStamp) {
+  RecursiveMutexAutoLock lock(mRecursiveMutex);
   if (!mScrollPayload) {
     mScrollPayload = Some(
         CompositionPayload{CompositionPayloadType::eAPZScroll, aTimeStamp});
   }
+}
+
+void AsyncPanZoomController::StartTouch(const ParentLayerPoint& aPoint, uint32_t aTime) {
+  RecursiveMutexAutoLock lock(mRecursiveMutex);
+  mX.StartTouch(aPoint.x, aTime);
+  mY.StartTouch(aPoint.y, aTime);
 }
 
 void AsyncPanZoomController::TrackTouch(const MultiTouchInput& aEvent) {
@@ -4324,11 +4326,15 @@ void AsyncPanZoomController::ReportCheckerboard(const TimeStamp& aSampleTime) {
   bool forTelemetry = Telemetry::CanRecordExtended();
   uint32_t magnitude = GetCheckerboardMagnitude();
 
+  // IsInTransformingState() acquires the APZC lock and thus needs to
+  // be called before acquiring mCheckerboardEventLock.
+  bool inTransformingState = IsInTransformingState();
+
   MutexAutoLock lock(mCheckerboardEventLock);
   if (!mCheckerboardEvent && (recordTrace || forTelemetry)) {
     mCheckerboardEvent = MakeUnique<CheckerboardEvent>(recordTrace);
   }
-  mPotentialCheckerboardTracker.InTransform(IsTransformingState(mState));
+  mPotentialCheckerboardTracker.InTransform(inTransformingState);
   if (magnitude) {
     mPotentialCheckerboardTracker.CheckerboardSeen();
   }
@@ -4800,6 +4806,24 @@ const FrameMetrics& AsyncPanZoomController::Metrics() const {
   ;
 }
 
+bool AsyncPanZoomController::UpdateRootFrameMetricsIfChanged(
+    FrameMetrics& metrics) {
+  RecursiveMutexAutoLock lock(mRecursiveMutex);
+
+  const FrameMetrics& aMetrics = Metrics();
+  if (!aMetrics.IsRootContent()) return false;
+
+  bool hasChanged = RoundedToInt(metrics.GetScrollOffset()) !=
+                        RoundedToInt(aMetrics.GetScrollOffset()) ||
+                    metrics.GetZoom() != aMetrics.GetZoom();
+
+  if (hasChanged) {
+    metrics = aMetrics;
+  }
+
+  return hasChanged;
+}
+
 const FrameMetrics& AsyncPanZoomController::GetFrameMetrics() const {
   return Metrics();
 }
@@ -5099,6 +5123,11 @@ void AsyncPanZoomController::DispatchStateChangeNotification(
 #endif
     }
   }
+}
+
+bool AsyncPanZoomController::IsInTransformingState() const {
+  RecursiveMutexAutoLock lock(mRecursiveMutex);
+  return IsTransformingState(mState);
 }
 
 bool AsyncPanZoomController::IsTransformingState(PanZoomState aState) {

@@ -86,21 +86,14 @@ class nsCSSProps {
     return Servo_Property_LookupEnabledForAllContent(&aProperty);
   }
 
-  static nsCSSPropertyID LookupProperty(const nsAString& aProperty) {
-    NS_ConvertUTF16toUTF8 utf8(aProperty);
-    return LookupProperty(utf8);
-  }
-
   // As above, but looked up using a property's IDL name.
-  // eCSSPropertyExtra_variable won't be returned from these methods.
-  static nsCSSPropertyID LookupPropertyByIDLName(
-      const nsAString& aPropertyIDLName, EnabledState aEnabled);
+  // eCSSPropertyExtra_variable won't be returned from this method.
   static nsCSSPropertyID LookupPropertyByIDLName(
       const nsACString& aPropertyIDLName, EnabledState aEnabled);
 
   // Returns whether aProperty is a custom property name, i.e. begins with
   // "--".  This assumes that the CSS Variables pref has been enabled.
-  static bool IsCustomPropertyName(const nsAString& aProperty);
+  static bool IsCustomPropertyName(const nsACString& aProperty);
 
   static bool IsShorthand(nsCSSPropertyID aProperty) {
     MOZ_ASSERT(0 <= aProperty && aProperty < eCSSProperty_COUNT,
@@ -109,7 +102,7 @@ class nsCSSProps {
   }
 
   // Same but for @font-face descriptors
-  static nsCSSFontDesc LookupFontDesc(const nsAString& aProperty);
+  static nsCSSFontDesc LookupFontDesc(const nsACString& aProperty);
 
   // The relevant invariants are asserted in Document.cpp
   static mozilla::UseCounter UseCounterFor(nsCSSPropertyID aProperty) {

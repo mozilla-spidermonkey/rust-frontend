@@ -12,20 +12,17 @@ job-defaults:
     workdir: /home/cltbld
     run-on-projects:
         by-test-name:
-            raptor-tp6-.*-cold:
+            raptor-tp6-\d{1,2}-firefox(?!-cold):
                 by-test-platform:
-                    windows10-64-ref-hw-2017/opt: ['try', 'mozilla-central']
                     windows10-aarch64/opt: ['try']
-                    (?:windows10-64|windows7-32|linux64)(?:-qr)?/opt: ['mozilla-central', 'try', 'ash']
-                    macosx.*64(?:-qr)?/opt: ['mozilla-central', 'try']
-                    default: ['try', 'trunk', 'mozilla-beta']
+                    default: ['try', 'mozilla-central']
             default:
                 by-test-platform:
                     windows10-64-ref-hw-2017/opt: ['try', 'mozilla-central']
                     windows10-aarch64/opt: ['try']
                     (?:windows10-64|windows7-32|linux64)(?:-qr)?/opt: ['mozilla-central', 'try', 'ash']
                     macosx.*64(?:-qr)?/opt: ['mozilla-central', 'try']
-                    default: ['try', 'mozilla-beta']
+                    default: ['try', 'trunk', 'mozilla-beta']
     tier:
         by-test-platform:
             windows10-aarch64/.*: 2
@@ -51,6 +48,11 @@ job-defaults:
                     - raptor/linux64_config_taskcluster.py
                 default:
                     - raptor/linux_config.py
+    fission-run-on-projects:
+        by-test-platform:
+            linux64-shippable-qr/opt: ['mozilla-central']
+            windows10-64-shippable-qr/opt: ['mozilla-central']
+            default: []
 
 raptor-tp6-1-firefox:
     description: "Raptor tp6-1 on Firefox"
@@ -1028,7 +1030,10 @@ browsertime-tp6:
 browsertime-speedometer:
     description: "Raptor (browsertime) Speedometer on Firefox"
     raptor-test: raptor-speedometer
-    run-on-projects: ['integration', 'try']
+    run-on-projects:
+        by-test-platform:
+            windows10-aarch64/opt: ['try']
+            default: ['integration', 'try']
     variants: ["fission"]
     apps: ["firefox"]
     treeherder-symbol: Btime(sp)
@@ -1037,18 +1042,18 @@ browsertime-speedometer:
         extra-options:
             - --browsertime
 
-browsertime-tp6-1-profiling:
-    description: "Raptor (browsertime) tp6-1 with Gecko Profiling"
-    raptor-test: raptor-tp6-1
-    run-on-projects: ['integration', 'try']
-    apps: ["firefox"]
-    variants: ["fission"]
-    cold:
-        by-app:
-            firefox: true
-            default: false
-    treeherder-symbol: Btime-Prof(tp6-1-p)
-    max-run-time: 3000
+browsertime-tp6-profiling:
+    description: "Raptor (browsertime) tp6 page-load tests with Gecko Profiling"
+    raptor-test: tp6
+    raptor-subtests: ['amazon']
+    run-on-projects:
+        by-test-platform:
+            .*shippable[^-qr].*: ['mozilla-central', 'try']
+            default: []
+    apps: ['firefox']
+    pageload: 'both'
+    treeherder-symbol: Btime-Prof(tp6)
+    max-run-time: 4000
     tier: 3
     mozharness:
         extra-options:

@@ -78,6 +78,8 @@
 #include "mozilla/Services.h"
 #include "nsScreen.h"
 #include "ChildIterator.h"
+#include "nsSerializationHelper.h"
+#include "nsICertOverrideService.h"
 #include "nsIX509Cert.h"
 #include "nsIX509CertValidity.h"
 #include "nsITransportSecurityInfo.h"
@@ -697,6 +699,16 @@ OnloadBlocker::GetLoadFlags(nsLoadFlags* aLoadFlags) {
 }
 
 NS_IMETHODIMP
+OnloadBlocker::GetTRRMode(nsIRequest::TRRMode* aTRRMode) {
+  return GetTRRModeImpl(aTRRMode);
+}
+
+NS_IMETHODIMP
+OnloadBlocker::SetTRRMode(nsIRequest::TRRMode aTRRMode) {
+  return SetTRRModeImpl(aTRRMode);
+}
+
+NS_IMETHODIMP
 OnloadBlocker::SetLoadFlags(nsLoadFlags aLoadFlags) { return NS_OK; }
 
 // ==================================================================
@@ -763,7 +775,7 @@ void ExternalResourceMap::EnumerateResources(SubDocEnumFunc aCallback,
   }
 
   for (auto& doc : docs) {
-    if (!aCallback(*doc, aData)) {
+    if (aCallback(*doc, aData) == CallState::Stop) {
       return;
     }
   }
@@ -1381,6 +1393,8 @@ Document::Document(const char* aContentType)
   mReferrerInfo = new dom::ReferrerInfo(nullptr);
 }
 
+#ifndef ANDROID
+// unused by GeckoView
 static bool IsAboutErrorPage(nsGlobalWindowInner* aWin, const char* aSpec) {
   if (NS_WARN_IF(!aWin)) {
     return false;
@@ -1402,10 +1416,148 @@ static bool IsAboutErrorPage(nsGlobalWindowInner* aWin, const char* aSpec) {
 
   return aboutSpec.EqualsASCII(aSpec);
 }
+#endif
 
 bool Document::CallerIsTrustedAboutNetError(JSContext* aCx, JSObject* aObject) {
   nsGlobalWindowInner* win = xpc::WindowOrNull(aObject);
+#ifdef ANDROID
+  // GeckoView uses data URLs for error pages, so for now just check for any
+  // error page
+  return win && win->GetDocument() && win->GetDocument()->IsErrorPage();
+#else
   return IsAboutErrorPage(win, "neterror");
+#endif
+}
+
+already_AddRefed<mozilla::dom::Promise> Document::AddCertException(
+    bool aIsTemporary) {
+  nsIGlobalObject* global = GetScopeObject();
+  if (!global) {
+    return nullptr;
+  }
+
+  ErrorResult er;
+  RefPtr<Promise> promise =
+      Promise::Create(global, er, Promise::ePropagateUserInteraction);
+  if (er.Failed()) {
+    return nullptr;
+  }
+
+  nsCOMPtr<nsISupports> info;
+  nsCOMPtr<nsITransportSecurityInfo> tsi;
+  nsresult rv = NS_OK;
+  if (NS_WARN_IF(!mFailedChannel)) {
+    promise->MaybeReject(NS_ERROR_DOM_INVALID_STATE_ERR);
+    return promise.forget();
+  }
+
+  rv = mFailedChannel->GetSecurityInfo(getter_AddRefs(info));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    promise->MaybeReject(rv);
+    return promise.forget();
+  }
+  nsCOMPtr<nsIURI> failedChannelURI;
+  NS_GetFinalChannelURI(mFailedChannel, getter_AddRefs(failedChannelURI));
+  if (!failedChannelURI) {
+    promise->MaybeReject(NS_ERROR_DOM_INVALID_STATE_ERR);
+    return promise.forget();
+  }
+  nsAutoCString host;
+  failedChannelURI->GetAsciiHost(host);
+  int32_t port;
+  failedChannelURI->GetPort(&port);
+
+  tsi = do_QueryInterface(info);
+  if (NS_WARN_IF(!tsi)) {
+    promise->MaybeReject(NS_ERROR_DOM_INVALID_STATE_ERR);
+    return promise.forget();
+  }
+
+  bool isUntrusted = true;
+  rv = tsi->GetIsUntrusted(&isUntrusted);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    promise->MaybeReject(rv);
+    return promise.forget();
+  }
+
+  bool isDomainMismatch = true;
+  rv = tsi->GetIsDomainMismatch(&isDomainMismatch);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    promise->MaybeReject(rv);
+    return promise.forget();
+  }
+
+  bool isNotValidAtThisTime = true;
+  rv = tsi->GetIsNotValidAtThisTime(&isNotValidAtThisTime);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    promise->MaybeReject(rv);
+    return promise.forget();
+  }
+
+  nsCOMPtr<nsIX509Cert> cert;
+  rv = tsi->GetServerCert(getter_AddRefs(cert));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    promise->MaybeReject(rv);
+    return promise.forget();
+  }
+  if (NS_WARN_IF(!cert)) {
+    promise->MaybeReject(NS_ERROR_DOM_INVALID_STATE_ERR);
+    return promise.forget();
+  }
+
+  uint32_t flags = 0;
+  if (isUntrusted) {
+    flags |= nsICertOverrideService::ERROR_UNTRUSTED;
+  }
+  if (isDomainMismatch) {
+    flags |= nsICertOverrideService::ERROR_MISMATCH;
+  }
+  if (isNotValidAtThisTime) {
+    flags |= nsICertOverrideService::ERROR_TIME;
+  }
+
+  if (XRE_IsContentProcess()) {
+    nsCOMPtr<nsISerializable> certSer = do_QueryInterface(cert);
+    nsCString certSerialized;
+    NS_SerializeToString(certSer, certSerialized);
+
+    ContentChild* cc = ContentChild::GetSingleton();
+    MOZ_ASSERT(cc);
+    cc->SendAddCertException(certSerialized, flags, host, port, aIsTemporary)
+        ->Then(GetCurrentThreadSerialEventTarget(), __func__,
+               [promise](const mozilla::MozPromise<
+                         nsresult, mozilla::ipc::ResponseRejectReason,
+                         true>::ResolveOrRejectValue& aValue) {
+                 if (aValue.IsResolve()) {
+                   promise->MaybeResolve(aValue.ResolveValue());
+                 } else {
+                   promise->MaybeRejectWithUndefined();
+                 }
+               });
+    return promise.forget();
+  }
+
+  if (XRE_IsParentProcess()) {
+    nsCOMPtr<nsICertOverrideService> overrideService =
+        do_GetService(NS_CERTOVERRIDE_CONTRACTID);
+    if (!overrideService) {
+      promise->MaybeReject(NS_ERROR_FAILURE);
+      return promise.forget();
+    }
+
+    rv = overrideService->RememberValidityOverride(host, port, cert, flags,
+                                                   aIsTemporary);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      promise->MaybeReject(rv);
+      return promise.forget();
+    }
+
+    promise->MaybeResolveWithUndefined();
+    return promise.forget();
+  }
+
+  promise->MaybeReject(NS_ERROR_FAILURE);
+  return promise.forget();
 }
 
 void Document::GetNetErrorInfo(NetErrorInfo& aInfo, ErrorResult& aRv) {
@@ -1440,7 +1592,18 @@ void Document::GetNetErrorInfo(NetErrorInfo& aInfo, ErrorResult& aRv) {
 bool Document::CallerIsTrustedAboutCertError(JSContext* aCx,
                                              JSObject* aObject) {
   nsGlobalWindowInner* win = xpc::WindowOrNull(aObject);
+#ifdef ANDROID
+  // GeckoView uses data URLs for error pages, so for now just check for any
+  // error page
+  return win && win->GetDocument() && win->GetDocument()->IsErrorPage();
+#else
   return IsAboutErrorPage(win, "certerror");
+#endif
+}
+
+bool Document::IsErrorPage() const {
+  nsCOMPtr<nsILoadInfo> loadInfo = mChannel ? mChannel->LoadInfo() : nullptr;
+  return loadInfo && loadInfo->GetLoadErrorPage();
 }
 
 void Document::GetFailedCertSecurityInfo(FailedCertSecurityInfo& aInfo,
@@ -1929,8 +2092,8 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(Document)
     nsAutoCString uri;
     if (tmp->mDocumentURI) uri = tmp->mDocumentURI->GetSpecOrDefault();
     static const char* kNSURIs[] = {"([none])", "(xmlns)", "(xml)", "(xhtml)",
-                                    "(XLink)",  "(XSLT)",  "(XBL)", "(MathML)",
-                                    "(RDF)",    "(XUL)"};
+                                    "(XLink)",  "(XSLT)", "(MathML)", "(RDF)",
+                                    "(XUL)"};
     if (nsid < ArrayLength(kNSURIs)) {
       SprintfLiteral(name, "Document %s %s %s", loadedAsData.get(),
                      kNSURIs[nsid], uri.get());
@@ -6659,7 +6822,7 @@ void Document::SetContainer(nsDocShell* aContainer) {
   }
 
   mInChromeDocShell =
-      aContainer && aContainer->ItemType() == nsIDocShellTreeItem::typeChrome;
+      aContainer && aContainer->GetBrowsingContext()->IsChrome();
 
   EnumerateActivityObservers(NotifyActivityChanged, nullptr);
 
@@ -9094,7 +9257,7 @@ nsINode* Document::AdoptNode(nsINode& aAdoptedNode, ErrorResult& rv) {
         rv.Throw(NS_ERROR_DOM_HIERARCHY_REQUEST_ERR);
         return nullptr;
       }
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     }
     case ELEMENT_NODE:
     case PROCESSING_INSTRUCTION_NODE:
@@ -9430,7 +9593,7 @@ nsViewportInfo Document::GetViewportInfo(const ScreenIntSize& aDisplaySize) {
       mWidthStrEmpty = metaData.mWidth.IsEmpty();
 
       mViewportType = hasValidContents ? Specified : NoValidContent;
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     }
     case Specified:
     case NoValidContent:
@@ -9826,9 +9989,9 @@ void Document::FlushExternalResources(FlushType aType) {
   }
 
   EnumerateExternalResources(
-      [](Document& aDoc, void* aData) -> bool {
+      [](Document& aDoc, void* aData) -> CallState {
         aDoc.FlushPendingNotifications(*static_cast<FlushType*>(aData));
-        return true;
+        return CallState::Continue;
       },
       &aType);
 }
@@ -10034,7 +10197,7 @@ void Document::Sanitize() {
         HTMLInputElement::FromNodeOrNull(nodes->Item(i));
     if (!input) continue;
 
-    input->GetAttribute(NS_LITERAL_STRING("autocomplete"), value);
+    input->GetAttr(nsGkAtoms::autocomplete, value);
     if (value.LowerCaseEqualsLiteral("off") || input->HasBeenTypePassword()) {
       input->Reset();
     }
@@ -10070,7 +10233,7 @@ void Document::EnumerateSubDocuments(SubDocEnumFunc aCallback, void* aData) {
     }
   }
   for (auto& subdoc : subdocs) {
-    if (!aCallback(*subdoc, aData)) {
+    if (aCallback(*subdoc, aData) == CallState::Stop) {
       break;
     }
   }
@@ -10555,10 +10718,10 @@ void Document::DispatchPageTransition(EventTarget* aDispatchTarget,
                                     nullptr);
 }
 
-static bool NotifyPageShow(Document& aDocument, void* aData) {
+static CallState NotifyPageShow(Document& aDocument, void* aData) {
   const bool* aPersistedPtr = static_cast<const bool*>(aData);
   aDocument.OnPageShow(*aPersistedPtr, nullptr);
-  return true;
+  return CallState::Continue;
 }
 
 void Document::OnPageShow(bool aPersisted, EventTarget* aDispatchStartTarget,
@@ -10621,10 +10784,10 @@ void Document::OnPageShow(bool aPersisted, EventTarget* aDispatchStartTarget,
   }
 }
 
-static bool NotifyPageHide(Document& aDocument, void* aData) {
+static CallState NotifyPageHide(Document& aDocument, void* aData) {
   const bool* aPersistedPtr = static_cast<const bool*>(aData);
   aDocument.OnPageHide(*aPersistedPtr, nullptr);
-  return true;
+  return CallState::Continue;
 }
 
 static void DispatchFullscreenChange(Document& aDocument, nsINode* aTarget) {
@@ -10644,23 +10807,6 @@ void Document::OnPageHide(bool aPersisted, EventTarget* aDispatchStartTarget,
   MOZ_DIAGNOSTIC_ASSERT(
       inFrameLoaderSwap ==
       (mDocumentContainer && mDocumentContainer->InFrameSwap()));
-
-  if (IsTopLevelContentDocument() && GetDocGroup() &&
-      Telemetry::CanRecordExtended()) {
-    TabGroup* tabGroup = mDocGroup->GetTabGroup();
-
-    if (tabGroup) {
-      uint32_t active = tabGroup->Count(true /* aActiveOnly */);
-      uint32_t total = tabGroup->Count();
-
-      if (HasHttpScheme(GetDocumentURI())) {
-        Telemetry::Accumulate(Telemetry::ACTIVE_HTTP_DOCGROUPS_PER_TABGROUP,
-                              active);
-        Telemetry::Accumulate(Telemetry::TOTAL_HTTP_DOCGROUPS_PER_TABGROUP,
-                              total);
-      }
-    }
-  }
 
   // Send out notifications that our <link> elements are detached,
   // but only if this is not a full unload.
@@ -11054,9 +11200,10 @@ void Document::GetReadyState(nsAString& aReadyState) const {
   }
 }
 
-static bool SuppressEventHandlingInDocument(Document& aDocument, void* aData) {
+static CallState SuppressEventHandlingInDocument(Document& aDocument,
+                                                 void* aData) {
   aDocument.SuppressEventHandling(*static_cast<uint32_t*>(aData));
-  return true;
+  return CallState::Continue;
 }
 
 void Document::SuppressEventHandling(uint32_t aIncrease) {
@@ -11392,7 +11539,8 @@ class nsDelayedEventDispatcher : public Runnable {
   nsTArray<nsCOMPtr<Document>> mDocuments;
 };
 
-static bool GetAndUnsuppressSubDocuments(Document& aDocument, void* aData) {
+static CallState GetAndUnsuppressSubDocuments(Document& aDocument,
+                                              void* aData) {
   if (aDocument.EventHandlingSuppressed() > 0) {
     aDocument.DecreaseEventSuppression();
     aDocument.ScriptLoader()->RemoveExecuteBlocker();
@@ -11402,7 +11550,7 @@ static bool GetAndUnsuppressSubDocuments(Document& aDocument, void* aData) {
 
   docs->AppendElement(&aDocument);
   aDocument.EnumerateSubDocuments(GetAndUnsuppressSubDocuments, aData);
-  return true;
+  return CallState::Continue;
 }
 
 void Document::UnsuppressEventHandlingAndFireEvents(bool aFireEvents) {
@@ -11472,7 +11620,7 @@ void Document::SetSuppressedEventListener(EventListener* aListener) {
       [](Document& aDocument, void* aData) {
         aDocument.SetSuppressedEventListener(
             static_cast<EventListener*>(aData));
-        return true;
+        return CallState::Continue;
       },
       aListener);
 }
@@ -12024,12 +12172,12 @@ mozilla::dom::ImageTracker* Document::ImageTracker() {
   return mImageTracker;
 }
 
-static bool AllSubDocumentPluginEnum(Document& aDocument, void* userArg) {
+static CallState AllSubDocumentPluginEnum(Document& aDocument, void* userArg) {
   nsTArray<nsIObjectLoadingContent*>* plugins =
       reinterpret_cast<nsTArray<nsIObjectLoadingContent*>*>(userArg);
   MOZ_ASSERT(plugins);
   aDocument.GetPlugins(*plugins);
-  return true;
+  return CallState::Continue;
 }
 
 void Document::GetPlugins(nsTArray<nsIObjectLoadingContent*>& aPlugins) {
@@ -12827,12 +12975,12 @@ void Document::AsyncExitFullscreen(Document* aDoc) {
   }
 }
 
-static bool CountFullscreenSubDocuments(Document& aDoc, void* aData) {
+static CallState CountFullscreenSubDocuments(Document& aDoc, void* aData) {
   if (aDoc.FullscreenStackTop()) {
     uint32_t* count = static_cast<uint32_t*>(aData);
     (*count)++;
   }
-  return true;
+  return CallState::Continue;
 }
 
 static uint32_t CountFullscreenSubDocuments(Document& aDoc) {
@@ -12850,14 +12998,19 @@ bool Document::IsFullscreenLeaf() {
   return CountFullscreenSubDocuments(*this) == 0;
 }
 
-bool GetFullscreenLeaf(Document& aDoc, void* aData) {
+static bool GetFullscreenLeaf(Document& aDoc, void* aData) {
   if (aDoc.IsFullscreenLeaf()) {
     Document** result = static_cast<Document**>(aData);
     *result = &aDoc;
     return false;
   }
   if (aDoc.FullscreenStackTop()) {
-    aDoc.EnumerateSubDocuments(GetFullscreenLeaf, aData);
+    aDoc.EnumerateSubDocuments(
+        [](Document& aDocument, void* aData) {
+          return GetFullscreenLeaf(aDocument, aData) ? CallState::Continue
+                                                     : CallState::Stop;
+        },
+        aData);
   }
   return true;
 }
@@ -12880,7 +13033,7 @@ static Document* GetFullscreenLeaf(Document* aDoc) {
   return leaf;
 }
 
-static bool ResetFullscreen(Document& aDocument, void* aData) {
+static CallState ResetFullscreen(Document& aDocument, void* aData) {
   if (Element* fsElement = aDocument.FullscreenStackTop()) {
     NS_ASSERTION(CountFullscreenSubDocuments(aDocument) <= 1,
                  "Should have at most 1 fullscreen subdocument.");
@@ -12889,7 +13042,7 @@ static bool ResetFullscreen(Document& aDocument, void* aData) {
     DispatchFullscreenChange(aDocument, fsElement);
     aDocument.EnumerateSubDocuments(ResetFullscreen, nullptr);
   }
-  return true;
+  return CallState::Continue;
 }
 
 // Since Document::ExitFullscreenInDocTree() could be called from
@@ -14360,9 +14513,9 @@ void Document::ReportUseCounters() {
       doc->ReportUseCounters();
     }
     EnumerateExternalResources(
-        [](Document& aDoc, void*) -> bool {
+        [](Document& aDoc, void*) -> CallState {
           aDoc.ReportUseCounters();
-          return true;
+          return CallState::Continue;
         },
         nullptr);
   }
@@ -14519,9 +14672,10 @@ void Document::NotifyIntersectionObservers() {
   }
 }
 
-static bool NotifyLayerManagerRecreatedCallback(Document& aDocument, void*) {
+static CallState NotifyLayerManagerRecreatedCallback(Document& aDocument,
+                                                     void*) {
   aDocument.NotifyLayerManagerRecreated();
-  return true;
+  return CallState::Continue;
 }
 
 void Document::NotifyLayerManagerRecreated() {
@@ -14611,7 +14765,8 @@ already_AddRefed<Element> Document::CreateHTMLElement(nsAtom* aTag) {
   return element.forget();
 }
 
-bool MarkDocumentTreeToBeInSyncOperation(Document& aDoc, void* aData) {
+static CallState MarkDocumentTreeToBeInSyncOperation(Document& aDoc,
+                                                     void* aData) {
   auto* documents = static_cast<nsTArray<nsCOMPtr<Document>>*>(aData);
   aDoc.SetIsInSyncOperation(true);
   if (nsCOMPtr<nsPIDOMWindowInner> window = aDoc.GetInnerWindow()) {
@@ -14619,7 +14774,7 @@ bool MarkDocumentTreeToBeInSyncOperation(Document& aDoc, void* aData) {
   }
   documents->AppendElement(&aDoc);
   aDoc.EnumerateSubDocuments(MarkDocumentTreeToBeInSyncOperation, aData);
-  return true;
+  return CallState::Continue;
 }
 
 nsAutoSyncOperation::nsAutoSyncOperation(Document* aDoc) {
@@ -15161,20 +15316,13 @@ bool Document::IsThirdPartyForFlashClassifier() {
     return mIsThirdPartyForFlashClassifier.value();
   }
 
-  nsCOMPtr<nsIDocShellTreeItem> docshell = this->GetDocShell();
-  if (!docshell) {
+  BrowsingContext* browsingContext = this->GetBrowsingContext();
+  if (!browsingContext) {
     mIsThirdPartyForFlashClassifier.emplace(true);
     return mIsThirdPartyForFlashClassifier.value();
   }
 
-  nsCOMPtr<nsIDocShellTreeItem> parent;
-  nsresult rv = docshell->GetInProcessSameTypeParent(getter_AddRefs(parent));
-  MOZ_ASSERT(
-      NS_SUCCEEDED(rv),
-      "nsIDocShellTreeItem::GetInProcessSameTypeParent should never fail");
-  bool isTopLevel = !parent;
-
-  if (isTopLevel) {
+  if (browsingContext->IsTop()) {
     mIsThirdPartyForFlashClassifier.emplace(false);
     return mIsThirdPartyForFlashClassifier.value();
   }
@@ -15195,7 +15343,7 @@ bool Document::IsThirdPartyForFlashClassifier() {
   nsCOMPtr<nsIPrincipal> parentPrincipal = parentDocument->GetPrincipal();
 
   bool principalsMatch = false;
-  rv = principal->Equals(parentPrincipal, &principalsMatch);
+  nsresult rv = principal->Equals(parentPrincipal, &principalsMatch);
 
   if (NS_WARN_IF(NS_FAILED(rv))) {
     // Failure
@@ -15434,12 +15582,6 @@ already_AddRefed<Promise> Document::RequestStorageAccess(ErrorResult& aRv) {
                       Telemetry::LABELS_STORAGE_ACCESS_API_UI::Allow);
                   p->Resolve(AntiTrackingCommon::eAllow, __func__);
                 },
-                // Allow on any site
-                [p] {
-                  Telemetry::AccumulateCategorical(
-                      Telemetry::LABELS_STORAGE_ACCESS_API_UI::AllowOnAnySite);
-                  p->Resolve(AntiTrackingCommon::eAllowOnAnySite, __func__);
-                },
                 // Block
                 [p] {
                   Telemetry::AccumulateCategorical(
@@ -15449,17 +15591,6 @@ already_AddRefed<Promise> Document::RequestStorageAccess(ErrorResult& aRv) {
 
         typedef ContentPermissionRequestBase::PromptResult PromptResult;
         PromptResult pr = sapr->CheckPromptPrefs();
-        bool onAnySite = false;
-        if (pr == PromptResult::Pending) {
-          // Also check our custom pref for the "Allow on any site" case
-          if (Preferences::GetBool("dom.storage_access.prompt.testing",
-                                   false) &&
-              Preferences::GetBool(
-                  "dom.storage_access.prompt.testing.allowonanysite", false)) {
-            pr = PromptResult::Granted;
-            onAnySite = true;
-          }
-        }
 
         if (pr == PromptResult::Pending) {
           // We're about to show a prompt, record the request attempt
@@ -15469,7 +15600,7 @@ already_AddRefed<Promise> Document::RequestStorageAccess(ErrorResult& aRv) {
 
         self->AutomaticStorageAccessCanBeGranted()->Then(
             GetCurrentThreadSerialEventTarget(), __func__,
-            [p, pr, sapr, inner, onAnySite](
+            [p, pr, sapr, inner](
                 const AutomaticStorageAccessGrantPromise::ResolveOrRejectValue&
                     aValue) -> void {
               // Make a copy because we can't modified copy-captured lambda
@@ -15496,9 +15627,7 @@ already_AddRefed<Promise> Document::RequestStorageAccess(ErrorResult& aRv) {
                 if (pr2 == PromptResult::Granted) {
                   AntiTrackingCommon::StorageAccessPromptChoices choice =
                       AntiTrackingCommon::eAllow;
-                  if (onAnySite) {
-                    choice = AntiTrackingCommon::eAllowOnAnySite;
-                  } else if (autoGrant) {
+                  if (autoGrant) {
                     choice = AntiTrackingCommon::eAllowAutoGrant;
                   }
                   if (!autoGrant) {
