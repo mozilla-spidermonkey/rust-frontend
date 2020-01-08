@@ -39,10 +39,21 @@ impl<T> CVec<T> {
 
 #[repr(C)]
 pub struct JsparagusResult {
+    unimplemented: bool,
+    error: CVec<u8>,
     bytecode: CVec<u8>,
     strings: CVec<CVec<u8>>,
-    error: CVec<u8>,
-    unimplemented: bool,
+
+    /// Maximum stack depth before any instruction.
+    ///
+    /// This value is a function of `bytecode`: there's only one correct value
+    /// for a given script.
+    maximum_stack_depth: u32,
+
+    /// Number of instructions in this script that have IC entries.
+    ///
+    /// A function of `bytecode`. See `JOF_IC`.
+    num_ic_entries: u32,
 }
 
 enum JsparagusError {
@@ -55,6 +66,8 @@ pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize) -> Jspa
     let text = str::from_utf8(slice::from_raw_parts(text, text_len)).expect("Invalid UTF8");
     match jsparagus(text) {
         Ok(mut result) => JsparagusResult {
+            unimplemented: false,
+            error: CVec::empty(),
             bytecode: CVec::from(result.bytecode),
             strings: CVec::from(
                 result
@@ -63,20 +76,24 @@ pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize) -> Jspa
                     .map(|s| CVec::from(s.into_bytes()))
                     .collect(),
             ),
-            error: CVec::empty(),
-            unimplemented: false,
+            maximum_stack_depth: result.maximum_stack_depth,
+            num_ic_entries: result.num_ic_entries,
         },
         Err(JsparagusError::GenericError(message)) => JsparagusResult {
+            unimplemented: false,
+            error: CVec::from(format!("{}\0", message).into_bytes()),
             bytecode: CVec::empty(),
             strings: CVec::empty(),
-            error: CVec::from(format!("{}\0", message).into_bytes()),
-            unimplemented: false,
+            maximum_stack_depth: 0,
+            num_ic_entries: 0,
         },
         Err(JsparagusError::NotImplemented) => JsparagusResult {
+            unimplemented: true,
+            error: CVec::empty(),
             bytecode: CVec::empty(),
             strings: CVec::empty(),
-            error: CVec::empty(),
-            unimplemented: true,
+            maximum_stack_depth: 0,
+            num_ic_entries: 0,
         },
     }
 }

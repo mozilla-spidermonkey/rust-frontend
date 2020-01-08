@@ -74,16 +74,19 @@ bool Jsparagus::initScript(JSContext* cx, JS::Handle<JSScript*> script,
                                          numTryNotes)) {
     return false;
   }
+  js::ImmutableScriptData* data = script->immutableScriptData();
 
-  jsbytecode* code = script->immutableScriptData()->code();
-  for (size_t i = 0; i < codeLength; i++) {
-    code[i] = jsparagus.bytecode.data[i];
-  }
+  // Initialize POD fields
+  data->mainOffset = 0;
+  data->nfixed = 0;
+  data->nslots = data->nfixed + jsparagus.maximum_stack_depth;
+  data->bodyScopeIndex = 0;
+  data->numICEntries = jsparagus.num_ic_entries;
+  data->numBytecodeTypeSets = 0;
 
-  jssrcnote* notes = script->immutableScriptData()->notes();
-  for (size_t i = 0; i < noteLength; i++) {
-    notes[i] = SRC_NULL;
-  }
+  // Initialize trailing arrays
+  std::copy_n(jsparagus.bytecode.data, codeLength, data->code());
+  std::fill_n(data->notes(), noteLength, SRC_NULL);
 
   return script->shareScriptData(cx);
 }
