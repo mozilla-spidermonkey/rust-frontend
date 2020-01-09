@@ -13,6 +13,7 @@
 #include "base/task.h"           // for NewRunnableMethod, etc
 #include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/dom/TabGroup.h"
+#include "mozilla/dom/WebGLChild.h"
 #include "mozilla/layers/CompositorManagerChild.h"
 #include "mozilla/layers/ImageBridgeChild.h"
 #include "mozilla/layers/APZChild.h"
@@ -1059,6 +1060,8 @@ bool CompositorBridgeChild::DeallocPAPZCTreeManagerChild(
   child->ReleaseIPDLReference();
   return true;
 }
+
+// -
 
 void CompositorBridgeChild::WillEndTransaction() { ResetShmemCounter(); }
 

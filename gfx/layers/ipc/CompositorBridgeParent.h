@@ -15,10 +15,11 @@
 //       which the deadline will be 15ms + throttle threshold
 //#define COMPOSITOR_PERFORMANCE_WARNING
 
-#include <stdint.h>              // for uint64_t
-#include "Layers.h"              // for Layer
-#include "mozilla/Assertions.h"  // for MOZ_ASSERT_HELPER2
-#include "mozilla/Attributes.h"  // for override
+#include <stdint.h>                   // for uint64_t
+#include "Layers.h"                   // for Layer
+#include "mozilla/Assertions.h"       // for MOZ_ASSERT_HELPER2
+#include "mozilla/Attributes.h"       // for override
+#include "mozilla/GfxMessageUtils.h"  // for WebGLVersion
 #include "mozilla/Maybe.h"
 #include "mozilla/Monitor.h"    // for Monitor
 #include "mozilla/RefPtr.h"     // for RefPtr
@@ -53,10 +54,10 @@ namespace mozilla {
 
 class CancelableRunnable;
 
-namespace webgpu {
-class PWebGPUParent;
-class WebGPUParent;
-}  // namespace webgpu
+namespace dom {
+class HostWebGLCommandSink;
+class WebGLParent;
+}  // namespace dom
 
 namespace gfx {
 class DrawTarget;
@@ -70,6 +71,11 @@ class Shmem;
 class ProtocolFuzzerHelper;
 #endif
 }  // namespace ipc
+
+namespace webgpu {
+class PWebGPUParent;
+class WebGPUParent;
+}  // namespace webgpu
 
 namespace layers {
 
@@ -296,6 +302,9 @@ class CompositorBridgeParentBase : public PCompositorBridgeParent,
       DxgiAdapterDesc* desc) {
     return IPC_FAIL_NO_REASON(this);
   }
+
+  virtual already_AddRefed<PWebGLParent> AllocPWebGLParent(
+      const webgl::InitContextDesc&, webgl::InitContextResult* out) = 0;
 
   bool mCanSend;
 
@@ -683,8 +692,14 @@ class CompositorBridgeParent final : public CompositorBridgeParentBase,
 #endif  // defined(MOZ_WIDGET_ANDROID)
 
   WebRenderBridgeParent* GetWrBridge() { return mWrBridge; }
-
   webgpu::WebGPUParent* GetWebGPUBridge() { return mWebGPUBridge; }
+
+  already_AddRefed<PWebGLParent> AllocPWebGLParent(
+      const webgl::InitContextDesc&, webgl::InitContextResult*) override {
+    MOZ_ASSERT_UNREACHABLE(
+        "This message is CrossProcessCompositorBridgeParent only");
+    return nullptr;
+  }
 
  private:
   void Initialize();

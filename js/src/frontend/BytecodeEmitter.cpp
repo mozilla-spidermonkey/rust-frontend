@@ -4382,193 +4382,55 @@ bool BytecodeEmitter::emitAssignmentOrInit(ParseNodeKind kind, ParseNode* lhs,
   return true;
 }
 
-bool ParseNode::getConstantValue(JSContext* cx,
-                                 AllowConstantObjects allowObjects,
-                                 MutableHandleValue vp, Value* compare,
-                                 size_t ncompare, NewObjectKind newKind) {
-  MOZ_ASSERT(newKind == TenuredObject || newKind == SingletonObject);
+ArrayObject* CallSiteNode::getArrayValue(JSContext* cx, ListNode* cookedOrRaw) {
+  uint32_t count = cookedOrRaw->count();
+  ParseNode* pn = cookedOrRaw->head();
 
-  switch (getKind()) {
-    case ParseNodeKind::NumberExpr:
-      vp.setNumber(as<NumericLiteral>().value());
-      return true;
-    case ParseNodeKind::BigIntExpr:
-      vp.setBigInt(as<BigIntLiteral>().value());
-      return true;
-    case ParseNodeKind::TemplateStringExpr:
-    case ParseNodeKind::StringExpr:
-      vp.setString(as<NameNode>().atom());
-      return true;
-    case ParseNodeKind::TrueExpr:
-      vp.setBoolean(true);
-      return true;
-    case ParseNodeKind::FalseExpr:
-      vp.setBoolean(false);
-      return true;
-    case ParseNodeKind::NullExpr:
-      vp.setNull();
-      return true;
-    case ParseNodeKind::RawUndefinedExpr:
-      vp.setUndefined();
-      return true;
-    case ParseNodeKind::CallSiteObj:
-    case ParseNodeKind::ArrayExpr: {
-      unsigned count;
-      ParseNode* pn;
+  // The first element of a call-site node is the raw-values list. Skip over it.
+  if (cookedOrRaw->isKind(ParseNodeKind::CallSiteObj)) {
+    MOZ_ASSERT(pn->isKind(ParseNodeKind::ArrayExpr));
+    pn = pn->pn_next;
+    count--;
+  } else {
+    MOZ_ASSERT(cookedOrRaw->isKind(ParseNodeKind::ArrayExpr));
+  }
 
-      if (allowObjects == DontAllowObjects) {
-        vp.setMagic(JS_GENERIC_MAGIC);
-        return true;
-      }
-
-      ObjectGroup::NewArrayKind arrayKind = ObjectGroup::NewArrayKind::Normal;
-      if (allowObjects == ForCopyOnWriteArray) {
-        arrayKind = ObjectGroup::NewArrayKind::CopyOnWrite;
-        allowObjects = DontAllowObjects;
-      }
-
-      if (getKind() == ParseNodeKind::CallSiteObj) {
-        count = as<CallSiteNode>().count() - 1;
-        pn = as<CallSiteNode>().head()->pn_next;
-      } else {
-        MOZ_ASSERT(!as<ListNode>().hasNonConstInitializer());
-        count = as<ListNode>().count();
-        pn = as<ListNode>().head();
-      }
-
-      RootedValueVector values(cx);
-      if (!values.appendN(MagicValue(JS_ELEMENTS_HOLE), count)) {
-        return false;
-      }
-      size_t idx;
-      for (idx = 0; pn; idx++, pn = pn->pn_next) {
-        if (!pn->getConstantValue(cx, allowObjects, values[idx], values.begin(),
-                                  idx)) {
-          return false;
-        }
-        if (values[idx].isMagic(JS_GENERIC_MAGIC)) {
-          vp.setMagic(JS_GENERIC_MAGIC);
-          return true;
-        }
-      }
-      MOZ_ASSERT(idx == count);
-
-      ArrayObject* obj = ObjectGroup::newArrayObject(
-          cx, values.begin(), values.length(), newKind, arrayKind);
-      if (!obj) {
-        return false;
-      }
-
-      if (!CombineArrayElementTypes(cx, obj, compare, ncompare)) {
-        return false;
-      }
-
-      vp.setObject(*obj);
-      return true;
+  RootedValueVector values(cx);
+  if (!values.appendN(MagicValue(JS_ELEMENTS_HOLE), count)) {
+    return nullptr;
+  }
+  size_t idx;
+  for (idx = 0; pn; idx++, pn = pn->pn_next) {
+    if (pn->isKind(ParseNodeKind::TemplateStringExpr)) {
+      values[idx].setString(pn->as<NameNode>().atom());
+    } else {
+      MOZ_ASSERT(pn->isKind(ParseNodeKind::RawUndefinedExpr));
+      values[idx].setUndefined();
     }
-    case ParseNodeKind::ObjectExpr: {
-      MOZ_ASSERT(!as<ListNode>().hasNonConstInitializer());
-
-      if (allowObjects == DontAllowObjects) {
-        vp.setMagic(JS_GENERIC_MAGIC);
-        return true;
-      }
-      MOZ_ASSERT(allowObjects == AllowObjects);
-
-      Rooted<IdValueVector> properties(cx, IdValueVector(cx));
-
-      RootedValue value(cx), idvalue(cx);
-      for (ParseNode* item : as<ListNode>().contents()) {
-        // MutateProto and Spread, both are unary, cannot appear here.
-        BinaryNode* prop = &item->as<BinaryNode>();
-        if (!prop->right()->getConstantValue(cx, allowObjects, &value)) {
-          return false;
-        }
-        if (value.isMagic(JS_GENERIC_MAGIC)) {
-          vp.setMagic(JS_GENERIC_MAGIC);
-          return true;
-        }
-
-        ParseNode* key = prop->left();
-        if (key->isKind(ParseNodeKind::NumberExpr)) {
-          idvalue = NumberValue(key->as<NumericLiteral>().value());
-        } else {
-          MOZ_ASSERT(key->isKind(ParseNodeKind::ObjectPropertyName) ||
-                     key->isKind(ParseNodeKind::StringExpr));
-          MOZ_ASSERT(key->as<NameNode>().atom() != cx->names().proto);
-          idvalue = StringValue(key->as<NameNode>().atom());
-        }
-
-        RootedId id(cx);
-        if (!ValueToId<CanGC>(cx, idvalue, &id)) {
-          return false;
-        }
-
-        if (!properties.append(IdValuePair(id, value))) {
-          return false;
-        }
-      }
-
-      JSObject* obj = ObjectGroup::newPlainObject(cx, properties.begin(),
-                                                  properties.length(), newKind);
-      if (!obj) {
-        return false;
-      }
-
-      if (!CombinePlainObjectPropertyTypes(cx, obj, compare, ncompare)) {
-        return false;
-      }
-
-      vp.setObject(*obj);
-      return true;
-    }
-    default:
-      MOZ_CRASH("Unexpected node");
   }
-  return false;
-}
+  MOZ_ASSERT(idx == count);
 
-bool BytecodeEmitter::emitSingletonInitialiser(ListNode* objOrArray) {
-  NewObjectKind newKind = (objOrArray->getKind() == ParseNodeKind::ObjectExpr)
-                              ? SingletonObject
-                              : TenuredObject;
-
-  RootedValue value(cx);
-  if (!objOrArray->getConstantValue(cx, ParseNode::AllowObjects, &value,
-                                    nullptr, 0, newKind)) {
-    return false;
-  }
-
-  MOZ_ASSERT_IF(newKind == SingletonObject, value.toObject().isSingleton());
-
-  ObjectBox* objbox = parser->newObjectBox(&value.toObject());
-  if (!objbox) {
-    return false;
-  }
-
-  return emitObjectOp(objbox, JSOP_OBJECT);
+  return ObjectGroup::newArrayObject(cx, values.begin(), values.length(),
+                                     TenuredObject);
 }
 
 bool BytecodeEmitter::emitCallSiteObject(CallSiteNode* callSiteObj) {
-  RootedValue value(cx);
-  if (!callSiteObj->getConstantValue(cx, ParseNode::AllowObjects, &value)) {
+  ArrayObject* cookedValues = callSiteObj->getCookedArrayValue(cx);
+  if (!cookedValues) {
     return false;
   }
 
-  MOZ_ASSERT(value.isObject());
-
-  ObjectBox* objbox1 = parser->newObjectBox(&value.toObject());
+  ObjectBox* objbox1 = parser->newObjectBox(cookedValues);
   if (!objbox1) {
     return false;
   }
 
-  if (!callSiteObj->getRawArrayValue(cx, &value)) {
+  ArrayObject* rawValues = callSiteObj->getRawArrayValue(cx);
+  if (!rawValues) {
     return false;
   }
 
-  MOZ_ASSERT(value.isObject());
-
-  ObjectBox* objbox2 = parser->newObjectBox(&value.toObject());
+  ObjectBox* objbox2 = parser->newObjectBox(rawValues);
   if (!objbox2) {
     return false;
   }

@@ -57,7 +57,6 @@ using JS::MapTypeToTraceKind;
 
 using mozilla::DebugOnly;
 using mozilla::IntegerRange;
-using mozilla::IsBaseOf;
 using mozilla::IsSame;
 using mozilla::PodCopy;
 
@@ -3610,9 +3609,9 @@ static inline bool ShouldCheckMarkState(JSRuntime* rt, T** thingp) {
 
 template <typename T>
 struct MightBeNurseryAllocated {
-  static const bool value = mozilla::IsBaseOf<JSObject, T>::value ||
-                            mozilla::IsBaseOf<JSString, T>::value ||
-                            mozilla::IsBaseOf<JS::BigInt, T>::value;
+  static const bool value = std::is_base_of<JSObject, T>::value ||
+                            std::is_base_of<JSString, T>::value ||
+                            std::is_base_of<JS::BigInt, T>::value;
 };
 
 template <typename T>

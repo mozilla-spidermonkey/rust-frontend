@@ -99,8 +99,22 @@ class PromiseObject : public NativeObject {
 
   static PromiseObject* createSkippingExecutor(JSContext* cx);
 
+  // Create an instance of the original Promise binding, rejected with the given
+  // value.
+  static PromiseObject* unforgeableReject(JSContext* cx, HandleValue value);
+
+  // Create an instance of the original Promise binding, resolved with the given
+  // value.
+  //
+  // However, if |value| is itself a promise -- including from another realm --
+  // |value| itself will in some circumstances be returned.  This sadly means
+  // this function must return |JSObject*| and can't return |PromiseObject*|.
   static JSObject* unforgeableResolve(JSContext* cx, HandleValue value);
-  static JSObject* unforgeableReject(JSContext* cx, HandleValue value);
+
+  // Create an instance of the original Promise binding, rejected with the given
+  // value.
+  static PromiseObject* unforgeableResolveWithNonPromise(JSContext* cx,
+                                                         HandleValue value);
 
   int32_t flags() { return getFixedSlot(PromiseSlot_Flags).toInt32(); }
   void setHandled() {
@@ -239,6 +253,25 @@ MOZ_MUST_USE bool OriginalPromiseThen(JSContext* cx, HandleObject promiseObj,
                                       HandleValue onRejected,
                                       MutableHandleObject dependent,
                                       CreateDependentPromise createDependent);
+
+/**
+ * React to[0] `unwrappedPromise` (which may not be from the current realm)
+ * using the provided fulfill/reject functions, as though by calling the
+ * original value of `Promise.prototype.then`.
+ *
+ * However, no dependent Promise will be created, and mucking with `Promise` and
+ * `Promise[Symbol.species]` will not alter this function's behavior.
+ *
+ * Note: Reactions pushed using this function contain a null `promise` field.
+ * That field is only ever used by devtools, which have to treat these reactions
+ * specially.
+ *
+ * 0. The sense of "react" here is the sense of the term as defined by Web IDL:
+ *    https://heycam.github.io/webidl/#dfn-perform-steps-once-promise-is-settled
+ */
+extern MOZ_MUST_USE bool ReactIgnoringUnhandledRejection(
+    JSContext* cx, Handle<PromiseObject*> unwrappedPromise,
+    HandleObject onFulfilled_, HandleObject onRejected_);
 
 /**
  * PromiseResolve ( C, x )

@@ -30,6 +30,7 @@ linux1804-64/opt:
         - awsy
         - desktop-screenshot-capture
         - linux1804-tests
+        - mochitest-headless
 
 linux1804-64/debug:
     build-platform: linux64/debug
@@ -43,6 +44,8 @@ linux1804-64-shippable/opt:
         - desktop-screenshot-capture
         - linux1804-tests
         - marionette-headless
+        - mochitest-headless
+        - web-platform-tests-wdspec-headless
 
 linux1804-64-devedition/opt:
     build-platform: linux64-devedition-nightly/opt
@@ -79,16 +82,18 @@ linux1804-64-qr/debug:
     test-sets:
         - linux1804-qr-tests
 
-linux1804-64-asan-qr/opt:
-    build-platform: linux64-asan/opt
-    test-sets:
-        - linux-qr-smoketests
+# Disabled temporarily due to Bug 1602863
+# linux1804-64-asan-qr/opt:
+#     build-platform: linux64-asan/opt
+#     test-sets:
+#         - linux-qr-smoketests
 
-linux1804-64-ccov/opt:
-    build-platform: linux64-ccov/opt
-    test-sets:
-        - awsy
-        - linux1804-tests
+# Temporarily disabled as ccov still runs on ubuntu1604, Bug 1606861
+# linux1804-64-ccov/opt:
+#     build-platform: linux64-ccov/opt
+#     test-sets:
+#         - awsy
+#         - linux1804-tests
 
 linux64/debug:
     build-platform: linux64/debug
@@ -103,7 +108,6 @@ linux64/opt:
         - web-platform-tests
         - opt-only-tests
         - talos
-        - mochitest-headless
         - linux-talos-flex
         - raptor-firefox
         - browsertime
@@ -114,10 +118,8 @@ linux64-shippable/opt:
     test-sets:
         - linux-common-tests
         - web-platform-tests
-        - web-platform-tests-wdspec-headless
         - opt-only-tests
         - talos
-        - mochitest-headless
         - linux-talos-flex
         - raptor-chrome
         - raptor-chromium

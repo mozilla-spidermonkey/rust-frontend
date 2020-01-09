@@ -707,7 +707,8 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_7___default.a.PureCompo
     } = App;
     const prefs = props.Prefs.values;
     const isDiscoveryStream = props.DiscoveryStream.config && props.DiscoveryStream.config.enabled;
-    let filteredSections = props.Sections; // Filter out highlights for DS
+    let filteredSections = props.Sections;
+    const pocketEnabled = prefs["feeds.section.topstories"]; // Filter out highlights for DS
 
     if (isDiscoveryStream) {
       filteredSections = filteredSections.filter(section => section.id !== "highlights");
@@ -715,7 +716,7 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_7___default.a.PureCompo
 
     const noSectionsEnabled = !prefs["feeds.topsites"] && filteredSections.filter(section => section.enabled).length === 0;
     const searchHandoffEnabled = prefs["improvesearch.handoffToAwesomebar"];
-    const outerClassName = ["outer-wrapper", isDiscoveryStream && "ds-outer-wrapper-search-alignment", isDiscoveryStream && "ds-outer-wrapper-breakpoint-override", prefs.showSearch && this.state.fixedSearch && !noSectionsEnabled && "fixed-search", prefs.showSearch && noSectionsEnabled && "only-search"].filter(v => v).join(" ");
+    const outerClassName = ["outer-wrapper", isDiscoveryStream && pocketEnabled && "ds-outer-wrapper-search-alignment", isDiscoveryStream && "ds-outer-wrapper-breakpoint-override", prefs.showSearch && this.state.fixedSearch && !noSectionsEnabled && "fixed-search", prefs.showSearch && noSectionsEnabled && "only-search"].filter(v => v).join(" ");
     return react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("div", null, react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("div", {
       className: outerClassName
     }, react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("main", null, prefs.showSearch && react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement("div", {
@@ -6988,12 +6989,12 @@ class DSPrivacyModal extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureCo
     }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("h3", {
       "data-l10n-id": "newtab-privacy-modal-header"
     }), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("p", {
-      "data-l10n-id": "newtab-privacy-modal-paragraph"
+      "data-l10n-id": "newtab-privacy-modal-paragraph-2"
     }), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("a", {
       className: "modal-link modal-link-privacy",
       "data-l10n-id": "newtab-privacy-modal-link",
       onClick: this.onLearnLinkClick,
-      href: "https://www.mozilla.org/en-US/privacy/firefox/"
+      href: "https://help.getpocket.com/article/1142-firefox-new-tab-recommendations-faq"
     }), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("button", {
       className: "modal-link modal-link-manage",
       onClick: this.onManageLinkClick

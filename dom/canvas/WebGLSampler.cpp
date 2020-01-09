@@ -12,27 +12,15 @@
 namespace mozilla {
 
 WebGLSampler::WebGLSampler(WebGLContext* const webgl)
-    : WebGLRefCountedObject(webgl), mGLName([&]() {
+    : WebGLContextBoundObject(webgl), mGLName([&]() {
         GLuint ret = 0;
         webgl->gl->fGenSamplers(1, &ret);
         return ret;
-      }()) {
-  mContext->mSamplers.insertBack(this);
-}
+      }()) {}
 
-WebGLSampler::~WebGLSampler() { DeleteOnce(); }
-
-void WebGLSampler::Delete() {
+WebGLSampler::~WebGLSampler() {
+  if (!mContext) return;
   mContext->gl->fDeleteSamplers(1, &mGLName);
-
-  removeFrom(mContext->mSamplers);
-}
-
-WebGLContext* WebGLSampler::GetParentObject() const { return mContext; }
-
-JSObject* WebGLSampler::WrapObject(JSContext* cx,
-                                   JS::Handle<JSObject*> givenProto) {
-  return dom::WebGLSampler_Binding::Wrap(cx, this, givenProto);
 }
 
 static bool ValidateSamplerParameterParams(WebGLContext* webgl, GLenum pname,
@@ -163,11 +151,5 @@ void WebGLSampler::SamplerParameter(GLenum pname, const FloatOrInt& param) {
     mContext->gl->fSamplerParameteri(mGLName, pname, param.i);
   }
 }
-
-////
-
-NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_0(WebGLSampler)
-NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(WebGLSampler, AddRef)
-NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(WebGLSampler, Release)
 
 }  // namespace mozilla

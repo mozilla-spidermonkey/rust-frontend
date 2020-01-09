@@ -42,6 +42,9 @@
 //   garbage-collected.
 
 namespace js {
+
+class ArrayObject;
+
 namespace frontend {
 
 class ParseContext;
@@ -739,18 +742,6 @@ class ParseNode {
   // True iff this is a for-in/of loop variable declaration (var/let/const).
   inline bool isForLoopDeclaration() const;
 
-  enum AllowConstantObjects {
-    DontAllowObjects = 0,
-    AllowObjects,
-    ForCopyOnWriteArray
-  };
-
-  MOZ_MUST_USE bool getConstantValue(JSContext* cx,
-                                     AllowConstantObjects allowObjects,
-                                     MutableHandleValue vp,
-                                     Value* compare = nullptr,
-                                     size_t ncompare = 0,
-                                     NewObjectKind newKind = TenuredObject);
   inline bool isConstant();
 
   template <class NodeType>
@@ -1949,6 +1940,8 @@ class PropertyByValue : public BinaryNode {
  * TaggedTemplate.
  */
 class CallSiteNode : public ListNode {
+  MOZ_MUST_USE ArrayObject* getArrayValue(JSContext* cx, ListNode* cookedOrRaw);
+
  public:
   explicit CallSiteNode(uint32_t begin)
       : ListNode(ParseNodeKind::CallSiteObj, TokenPos(begin, begin + 1)) {}
@@ -1959,8 +1952,12 @@ class CallSiteNode : public ListNode {
     return match;
   }
 
-  MOZ_MUST_USE bool getRawArrayValue(JSContext* cx, MutableHandleValue vp) {
-    return head()->getConstantValue(cx, AllowObjects, vp);
+  MOZ_MUST_USE ArrayObject* getCookedArrayValue(JSContext* cx) {
+    return getArrayValue(cx, this);
+  }
+
+  MOZ_MUST_USE ArrayObject* getRawArrayValue(JSContext* cx) {
+    return getArrayValue(cx, rawNodes());
   }
 
   ListNode* rawNodes() const {

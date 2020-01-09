@@ -33,7 +33,7 @@
 #include "vm/Realm.h"         // JS::Realm
 #include "vm/StringType.h"    // js::PropertyName
 
-#include "builtin/streams/MiscellaneousOperations-inl.h"  // js::{Reject,Resolve}UnwrappedPromiseWithUndefined, js::SetPromiseIsHandled
+#include "builtin/streams/MiscellaneousOperations-inl.h"  // js::{Reject,Resolve}UnwrappedPromiseWithUndefined, js::SetSettledPromiseIsHandled
 #include "builtin/streams/ReadableStreamReader-inl.h"  // js::js::UnwrapReaderFromStream{,NoThrow}
 #include "vm/Compartment-inl.h"                        // JS::Compartment::wrap
 #include "vm/JSContext-inl.h"                          // JSContext::check
@@ -64,7 +64,7 @@ using JS::Value;
  * places as the standard, but the effect is the same. See the comment on
  * `ReadableStreamReader::forAuthorCode()`.
  */
-MOZ_MUST_USE JSObject* js::ReadableStreamAddReadOrReadIntoRequest(
+MOZ_MUST_USE js::PromiseObject* js::ReadableStreamAddReadOrReadIntoRequest(
     JSContext* cx, Handle<ReadableStream*> unwrappedStream) {
   // Step 1: Assert: ! IsReadableStream{BYOB,Default}Reader(stream.[[reader]])
   //         is true.
@@ -83,7 +83,7 @@ MOZ_MUST_USE JSObject* js::ReadableStreamAddReadOrReadIntoRequest(
                 unwrappedStream->readable());
 
   // Step 3: Let promise be a new promise.
-  Rooted<JSObject*> promise(cx, PromiseObject::createSkippingExecutor(cx));
+  Rooted<PromiseObject*> promise(cx, PromiseObject::createSkippingExecutor(cx));
   if (!promise) {
     return nullptr;
   }
@@ -127,7 +127,8 @@ MOZ_MUST_USE JSObject* js::ReadableStreamCancel(
   // Step 2: If stream.[[state]] is "closed", return a new promise resolved
   //         with undefined.
   if (unwrappedStream->closed()) {
-    return PromiseObject::unforgeableResolve(cx, UndefinedHandleValue);
+    return PromiseObject::unforgeableResolveWithNonPromise(
+        cx, UndefinedHandleValue);
   }
 
   // Step 3: If stream.[[state]] is "errored", return a new promise rejected
@@ -353,7 +354,7 @@ MOZ_MUST_USE bool js::ReadableStreamErrorInternal(
   // 3.8.5 ReadableStreamReaderGenericRelease step 6 sets
   // stream.[[reader]] to undefined.
   Rooted<JSObject*> closedPromise(cx, unwrappedReader->closedPromise());
-  SetPromiseIsHandled(cx, closedPromise.as<PromiseObject>());
+  SetSettledPromiseIsHandled(cx, closedPromise.as<PromiseObject>());
 
   if (unwrappedStream->mode() == JS::ReadableStreamMode::ExternalSource) {
     // Make sure we're in the stream's compartment.

@@ -393,7 +393,8 @@ MOZ_MUST_USE JSObject* js::ReadableStreamControllerCancelSteps(
                                         unwrappedController->cancelMethod());
     if (unwrappedCancelMethod.isUndefined()) {
       // CreateAlgorithmFromUnderlyingMethod step 7.
-      result = PromiseObject::unforgeableResolve(cx, UndefinedHandleValue);
+      result = PromiseObject::unforgeableResolveWithNonPromise(
+          cx, UndefinedHandleValue);
     } else {
       // CreateAlgorithmFromUnderlyingMethod steps 6.c.i-ii.
       {
@@ -494,7 +495,7 @@ JSObject* js::ReadableStreamDefaultControllerPullSteps(
 
   // Step 3: Let pendingPromise be
   //         ! ReadableStreamAddReadRequest(stream, forAuthorCode).
-  Rooted<JSObject*> pendingPromise(
+  Rooted<PromiseObject*> pendingPromise(
       cx, ReadableStreamAddReadOrReadIntoRequest(cx, unwrappedStream));
   if (!pendingPromise) {
     return nullptr;
