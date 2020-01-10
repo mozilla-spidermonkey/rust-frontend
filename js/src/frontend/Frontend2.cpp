@@ -6,10 +6,13 @@
 
 #include "frontend/Frontend2.h"
 
+#include "mozilla/ScopeExit.h"
 #include "mozilla/Span.h"  // mozilla::Span
 
 #include <stddef.h>  // size_t
 #include <stdint.h>  // uint8_t, uint32_t
+
+#include "jsapi.h"
 
 #include "frontend-rs/frontend-rs.h"  // CVec, JsparagusResult, free_jsparagus, run_jsparagus
 #include "frontend/BytecodeCompilation.h"  // GlobalScriptInfo
@@ -115,6 +118,13 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
   JsparagusResult jsparagus = run_jsparagus(bytes, length);
   AutoFreeJsparagusResult afjr(&jsparagus);
 
+  if (jsparagus.error.data) {
+    *unimplemented = false;
+    JS_ReportErrorASCII(cx, "%s",
+                        reinterpret_cast<const char*>(jsparagus.error.data));
+    return nullptr;
+  }
+
   if (jsparagus.unimplemented) {
     *unimplemented = true;
     return nullptr;
@@ -156,6 +166,24 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
   }
 
   return script;
+}
+
+bool RustParseScript(JSContext* cx, const uint8_t* bytes, size_t length)
+{
+  if (test_parse_script(bytes, length)) {
+    return true;
+  }
+  JS_ReportErrorASCII(cx, "Rust parse script failed");
+  return false;
+}
+
+bool RustParseModule(JSContext* cx, const uint8_t* bytes, size_t length)
+{
+  if (test_parse_module(bytes, length)) {
+    return true;
+  }
+  JS_ReportErrorASCII(cx, "Rust parse module failed");
+  return false;
 }
 
 }  // namespace frontend

@@ -76,6 +76,7 @@
 #if defined(JS_BUILD_BINAST)
 #  include "frontend/BinASTParser.h"
 #endif  // defined(JS_BUILD_BINAST)
+#include "frontend/Frontend2.h"
 #include "frontend/ModuleSharedContext.h"
 #include "frontend/ParseInfo.h"
 #include "frontend/Parser.h"
@@ -5234,78 +5235,15 @@ static bool BinParse(JSContext* cx, unsigned argc, Value* vp) {
 
 #endif  // defined(JS_BUILD_BINAST)
 
-static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
+template <typename Unit>
+static bool FullParseTest(JSContext* cx, const JS::ReadOnlyCompileOptions& options,
+                          const Unit* units, size_t length, ParseInfo& parseInfo,
+                          ScriptSourceObject* sourceObject, js::frontend::ParseGoal goal) {
   using namespace js::frontend;
-
-  CallArgs args = CallArgsFromVp(argc, vp);
-
-  if (!args.requireAtLeast(cx, "parse", 1)) {
-    return false;
-  }
-  if (!args[0].isString()) {
-    const char* typeName = InformalValueTypeName(args[0]);
-    JS_ReportErrorASCII(cx, "expected string to parse, got %s", typeName);
-    return false;
-  }
-
-  frontend::ParseGoal goal = frontend::ParseGoal::Script;
-
-  if (args.length() >= 2) {
-    if (!args[1].isObject()) {
-      const char* typeName = InformalValueTypeName(args[1]);
-      JS_ReportErrorASCII(cx, "expected object (options) to parse, got %s",
-                          typeName);
-      return false;
-    }
-    RootedObject objOptions(cx, &args[1].toObject());
-
-    RootedValue optionModule(cx);
-    if (!JS_GetProperty(cx, objOptions, "module", &optionModule)) {
-      return false;
-    }
-
-    if (optionModule.isBoolean()) {
-      if (optionModule.toBoolean()) {
-        goal = frontend::ParseGoal::Module;
-      }
-    } else if (!optionModule.isUndefined()) {
-      const char* typeName = InformalValueTypeName(optionModule);
-      JS_ReportErrorASCII(cx, "option `module` should be a boolean, got %s",
-                          typeName);
-      return false;
-    }
-  }
-
-  JSString* scriptContents = args[0].toString();
-
-  AutoStableStringChars stableChars(cx);
-  if (!stableChars.initTwoByte(cx, scriptContents)) {
-    return false;
-  }
-
-  size_t length = scriptContents->length();
-  const char16_t* chars = stableChars.twoByteRange().begin().get();
-
-  CompileOptions options(cx);
-  options.setIntroductionType("js shell parse").setFileAndLine("<string>", 1);
-  if (goal == frontend::ParseGoal::Module) {
-    // See frontend::CompileModule.
-    options.setForceStrictMode();
-    options.allowHTMLComments = false;
-  }
-
-  LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  ParseInfo parseInfo(cx, allocScope);
-
-  RootedScriptSourceObject sourceObject(
-      cx, frontend::CreateScriptSourceObject(cx, options, Nothing()));
-  if (!sourceObject) {
-    return false;
-  }
-
-  Parser<FullParseHandler, char16_t> parser(
-      cx, options, chars, length,
-      /* foldConstants = */ false, parseInfo, nullptr, nullptr, sourceObject);
+  Parser<FullParseHandler, Unit> parser(cx, options, units, length,
+                                        /* foldConstants = */ false,
+                                        parseInfo, nullptr, nullptr,
+                                        sourceObject);
   if (!parser.checkOptions()) {
     return false;
   }
@@ -5335,6 +5273,125 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
   js::Fprinter out(stderr);
   DumpParseTree(pn, out);
 #endif
+  return true;
+}
+
+static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
+  using namespace js::frontend;
+
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (!args.requireAtLeast(cx, "parse", 1)) {
+    return false;
+  }
+  if (!args[0].isString()) {
+    const char* typeName = InformalValueTypeName(args[0]);
+    JS_ReportErrorASCII(cx, "expected string to parse, got %s", typeName);
+    return false;
+  }
+
+  frontend::ParseGoal goal = frontend::ParseGoal::Script;
+  bool rustFrontend = false;
+
+  if (args.length() >= 2) {
+    if (!args[1].isObject()) {
+      const char* typeName = InformalValueTypeName(args[1]);
+      JS_ReportErrorASCII(cx, "expected object (options) to parse, got %s",
+                          typeName);
+      return false;
+    }
+    RootedObject objOptions(cx, &args[1].toObject());
+
+    RootedValue optionModule(cx);
+    if (!JS_GetProperty(cx, objOptions, "module", &optionModule)) {
+      return false;
+    }
+
+    if (optionModule.isBoolean()) {
+      if (optionModule.toBoolean()) {
+        goal = frontend::ParseGoal::Module;
+      }
+    } else if (!optionModule.isUndefined()) {
+      const char* typeName = InformalValueTypeName(optionModule);
+      JS_ReportErrorASCII(cx, "option `module` should be a boolean, got %s",
+                          typeName);
+      return false;
+    }
+
+    RootedValue optionRustFrontend(cx);
+    if (!JS_GetProperty(cx, objOptions, "rustFrontend", &optionRustFrontend)) {
+      return false;
+    }
+
+    if (optionRustFrontend.isBoolean()) {
+      rustFrontend = optionRustFrontend.toBoolean();
+    } else if (!optionRustFrontend.isUndefined()) {
+      const char* typeName = InformalValueTypeName(optionRustFrontend);
+      JS_ReportErrorASCII(cx, "option `rustFrontend` should be a boolean, got %s",
+                          typeName);
+      return false;
+    }
+  }
+
+  JSString* scriptContents = args[0].toString();
+
+  AutoStableStringChars stableChars(cx);
+  if (!stableChars.init(cx, scriptContents)) {
+    return false;
+  }
+
+  size_t length = scriptContents->length();
+  if (rustFrontend) {
+    if (stableChars.isLatin1()) {
+      const Latin1Char* chars = stableChars.latin1Range().begin().get();
+      if (goal == frontend::ParseGoal::Script) {
+        if (!RustParseScript(cx, chars, length)) {
+          return false;
+        }
+      } else {
+        if (!RustParseModule(cx, chars, length)) {
+          return false;
+        }
+      }
+      args.rval().setUndefined();
+      return true;
+    }
+    JS_ReportErrorASCII(cx, "Rust parser does not support two-byte chars yet");
+    return false;
+  }
+
+  CompileOptions options(cx);
+  options.setIntroductionType("js shell parse").setFileAndLine("<string>", 1);
+  if (goal == frontend::ParseGoal::Module) {
+    // See frontend::CompileModule.
+    options.setForceStrictMode();
+    options.allowHTMLComments = false;
+  }
+
+  LifoAllocScope allocScope(&cx->tempLifoAlloc());
+  ParseInfo parseInfo(cx, allocScope);
+
+  RootedScriptSourceObject sourceObject(
+      cx, frontend::CreateScriptSourceObject(cx, options, Nothing()));
+  if (!sourceObject) {
+    return false;
+  }
+
+  if (stableChars.isLatin1()) {
+    const Latin1Char* chars_ = stableChars.latin1Range().begin().get();
+    auto chars = reinterpret_cast<const mozilla::Utf8Unit*>(chars_);
+    if (!FullParseTest<mozilla::Utf8Unit>(cx, options, chars, length,
+                                          parseInfo, sourceObject, goal)) {
+      return false;
+    }
+  } else {
+    MOZ_ASSERT(stableChars.isTwoByte());
+    const char16_t* chars = stableChars.twoByteRange().begin().get();
+    if (!FullParseTest<char16_t>(cx, options, chars, length,
+                                 parseInfo, sourceObject, goal)) {
+      return false;
+    }
+  }
   args.rval().setUndefined();
   return true;
 }

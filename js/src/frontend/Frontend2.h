@@ -40,6 +40,11 @@ class Jsparagus {
       ScriptSourceObject** sourceObjectOut, bool* unimplemented);
 };
 
+// Use the Rust frontend to parse and free the generated AST. Returns true if no
+// error were detected while parsing.
+MOZ_MUST_USE bool RustParseScript(JSContext* cx, const uint8_t* bytes, size_t length);
+MOZ_MUST_USE bool RustParseModule(JSContext* cx, const uint8_t* bytes, size_t length);
+
 }  // namespace frontend
 
 }  // namespace js
