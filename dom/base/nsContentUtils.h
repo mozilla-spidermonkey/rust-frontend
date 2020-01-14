@@ -395,11 +395,14 @@ class nsContentUtils {
                                          nsTArray<int32_t>* aAncestorOffsets);
 
   /**
-   * Returns the common ancestor, if any, for two nodes.
+   * Returns the closest common inclusive ancestor
+   * (https://dom.spec.whatwg.org/#concept-tree-inclusive-ancestor) , if any,
+   * for two nodes.
    *
    * Returns null if the nodes are disconnected.
    */
-  static nsINode* GetCommonAncestor(nsINode* aNode1, nsINode* aNode2) {
+  static nsINode* GetClosestCommonInclusiveAncestor(nsINode* aNode1,
+                                                    nsINode* aNode2) {
     if (aNode1 == aNode2) {
       return aNode1;
     }
@@ -1733,12 +1736,19 @@ class nsContentUtils {
    * @return NS_ERROR_DOM_INVALID_STATE_ERR if a re-entrant attempt to parse
    *         fragments is made, NS_ERROR_OUT_OF_MEMORY if aSourceBuffer is too
    *         long and NS_OK otherwise.
+   * @param aFlags defaults to -1 indicating that ParseFragmentHTML will do
+   *        default sanitization for system privileged calls to it. Only
+   *        ParserUtils::ParseFragment() should ever pass explicit aFlags
+   *        which will then used for sanitization of the fragment.
+   *        To pass explicit aFlags use any of the sanitization flags
+   *        listed in nsIParserUtils.idl.
    */
   static nsresult ParseFragmentHTML(const nsAString& aSourceBuffer,
                                     nsIContent* aTargetNode,
                                     nsAtom* aContextLocalName,
                                     int32_t aContextNamespace, bool aQuirks,
-                                    bool aPreventScriptExecution);
+                                    bool aPreventScriptExecution,
+                                    int32_t aFlags = -1);
 
   /**
    * Invoke the fragment parsing algorithm (innerHTML) using the XML parser.
@@ -1751,6 +1761,12 @@ class nsContentUtils {
    * @param aDocument the target document
    * @param aTagStack the namespace mapping context
    * @param aPreventExecution whether to mark scripts as already started
+   * @param aFlags, pass -1 and ParseFragmentXML will do default
+   *        sanitization for system privileged calls to it. Only
+   *        ParserUtils::ParseFragment() should ever pass explicit aFlags
+   *        which will then used for sanitization of the fragment.
+   *        To pass explicit aFlags use any of the sanitization flags
+   *        listed in nsIParserUtils.idl.
    * @param aReturn the result fragment
    * @return NS_ERROR_DOM_INVALID_STATE_ERR if a re-entrant attempt to parse
    *         fragments is made, a return code from the XML parser.
@@ -1758,7 +1774,7 @@ class nsContentUtils {
   static nsresult ParseFragmentXML(const nsAString& aSourceBuffer,
                                    Document* aDocument,
                                    nsTArray<nsString>& aTagStack,
-                                   bool aPreventScriptExecution,
+                                   bool aPreventScriptExecution, int32_t aFlags,
                                    mozilla::dom::DocumentFragment** aReturn);
 
   /**

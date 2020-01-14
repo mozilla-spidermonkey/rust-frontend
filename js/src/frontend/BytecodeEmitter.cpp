@@ -23,7 +23,6 @@
 #include <algorithm>
 #include <string.h>
 
-#include "jsnum.h"    // NumberToAtom
 #include "jstypes.h"  // JS_BIT
 
 #include "ds/Nestable.h"  // Nestable
@@ -354,9 +353,13 @@ bool BytecodeEmitter::emitN(JSOp op, size_t extra, BytecodeOffset* offset) {
 bool BytecodeEmitter::emitJumpTargetOp(JSOp op, BytecodeOffset* off) {
   MOZ_ASSERT(BytecodeIsJumpTarget(op));
 
+  // Record the current IC-entry index at start of this op.
   uint32_t numEntries = bytecodeSection().numICEntries();
 
-  if (!emitN(op, CodeSpec[op].length - 1, off)) {
+  size_t n = GetOpLength(op) - 1;
+  MOZ_ASSERT(GetOpLength(op) >= 1 + UINT32_INDEX_LEN);
+
+  if (!emitN(op, n, off)) {
     return false;
   }
 
@@ -857,32 +860,14 @@ AbstractScope BytecodeEmitter::innermostScope() const {
   return innermostEmitterScope()->scope(this);
 }
 
-bool BytecodeEmitter::emitIndex32(JSOp op, uint32_t index) {
-  MOZ_ASSERT(checkStrictOrSloppy(op));
-
-  const size_t len = 1 + UINT32_INDEX_LEN;
-  MOZ_ASSERT(len == size_t(CodeSpec[op].length));
-
-  BytecodeOffset offset;
-  if (!emitCheck(op, len, &offset)) {
-    return false;
-  }
-
-  jsbytecode* code = bytecodeSection().code(offset);
-  code[0] = jsbytecode(op);
-  SET_UINT32_INDEX(code, index);
-  bytecodeSection().updateDepth(offset);
-  return true;
-}
-
 bool BytecodeEmitter::emitIndexOp(JSOp op, uint32_t index) {
   MOZ_ASSERT(checkStrictOrSloppy(op));
 
-  const size_t len = CodeSpec[op].length;
-  MOZ_ASSERT(len >= 1 + UINT32_INDEX_LEN);
+  constexpr size_t OpLength = 1 + UINT32_INDEX_LEN;
+  MOZ_ASSERT(GetOpLength(op) == OpLength);
 
   BytecodeOffset offset;
-  if (!emitCheck(op, len, &offset)) {
+  if (!emitCheck(op, OpLength, &offset)) {
     return false;
   }
 
@@ -893,7 +878,7 @@ bool BytecodeEmitter::emitIndexOp(JSOp op, uint32_t index) {
   return true;
 }
 
-bool BytecodeEmitter::emitAtomOp(JSAtom* atom, JSOp op,
+bool BytecodeEmitter::emitAtomOp(JSOp op, JSAtom* atom,
                                  ShouldInstrument shouldInstrument) {
   MOZ_ASSERT(atom);
 
@@ -914,10 +899,10 @@ bool BytecodeEmitter::emitAtomOp(JSAtom* atom, JSOp op,
     return false;
   }
 
-  return emitAtomOp(index, op, shouldInstrument);
+  return emitAtomOp(op, index, shouldInstrument);
 }
 
-bool BytecodeEmitter::emitAtomOp(uint32_t atomIndex, JSOp op,
+bool BytecodeEmitter::emitAtomOp(JSOp op, uint32_t atomIndex,
                                  ShouldInstrument shouldInstrument) {
   MOZ_ASSERT(JOF_OPTYPE(op) == JOF_ATOM);
 
@@ -932,13 +917,13 @@ bool BytecodeEmitter::emitAtomOp(uint32_t atomIndex, JSOp op,
 bool BytecodeEmitter::emitInternedScopeOp(uint32_t index, JSOp op) {
   MOZ_ASSERT(JOF_OPTYPE(op) == JOF_SCOPE);
   MOZ_ASSERT(index < perScriptData().gcThingList().length());
-  return emitIndex32(op, index);
+  return emitIndexOp(op, index);
 }
 
 bool BytecodeEmitter::emitInternedObjectOp(uint32_t index, JSOp op) {
   MOZ_ASSERT(JOF_OPTYPE(op) == JOF_OBJECT);
   MOZ_ASSERT(index < perScriptData().gcThingList().length());
-  return emitIndex32(op, index);
+  return emitIndexOp(op, index);
 }
 
 bool BytecodeEmitter::emitObjectOp(ObjectBox* objbox, JSOp op) {
@@ -962,7 +947,7 @@ bool BytecodeEmitter::emitObjectPairOp(ObjectBox* objbox1, ObjectBox* objbox2,
 }
 
 bool BytecodeEmitter::emitRegExp(uint32_t index) {
-  return emitIndex32(JSOP_REGEXP, index);
+  return emitIndexOp(JSOP_REGEXP, index);
 }
 
 bool BytecodeEmitter::emitLocalOp(JSOp op, uint32_t slot) {
@@ -992,11 +977,11 @@ bool BytecodeEmitter::emitArgOp(JSOp op, uint16_t slot) {
 bool BytecodeEmitter::emitEnvCoordOp(JSOp op, EnvironmentCoordinate ec) {
   MOZ_ASSERT(JOF_OPTYPE(op) == JOF_ENVCOORD);
 
-  unsigned n = ENVCOORD_HOPS_LEN + ENVCOORD_SLOT_LEN;
-  MOZ_ASSERT(int(n) + 1 /* op */ == CodeSpec[op].length);
+  constexpr size_t N = ENVCOORD_HOPS_LEN + ENVCOORD_SLOT_LEN;
+  MOZ_ASSERT(GetOpLength(op) == 1 + N);
 
   BytecodeOffset off;
-  if (!emitN(op, n, &off)) {
+  if (!emitN(op, N, &off)) {
     return false;
   }
 
@@ -1712,7 +1697,7 @@ bool BytecodeEmitter::emitPrepareIteratorResult() {
   if (!iteratorResultShape(&shape)) {
     return false;
   }
-  return emitIndex32(JSOP_NEWOBJECT, shape);
+  return emitIndexOp(JSOP_NEWOBJECT, shape);
 }
 
 bool BytecodeEmitter::emitFinishIteratorResult(bool done) {
@@ -1725,13 +1710,13 @@ bool BytecodeEmitter::emitFinishIteratorResult(bool done) {
     return false;
   }
 
-  if (!emitIndex32(JSOP_INITPROP, value_id)) {
+  if (!emitAtomOp(JSOP_INITPROP, value_id)) {
     return false;
   }
   if (!emit1(done ? JSOP_TRUE : JSOP_FALSE)) {
     return false;
   }
-  if (!emitIndex32(JSOP_INITPROP, done_id)) {
+  if (!emitAtomOp(JSOP_INITPROP, done_id)) {
     return false;
   }
   return true;
@@ -1819,7 +1804,7 @@ bool BytecodeEmitter::emitPropLHS(PropertyAccess* prop) {
 
   while (true) {
     // Walk back up the list, emitting annotated name ops.
-    if (!emitAtomOp(pndot->key().atom(), JSOP_GETPROP, ShouldInstrument::Yes)) {
+    if (!emitAtomOp(JSOP_GETPROP, pndot->key().atom(), ShouldInstrument::Yes)) {
       return false;
     }
 
@@ -2904,7 +2889,7 @@ bool BytecodeEmitter::emitIteratorCloseInScope(
   // Step 3.
   //
   // Get the "return" method.
-  if (!emitAtomOp(cx->names().return_, JSOP_CALLPROP)) {
+  if (!emitAtomOp(JSOP_CALLPROP, cx->names().return_)) {
     //              [stack] ... ITER RET
     return false;
   }
@@ -3492,7 +3477,7 @@ bool BytecodeEmitter::emitDestructuringOpsArray(ListNode* pattern,
       //            [stack] ... OBJ NEXT ITER LREF* RESULT RESULT
       return false;
     }
-    if (!emitAtomOp(cx->names().done, JSOP_GETPROP)) {
+    if (!emitAtomOp(JSOP_GETPROP, cx->names().done)) {
       //            [stack] ... OBJ NEXT ITER LREF* RESULT DONE
       return false;
     }
@@ -3530,7 +3515,7 @@ bool BytecodeEmitter::emitDestructuringOpsArray(ListNode* pattern,
       return false;
     }
 
-    if (!emitAtomOp(cx->names().value, JSOP_GETPROP)) {
+    if (!emitAtomOp(JSOP_GETPROP, cx->names().value)) {
       //            [stack] ... OBJ NEXT ITER DONE LREF* VALUE
       return false;
     }
@@ -3720,7 +3705,7 @@ bool BytecodeEmitter::emitDestructuringOpsObject(ListNode* pattern,
     bool needsGetElem = true;
 
     if (member->isKind(ParseNodeKind::MutateProto)) {
-      if (!emitAtomOp(cx->names().proto, JSOP_GETPROP)) {
+      if (!emitAtomOp(JSOP_GETPROP, cx->names().proto)) {
         //          [stack] ... SET? RHS LREF* PROP
         return false;
       }
@@ -3735,9 +3720,14 @@ bool BytecodeEmitter::emitDestructuringOpsObject(ListNode* pattern,
           //        [stack]... SET? RHS LREF* RHS KEY
           return false;
         }
+      } else if (key->isKind(ParseNodeKind::BigIntExpr)) {
+        if (!emitBigIntOp(&key->as<BigIntLiteral>())) {
+          //        [stack]... SET? RHS LREF* RHS KEY
+          return false;
+        }
       } else if (key->isKind(ParseNodeKind::ObjectPropertyName) ||
                  key->isKind(ParseNodeKind::StringExpr)) {
-        if (!emitAtomOp(key->as<NameNode>().atom(), JSOP_GETPROP,
+        if (!emitAtomOp(JSOP_GETPROP, key->as<NameNode>().atom(),
                         ShouldInstrument::Yes)) {
           //        [stack] ... SET? RHS LREF* PROP
           return false;
@@ -3877,7 +3867,7 @@ bool BytecodeEmitter::emitDestructuringObjRestExclusionSet(ListNode* pattern) {
         }
       }
 
-      if (!emitIndex32(JSOP_INITPROP, index)) {
+      if (!emitAtomOp(JSOP_INITPROP, index)) {
         return false;
       }
     }
@@ -3948,7 +3938,7 @@ bool BytecodeEmitter::emitTemplateString(ListNode* templateString) {
   if (!pushedString) {
     // All strings were empty, this can happen for something like `${""}`.
     // Just push an empty string.
-    if (!emitAtomOp(cx->names().empty, JSOP_STRING)) {
+    if (!emitAtomOp(JSOP_STRING, cx->names().empty)) {
       return false;
     }
   }
@@ -4794,7 +4784,7 @@ bool BytecodeEmitter::emitCopyDataProperties(CopyOption option) {
     //              [stack] TARGET SOURCE SET
     argc = 3;
 
-    if (!emitAtomOp(cx->names().CopyDataProperties, JSOP_GETINTRINSIC)) {
+    if (!emitAtomOp(JSOP_GETINTRINSIC, cx->names().CopyDataProperties)) {
       //            [stack] TARGET SOURCE SET COPYDATAPROPERTIES
       return false;
     }
@@ -4803,8 +4793,8 @@ bool BytecodeEmitter::emitCopyDataProperties(CopyOption option) {
     //              [stack] TARGET SOURCE
     argc = 2;
 
-    if (!emitAtomOp(cx->names().CopyDataPropertiesUnfiltered,
-                    JSOP_GETINTRINSIC)) {
+    if (!emitAtomOp(JSOP_GETINTRINSIC,
+                    cx->names().CopyDataPropertiesUnfiltered)) {
       //            [stack] TARGET SOURCE COPYDATAPROPERTIES
       return false;
     }
@@ -4850,7 +4840,7 @@ bool BytecodeEmitter::emitBigIntOp(BigIntLiteral* bigint) {
   if (!perScriptData().gcThingList().append(bigint, &index)) {
     return false;
   }
-  return emitIndex32(JSOP_BIGINT, index);
+  return emitIndexOp(JSOP_BIGINT, index);
 }
 
 bool BytecodeEmitter::emitIterator() {
@@ -4883,7 +4873,7 @@ bool BytecodeEmitter::emitIterator() {
     //              [stack] ITER ITER
     return false;
   }
-  if (!emitAtomOp(cx->names().next, JSOP_GETPROP)) {
+  if (!emitAtomOp(JSOP_GETPROP, cx->names().next)) {
     //              [stack] ITER NEXT
     return false;
   }
@@ -4956,7 +4946,7 @@ bool BytecodeEmitter::emitAsyncIterator() {
     //              [stack] ITER ITER
     return false;
   }
-  if (!emitAtomOp(cx->names().next, JSOP_GETPROP)) {
+  if (!emitAtomOp(JSOP_GETPROP, cx->names().next)) {
     //              [stack] ITER SYNCNEXT
     return false;
   }
@@ -4993,7 +4983,7 @@ bool BytecodeEmitter::emitAsyncIterator() {
     //              [stack] ITER ITER
     return false;
   }
-  if (!emitAtomOp(cx->names().next, JSOP_GETPROP)) {
+  if (!emitAtomOp(JSOP_GETPROP, cx->names().next)) {
     //              [stack] ITER NEXT
     return false;
   }
@@ -5033,7 +5023,7 @@ bool BytecodeEmitter::emitSpread(bool allowSelfHosted) {
       //            [stack] NEXT ITER ARR I RESULT RESULT
       return false;
     }
-    if (!emitAtomOp(cx->names().done, JSOP_GETPROP)) {
+    if (!emitAtomOp(JSOP_GETPROP, cx->names().done)) {
       //            [stack] NEXT ITER ARR I RESULT DONE
       return false;
     }
@@ -5043,7 +5033,7 @@ bool BytecodeEmitter::emitSpread(bool allowSelfHosted) {
     }
 
     // Emit code to assign result.value to the iteration variable.
-    if (!emitAtomOp(cx->names().value, JSOP_GETPROP)) {
+    if (!emitAtomOp(JSOP_GETPROP, cx->names().value)) {
       //            [stack] NEXT ITER ARR I VALUE
       return false;
     }
@@ -6201,7 +6191,7 @@ bool BytecodeEmitter::emitYieldStar(ParseNode* iter) {
       //            [stack] NEXT ITER RECEIVED ITER ITER
       return false;
     }
-    if (!emitAtomOp(cx->names().throw_, JSOP_CALLPROP)) {
+    if (!emitAtomOp(JSOP_CALLPROP, cx->names().throw_)) {
       //            [stack] NEXT ITER RECEIVED ITER THROW
       return false;
     }
@@ -6308,7 +6298,7 @@ bool BytecodeEmitter::emitYieldStar(ParseNode* iter) {
       //            [stack] NEXT ITER RECEIVED ITER ITER
       return false;
     }
-    if (!emitAtomOp(cx->names().return_, JSOP_CALLPROP)) {
+    if (!emitAtomOp(JSOP_CALLPROP, cx->names().return_)) {
       //            [stack] NEXT ITER RECEIVED ITER RET
       return false;
     }
@@ -6338,7 +6328,7 @@ bool BytecodeEmitter::emitYieldStar(ParseNode* iter) {
       return false;
     }
     if (needsIteratorResult) {
-      if (!emitAtomOp(cx->names().value, JSOP_GETPROP)) {
+      if (!emitAtomOp(JSOP_GETPROP, cx->names().value)) {
         //          [stack] NEXT ITER RET ITER VAL
         return false;
       }
@@ -6371,7 +6361,7 @@ bool BytecodeEmitter::emitYieldStar(ParseNode* iter) {
       //            [stack] NEXT ITER RESULT RESULT
       return false;
     }
-    if (!emitAtomOp(cx->names().done, JSOP_GETPROP)) {
+    if (!emitAtomOp(JSOP_GETPROP, cx->names().done)) {
       //            [stack] NEXT ITER RESULT DONE
       return false;
     }
@@ -6381,7 +6371,7 @@ bool BytecodeEmitter::emitYieldStar(ParseNode* iter) {
     }
 
     // Step 7.c.viii.1.
-    if (!emitAtomOp(cx->names().value, JSOP_GETPROP)) {
+    if (!emitAtomOp(JSOP_GETPROP, cx->names().value)) {
       //            [stack] NEXT ITER VALUE
       return false;
     }
@@ -6472,7 +6462,7 @@ bool BytecodeEmitter::emitYieldStar(ParseNode* iter) {
     //              [stack] NEXT ITER RESULT RESULT
     return false;
   }
-  if (!emitAtomOp(cx->names().done, JSOP_GETPROP)) {
+  if (!emitAtomOp(JSOP_GETPROP, cx->names().done)) {
     //              [stack] NEXT ITER RESULT DONE
     return false;
   }
@@ -6489,7 +6479,7 @@ bool BytecodeEmitter::emitYieldStar(ParseNode* iter) {
     return false;
   }
   if (iterKind == IteratorKind::Async) {
-    if (!emitAtomOp(cx->names().value, JSOP_GETPROP)) {
+    if (!emitAtomOp(JSOP_GETPROP, cx->names().value)) {
       //            [stack] NEXT ITER RESULT
       return false;
     }
@@ -6537,7 +6527,7 @@ bool BytecodeEmitter::emitYieldStar(ParseNode* iter) {
     //              [stack] RESULT
     return false;
   }
-  if (!emitAtomOp(cx->names().value, JSOP_GETPROP)) {
+  if (!emitAtomOp(JSOP_GETPROP, cx->names().value)) {
     //              [stack] VALUE
     return false;
   }
@@ -6656,7 +6646,7 @@ bool BytecodeEmitter::emitDeleteName(UnaryNode* deleteNode) {
   NameNode* nameExpr = &deleteNode->kid()->as<NameNode>();
   MOZ_ASSERT(nameExpr->isKind(ParseNodeKind::Name));
 
-  return emitAtomOp(nameExpr->atom(), JSOP_DELNAME);
+  return emitAtomOp(JSOP_DELNAME, nameExpr->atom());
 }
 
 bool BytecodeEmitter::emitDeleteProperty(UnaryNode* deleteNode) {
@@ -7606,6 +7596,15 @@ void BytecodeEmitter::isPropertyListObjLiteralCompatible(ListNode* obj,
         break;
       }
     }
+    // BigInt keys aren't yet supported.
+    if (key->isKind(ParseNodeKind::BigIntExpr)) {
+      keysOK = false;
+      break;
+    }
+
+    MOZ_ASSERT(key->isKind(ParseNodeKind::ObjectPropertyName) ||
+               key->isKind(ParseNodeKind::StringExpr) ||
+               key->isKind(ParseNodeKind::NumberExpr));
 
     AccessorType accessorType =
         prop->is<PropertyDefinition>()
@@ -7753,8 +7752,18 @@ bool BytecodeEmitter::emitPropertyList(ListNode* obj, PropertyEmitter& pe,
         if (key->isKind(ParseNodeKind::NumberExpr)) {
           MOZ_ASSERT(accessorType == AccessorType::None);
 
-          NumericLiteral* literal = &key->as<NumericLiteral>();
-          RootedAtom keyAtom(cx, NumberToAtom(cx, literal->value()));
+          RootedAtom keyAtom(cx, key->as<NumericLiteral>().toAtom(cx));
+          if (!keyAtom) {
+            return false;
+          }
+          if (!emitAnonymousFunctionWithName(propVal, keyAtom)) {
+            //      [stack] CTOR? OBJ CTOR? KEY VAL
+            return false;
+          }
+        } else if (key->isKind(ParseNodeKind::BigIntExpr)) {
+          MOZ_ASSERT(accessorType == AccessorType::None);
+
+          RootedAtom keyAtom(cx, key->as<BigIntLiteral>().toAtom(cx));
           if (!keyAtom) {
             return false;
           }
@@ -7806,15 +7815,23 @@ bool BytecodeEmitter::emitPropertyList(ListNode* obj, PropertyEmitter& pe,
         (type == ClassBody && propdef->as<ClassMethod>().isStatic())
             ? PropertyEmitter::Kind::Static
             : PropertyEmitter::Kind::Prototype;
-    if (key->isKind(ParseNodeKind::NumberExpr)) {
+    if (key->isKind(ParseNodeKind::NumberExpr) ||
+        key->isKind(ParseNodeKind::BigIntExpr)) {
       //            [stack] CTOR? OBJ
       if (!pe.prepareForIndexPropKey(Some(propdef->pn_pos.begin), kind)) {
         //          [stack] CTOR? OBJ CTOR?
         return false;
       }
-      if (!emitNumberOp(key->as<NumericLiteral>().value())) {
-        //          [stack] CTOR? OBJ CTOR? KEY
-        return false;
+      if (key->isKind(ParseNodeKind::NumberExpr)) {
+        if (!emitNumberOp(key->as<NumericLiteral>().value())) {
+          //        [stack] CTOR? OBJ CTOR? KEY
+          return false;
+        }
+      } else {
+        if (!emitBigIntOp(&key->as<BigIntLiteral>())) {
+          //        [stack] CTOR? OBJ CTOR? KEY
+          return false;
+        }
       }
       if (!pe.prepareForIndexPropValue()) {
         //          [stack] CTOR? OBJ CTOR? KEY
@@ -8002,7 +8019,7 @@ bool BytecodeEmitter::emitPropertyListObjLiteral(ListNode* obj,
   JSOp op = singleton
                 ? JSOP_OBJECT
                 : isInnerSingleton ? JSOP_NEWOBJECT_WITHGROUP : JSOP_NEWOBJECT;
-  bool success = emitIndex32(op, gcThingIndex);
+  bool success = emitIndexOp(op, gcThingIndex);
   if (!success) {
     return false;
   }
@@ -8035,7 +8052,7 @@ bool BytecodeEmitter::emitObjLiteralArray(ParseNode* arrayHead, bool isCow) {
   }
 
   JSOp op = isCow ? JSOP_NEWARRAY_COPYONWRITE : JSOP_OBJECT;
-  if (!emitIndex32(op, gcThingIndex)) {
+  if (!emitIndexOp(op, gcThingIndex)) {
     return false;
   }
 
@@ -8055,6 +8072,7 @@ bool BytecodeEmitter::isRHSObjLiteralCompatible(ParseNode* value) {
 
 bool BytecodeEmitter::emitObjLiteralValue(ObjLiteralCreationData* data,
                                           ParseNode* value) {
+  MOZ_ASSERT(isRHSObjLiteralCompatible(value));
   if (value->isKind(ParseNodeKind::NumberExpr)) {
     double numValue = value->as<NumericLiteral>().value();
     int32_t i = 0;
@@ -8093,7 +8111,7 @@ bool BytecodeEmitter::emitObjLiteralValue(ObjLiteralCreationData* data,
       return false;
     }
   } else {
-    return false;
+    MOZ_CRASH("Unexpected parse node");
   }
   return true;
 }
@@ -9118,7 +9136,7 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitInstrumentationSlow(
     return false;
   }
 
-  if (!emitAtomOp(index, JSOP_STRING)) {
+  if (!emitAtomOp(JSOP_STRING, index)) {
     return false;
   }
   //            [stack] CALLBACK UNDEFINED KIND
@@ -9173,14 +9191,14 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitInstrumentationForOpcodeSlow(
     case JSOP_LENGTH:
       return emitInstrumentationSlow(
           InstrumentationKind::GetProperty, [=](uint32_t pushed) {
-            return emitDupAt(pushed) && emitAtomOp(atomIndex, JSOP_STRING);
+            return emitDupAt(pushed) && emitAtomOp(JSOP_STRING, atomIndex);
           });
     case JSOP_SETPROP:
     case JSOP_STRICTSETPROP:
       return emitInstrumentationSlow(
           InstrumentationKind::SetProperty, [=](uint32_t pushed) {
             return emitDupAt(pushed + 1) &&
-                   emitAtomOp(atomIndex, JSOP_STRING) && emitDupAt(pushed + 2);
+                   emitAtomOp(JSOP_STRING, atomIndex) && emitDupAt(pushed + 2);
           });
     case JSOP_GETELEM:
     case JSOP_CALLELEM:
@@ -9640,7 +9658,7 @@ bool BytecodeEmitter::emitTree(
 
     case ParseNodeKind::TemplateStringExpr:
     case ParseNodeKind::StringExpr:
-      if (!emitAtomOp(pn->as<NameNode>().atom(), JSOP_STRING)) {
+      if (!emitAtomOp(JSOP_STRING, pn->as<NameNode>().atom())) {
         return false;
       }
       break;

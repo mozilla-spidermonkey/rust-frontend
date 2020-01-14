@@ -46,6 +46,7 @@
 #include "frontend/TokenStream.h"
 #include "irregexp/RegExpParser.h"
 #include "js/RegExpFlags.h"  // JS::RegExpFlags
+#include "vm/BigIntType.h"
 #include "vm/BytecodeUtil.h"
 #include "vm/JSAtom.h"
 #include "vm/JSContext.h"
@@ -354,7 +355,7 @@ FunctionBox* PerHandlerParser<ParseHandler>::newFunctionBox(
 
   FunctionBox* funbox;
 
-  if (parseInfo_.isDeferred()) {
+  if (getParseInfo().isDeferred()) {
     funbox = alloc_.new_<FunctionBox>(
         cx_, traceListHead_, fcd, toStringStart, inheritedDirectives,
         options().extraWarningsOption, generatorKind, asyncKind);
@@ -1768,7 +1769,7 @@ bool PerHandlerParser<SyntaxParseHandler>::finishFunction(
   }
 
   // If we can defer the LazyScript creation, we are now done.
-  if (parseInfo_.isDeferred()) {
+  if (getParseInfo().isDeferred()) {
     // Move data into funbox
     MOZ_ASSERT(funbox->functionCreationData());
     funbox->functionCreationData()->lazyScriptData =
@@ -9627,7 +9628,7 @@ RegExpLiteral* Parser<FullParseHandler, Unit>::newRegExp() {
   mozilla::Range<const char16_t> range(chars.begin(), chars.length());
   RegExpFlags flags = anyChars.currentToken().regExpFlags();
 
-  if (this->parseInfo_.isDeferred()) {
+  if (this->getParseInfo().isDeferred()) {
     {
       LifoAllocScope allocScope(&cx_->tempLifoAlloc());
       // Verify that the Regexp will syntax parse when the time comes to
@@ -9638,12 +9639,12 @@ RegExpLiteral* Parser<FullParseHandler, Unit>::newRegExp() {
       }
     }
 
-    RegExpIndex index(this->parseInfo_.regExpData.length());
-    if (!this->parseInfo_.regExpData.emplaceBack()) {
+    RegExpIndex index(this->getParseInfo().regExpData.length());
+    if (!this->getParseInfo().regExpData.emplaceBack()) {
       return nullptr;
     }
 
-    if (!this->parseInfo_.regExpData[index].init(cx_, range, flags)) {
+    if (!this->getParseInfo().regExpData[index].init(cx_, range, flags)) {
       return nullptr;
     }
 
@@ -9690,24 +9691,24 @@ GeneralParser<ParseHandler, Unit>::newRegExp() {
 template <typename Unit>
 BigIntLiteral* Parser<FullParseHandler, Unit>::newBigInt() {
   // The token's charBuffer contains the DecimalIntegerLiteral or
-  // NumericLiteralBase production, and as such does not include the
-  // BigIntLiteralSuffix (the trailing "n").  Note that NumericLiteralBase
-  // productions may start with 0[bBoOxX], indicating binary/octal/hex.
+  // NonDecimalIntegerLiteral production, and as such does not include the
+  // BigIntLiteralSuffix (the trailing "n").  Note that NonDecimalIntegerLiteral
+  // productions start with 0[bBoOxX], indicating binary/octal/hex.
   const auto& chars = tokenStream.getCharBuffer();
 
-  if (this->parseInfo_.isDeferred()) {
-    BigIntIndex index(this->parseInfo_.bigIntData.length());
-    if (!this->parseInfo_.bigIntData.emplaceBack()) {
+  if (this->getParseInfo().isDeferred()) {
+    BigIntIndex index(this->getParseInfo().bigIntData.length());
+    if (!this->getParseInfo().bigIntData.emplaceBack()) {
       return null();
     }
 
-    if (!this->parseInfo_.bigIntData[index].init(this->cx_, chars)) {
+    if (!this->getParseInfo().bigIntData[index].init(this->cx_, chars)) {
       return null();
     }
 
     // Should the operations below fail, the buffer held by data will
     // be cleaned up by the ParseInfo destructor.
-    return handler_.newBigInt(index, this->parseInfo_, pos());
+    return handler_.newBigInt(index, this->getParseInfo(), pos());
   }
 
   mozilla::Range<const char16_t> source(chars.begin(), chars.length());
@@ -9735,6 +9736,19 @@ template <class ParseHandler, typename Unit>
 typename ParseHandler::BigIntLiteralType
 GeneralParser<ParseHandler, Unit>::newBigInt() {
   return asFinalParser()->newBigInt();
+}
+
+template <class ParseHandler, typename Unit>
+JSAtom* GeneralParser<ParseHandler, Unit>::bigIntAtom() {
+  // See newBigInt() for a description about |chars'| contents.
+  const auto& chars = tokenStream.getCharBuffer();
+  mozilla::Range<const char16_t> source(chars.begin(), chars.length());
+
+  RootedBigInt bi(cx_, js::ParseBigIntLiteral(cx_, source));
+  if (!bi) {
+    return nullptr;
+  }
+  return BigIntToAtom<CanGC>(cx_, bi);
 }
 
 // |exprPossibleError| is the PossibleError state within |expr|,
@@ -10005,6 +10019,13 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::propertyName(
       }
       return newNumber(anyChars.currentToken());
 
+    case TokenKind::BigInt:
+      propAtom.set(bigIntAtom());
+      if (!propAtom.get()) {
+        return null();
+      }
+      return newBigInt();
+
     case TokenKind::String: {
       propAtom.set(anyChars.currentToken().atom());
       uint32_t index;
@@ -10034,7 +10055,7 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::propertyName(
 static bool TokenKindCanStartPropertyName(TokenKind tt) {
   return TokenKindIsPossibleIdentifierName(tt) || tt == TokenKind::String ||
          tt == TokenKind::Number || tt == TokenKind::LeftBracket ||
-         tt == TokenKind::Mul;
+         tt == TokenKind::Mul || tt == TokenKind::BigInt;
 }
 
 template <class ParseHandler, typename Unit>

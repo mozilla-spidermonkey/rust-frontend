@@ -2274,11 +2274,6 @@ var gBrowserInit = {
       gBrowserThumbnails.init();
     });
 
-    // Show the addons private browsing panel the first time a private window.
-    scheduleIdleTask(() => {
-      ExtensionsUI.showPrivateBrowsingNotification(window);
-    });
-
     scheduleIdleTask(
       () => {
         // Initialize the download manager some time after the app starts so that
@@ -2918,7 +2913,7 @@ function openLocation(event) {
     if (gURLBar.view.isOpen) {
       return;
     }
-    if (!gURLBar.view.maybeReopen() && gURLBar.openViewOnFocusForCurrentTab) {
+    if (!gURLBar.view.maybeReopen() && gURLBar.openViewOnFocus) {
       gURLBar.startQuery({ event });
     }
     return;
@@ -6121,7 +6116,6 @@ var TabsProgressListener = {
     if (tab && tab._sharingState) {
       gBrowser.resetBrowserSharing(aBrowser);
     }
-    webrtcUI.forgetStreamsFromBrowser(aBrowser);
 
     gBrowser.getNotificationBox(aBrowser).removeTransientNotifications();
 

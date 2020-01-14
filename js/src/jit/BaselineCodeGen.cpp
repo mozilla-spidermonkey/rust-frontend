@@ -66,7 +66,7 @@ BaselineCompilerHandler::BaselineCompilerHandler(JSContext* cx,
       pc_(script->code()),
       icEntryIndex_(0),
       compileDebugInstrumentation_(script->isDebuggee()),
-      ionCompileable_(jit::IsIonEnabled() && CanIonCompileScript(cx, script)) {
+      ionCompileable_(IsIonEnabled(cx) && CanIonCompileScript(cx, script)) {
 }
 
 BaselineInterpreterHandler::BaselineInterpreterHandler(JSContext* cx,
@@ -4569,7 +4569,7 @@ bool BaselineCodeGen<Handler>::emit_JSOP_UNINITIALIZED() {
 
 template <>
 bool BaselineCompilerCodeGen::emitCall(JSOp op) {
-  MOZ_ASSERT(IsCallOp(op));
+  MOZ_ASSERT(IsInvokeOp(op));
 
   frame.syncStack(0);
 
@@ -4582,7 +4582,7 @@ bool BaselineCompilerCodeGen::emitCall(JSOp op) {
   }
 
   // Update FrameInfo.
-  bool construct = IsConstructorCallOp(op);
+  bool construct = IsConstructOp(op);
   frame.popn(2 + argc + construct);
   frame.push(R0);
   return true;
@@ -4590,7 +4590,7 @@ bool BaselineCompilerCodeGen::emitCall(JSOp op) {
 
 template <>
 bool BaselineInterpreterCodeGen::emitCall(JSOp op) {
-  MOZ_ASSERT(IsCallOp(op));
+  MOZ_ASSERT(IsInvokeOp(op));
 
   // The IC expects argc in R0.
   LoadUint16Operand(masm, R0.scratchReg());
@@ -4601,7 +4601,7 @@ bool BaselineInterpreterCodeGen::emitCall(JSOp op) {
   // Pop the arguments. We have to reload pc/argc because the IC clobbers them.
   // The return value is in R0 so we can't use that.
   Register scratch = R1.scratchReg();
-  uint32_t extraValuesToPop = IsConstructorCallOp(op) ? 3 : 2;
+  uint32_t extraValuesToPop = IsConstructOp(op) ? 3 : 2;
   Register spReg = AsRegister(masm.getStackPointer());
   LoadUint16Operand(masm, scratch);
   masm.computeEffectiveAddress(
@@ -4612,7 +4612,7 @@ bool BaselineInterpreterCodeGen::emitCall(JSOp op) {
 
 template <typename Handler>
 bool BaselineCodeGen<Handler>::emitSpreadCall(JSOp op) {
-  MOZ_ASSERT(IsCallOp(op));
+  MOZ_ASSERT(IsInvokeOp(op));
 
   frame.syncStack(0);
   masm.move32(Imm32(1), R0.scratchReg());

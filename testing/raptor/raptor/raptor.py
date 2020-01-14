@@ -12,7 +12,6 @@ import os
 import posixpath
 import re
 import shutil
-import signal
 import six
 import subprocess
 import sys
@@ -73,26 +72,14 @@ from results import RaptorResultsHandler, BrowsertimeResultsHandler
 from utils import view_gecko_profile, write_yml_file
 from cpu import start_android_cpu_profiler
 
+from signal_handler import SignalHandler, SignalHandlerException
+
 LOG = RaptorLogger(component='raptor-main')
 # Bug 1547943 - Intermittent mozrunner.errors.RunnerNotStartedError
 # - mozproxy.utils LOG displayed INFO messages even when LOG.error() was used in mitm.py
 mpu.LOG = RaptorLogger(component='raptor-mitmproxy')
 
 DEFAULT_CHROMEVERSION = '77'
-
-
-class SignalHandler:
-
-    def __init__(self):
-        signal.signal(signal.SIGINT, self.handle_signal)
-        signal.signal(signal.SIGTERM, self.handle_signal)
-
-    def handle_signal(self, signum, frame):
-        raise SignalHandlerException("Program aborted due to signal %s" % signum)
-
-
-class SignalHandlerException(Exception):
-    pass
 
 
 class Perftest(object):
@@ -182,13 +169,6 @@ either Raptor or browsertime."""
         if self.debug_mode:
             self.post_startup_delay = min(self.post_startup_delay, 3000)
             LOG.info("debug-mode enabled, reducing post-browser startup pause to %d ms"
-                     % self.post_startup_delay)
-        # if using conditioned profiles in CI, reduce default browser-settle
-        # time down to 1 second, from 30
-        if not self.no_condprof and not self.config['run_local'] \
-                and post_startup_delay == 30000:
-            self.post_startup_delay = 1000
-            LOG.info("using conditioned profiles, so reducing post_startup_delay to %d ms"
                      % self.post_startup_delay)
         LOG.info("main raptor init, config is: %s" % str(self.config))
 

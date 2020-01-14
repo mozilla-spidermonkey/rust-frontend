@@ -38,3 +38,13 @@ unset AR
 unset NM
 unset RANLIB
 unset NASM
+
+# Don't unset this on Linux artifact builds so the artifact builds correctly
+# package the graphite shared library.
+if test `uname -s` != Linux; then
+  unset WASM_SANDBOXED_LIBRARIES
+fi
+unset WASM_CC
+unset WASM_CXX
+unset LUCETC
+unset WASI_SYSROOT

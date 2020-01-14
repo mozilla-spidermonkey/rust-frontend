@@ -37,7 +37,7 @@ linux64/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-plain/opt:
@@ -75,7 +75,7 @@ linux64-plain/opt:
             - linux64-nasm
             - linux64-node
             - linux64-cbindgen
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-fuzzing/debug:
@@ -114,7 +114,7 @@ linux64-fuzzing/debug:
             - linux64-rust-size
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64/debug:
@@ -152,7 +152,7 @@ linux64/debug:
             - linux64-rust-size
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-plain/debug:
@@ -190,7 +190,7 @@ linux64-plain/debug:
             - linux64-nasm
             - linux64-node
             - linux64-cbindgen
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-devedition-nightly/opt:
@@ -235,7 +235,7 @@ linux64-devedition-nightly/opt:
             - linux64-cbindgen
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-base-toolchains/opt:
@@ -272,7 +272,7 @@ linux64-base-toolchains/opt:
             - linux64-sccache
             - linux64-nasm-2.13.02
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-base-toolchains/debug:
@@ -311,7 +311,7 @@ linux64-base-toolchains/debug:
             - linux64-sccache
             - linux64-nasm-2.13.02
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-base-toolchains-clang/opt:
@@ -347,7 +347,7 @@ linux64-base-toolchains-clang/opt:
             - linux64-cbindgen
             - linux64-nasm-2.13.02
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-base-toolchains-clang/debug:
@@ -385,7 +385,7 @@ linux64-base-toolchains-clang/debug:
             - linux64-cbindgen
             - linux64-nasm-2.13.02
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux/opt:
@@ -424,7 +424,7 @@ linux/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux/debug:
@@ -464,7 +464,7 @@ linux/debug:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux-rusttests/opt:
@@ -504,7 +504,7 @@ linux-rusttests/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux-rusttests/debug:
@@ -544,7 +544,7 @@ linux-rusttests/debug:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux-devedition-nightly/opt:
@@ -590,7 +590,7 @@ linux-devedition-nightly/opt:
             - linux64-cbindgen
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux-shippable/opt:
@@ -633,7 +633,7 @@ linux-shippable/opt:
             - linux64-cbindgen
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux-reproduced/opt:
@@ -676,7 +676,7 @@ linux-reproduced/opt:
             - linux64-cbindgen
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-asan/opt:
@@ -715,7 +715,7 @@ linux64-asan/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-tsan/opt:
@@ -753,7 +753,7 @@ linux64-tsan/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-tsan-fuzzing/opt:
@@ -791,7 +791,7 @@ linux64-tsan-fuzzing/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-asan-fuzzing/opt:
@@ -830,7 +830,7 @@ linux64-asan-fuzzing/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-asan-fuzzing-ccov/opt:
@@ -869,7 +869,7 @@ linux64-asan-fuzzing-ccov/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-fuzzing-ccov/opt:
@@ -910,7 +910,7 @@ linux64-fuzzing-ccov/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-asan-reporter-nightly/opt:
@@ -950,6 +950,8 @@ linux64-asan-reporter-nightly/opt:
         need-xvfb: true
         mar-channel-id:
             firefox-mozilla-central-asan
+        accepted-mar-channel-ids:
+            firefox-mozilla-central-asan
     fetches:
         toolchain:
             - linux64-binutils
@@ -959,7 +961,7 @@ linux64-asan-reporter-nightly/opt:
             - linux64-cbindgen
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-asan/debug:
@@ -998,7 +1000,7 @@ linux64-asan/debug:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-shippable/opt:
@@ -1039,7 +1041,7 @@ linux64-shippable/opt:
             - linux64-cbindgen
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-noopt/debug:
@@ -1080,7 +1082,7 @@ linux64-noopt/debug:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-rusttests/opt:
@@ -1119,7 +1121,7 @@ linux64-rusttests/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-rusttests/debug:
@@ -1158,7 +1160,7 @@ linux64-rusttests/debug:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-tup/opt:
@@ -1199,7 +1201,7 @@ linux64-tup/opt:
             - linux64-tup
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-ccov/opt:
@@ -1240,7 +1242,7 @@ linux64-ccov/opt:
             - linux64-nasm
             - linux64-node
             - linux64-grcov
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-add-on-devel/opt:
@@ -1267,7 +1269,7 @@ linux64-add-on-devel/opt:
         mozconfig-variant: add-on-devel
         tooltool-downloads: public
         need-xvfb: true
-    run-on-projects: ['mozilla-beta', 'mozilla-release', 'mozilla-esr45']
+    run-on-projects: ['mozilla-beta', 'mozilla-release']
     fetches:
         toolchain:
             - linux64-binutils
@@ -1278,7 +1280,7 @@ linux64-add-on-devel/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-aarch64/opt:
@@ -1318,7 +1320,7 @@ linux64-aarch64/opt:
             - linux64-cbindgen
             - linux64-sccache
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux-gcp/debug:
@@ -1350,6 +1352,7 @@ linux-gcp/debug:
         mozconfig-variant: debug
         tooltool-downloads: public
         need-xvfb: true
+    run-on-projects: ['try', 'release']
     fetches:
         toolchain:
             - linux64-binutils
@@ -1360,7 +1363,7 @@ linux-gcp/debug:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux-gcp/opt:
@@ -1401,7 +1404,7 @@ linux-gcp/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-gcp/debug:
@@ -1442,7 +1445,7 @@ linux64-gcp/debug:
             - linux64-rust-size
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot
 
 linux64-gcp/opt:
@@ -1482,5 +1485,5 @@ linux64-gcp/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
-            - lucetc
+            - linux64-lucetc
             - wasi-sysroot

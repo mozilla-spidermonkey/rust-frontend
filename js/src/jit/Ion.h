@@ -221,7 +221,7 @@ inline bool IsIonInlinableGetterOrSetterOp(JSOp op) {
 inline bool IsIonInlinableOp(JSOp op) {
   // CALL, FUNCALL, FUNAPPLY, EVAL, NEW (Normal Callsites)
   // or an inlinable getter or setter.
-  return (IsCallOp(op) && !IsSpreadCallOp(op)) ||
+  return (IsInvokeOp(op) && !IsSpreadOp(op)) ||
          IsIonInlinableGetterOrSetterOp(op);
 }
 
@@ -273,6 +273,11 @@ size_t SizeOfIonData(JSScript* script, mozilla::MallocSizeOf mallocSizeOf);
 
 bool JitSupportsSimd();
 bool JitSupportsAtomics();
+
+inline bool IsIonEnabled(JSContext* cx) {
+  return IsBaselineJitEnabled() && JitOptions.ion &&
+         !cx->options().disableIon();
+}
 
 }  // namespace jit
 }  // namespace js

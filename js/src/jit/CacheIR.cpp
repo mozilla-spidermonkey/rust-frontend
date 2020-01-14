@@ -1828,7 +1828,7 @@ AttachDecision GetPropIRGenerator::tryAttachModuleNamespace(HandleObject obj,
     return AttachDecision::NoAction;
   }
 
-  if (IsIonEnabled()) {
+  if (IsIonEnabled(cx_)) {
     EnsureTrackPropertyTypes(cx_, env, shape->propid());
   }
 
@@ -1894,7 +1894,7 @@ AttachDecision GetPropIRGenerator::tryAttachPrimitive(ValOperandId valId,
     case CanAttachReadSlot: {
       if (holder) {
         // Instantiate this property, for use during Ion compilation.
-        if (IsIonEnabled()) {
+        if (IsIonEnabled(cx_)) {
           EnsureTrackPropertyTypes(cx_, holder, id);
         }
       }
@@ -2492,7 +2492,7 @@ AttachDecision GetNameIRGenerator::tryAttachGlobalNameValue(ObjOperandId objId,
   }
 
   // Instantiate this global property, for use during Ion compilation.
-  if (IsIonEnabled()) {
+  if (IsIonEnabled(cx_)) {
     EnsureTrackPropertyTypes(cx_, holder, id);
   }
 
@@ -2560,7 +2560,7 @@ AttachDecision GetNameIRGenerator::tryAttachGlobalNameGetter(ObjOperandId objId,
     return AttachDecision::NoAction;
   }
 
-  if (IsIonEnabled()) {
+  if (IsIonEnabled(cx_)) {
     EnsureTrackPropertyTypes(cx_, holder, id);
   }
 
@@ -5170,8 +5170,8 @@ AttachDecision CallIRGenerator::tryAttachCallScripted(
 
   bool isSpecialized = mode_ == ICState::Mode::Specialized;
 
-  bool isConstructing = IsConstructorCallPC(pc_);
-  bool isSpread = IsSpreadCallPC(pc_);
+  bool isConstructing = IsConstructPC(pc_);
+  bool isSpread = IsSpreadPC(pc_);
   bool isSameRealm = isSpecialized && cx_->realm() == calleeFunc->realm();
   CallFlags flags(isConstructing, isSpread, isSameRealm);
 
@@ -5200,7 +5200,7 @@ AttachDecision CallIRGenerator::tryAttachCallScripted(
 
   // Keep track of the function's |prototype| property in type
   // information, for use during Ion compilation.
-  if (IsIonEnabled()) {
+  if (IsIonEnabled(cx_)) {
     EnsureTrackPropertyTypes(cx_, calleeFunc, NameToId(cx_->names().prototype));
   }
 
@@ -5362,9 +5362,9 @@ AttachDecision CallIRGenerator::tryAttachCallNative(HandleFunction calleeFunc) {
 
   bool isSpecialized = mode_ == ICState::Mode::Specialized;
 
-  bool isSpread = IsSpreadCallPC(pc_);
+  bool isSpread = IsSpreadPC(pc_);
   bool isSameRealm = isSpecialized && cx_->realm() == calleeFunc->realm();
-  bool isConstructing = IsConstructorCallPC(pc_);
+  bool isConstructing = IsConstructPC(pc_);
   CallFlags flags(isConstructing, isSpread, isSameRealm);
 
   if (isConstructing && !calleeFunc->isConstructor()) {
@@ -5429,7 +5429,7 @@ AttachDecision CallIRGenerator::tryAttachCallNative(HandleFunction calleeFunc) {
 
 bool CallIRGenerator::getTemplateObjectForClassHook(
     HandleObject calleeObj, MutableHandleObject result) {
-  MOZ_ASSERT(IsConstructorCallPC(pc_));
+  MOZ_ASSERT(IsConstructPC(pc_));
   JSNative hook = calleeObj->constructHook();
 
   // Saving the template object is unsound for super(), as a single
@@ -5467,8 +5467,8 @@ AttachDecision CallIRGenerator::tryAttachCallHook(HandleObject calleeObj) {
     return AttachDecision::NoAction;
   }
 
-  bool isSpread = IsSpreadCallPC(pc_);
-  bool isConstructing = IsConstructorCallPC(pc_);
+  bool isSpread = IsSpreadPC(pc_);
+  bool isConstructing = IsConstructPC(pc_);
   CallFlags flags(isConstructing, isSpread);
   JSNative hook =
       isConstructing ? calleeObj->constructHook() : calleeObj->callHook();

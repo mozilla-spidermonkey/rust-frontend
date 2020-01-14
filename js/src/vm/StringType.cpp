@@ -27,6 +27,7 @@
 
 #include "jsfriendapi.h"
 
+#include "builtin/Array.h"
 #include "frontend/BytecodeCompiler.h"
 #include "gc/Marking.h"
 #include "gc/Nursery.h"
@@ -36,6 +37,7 @@
 #include "js/UbiNode.h"
 #include "util/StringBuffer.h"
 #include "util/Unicode.h"
+#include "vm/ErrorObject.h"
 #include "vm/GeckoProfiler.h"
 #include "vm/JSFunction.h"
 
@@ -2320,6 +2322,14 @@ JSString* js::ValueToSource(JSContext* cx, HandleValue v) {
   if (obj->is<JSFunction>()) {
     RootedFunction fun(cx, &obj->as<JSFunction>());
     return FunctionToString(cx, fun, true);
+  }
+
+  if (obj->is<ArrayObject>()) {
+    return ArrayToSource(cx, obj);
+  }
+
+  if (obj->is<ErrorObject>()) {
+    return ErrorToSource(cx, obj);
   }
 
   return ObjectToSource(cx, obj);

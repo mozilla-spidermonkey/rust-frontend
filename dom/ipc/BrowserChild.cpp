@@ -1111,7 +1111,8 @@ mozilla::ipc::IPCResult BrowserChild::RecvResumeLoad(
 }
 
 void BrowserChild::DoFakeShow(const ParentShowInfo& aParentShowInfo) {
-  OwnerShowInfo ownerInfo{ScreenIntSize(), mParentIsActive, nsSizeMode_Normal};
+  OwnerShowInfo ownerInfo{ScreenIntSize(), ScrollbarPreference::Auto,
+                          mParentIsActive, nsSizeMode_Normal};
   RecvShow(aParentShowInfo, ownerInfo);
   mDidFakeShow = true;
 }
@@ -1187,6 +1188,9 @@ mozilla::ipc::IPCResult BrowserChild::RecvShow(
 
   ApplyParentShowInfo(aParentInfo);
   RecvParentActivated(aOwnerInfo.parentWindowIsActive());
+  if (!mIsTopLevel) {
+    RecvScrollbarPreferenceChanged(aOwnerInfo.scrollbarPreference());
+  }
 
   if (!res) {
     return IPC_FAIL_NO_REASON(this);
@@ -1210,6 +1214,16 @@ mozilla::ipc::IPCResult BrowserChild::RecvInitRendering(
     const CompositorOptions& aCompositorOptions, const bool& aLayersConnected) {
   mLayersConnected = Some(aLayersConnected);
   InitRenderingState(aTextureFactoryIdentifier, aLayersId, aCompositorOptions);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult BrowserChild::RecvScrollbarPreferenceChanged(
+    ScrollbarPreference aPreference) {
+  MOZ_ASSERT(!mIsTopLevel,
+             "Scrollbar visibility should be derived from chrome flags for "
+             "top-level windows");
+  nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation());
+  nsDocShell::Cast(docShell)->SetScrollbarPreference(aPreference);
   return IPC_OK();
 }
 
@@ -3832,18 +3846,11 @@ NS_IMETHODIMP BrowserChild::OnSecurityChange(nsIWebProgress* aWebProgress,
 NS_IMETHODIMP BrowserChild::OnContentBlockingEvent(nsIWebProgress* aWebProgress,
                                                    nsIRequest* aRequest,
                                                    uint32_t aEvent) {
-  if (!IPCOpen() || !mShouldSendWebProgressEventsToParent) {
-    return NS_OK;
-  }
-
-  Maybe<WebProgressData> webProgressData;
-  RequestData requestData;
-  nsresult rv = PrepareProgressListenerData(aWebProgress, aRequest,
-                                            webProgressData, requestData);
-  NS_ENSURE_SUCCESS(rv, rv);
-  Unused << SendOnContentBlockingEvent(webProgressData, requestData, aEvent);
-
-  return NS_OK;
+  // The OnContentBlockingEvent only happenes in the parent process. It should
+  // not be seen in the content process.
+  MOZ_DIAGNOSTIC_ASSERT(
+      false, "OnContentBlockingEvent should not be seen in content process.");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP BrowserChild::OnProgressChange64(nsIWebProgress* aWebProgress,
@@ -4006,6 +4013,25 @@ BrowserChild::DoesWindowSupportProtectedMedia() {
           });
 }
 #endif
+
+void BrowserChild::NotifyContentBlockingEvent(
+    uint32_t aEvent, nsIChannel* aChannel, bool aBlocked, nsIURI* aHintURI,
+    const nsTArray<nsCString>& aTrackingFullHashes,
+    const Maybe<mozilla::AntiTrackingCommon::StorageAccessGrantedReason>&
+        aReason) {
+  if (!IPCOpen()) {
+    return;
+  }
+
+  Maybe<WebProgressData> webProgressData;
+  RequestData requestData;
+  nsresult rv = PrepareProgressListenerData(nullptr, aChannel, webProgressData,
+                                            requestData);
+  NS_ENSURE_SUCCESS_VOID(rv);
+
+  Unused << SendNotifyContentBlockingEvent(
+      aEvent, requestData, aBlocked, aHintURI, aTrackingFullHashes, aReason);
+}
 
 BrowserChildMessageManager::BrowserChildMessageManager(
     BrowserChild* aBrowserChild)

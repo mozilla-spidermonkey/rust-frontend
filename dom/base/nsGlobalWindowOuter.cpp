@@ -1704,14 +1704,6 @@ static bool TreatAsRemoteXUL(nsIPrincipal* aPrincipal) {
          !Preferences::GetBool("dom.use_xbl_scopes_for_remote_xul", false);
 }
 
-static bool EnablePrivilege(JSContext* cx, unsigned argc, JS::Value* vp) {
-  Telemetry::Accumulate(Telemetry::ENABLE_PRIVILEGE_EVER_CALLED, true);
-  return xpc::EnableUniversalXPConnect(cx);
-}
-
-static const JSFunctionSpec EnablePrivilegeSpec[] = {
-    JS_FN("enablePrivilege", EnablePrivilege, 1, 0), JS_FS_END};
-
 static bool InitializeLegacyNetscapeObject(JSContext* aCx,
                                            JS::Handle<JSObject*> aGlobal) {
   JSAutoRealm ar(aCx, aGlobal);
@@ -1724,21 +1716,7 @@ static bool InitializeLegacyNetscapeObject(JSContext* aCx,
   obj = JS_DefineObject(aCx, obj, "security", nullptr);
   NS_ENSURE_TRUE(obj, false);
 
-  // We hide enablePrivilege behind a pref because it has been altered in a
-  // way that makes it fundamentally insecure to use in production. Mozilla
-  // uses this pref during automated testing to support legacy test code that
-  // uses enablePrivilege. If you're not doing test automation, you _must_ not
-  // flip this pref, or you will be exposing all your users to security
-  // vulnerabilities.
-  if (!xpc::IsInAutomation()) {
-    return true;
-  }
-
-  /* Define PrivilegeManager object with the necessary "static" methods. */
-  obj = JS_DefineObject(aCx, obj, "PrivilegeManager", nullptr);
-  NS_ENSURE_TRUE(obj, false);
-
-  return JS_DefineFunctions(aCx, obj, EnablePrivilegeSpec);
+  return true;
 }
 
 struct MOZ_STACK_CLASS CompartmentFinderState {
@@ -5403,66 +5381,35 @@ void nsGlobalWindowOuter::NotifyContentBlockingEvent(
         nsContentUtils::GetASCIIOrigin(uri, origin);
 
         bool blockedValue = aBlocked;
-        bool unblocked = false;
         if (aEvent == nsIWebProgressListener::STATE_BLOCKED_TRACKING_CONTENT) {
           doc->SetHasTrackingContentBlocked(aBlocked, origin);
-          if (!aBlocked) {
-            unblocked = !doc->GetHasTrackingContentBlocked();
-          }
         } else if (aEvent == nsIWebProgressListener::
                                  STATE_LOADED_LEVEL_1_TRACKING_CONTENT) {
           doc->SetHasLevel1TrackingContentLoaded(aBlocked, origin);
-          if (!aBlocked) {
-            unblocked = !doc->GetHasLevel1TrackingContentLoaded();
-          }
         } else if (aEvent == nsIWebProgressListener::
                                  STATE_LOADED_LEVEL_2_TRACKING_CONTENT) {
           doc->SetHasLevel2TrackingContentLoaded(aBlocked, origin);
-          if (!aBlocked) {
-            unblocked = !doc->GetHasLevel2TrackingContentLoaded();
-          }
         } else if (aEvent == nsIWebProgressListener::
                                  STATE_BLOCKED_FINGERPRINTING_CONTENT) {
           doc->SetHasFingerprintingContentBlocked(aBlocked, origin);
-          if (!aBlocked) {
-            unblocked = !doc->GetHasFingerprintingContentBlocked();
-          }
         } else if (aEvent == nsIWebProgressListener::
                                  STATE_LOADED_FINGERPRINTING_CONTENT) {
           doc->SetHasFingerprintingContentLoaded(aBlocked, origin);
-          if (!aBlocked) {
-            unblocked = !doc->GetHasFingerprintingContentLoaded();
-          }
         } else if (aEvent ==
                    nsIWebProgressListener::STATE_BLOCKED_CRYPTOMINING_CONTENT) {
           doc->SetHasCryptominingContentBlocked(aBlocked, origin);
-          if (!aBlocked) {
-            unblocked = !doc->GetHasCryptominingContentBlocked();
-          }
         } else if (aEvent ==
                    nsIWebProgressListener::STATE_LOADED_CRYPTOMINING_CONTENT) {
           doc->SetHasCryptominingContentLoaded(aBlocked, origin);
-          if (!aBlocked) {
-            unblocked = !doc->GetHasCryptominingContentLoaded();
-          }
         } else if (aEvent == nsIWebProgressListener::
                                  STATE_BLOCKED_SOCIALTRACKING_CONTENT) {
           doc->SetHasSocialTrackingContentBlocked(aBlocked, origin);
-          if (!aBlocked) {
-            unblocked = !doc->GetHasSocialTrackingContentBlocked();
-          }
         } else if (aEvent == nsIWebProgressListener::
                                  STATE_LOADED_SOCIALTRACKING_CONTENT) {
           doc->SetHasSocialTrackingContentLoaded(aBlocked, origin);
-          if (!aBlocked) {
-            unblocked = !doc->GetHasSocialTrackingContentLoaded();
-          }
         } else if (aEvent == nsIWebProgressListener::
                                  STATE_COOKIES_BLOCKED_BY_PERMISSION) {
           doc->SetHasCookiesBlockedByPermission(aBlocked, origin);
-          if (!aBlocked) {
-            unblocked = !doc->GetHasCookiesBlockedByPermission();
-          }
         } else if (aEvent ==
                    nsIWebProgressListener::STATE_COOKIES_BLOCKED_TRACKER) {
           nsTArray<nsCString> trackingFullHashes;
@@ -5472,10 +5419,6 @@ void nsGlobalWindowOuter::NotifyContentBlockingEvent(
           }
           doc->SetHasTrackingCookiesBlocked(aBlocked, origin, aReason,
                                             trackingFullHashes);
-
-          if (!aBlocked) {
-            unblocked = !doc->GetHasTrackingCookiesBlocked();
-          }
         } else if (aEvent == nsIWebProgressListener::
                                  STATE_COOKIES_BLOCKED_SOCIALTRACKER) {
           nsTArray<nsCString> trackingFullHashes;
@@ -5485,22 +5428,12 @@ void nsGlobalWindowOuter::NotifyContentBlockingEvent(
           }
           doc->SetHasSocialTrackingCookiesBlocked(aBlocked, origin, aReason,
                                                   trackingFullHashes);
-
-          if (!aBlocked) {
-            unblocked = !doc->GetHasSocialTrackingCookiesBlocked();
-          }
         } else if (aEvent ==
                    nsIWebProgressListener::STATE_COOKIES_BLOCKED_ALL) {
           doc->SetHasAllCookiesBlocked(aBlocked, origin);
-          if (!aBlocked) {
-            unblocked = !doc->GetHasAllCookiesBlocked();
-          }
         } else if (aEvent ==
                    nsIWebProgressListener::STATE_COOKIES_BLOCKED_FOREIGN) {
           doc->SetHasForeignCookiesBlocked(aBlocked, origin);
-          if (!aBlocked) {
-            unblocked = !doc->GetHasForeignCookiesBlocked();
-          }
         } else if (aEvent == nsIWebProgressListener::STATE_COOKIES_LOADED) {
           MOZ_ASSERT(!aBlocked,
                      "We don't expected to see blocked STATE_COOKIES_LOADED");
@@ -5509,9 +5442,6 @@ void nsGlobalWindowOuter::NotifyContentBlockingEvent(
           // phrased in "loaded" terms as opposed to "blocked" terms.
           blockedValue = !aBlocked;
           doc->SetHasCookiesLoaded(blockedValue, origin);
-          if (!aBlocked) {
-            unblocked = !doc->GetHasCookiesLoaded();
-          }
         } else if (aEvent ==
                    nsIWebProgressListener::STATE_COOKIES_LOADED_TRACKER) {
           MOZ_ASSERT(
@@ -5522,9 +5452,6 @@ void nsGlobalWindowOuter::NotifyContentBlockingEvent(
           // in "loaded" terms as opposed to "blocked" terms.
           blockedValue = !aBlocked;
           doc->SetHasTrackerCookiesLoaded(blockedValue, origin);
-          if (!aBlocked) {
-            unblocked = !doc->GetHasTrackerCookiesLoaded();
-          }
         } else if (aEvent ==
                    nsIWebProgressListener::STATE_COOKIES_LOADED_SOCIALTRACKER) {
           MOZ_ASSERT(!aBlocked,
@@ -5535,37 +5462,9 @@ void nsGlobalWindowOuter::NotifyContentBlockingEvent(
           // phrased in "loaded" terms as opposed to "blocked" terms.
           blockedValue = !aBlocked;
           doc->SetHasSocialTrackerCookiesLoaded(blockedValue, origin);
-          if (!aBlocked) {
-            unblocked = !doc->GetHasSocialTrackerCookiesLoaded();
-          }
         } else {
           // Ignore nsIWebProgressListener::STATE_BLOCKED_UNSAFE_CONTENT;
         }
-        const uint32_t oldEvent = event;
-        if (blockedValue) {
-          event |= aEvent;
-        } else if (unblocked) {
-          event &= ~aEvent;
-        }
-
-        if (event == oldEvent
-#ifdef ANDROID
-            // GeckoView always needs to notify about blocked trackers,
-            // since the GeckoView API always needs to report the URI and
-            // type of any blocked tracker. We use a platform-dependent code
-            // path here because reporting this notification on desktop
-            // platforms isn't necessary and doing so can have a big
-            // performance cost.
-            && aEvent != nsIWebProgressListener::STATE_BLOCKED_TRACKING_CONTENT
-#endif
-        ) {
-          // Avoid dispatching repeated notifications when nothing has
-          // changed
-          return;
-        }
-
-        nsDocShell::Cast(docShell)->nsDocLoader::OnContentBlockingEvent(channel,
-                                                                        event);
       });
   nsresult rv;
   if (StaticPrefs::dom_testing_sync_content_blocking_notifications()) {
@@ -6441,14 +6340,9 @@ void nsGlobalWindowOuter::NotifyWindowIDDestroyed(const char* aTopic) {
   Dispatch(TaskCategory::Other, runnable.forget());
 }
 
-Element* nsGlobalWindowOuter::GetFrameElementOuter(
-    nsIPrincipal& aSubjectPrincipal) {
-  if (!mDocShell || mDocShell->GetIsMozBrowser()) {
-    return nullptr;
-  }
-
+Element* nsGlobalWindowOuter::GetFrameElement(nsIPrincipal& aSubjectPrincipal) {
   // Per HTML5, the frameElement getter returns null in cross-origin situations.
-  Element* element = GetRealFrameElementOuter();
+  Element* element = GetFrameElement();
   if (!element) {
     return nullptr;
   }
@@ -6460,29 +6354,11 @@ Element* nsGlobalWindowOuter::GetFrameElementOuter(
   return element;
 }
 
-Element* nsGlobalWindowOuter::GetRealFrameElementOuter() {
-  if (!mDocShell) {
-    return nullptr;
-  }
-
-  nsCOMPtr<nsIDocShell> parent;
-  mDocShell->GetSameTypeParentIgnoreBrowserBoundaries(getter_AddRefs(parent));
-
-  if (!parent || parent == mDocShell) {
-    // We're at a chrome boundary, don't expose the chrome iframe
-    // element to content code.
-    return nullptr;
-  }
-
-  return mFrameElement;
-}
-
-/**
- * nsIGlobalWindow::GetFrameElement (when called from C++) is just a wrapper
- * around GetRealFrameElement.
- */
 Element* nsGlobalWindowOuter::GetFrameElement() {
-  FORWARD_TO_INNER(GetFrameElement, (), nullptr);
+  if (!mBrowsingContext || mBrowsingContext->IsTop()) {
+    return nullptr;
+  }
+  return mBrowsingContext->GetEmbedderElement();
 }
 
 namespace {

@@ -1780,8 +1780,6 @@ nsresult nsHttpChannel::CallOnStartRequest() {
     return mStatus;
   }
 
-  ReportContentTypeTelemetryForCrossOriginStylesheets();
-
   mTracingEnabled = false;
 
   // Ensure mListener->OnStartRequest will be invoked before exiting
@@ -8130,93 +8128,6 @@ nsresult nsHttpChannel::ContinueOnStopRequestAfterAuthRetry(
   return ContinueOnStopRequest(aStatus, aIsFromNet, aContentComplete);
 }
 
-class HeaderValuesVisitor final : public nsIHttpHeaderVisitor {
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSIHTTPHEADERVISITOR
-
-  nsTArray<nsCString>& Get() { return mHeaderValues; }
-
- private:
-  nsTArray<nsCString> mHeaderValues;
-  ~HeaderValuesVisitor() = default;
-};
-
-NS_IMETHODIMP HeaderValuesVisitor::VisitHeader(const nsACString& aHeader,
-                                               const nsACString& aValue) {
-  mHeaderValues.AppendElement(aValue);
-  return NS_OK;
-}
-
-NS_IMPL_ISUPPORTS(HeaderValuesVisitor, nsIHttpHeaderVisitor)
-
-void nsHttpChannel::ReportContentTypeTelemetryForCrossOriginStylesheets() {
-  // Only record for successful requests.
-  if (NS_FAILED(mStatus)) {
-    return;
-  }
-  // Only record for stylesheet requests
-  if (!mContentTypeHint.EqualsLiteral("text/css") &&
-      mLoadInfo->GetExternalContentPolicyType() !=
-          nsIContentPolicy::TYPE_STYLESHEET) {
-    return;
-  }
-
-  if (!mLoadInfo->LoadingPrincipal()) {
-    // No loading principal to check if it's same-origin
-    return;
-  }
-
-  nsCOMPtr<nsIURI> docURI = mLoadInfo->LoadingPrincipal()->GetURI();
-  nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
-  bool isPrivateWin = mLoadInfo->GetOriginAttributes().mPrivateBrowsingId > 0;
-  nsresult rv = ssm->CheckSameOriginURI(mURI, docURI, false, isPrivateWin);
-  bool isSameOrigin = NS_SUCCEEDED(rv);
-
-  // Only report cross origin stylesheet requests
-  if (isSameOrigin) {
-    return;
-  }
-
-  RefPtr<HeaderValuesVisitor> visitor = new HeaderValuesVisitor();
-  rv = GetOriginalResponseHeader(NS_LITERAL_CSTRING("Content-Type"), visitor);
-
-  auto allEmptyValues = [&visitor]() {
-    for (const auto& v : visitor->Get()) {
-      if (!v.IsEmpty()) {
-        return false;
-      }
-    }
-    return true;
-  };
-
-  nsAutoCString contentType;
-  if (mResponseHead) {
-    mResponseHead->ContentType(contentType);
-  }
-
-  typedef Telemetry::LABELS_NETWORK_CROSS_ORIGIN_STYLESHEET_CONTENT_TYPE
-      CTLabels;
-  CTLabels label;
-  if (rv == NS_ERROR_NOT_AVAILABLE) {
-    // No Content-Type header
-    label = CTLabels::NoHeader;
-  } else if (allEmptyValues()) {
-    // Any/all Content-Type headers are empty
-    label = CTLabels::EmptyHeader;
-  } else if (contentType.IsEmpty()) {
-    // failed to parse
-    label = CTLabels::FailedToParse;
-  } else if (contentType.EqualsLiteral("text/css")) {
-    // text/css
-    label = CTLabels::ParsedTextCSS;
-  } else {
-    // some other value
-    label = CTLabels::ParsedOther;
-  }
-
-  Telemetry::AccumulateCategorical(label);
-}
-
 nsresult nsHttpChannel::ContinueOnStopRequest(nsresult aStatus, bool aIsFromNet,
                                               bool aContentComplete) {
   LOG(
@@ -9788,28 +9699,24 @@ void nsHttpChannel::MaybeWarnAboutAppCache() {
 
 // Step 10 of HTTP-network-or-cache fetch
 void nsHttpChannel::SetOriginHeader() {
+  if (mRequestHead.IsGet() || mRequestHead.IsHead()) {
+    return;
+  }
   nsresult rv;
 
   nsAutoCString existingHeader;
   Unused << mRequestHead.GetHeader(nsHttp::Origin, existingHeader);
-  if (!existingHeader.IsEmpty() && !existingHeader.EqualsLiteral("null")) {
-    LOG(
-        ("nsHttpChannel::SetOriginHeader Origin header already present "
-         "[this=%p]",
-         this));
+  if (!existingHeader.IsEmpty()) {
+    LOG(("nsHttpChannel::SetOriginHeader Origin header already present"));
     nsCOMPtr<nsIURI> uri;
     rv = NS_NewURI(getter_AddRefs(uri), existingHeader);
-    if (NS_FAILED(rv) || !dom::ReferrerInfo::IsReferrerSchemeAllowed(uri) ||
+    if (NS_SUCCEEDED(rv) &&
         ReferrerInfo::ShouldSetNullOriginHeader(this, uri)) {
-      LOG(("nsHttpChannel::SetOriginHeader to null Origin [this=%p]", this));
-      DebugOnly<nsresult> success = mRequestHead.SetHeader(
-          nsHttp::Origin, NS_LITERAL_CSTRING("null"), false /* merge */);
-      MOZ_ASSERT(NS_SUCCEEDED(success));
+      LOG(("nsHttpChannel::SetOriginHeader null Origin by Referrer-Policy"));
+      rv = mRequestHead.SetHeader(nsHttp::Origin, NS_LITERAL_CSTRING("null"),
+                                  false /* merge */);
+      MOZ_ASSERT(NS_SUCCEEDED(rv));
     }
-    return;
-  }
-
-  if (mRequestHead.IsGet() || mRequestHead.IsHead()) {
     return;
   }
 

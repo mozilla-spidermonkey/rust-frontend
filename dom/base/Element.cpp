@@ -2695,8 +2695,9 @@ void Element::List(FILE* out, int32_t aIndent, const nsCString& aPrefix) const {
   fprintf(out, " state=[%llx]",
           static_cast<unsigned long long>(State().GetInternalValue()));
   fprintf(out, " flags=[%08x]", static_cast<unsigned int>(GetFlags()));
-  if (IsCommonAncestorForRangeInSelection()) {
-    const LinkedList<nsRange>* ranges = GetExistingCommonAncestorRanges();
+  if (IsClosestCommonInclusiveAncestorForRangeInSelection()) {
+    const LinkedList<nsRange>* ranges =
+        GetExistingClosestCommonInclusiveAncestorRanges();
     int32_t count = 0;
     if (ranges) {
       // Can't use range-based iteration on a const LinkedList, unfortunately.
@@ -4208,6 +4209,23 @@ void Element::AssertInvariantsOnNodeInfoChange() {
   }
 }
 #endif
+
+// static
+nsAtom* Element::GetEventNameForAttr(nsAtom* aAttr) {
+  if (aAttr == nsGkAtoms::onwebkitanimationend) {
+    return nsGkAtoms::onwebkitAnimationEnd;
+  }
+  if (aAttr == nsGkAtoms::onwebkitanimationiteration) {
+    return nsGkAtoms::onwebkitAnimationIteration;
+  }
+  if (aAttr == nsGkAtoms::onwebkitanimationstart) {
+    return nsGkAtoms::onwebkitAnimationStart;
+  }
+  if (aAttr == nsGkAtoms::onwebkittransitionend) {
+    return nsGkAtoms::onwebkitTransitionEnd;
+  }
+  return aAttr;
+}
 
 }  // namespace dom
 }  // namespace mozilla

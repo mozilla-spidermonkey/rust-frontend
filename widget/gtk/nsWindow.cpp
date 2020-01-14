@@ -6980,7 +6980,7 @@ void nsWindow::SetDrawsInTitlebar(bool aState) {
 
 GtkWindow* nsWindow::GetCurrentTopmostWindow() {
   GtkWindow* parentWindow = GTK_WINDOW(GetGtkWidget());
-  GtkWindow* topmostParentWindow;
+  GtkWindow* topmostParentWindow = nullptr;
   while (parentWindow) {
     topmostParentWindow = parentWindow;
     parentWindow = gtk_window_get_transient_for(parentWindow);
@@ -7722,16 +7722,7 @@ void nsWindow::LockAspectRatio(bool aShouldLock) {
 }
 
 nsresult nsWindow::SetPrefersReducedMotionOverrideForTest(bool aValue) {
-  LookAndFeel::SetShouldRetainCacheForTest(true);
-
-  LookAndFeelInt prefersReducedMotion;
-  prefersReducedMotion.id = LookAndFeel::eIntID_PrefersReducedMotion;
-  prefersReducedMotion.value = aValue ? 1 : 0;
-
-  AutoTArray<LookAndFeelInt, 1> lookAndFeelCache;
-  lookAndFeelCache.AppendElement(prefersReducedMotion);
-
-  LookAndFeel::SetIntCache(lookAndFeelCache);
+  LookAndFeel::SetPrefersReducedMotionOverrideForTest(aValue);
 
   // Notify as if the corresponding setting changed.
   g_object_notify(G_OBJECT(gtk_settings_get_default()),
@@ -7741,7 +7732,7 @@ nsresult nsWindow::SetPrefersReducedMotionOverrideForTest(bool aValue) {
 }
 
 nsresult nsWindow::ResetPrefersReducedMotionOverrideForTest() {
-  LookAndFeel::SetShouldRetainCacheForTest(false);
+  LookAndFeel::ResetPrefersReducedMotionOverrideForTest();
 
   return NS_OK;
 }

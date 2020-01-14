@@ -2591,6 +2591,9 @@ GlobalObject* JSRuntime::createSelfHostingGlobal(JSContext* cx) {
   options.creationOptions().setInvisibleToDebugger(true);
   options.behaviors().setDiscardSource(true);
 
+  bool disableDeferredMode = getenv("DISABLE_PARSER_DEFERRED_ALLOC") != nullptr;
+  options.behaviors().setDeferredParserAlloc(!disableDeferredMode);
+
   Realm* realm = NewRealm(cx, nullptr, options);
   if (!realm) {
     return nullptr;

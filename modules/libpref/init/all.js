@@ -2285,6 +2285,10 @@ pref("security.notification_enable_delay", 500);
   // to skip the allowlist for about: pages and do not ship with a
   // CSP and NS_ASSERT right away.
   pref("csp.skip_about_page_csp_allowlist_and_assert", false);
+  // For testing purposes only: Flipping this pref to true allows
+  // to skip the assertion that HTML fragments (e.g. innerHTML) can
+  // not be used within chrome code or about: pages.
+  pref("domsecurity.skip_html_fragment_assertion", false);
 #endif
 
 #ifdef EARLY_BETA_OR_EARLIER
@@ -2780,7 +2784,7 @@ pref("browser.tabs.remote.separatePrivilegedMozillaWebContentProcess", false);
 
 // The domains we will isolate into the Mozilla Content Process. Comma-separated
 // full domains: any subdomains of the domains listed will also be allowed.
-pref("browser.tabs.remote.separatedMozillaDomains", "addons.cdn.mozilla.net,addons.mozilla.org,accounts.firefox.com");
+pref("browser.tabs.remote.separatedMozillaDomains", "addons.mozilla.org,accounts.firefox.com");
 
 // Default font types and sizes by locale
 pref("font.default.ar", "sans-serif");
@@ -4043,7 +4047,6 @@ pref("network.psl.onUpdate_notify", false);
   pref("widget.content.gtk-theme-override", "");
 #endif
 #ifdef MOZ_WAYLAND
-  pref("widget.wayland_dmabuf_backend.enabled", false);
   pref("widget.wayland_vsync.enabled", false);
 #endif
 

@@ -33,7 +33,6 @@
 #include "jstypes.h"      // for JS_PUBLIC_API
 
 #include "builtin/Array.h"               // for NewDenseFullyAllocatedArray
-#include "builtin/Promise.h"             // for PromiseObject
 #include "debugger/DebugAPI.h"           // for ResumeMode, DebugAPI
 #include "debugger/DebuggerMemory.h"     // for DebuggerMemory
 #include "debugger/DebugScript.h"        // for DebugScript
@@ -96,6 +95,7 @@
 #include "vm/JSObject.h"              // for JSObject, RequireObject
 #include "vm/ObjectGroup.h"           // for TenuredObject
 #include "vm/ObjectOperations.h"      // for DefineDataProperty
+#include "vm/PromiseObject.h"         // for js::PromiseObject
 #include "vm/ProxyObject.h"           // for ProxyObject, JSObject::is
 #include "vm/Realm.h"                 // for AutoRealm, Realm
 #include "vm/Runtime.h"               // for ReportOutOfMemory, JSRuntime
@@ -2144,6 +2144,19 @@ ResumeMode Debugger::fireEnterFrame(JSContext* cx, MutableHandleValue vp) {
 
 ResumeMode Debugger::fireNativeCall(JSContext* cx, const CallArgs& args,
                                     CallReason reason, MutableHandleValue vp) {
+  // The onNativeCall hook is fired when self hosted functions are called,
+  // and any other self hosted function or C++ native that is directly called
+  // by the self hosted function is considered to be part of the same
+  // native call.
+  //
+  // We check this immediately before calling the hook to avoid unnecessary
+  // calls to cx->currentScript(), which can be expensive when the top frame
+  // is in jitcode.
+  JSScript* script = cx->currentScript();
+  if (script && script->selfHosted()) {
+    return ResumeMode::Continue;
+  }
+
   RootedObject hook(cx, getHook(OnNativeCall));
   MOZ_ASSERT(hook);
   MOZ_ASSERT(hook->isCallable());

@@ -6658,7 +6658,7 @@ AbortReasonOr<Ok> IonBuilder::jsop_compare(JSOp op, MDefinition* left,
   // TODO: Support tracking optimizations for inlining a call and regular
   // optimization tracking at the same time. Currently just drop optimization
   // tracking when that happens.
-  bool canTrackOptimization = !IsCallPC(pc);
+  bool canTrackOptimization = !IsInvokePC(pc);
 
   bool emitted = false;
   if (canTrackOptimization) {
@@ -6718,7 +6718,7 @@ AbortReasonOr<Ok> IonBuilder::compareTryCharacter(bool* emitted, JSOp op,
   // TODO: Support tracking optimizations for inlining a call and regular
   // optimization tracking at the same time. Currently just drop optimization
   // tracking when that happens.
-  bool canTrackOptimization = !IsCallPC(pc);
+  bool canTrackOptimization = !IsInvokePC(pc);
   if (canTrackOptimization) {
     trackOptimizationAttempt(TrackedStrategy::Compare_Character);
   }
@@ -6811,7 +6811,7 @@ AbortReasonOr<Ok> IonBuilder::compareTrySpecialized(bool* emitted, JSOp op,
   // TODO: Support tracking optimizations for inlining a call and regular
   // optimization tracking at the same time. Currently just drop optimization
   // tracking when that happens.
-  bool canTrackOptimization = !IsCallPC(pc);
+  bool canTrackOptimization = !IsInvokePC(pc);
   if (canTrackOptimization) {
     trackOptimizationAttempt(TrackedStrategy::Compare_SpecializedTypes);
   }
@@ -6869,7 +6869,7 @@ AbortReasonOr<Ok> IonBuilder::compareTryBitwise(bool* emitted, JSOp op,
   // TODO: Support tracking optimizations for inlining a call and regular
   // optimization tracking at the same time. Currently just drop optimization
   // tracking when that happens.
-  bool canTrackOptimization = !IsCallPC(pc);
+  bool canTrackOptimization = !IsInvokePC(pc);
   if (canTrackOptimization) {
     trackOptimizationAttempt(TrackedStrategy::Compare_Bitwise);
   }
@@ -6968,7 +6968,7 @@ AbortReasonOr<Ok> IonBuilder::compareTrySpecializedOnBaselineInspector(
   MOZ_ASSERT(*emitted == false);
 
   // Not supported for call expressions.
-  if (IsCallPC(pc)) {
+  if (IsInvokePC(pc)) {
     return Ok();
   }
 
@@ -7013,7 +7013,7 @@ AbortReasonOr<Ok> IonBuilder::compareTryBinaryStub(bool* emitted,
     return Ok();
   }
 
-  if (IsCallPC(pc)) {
+  if (IsInvokePC(pc)) {
     return Ok();
   }
 
@@ -7035,7 +7035,7 @@ AbortReasonOr<Ok> IonBuilder::newArrayTryTemplateObject(
   // TODO: Support tracking optimizations for inlining a call and regular
   // optimization tracking at the same time. Currently just drop optimization
   // tracking when that happens.
-  bool canTrackOptimization = !IsCallPC(pc);
+  bool canTrackOptimization = !IsInvokePC(pc);
 
   if (canTrackOptimization) {
     trackOptimizationAttempt(TrackedStrategy::NewArray_TemplateObject);
@@ -7088,7 +7088,7 @@ AbortReasonOr<Ok> IonBuilder::newArrayTryVM(bool* emitted,
   // TODO: Support tracking optimizations for inlining a call and regular
   // optimization tracking at the same time. Currently just drop optimization
   // tracking when that happens.
-  bool canTrackOptimization = !IsCallPC(pc);
+  bool canTrackOptimization = !IsInvokePC(pc);
 
   // Emit a VM call.
   if (canTrackOptimization) {
@@ -7137,7 +7137,7 @@ AbortReasonOr<Ok> IonBuilder::jsop_newarray(JSObject* templateObject,
   // TODO: Support tracking optimizations for inlining a call and regular
   // optimization tracking at the same time. Currently just drop optimization
   // tracking when that happens.
-  bool canTrackOptimization = !IsCallPC(pc);
+  bool canTrackOptimization = !IsInvokePC(pc);
 
   bool emitted = false;
   if (canTrackOptimization) {
@@ -7189,7 +7189,7 @@ AbortReasonOr<Ok> IonBuilder::newObjectTryTemplateObject(
   // TODO: Support tracking optimizations for inlining a call and regular
   // optimization tracking at the same time. Currently just drop optimization
   // tracking when that happens.
-  bool canTrackOptimization = !IsCallPC(pc);
+  bool canTrackOptimization = !IsInvokePC(pc);
 
   if (canTrackOptimization) {
     trackOptimizationAttempt(TrackedStrategy::NewObject_TemplateObject);
@@ -7833,6 +7833,26 @@ AbortReasonOr<MBasicBlock*> IonBuilder::newPendingLoopHeader(
       if (!phi->addBackedgeType(alloc(), type, typeSet)) {
         return abort(AbortReason::Alloc);
       }
+    }
+  }
+
+  // The bytecode emitted for destructuring assignments uses a "done" stack
+  // value that can be read from the exception handler. Mark the loop phi for
+  // this slot as having implicit uses so it won't be optimized away (replaced
+  // by the JS_OPTIMIZED_OUT magic value).
+  // See ProcessTryNotes in vm/Interpreter.cpp.
+  MOZ_ASSERT(block->stackDepth() >= info().firstStackSlot());
+  bool emptyStack = block->stackDepth() == info().firstStackSlot();
+  if (!emptyStack) {
+    JSContext* cx = TlsContext.get();
+    for (TryNoteIterAll tni(cx, script(), pc); !tni.done(); ++tni) {
+      const JSTryNote& tn = **tni;
+      if (tn.kind != JSTRY_DESTRUCTURING) {
+        continue;
+      }
+      MOZ_ASSERT(tn.stackDepth > 1);
+      uint32_t slot = info().stackSlot(tn.stackDepth - 1);
+      block->getSlot(slot)->setImplicitlyUsedUnchecked();
     }
   }
 

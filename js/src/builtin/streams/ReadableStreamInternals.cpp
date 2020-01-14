@@ -15,7 +15,6 @@
 
 #include "jsfriendapi.h"  // js::AssertSameCompartment
 
-#include "builtin/Promise.h"                           // js::PromiseObject
 #include "builtin/streams/ReadableStreamController.h"  // js::ReadableStreamController{,CancelSteps}
 #include "builtin/streams/ReadableStreamReader.h"  // js::ReadableStream{,Default}Reader, js::ForAuthorCodeBool
 #include "gc/AllocKind.h"   // js::gc::AllocKind
@@ -30,6 +29,7 @@
 #include "vm/JSFunction.h"    // JSFunction, js::NewNativeFunction
 #include "vm/NativeObject.h"  // js::NativeObject
 #include "vm/ObjectGroup.h"   // js::GenericObject
+#include "vm/PromiseObject.h"  // js::PromiseObject
 #include "vm/Realm.h"         // JS::Realm
 #include "vm/StringType.h"    // js::PropertyName
 
@@ -124,15 +124,15 @@ MOZ_MUST_USE JSObject* js::ReadableStreamCancel(
   // Step 1: Set stream.[[disturbed]] to true.
   unwrappedStream->setDisturbed();
 
-  // Step 2: If stream.[[state]] is "closed", return a new promise resolved
-  //         with undefined.
+  // Step 2: If stream.[[state]] is "closed", return a promise resolved with
+  //         undefined.
   if (unwrappedStream->closed()) {
     return PromiseObject::unforgeableResolveWithNonPromise(
         cx, UndefinedHandleValue);
   }
 
-  // Step 3: If stream.[[state]] is "errored", return a new promise rejected
-  //         with stream.[[storedError]].
+  // Step 3: If stream.[[state]] is "errored", return a promise rejected with
+  //         stream.[[storedError]].
   if (unwrappedStream->errored()) {
     Rooted<Value> storedError(cx, unwrappedStream->storedError());
     if (!cx->compartment()->wrap(cx, &storedError)) {
@@ -156,8 +156,8 @@ MOZ_MUST_USE JSObject* js::ReadableStreamCancel(
     return nullptr;
   }
 
-  // Step 6: Return the result of transforming sourceCancelPromise with a
-  //         fulfillment handler that returns undefined.
+  // Step 6: Return the result of reacting to sourceCancelPromise with a
+  //         fulfillment step that returns undefined.
   Handle<PropertyName*> funName = cx->names().empty;
   Rooted<JSFunction*> returnUndefined(
       cx, NewNativeFunction(cx, ReturnUndefined, 0, funName,

@@ -6,7 +6,6 @@
 
 #include "jit/VMFunctions.h"
 
-#include "builtin/Promise.h"
 #include "builtin/String.h"
 #include "builtin/TypedObject.h"
 #include "frontend/BytecodeCompiler.h"
@@ -1211,7 +1210,7 @@ bool RecompileImpl(JSContext* cx, bool force) {
   RootedScript script(cx, frame.script());
   MOZ_ASSERT(script->hasIonScript());
 
-  if (!IsIonEnabled()) {
+  if (!IsIonEnabled(cx)) {
     return true;
   }
 

@@ -2091,15 +2091,9 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(Document)
     uint32_t nsid = tmp->GetDefaultNamespaceID();
     nsAutoCString uri;
     if (tmp->mDocumentURI) uri = tmp->mDocumentURI->GetSpecOrDefault();
-    static const char* kNSURIs[] = {"([none])", "(xmlns)", "(xml)", "(xhtml)",
-                                    "(XLink)",  "(XSLT)", "(MathML)", "(RDF)",
-                                    "(XUL)"};
-    if (nsid < ArrayLength(kNSURIs)) {
-      SprintfLiteral(name, "Document %s %s %s", loadedAsData.get(),
-                     kNSURIs[nsid], uri.get());
-    } else {
-      SprintfLiteral(name, "Document %s %s", loadedAsData.get(), uri.get());
-    }
+    const char* nsuri = nsNameSpaceManager::GetNameSpaceDisplayName(nsid);
+    SprintfLiteral(name, "Document %s %s %s", loadedAsData.get(), nsuri,
+                   uri.get());
     cb.DescribeRefCountedNode(tmp->mRefCnt.get(), name);
   } else {
     NS_IMPL_CYCLE_COLLECTION_DESCRIBE(Document, tmp->mRefCnt.get())
@@ -3104,6 +3098,9 @@ nsresult Document::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
         IsSynthesized() && XRE_IsContentProcess()) {
       ContentChild::UpdateCookieStatus(mChannel);
     }
+
+    // Store the security info for future use.
+    mChannel->GetSecurityInfo(getter_AddRefs(mSecurityInfo));
   }
 
   // If this document is being loaded by a docshell, copy its sandbox flags
@@ -3518,13 +3515,24 @@ nsresult Document::InitReferrerInfo(nsIChannel* aChannel) {
   MOZ_ASSERT(mPreloadReferrerInfo);
 
   if (ReferrerInfo::ShouldResponseInheritReferrerInfo(aChannel)) {
-    // At this point the document is not fully created and mParentDocument has
-    // not been set yet,
-    Document* parentDoc = GetSameTypeParentDocument();
-    if (parentDoc) {
-      mReferrerInfo = parentDoc->GetReferrerInfo();
-      mPreloadReferrerInfo = mReferrerInfo;
-      return NS_OK;
+    // The channel is loading `about:srcdoc`. Srcdoc loads should respond with
+    // their parent's ReferrerInfo when asked for their ReferrerInfo, unless
+    // they have an opaque origin.
+    // https://w3c.github.io/webappsec-referrer-policy/#determine-requests-referrer
+    if (BrowsingContext* bc = GetBrowsingContext()) {
+      // At this point the document is not fully created and mParentDocument has
+      // not been set yet,
+      Document* parentDoc = bc->GetEmbedderElement()
+                                ? bc->GetEmbedderElement()->OwnerDoc()
+                                : nullptr;
+      if (parentDoc) {
+        mReferrerInfo = parentDoc->GetReferrerInfo();
+        mPreloadReferrerInfo = mReferrerInfo;
+        return NS_OK;
+      }
+
+      MOZ_ASSERT(NodePrincipal()->GetIsNullPrincipal(),
+                 "srcdoc without null principal as toplevel!");
     }
   }
 
@@ -10941,8 +10949,8 @@ void Document::MutationEventDispatched(nsINode* aTarget) {
       nsINode* commonAncestor = nullptr;
       int32_t realTargetCount = realTargets.Count();
       for (int32_t j = 0; j < realTargetCount; ++j) {
-        commonAncestor =
-            nsContentUtils::GetCommonAncestor(possibleTarget, realTargets[j]);
+        commonAncestor = nsContentUtils::GetClosestCommonInclusiveAncestor(
+            possibleTarget, realTargets[j]);
         if (commonAncestor) {
           realTargets.ReplaceObjectAt(commonAncestor, j);
           break;
@@ -14905,8 +14913,8 @@ void Document::SetUserHasInteracted() {
 }
 
 BrowsingContext* Document::GetBrowsingContext() const {
-  nsPIDOMWindowOuter* outer = GetWindow();
-  return outer ? outer->GetBrowsingContext() : nullptr;
+  nsCOMPtr<nsIDocShell> docshell(mDocumentContainer);
+  return docshell ? docshell->GetBrowsingContext() : nullptr;
 }
 
 void Document::NotifyUserGestureActivation() {
@@ -15156,7 +15164,7 @@ NS_IMPL_ISUPPORTS_INHERITED(UserIntractionTimer, Runnable, nsITimerCallback,
 
 void Document::MaybeStoreUserInteractionAsPermission() {
   // We care about user-interaction stored only for top-level documents.
-  if (GetSameTypeParentDocument()) {
+  if (!IsTopLevelContentDocument()) {
     return;
   }
 
@@ -15189,21 +15197,6 @@ bool Document::IsExtensionPage() const {
   return Preferences::GetBool("media.autoplay.allow-extension-background-pages",
                               true) &&
          BasePrincipal::Cast(NodePrincipal())->AddonPolicy();
-}
-
-Document* Document::GetSameTypeParentDocument() {
-  nsCOMPtr<nsIDocShellTreeItem> current = GetDocShell();
-  if (!current) {
-    return nullptr;
-  }
-
-  nsCOMPtr<nsIDocShellTreeItem> parent;
-  current->GetInProcessSameTypeParent(getter_AddRefs(parent));
-  if (!parent) {
-    return nullptr;
-  }
-
-  return parent->GetDocument();
 }
 
 void Document::TraceProtos(JSTracer* aTrc) {

@@ -114,6 +114,7 @@ static void CloseLiveIteratorIon(JSContext* cx,
 
   if (isDestructuring) {
     RootedValue doneValue(cx, si.read());
+    MOZ_RELEASE_ASSERT(!doneValue.isMagic());
     bool done = ToBoolean(doneValue);
     // Do not call IteratorClose if the destructuring iterator is already
     // done.
@@ -399,7 +400,10 @@ static bool ProcessTryNotesBaseline(JSContext* cx, const JSJitFrameIter& frame,
         uint8_t* stackPointer;
         BaselineFrameAndStackPointersFromTryNote(tn, frame, &framePointer,
                                                  &stackPointer);
+        // Note: if this ever changes, also update the JSTRY_DESTRUCTURING code
+        // in IonBuilder.cpp!
         RootedValue doneValue(cx, *(reinterpret_cast<Value*>(stackPointer)));
+        MOZ_RELEASE_ASSERT(!doneValue.isMagic());
         bool done = ToBoolean(doneValue);
         if (!done) {
           Value iterValue(*(reinterpret_cast<Value*>(stackPointer) + 1));
@@ -2025,7 +2029,7 @@ void InlineFrameIterator::findNextFrame() {
     }
 
     // Skip over non-argument slots, as well as |this|.
-    bool skipNewTarget = IsConstructorCallPC(pc_);
+    bool skipNewTarget = IsConstructPC(pc_);
     unsigned skipCount =
         (si_.numAllocations() - 1) - numActualArgs_ - 1 - skipNewTarget;
     for (unsigned j = 0; j < skipCount; j++) {
@@ -2193,9 +2197,9 @@ bool InlineFrameIterator::isConstructing() const {
     }
 
     // In the case of a JS frame, look up the pc from the snapshot.
-    MOZ_ASSERT(IsCallOp(parentOp) && !IsSpreadCallOp(parentOp));
+    MOZ_ASSERT(IsInvokeOp(parentOp) && !IsSpreadOp(parentOp));
 
-    return IsConstructorCallOp(parentOp);
+    return IsConstructOp(parentOp);
   }
 
   return frame_->isConstructing();

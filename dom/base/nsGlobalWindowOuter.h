@@ -567,7 +567,7 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
   already_AddRefed<nsPIDOMWindowOuter> GetInProcessParent() override;
   nsPIDOMWindowOuter* GetInProcessScriptableParent() override;
   nsPIDOMWindowOuter* GetInProcessScriptableParentOrNull() override;
-  mozilla::dom::Element* GetFrameElementOuter(nsIPrincipal& aSubjectPrincipal);
+  mozilla::dom::Element* GetFrameElement(nsIPrincipal& aSubjectPrincipal);
   mozilla::dom::Element* GetFrameElement() override;
   mozilla::dom::Nullable<mozilla::dom::WindowProxyHolder> OpenOuter(
       const nsAString& aUrl, const nsAString& aName, const nsAString& aOptions,
@@ -622,7 +622,6 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
                           mozilla::ErrorResult& aError);
   nsIControllers* GetControllersOuter(mozilla::ErrorResult& aError);
   nsresult GetControllers(nsIControllers** aControllers) override;
-  mozilla::dom::Element* GetRealFrameElementOuter();
   float GetMozInnerScreenXOuter(mozilla::dom::CallerType aCallerType);
   float GetMozInnerScreenYOuter(mozilla::dom::CallerType aCallerType);
   double GetDevicePixelRatioOuter(mozilla::dom::CallerType aCallerType);

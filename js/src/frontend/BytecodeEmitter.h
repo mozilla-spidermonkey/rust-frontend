@@ -40,7 +40,6 @@
 #include "frontend/ValueUsage.h"     // ValueUsage
 #include "js/RootingAPI.h"           // JS::Rooted, JS::Handle
 #include "js/TypeDecls.h"            // jsbytecode
-#include "vm/BigIntType.h"           // BigInt
 #include "vm/BytecodeUtil.h"         // JSOp
 #include "vm/Instrumentation.h"      // InstrumentationKind
 #include "vm/Interpreter.h"          // CheckIsObjectKind, CheckIsCallableKind
@@ -455,14 +454,13 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   MOZ_MUST_USE bool emitGoto(NestableControl* target, JumpList* jumplist,
                              GotoKind kind);
 
-  MOZ_MUST_USE bool emitIndex32(JSOp op, uint32_t index);
   MOZ_MUST_USE bool emitIndexOp(JSOp op, uint32_t index);
 
   MOZ_MUST_USE bool emitAtomOp(
-      JSAtom* atom, JSOp op,
+      JSOp op, JSAtom* atom,
       ShouldInstrument shouldInstrument = ShouldInstrument::No);
   MOZ_MUST_USE bool emitAtomOp(
-      uint32_t atomIndex, JSOp op,
+      JSOp op, uint32_t atomIndex,
       ShouldInstrument shouldInstrument = ShouldInstrument::No);
 
   MOZ_MUST_USE bool emitArrayLiteral(ListNode* array);
