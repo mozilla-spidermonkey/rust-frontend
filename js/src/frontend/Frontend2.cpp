@@ -103,6 +103,15 @@ class AutoFreeJsparagusResult {
   }
 };
 
+void ReportVisageCompileError(JSContext* cx, ErrorMetadata&& metadata, int errorNumber, ...) {
+  va_list args;
+  va_start(args, errorNumber);
+  ReportCompileError(cx, std::move(metadata), /* notes = */ nullptr, JSREPORT_ERROR,
+                     errorNumber, &args);
+  va_end(args);
+}
+
+
 /* static */
 JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
                                          JS::SourceText<Utf8Unit>& srcBuf,
@@ -120,8 +129,13 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
 
   if (jsparagus.error.data) {
     *unimplemented = false;
-    JS_ReportErrorASCII(cx, "%s",
-                        reinterpret_cast<const char*>(jsparagus.error.data));
+    ErrorMetadata metadata;
+    metadata.filename = "<unknown>";
+    metadata.lineNumber = 1;
+    metadata.columnNumber = 0;
+    metadata.isMuted = false;
+    ReportVisageCompileError(cx, std::move(metadata), JSMSG_VISAGE_COMPILE_ERROR,
+                             reinterpret_cast<const char*>(jsparagus.error.data));
     return nullptr;
   }
 
