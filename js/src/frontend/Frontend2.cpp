@@ -168,6 +168,21 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
     return nullptr;
   }
 
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  Sprinter sprinter(cx);
+  if (!sprinter.init()) {
+    return nullptr;
+  }
+  if (!Disassemble(cx, script, true, &sprinter, DisassembleSkeptically::Yes)) {
+    return nullptr;
+  }
+  printf("%s\n", sprinter.string());
+  if (!Disassemble(cx, script, true, &sprinter, DisassembleSkeptically::No)) {
+    return nullptr;
+  }
+  // (don't bother printing it)
+#endif
+
   return script;
 }
 
