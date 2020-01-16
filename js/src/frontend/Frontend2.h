@@ -37,7 +37,7 @@ class Jsparagus {
  public:
   static JSScript* compileGlobalScript(
       GlobalScriptInfo& info, JS::SourceText<mozilla::Utf8Unit>& srcBuf,
-      ScriptSourceObject** sourceObjectOut, bool* unimplemented);
+      bool* unimplemented);
 };
 
 // Use the Rust frontend to parse and free the generated AST. Returns true if no

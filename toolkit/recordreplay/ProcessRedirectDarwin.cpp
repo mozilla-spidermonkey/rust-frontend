@@ -978,8 +978,7 @@ static PreambleResult Preamble_pthread_self(CallArguments* aArguments) {
   return PreambleResult::PassThrough;
 }
 
-static void*
-GetTLVTemplate(void* aPtr, size_t* aSize) {
+static void* GetTLVTemplate(void* aPtr, size_t* aSize) {
   uint8_t* tlvTemplate = nullptr;
   *aSize = 0;
 

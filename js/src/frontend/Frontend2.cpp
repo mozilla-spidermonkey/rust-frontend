@@ -115,7 +115,6 @@ void ReportVisageCompileError(JSContext* cx, ErrorMetadata&& metadata, int error
 /* static */
 JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
                                          JS::SourceText<Utf8Unit>& srcBuf,
-                                         ScriptSourceObject** sourceObjectOut,
                                          bool* unimplemented) {
   // FIXME: check info members and return with *unimplemented = true
   //        if any field doesn't match to run_jsparagus.
@@ -151,18 +150,8 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
     return nullptr;
   }
 
-  ScriptSourceHolder ssHolder(ss);  // TODO
-
-  if (!ss->initFromOptions(cx, info.getOptions(), mozilla::Nothing())) {
-    return nullptr;
-  }
-
-  RootedScriptSourceObject sso(cx, ScriptSourceObject::create(cx, ss));
+  RootedScriptSourceObject sso(cx, frontend::CreateScriptSourceObject(cx, info.getOptions()));
   if (!sso) {
-    return nullptr;
-  }
-
-  if (!ScriptSourceObject::initFromOptions(cx, sso, info.getOptions())) {
     return nullptr;
   }
 

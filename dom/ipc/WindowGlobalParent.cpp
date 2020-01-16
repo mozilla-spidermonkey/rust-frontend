@@ -189,7 +189,6 @@ void WindowGlobalParent::GetContentBlockingLog(nsAString& aLog) {
   aLog.Assign(std::move(log));
 }
 
-
 mozilla::ipc::IPCResult WindowGlobalParent::RecvLoadURI(
     dom::BrowsingContext* aTargetBC, nsDocShellLoadState* aLoadState,
     bool aSetNavigating) {
