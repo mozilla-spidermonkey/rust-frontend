@@ -152,9 +152,9 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   enum EmitterMode {
     Normal,
 
-    // Emit JSOP_GETINTRINSIC instead of JSOP_GETNAME and assert that
-    // JSOP_GETNAME and JSOP_*GNAME don't ever get emitted. See the comment for
-    // the field |selfHostingMode| in Parser.h for details.
+    // Emit JSOp::GetIntrinsic instead of JSOp::GetName and assert that
+    // JSOp::GetName and JSOp::*GName don't ever get emitted. See the comment
+    // for the field |selfHostingMode| in Parser.h for details.
     SelfHosting,
 
     // Check the static scope chain of the root function for resolving free
@@ -400,13 +400,13 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   // values to duplicate, in theiro original order.
   MOZ_MUST_USE bool emitDupAt(unsigned slotFromTop, unsigned count = 1);
 
-  // Helper to emit JSOP_POP or JSOP_POPN.
+  // Helper to emit JSOp::Pop or JSOp::PopN.
   MOZ_MUST_USE bool emitPopN(unsigned n);
 
-  // Helper to emit JSOP_CHECKISOBJ.
+  // Helper to emit JSOp::CheckIsObj.
   MOZ_MUST_USE bool emitCheckIsObj(CheckIsObjectKind kind);
 
-  // Helper to emit JSOP_CHECKISCALLABLE.
+  // Helper to emit JSOp::CheckIsCallable.
   MOZ_MUST_USE bool emitCheckIsCallable(CheckIsCallableKind kind);
 
   // Push whether the value atop of the stack is non-undefined and non-null.
@@ -516,7 +516,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   MOZ_MUST_USE bool emitInitializeInstanceFields();
 
   // To catch accidental misuse, emitUint16Operand/emit3 assert that they are
-  // not used to unconditionally emit JSOP_GETLOCAL. Variable access should
+  // not used to unconditionally emit JSOp::GetLocal. Variable access should
   // instead be emitted using EmitVarOp. In special cases, when the caller
   // definitely knows that a given local slot is unaliased, this function may be
   // used as a non-asserting version of emitUint16Operand.
@@ -584,8 +584,8 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   MOZ_MUST_USE bool emitComputedPropertyName(UnaryNode* computedPropName);
 
-  // Emit bytecode to put operands for a JSOP_GETELEM/CALLELEM/SETELEM/DELELEM
-  // opcode onto the stack in the right order. In the case of SETELEM, the
+  // Emit bytecode to put operands for a JSOp::GetElem/CallElem/SetElem/DelElem
+  // opcode onto the stack in the right order. In the case of SetElem, the
   // value to be assigned must already be pushed.
   enum class EmitElemOption { Get, Call, IncDec, CompoundAssign, Ref };
   MOZ_MUST_USE bool emitElemOperands(PropertyByValue* elem,
@@ -690,7 +690,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   MOZ_MUST_USE bool emitAnonymousFunctionWithComputedName(
       ParseNode* node, FunctionPrefixKind prefixKind);
 
-  MOZ_MUST_USE bool setFunName(JSFunction* fun, JSAtom* name);
+  MOZ_MUST_USE bool setFunName(FunctionBox* fun, JSAtom* name);
   MOZ_MUST_USE bool emitInitializer(ParseNode* initializer, ParseNode* pattern);
 
   MOZ_MUST_USE bool emitCallSiteObject(CallSiteNode* callSiteObj);
@@ -707,7 +707,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   MOZ_MUST_USE bool emitDeleteElement(UnaryNode* deleteNode);
   MOZ_MUST_USE bool emitDeleteExpression(UnaryNode* deleteNode);
 
-  // |op| must be JSOP_TYPEOF or JSOP_TYPEOFEXPR.
+  // |op| must be JSOp::Typeof or JSOp::TypeofExpr.
   MOZ_MUST_USE bool emitTypeof(UnaryNode* typeofNode, JSOp op);
 
   MOZ_MUST_USE bool emitUnary(UnaryNode* unaryNode);
@@ -797,7 +797,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   MOZ_MUST_USE bool emitReturnRval() {
     return emitInstrumentation(InstrumentationKind::Exit) &&
-           emit1(JSOP_RETRVAL);
+           emit1(JSOp::RetRval);
   }
 
   MOZ_MUST_USE bool emitInstrumentation(InstrumentationKind kind,

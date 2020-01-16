@@ -7148,8 +7148,8 @@ bool GeneralParser<ParseHandler, Unit>::finishClassConstructor(
     const ParseContext::ClassStatement& classStmt, HandlePropertyName className,
     HasHeritage hasHeritage, uint32_t classStartOffset, uint32_t classEndOffset,
     size_t numFields, ListNodeType& classMembers) {
-  // Fields cannot re-use the constructor obtained via JSOP_CLASSCONSTRUCTOR or
-  // JSOP_DERIVEDCONSTRUCTOR due to needing to emit calls to the field
+  // Fields cannot re-use the constructor obtained via JSOp::ClassConstructor or
+  // JSOp::DerivedConstructor due to needing to emit calls to the field
   // initializers in the constructor. So, synthesize a new one.
   if (classStmt.constructorBox == nullptr && numFields > 0) {
     MOZ_ASSERT(!options().selfHostingMode);
@@ -9324,18 +9324,18 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::memberExpr(
           return null();
         }
 
-        JSOp op = JSOP_CALL;
+        JSOp op = JSOp::Call;
         bool maybeAsyncArrow = false;
         if (PropertyName* prop = handler_.maybeDottedProperty(lhs)) {
-          // Use the JSOP_FUN{APPLY,CALL} optimizations given the
-          // right syntax.
+          // Use the JSOp::Fun{Apply,Call} optimizations given the right
+          // syntax.
           if (prop == cx_->names().apply) {
-            op = JSOP_FUNAPPLY;
+            op = JSOp::FunApply;
             if (pc_->isFunctionBox()) {
               pc_->functionBox()->usesApply = true;
             }
           } else if (prop == cx_->names().call) {
-            op = JSOP_FUNCALL;
+            op = JSOp::FunCall;
           }
         } else if (tt == TokenKind::LeftParen) {
           if (handler_.isAsyncKeyword(lhs, cx_)) {
@@ -9347,9 +9347,9 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::memberExpr(
             // syntax when the initial name is "async".
             maybeAsyncArrow = true;
           } else if (handler_.isEvalName(lhs, cx_)) {
-            // Select the right EVAL op and flag pc_ as having a
+            // Select the right Eval op and flag pc_ as having a
             // direct eval.
-            op = pc_->sc()->strict() ? JSOP_STRICTEVAL : JSOP_EVAL;
+            op = pc_->sc()->strict() ? JSOp::StrictEval : JSOp::Eval;
             pc_->sc()->setBindingsAccessedDynamically();
             pc_->sc()->setHasDirectEval();
 
@@ -9377,12 +9377,12 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::memberExpr(
             return null();
           }
           if (isSpread) {
-            if (op == JSOP_EVAL) {
-              op = JSOP_SPREADEVAL;
-            } else if (op == JSOP_STRICTEVAL) {
-              op = JSOP_STRICTSPREADEVAL;
+            if (op == JSOp::Eval) {
+              op = JSOp::SpreadEval;
+            } else if (op == JSOp::StrictEval) {
+              op = JSOp::StrictSpreadEval;
             } else {
-              op = JSOP_SPREADCALL;
+              op = JSOp::SpreadCall;
             }
           }
 
@@ -9629,10 +9629,11 @@ RegExpLiteral* Parser<FullParseHandler, Unit>::newRegExp() {
   RegExpFlags flags = anyChars.currentToken().regExpFlags();
 
   if (this->getParseInfo().isDeferred()) {
-    {
-      LifoAllocScope allocScope(&cx_->tempLifoAlloc());
+    if (!handler_.canSkipRegexpSyntaxParse()) {
       // Verify that the Regexp will syntax parse when the time comes to
-      // instantiate it.
+      // instantiate it. If we have already done a syntax parse, we can
+      // skip this.
+      LifoAllocScope allocScope(&cx_->tempLifoAlloc());
       if (!irregexp::ParsePatternSyntax(anyChars, allocScope.alloc(), range,
                                         flags.unicode())) {
         return nullptr;

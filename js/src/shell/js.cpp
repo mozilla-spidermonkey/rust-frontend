@@ -137,6 +137,7 @@
 #include "vm/Shape.h"
 #include "vm/SharedArrayObject.h"
 #include "vm/Time.h"
+#include "vm/ToSource.h"  // js::ValueToSource
 #include "vm/TypedArrayObject.h"
 #include "vm/WrapperObject.h"
 #include "wasm/WasmJS.h"
@@ -764,7 +765,7 @@ static bool ShellInterruptCallback(JSContext* cx) {
     // Report any exceptions thrown by the JS interrupt callback, but do
     // *not* keep it on the cx. The interrupt handler is invoked at points
     // that are not expected to throw catchable exceptions, like at
-    // JSOP_RETRVAL.
+    // JSOp::RetRval.
     //
     // If the interrupted JS code was already throwing, any exceptions
     // thrown by the interrupt handler are silently swallowed.
@@ -5215,10 +5216,7 @@ static bool BinParse(JSContext* cx, unsigned argc, Value* vp) {
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   ParseInfo parseInfo(cx, allocScope);
-
-  RootedScriptSourceObject sourceObj(
-      cx, frontend::CreateScriptSourceObject(cx, options, Nothing()));
-  if (!sourceObj) {
+  if (!parseInfo.initFromOptions(cx, options)) {
     return false;
   }
 
@@ -5229,7 +5227,7 @@ static bool BinParse(JSContext* cx, unsigned argc, Value* vp) {
                        ? ParseBinASTData<frontend::BinASTTokenReaderMultipart>
                        : ParseBinASTData<frontend::BinASTTokenReaderContext>;
   if (!parseFunc(cx, buf_data, buf_length, &globalsc, parseInfo, options,
-                 sourceObj)) {
+                 parseInfo.sourceObject)) {
     return false;
   }
 
@@ -5240,13 +5238,15 @@ static bool BinParse(JSContext* cx, unsigned argc, Value* vp) {
 #endif  // defined(JS_BUILD_BINAST)
 
 template <typename Unit>
-static bool FullParseTest(JSContext* cx, const JS::ReadOnlyCompileOptions& options,
-                          const Unit* units, size_t length, ParseInfo& parseInfo,
-                          ScriptSourceObject* sourceObject, js::frontend::ParseGoal goal) {
+static bool FullParseTest(JSContext* cx,
+                          const JS::ReadOnlyCompileOptions& options,
+                          const Unit* units, size_t length,
+                          ParseInfo& parseInfo, ScriptSourceObject* sourceObject,
+                          js::frontend::ParseGoal goal) {
   using namespace js::frontend;
   Parser<FullParseHandler, Unit> parser(cx, options, units, length,
-                                        /* foldConstants = */ false,
-                                        parseInfo, nullptr, nullptr,
+                                        /* foldConstants = */ false, parseInfo,
+                                        nullptr, nullptr,
                                         sourceObject);
   if (!parser.checkOptions()) {
     return false;
@@ -5374,9 +5374,12 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   ParseInfo parseInfo(cx, allocScope);
+  if (!parseInfo.initFromOptions(cx, options)) {
+    return false;
+  }
 
   RootedScriptSourceObject sourceObject(
-      cx, frontend::CreateScriptSourceObject(cx, options, Nothing()));
+      cx, frontend::CreateScriptSourceObject(cx, options));
   if (!sourceObject) {
     return false;
   }
@@ -5384,15 +5387,14 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
   if (stableChars.isLatin1()) {
     const Latin1Char* chars_ = stableChars.latin1Range().begin().get();
     auto chars = reinterpret_cast<const mozilla::Utf8Unit*>(chars_);
-    if (!FullParseTest<mozilla::Utf8Unit>(cx, options, chars, length,
-                                          parseInfo, sourceObject, goal)) {
+    if (!FullParseTest<mozilla::Utf8Unit>(cx, options, chars, length, parseInfo, sourceObject,
+                                          goal)) {
       return false;
     }
   } else {
     MOZ_ASSERT(stableChars.isTwoByte());
     const char16_t* chars = stableChars.twoByteRange().begin().get();
-    if (!FullParseTest<char16_t>(cx, options, chars, length,
-                                 parseInfo, sourceObject, goal)) {
+    if (!FullParseTest<char16_t>(cx, options, chars, length, parseInfo, sourceObject, goal)) {
       return false;
     }
   }
@@ -5430,16 +5432,13 @@ static bool SyntaxParse(JSContext* cx, unsigned argc, Value* vp) {
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   ParseInfo parseInfo(cx, allocScope);
-
-  RootedScriptSourceObject sourceObject(
-      cx, frontend::CreateScriptSourceObject(cx, options, Nothing()));
-  if (!sourceObject) {
+  if (!parseInfo.initFromOptions(cx, options)) {
     return false;
   }
 
   Parser<frontend::SyntaxParseHandler, char16_t> parser(
       cx, options, chars, length, false, parseInfo, nullptr, nullptr,
-      sourceObject);
+      parseInfo.sourceObject);
   if (!parser.checkOptions()) {
     return false;
   }

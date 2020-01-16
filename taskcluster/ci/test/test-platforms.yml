@@ -63,13 +63,6 @@ linux1804-64-asan/opt:
         - linux1804-tests
         - web-platform-tests-1804
 
-# Stylo sequential runs check memory and
-# performance when using a single thread.
-linux1804-64-stylo-sequential/opt:
-    build-platform: linux64/opt
-    test-sets:
-        - awsy-stylo-sequential
-
 linux1804-64-qr/opt:
     build-platform: linux64/opt
     test-sets:
@@ -90,11 +83,10 @@ linux1804-64-qr/debug:
         - linux1804-qr-tests
         - web-platform-tests-1804
 
-# Disabled temporarily due to Bug 1602863
-# linux1804-64-asan-qr/opt:
-#     build-platform: linux64-asan/opt
-#     test-sets:
-#         - linux-qr-smoketests
+linux1804-64-asan-qr/opt:
+    build-platform: linux64-asan/opt
+    test-sets:
+        - linux-qr-smoketests
 
 linux1804-64-ccov/opt:
     build-platform: linux64-ccov/opt
@@ -178,11 +170,6 @@ linux64-qr/debug:
     test-sets:
         - linux-qr-tests
         - web-platform-tests-1604
-
-linux64-asan-qr/opt:
-    build-platform: linux64-asan/opt
-    test-sets:
-        - linux-qr-smoketests
 
 linux64-ccov/opt:
     build-platform: linux64-ccov/opt
@@ -475,7 +462,6 @@ android-hw-p2-8-0-arm7-api-16/opt:
     build-platform: android-api-16/opt
     test-sets:
         - android-hw-arm7-browsertime
-        - android-hw-arm7-opt-unittests
         - android-hw-arm7-raptor
         - android-hw-arm7-raptor-power
         - android-hw-arm7-raptor-cpu-memory
@@ -487,20 +473,21 @@ android-hw-p2-8-0-arm7-api-16/debug:
     test-sets:
         - android-hw-arm7-debug-unittests
 
-android-hw-p2-8-0-arm7-api-16-qr/opt:
+android-hw-p2-8-0-android-aarch64-qr/opt:
     build-platform: android-api-16/opt
     test-sets:
-        - android-hw-arm7-qr
+        - android-hw-aarch64-qr
 
-android-hw-p2-8-0-arm7-api-16-qr/debug:
-    build-platform: android-api-16/debug
+android-hw-p2-8-0-android-aarch64-qr/debug:
+    build-platform: android-aarch64/debug
     test-sets:
-        - android-hw-arm7-qr
+        - android-hw-aarch64-qr
 
 android-hw-p2-8-0-android-aarch64/opt:
     build-platform: android-aarch64/opt
     test-sets:
         - android-hw-aarch64-browsertime
+        - android-hw-aarch64-opt-unittests
         - android-hw-aarch64-raptor
         - android-hw-aarch64-raptor-power
         - android-hw-aarch64-raptor-cpu-memory
@@ -510,7 +497,13 @@ android-hw-p2-8-0-android-aarch64/pgo:
     build-platform: android-aarch64-pgo/opt
     test-sets:
         - android-hw-aarch64-browsertime
+        - android-hw-aarch64-pgo-unittests
         - android-hw-aarch64-raptor
         - android-hw-aarch64-raptor-power
         - android-hw-aarch64-raptor-cpu-memory
         - android-hw-aarch64-raptor-cpu-memory-power
+
+android-hw-p2-8-0-android-aarch64/debug:
+    build-platform: android-aarch64/debug
+    test-sets:
+        - android-hw-aarch64-debug-unittests

@@ -42,7 +42,6 @@
 #include "debugger/Object.h"             // for DebuggerObject
 #include "debugger/Script.h"             // for DebuggerScript
 #include "debugger/Source.h"             // for DebuggerSource
-#include "frontend/BytecodeCompiler.h"   // for CreateScriptSourceObject
 #include "frontend/NameAnalysisTypes.h"  // for ParseGoal, ParseGoal::Script
 #include "frontend/ParseContext.h"       // for UsedNameTracker
 #include "frontend/Parser.h"             // for Parser
@@ -636,7 +635,7 @@ bool Debugger::getFrame(JSContext* cx, const FrameIter& iter,
 
       // If no AbstractGeneratorObject exists yet, we create a Debugger.Frame
       // below anyway, and Debugger::onNewGenerator() will associate it
-      // with the AbstractGeneratorObject later when we hit JSOP_GENERATOR.
+      // with the AbstractGeneratorObject later when we hit JSOp::Generator.
     }
 
     if (!frame) {
@@ -1034,7 +1033,7 @@ bool DebugAPI::slowPathOnLeaveFrame(JSContext* cx, AbstractFramePtr frame,
 /* static */
 bool DebugAPI::slowPathOnNewGenerator(JSContext* cx, AbstractFramePtr frame,
                                       Handle<AbstractGeneratorObject*> genObj) {
-  // This is called from JSOP_GENERATOR, after default parameter expressions
+  // This is called from JSOp::Generator, after default parameter expressions
   // are evaluated and well after onEnterFrame, so Debugger.Frame objects for
   // `frame` may already have been exposed to debugger code. The
   // AbstractGeneratorObject for this generator call, though, has just been
@@ -1801,21 +1800,21 @@ Completion Completion::fromJSFramePop(JSContext* cx, AbstractFramePtr frame,
   // an `onStep` handler, which looks almost the same.
   //
   // GetGeneratorObjectForFrame can return nullptr even when a generator
-  // object does exist, if the frame is paused between the GENERATOR and
-  // SETALIASEDVAR opcodes. But by checking the opcode first we eliminate that
+  // object does exist, if the frame is paused between the Generator and
+  // SetAliasedVar opcodes. But by checking the opcode first we eliminate that
   // possibility, so it's fine to call genObj->isClosed().
   Rooted<AbstractGeneratorObject*> generatorObj(
       cx, GetGeneratorObjectForFrame(cx, frame));
-  switch (*pc) {
-    case JSOP_INITIALYIELD:
+  switch (JSOp(*pc)) {
+    case JSOp::InitialYield:
       MOZ_ASSERT(!generatorObj->isClosed());
       return Completion(InitialYield(generatorObj));
 
-    case JSOP_YIELD:
+    case JSOp::Yield:
       MOZ_ASSERT(!generatorObj->isClosed());
       return Completion(Yield(generatorObj, frame.returnValue()));
 
-    case JSOP_AWAIT:
+    case JSOp::Await:
       MOZ_ASSERT(!generatorObj->isClosed());
       return Completion(Await(generatorObj, frame.returnValue()));
 
@@ -2120,7 +2119,7 @@ ResumeMode Debugger::fireEnterFrame(JSContext* cx, MutableHandleValue vp) {
 
 #if DEBUG
   // Assert that the hook won't be able to re-enter the generator.
-  if (iter.hasScript() && *iter.pc() == JSOP_AFTERYIELD) {
+  if (iter.hasScript() && JSOp(*iter.pc()) == JSOp::AfterYield) {
     auto* genObj = GetGeneratorObjectForFrame(cx, iter.abstractFramePtr());
     MOZ_ASSERT(genObj->isRunning());
   }
@@ -2504,7 +2503,7 @@ bool DebugAPI::onTrap(JSContext* cx) {
 bool DebugAPI::onSingleStep(JSContext* cx) {
   FrameIter iter(cx);
 
-  // We may be stepping over a JSOP_EXCEPTION, that pushes the context's
+  // We may be stepping over a JSOp::Exception, that pushes the context's
   // pending exception for a 'catch' clause to handle. Don't let the onStep
   // handlers mess with that (other than by returning a resumption value).
   JS::AutoSaveExceptionState savedExc(cx);
@@ -5924,17 +5923,15 @@ bool Debugger::isCompilableUnit(JSContext* cx, unsigned argc, Value* vp) {
   CompileOptions options(cx);
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   frontend::ParseInfo parseInfo(cx, allocScope);
-
-  RootedScriptSourceObject sourceObject(
-      cx, frontend::CreateScriptSourceObject(cx, options, Nothing()));
-  if (!sourceObject) {
+  if (!parseInfo.initFromOptions(cx, options)) {
     return false;
   }
 
   JS::AutoSuppressWarningReporter suppressWarnings(cx);
   frontend::Parser<frontend::FullParseHandler, char16_t> parser(
       cx, options, chars.twoByteChars(), length,
-      /* foldConstants = */ true, parseInfo, nullptr, nullptr, sourceObject);
+      /* foldConstants = */ true, parseInfo, nullptr, nullptr,
+      parseInfo.sourceObject);
   if (!parser.checkOptions() || !parser.parse()) {
     // We ran into an error. If it was because we ran out of memory we report
     // it in the usual way.

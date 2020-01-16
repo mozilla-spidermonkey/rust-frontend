@@ -62,6 +62,7 @@
 #include "vm/Realm.h"
 #include "vm/Shape.h"
 #include "vm/StringType.h"  // StringToNewUTF8CharsZ
+#include "vm/ToSource.h"    // js::ValueToSource
 
 #include "vm/Compartment-inl.h"
 #include "vm/JSObject-inl.h"
@@ -931,6 +932,9 @@ void js::ReportIsNullOrUndefinedForPropertyAccess(JSContext* cx, HandleValue v,
   }
 
   UniqueChars keyStr = StringToNewUTF8CharsZ(cx, *idStr);
+  if (!keyStr) {
+    return;
+  }
 
   if (!reportScanStack) {
     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_PROPERTY_FAIL,

@@ -2011,10 +2011,10 @@ void InlineFrameIterator::findNextFrame() {
     MOZ_ASSERT(IsIonInlinableOp(JSOp(*pc_)));
 
     // Recover the number of actual arguments from the script.
-    if (JSOp(*pc_) != JSOP_FUNAPPLY) {
+    if (JSOp(*pc_) != JSOp::FunApply) {
       numActualArgs_ = GET_ARGC(pc_);
     }
-    if (JSOp(*pc_) == JSOP_FUNCALL) {
+    if (JSOp(*pc_) == JSOp::FunCall) {
       MOZ_ASSERT(GET_ARGC(pc_) > 0);
       numActualArgs_ = GET_ARGC(pc_) - 1;
     } else if (IsGetPropPC(pc_) || IsGetElemPC(pc_)) {
@@ -2252,7 +2252,7 @@ void InlineFrameIterator::dump() const {
           script()->lineno());
 
   fprintf(stderr, "  script = %p, pc = %p\n", (void*)script(), pc());
-  fprintf(stderr, "  current op: %s\n", CodeName[*pc()]);
+  fprintf(stderr, "  current op: %s\n", CodeName(JSOp(*pc())));
 
   if (!more()) {
     numActualArgs();

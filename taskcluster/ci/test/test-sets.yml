@@ -30,8 +30,6 @@ common-tests:
     - mochitest-gpu
     - mochitest-media
     - mochitest-webgpu
-    - reftest
-    - reftest-no-accel
     - telemetry-tests-client
     - test-verify
     - test-verify-gpu
@@ -45,11 +43,11 @@ web-platform-tests:
     - web-platform-tests-wdspec
 
 web-platform-tests-1804:
+    - web-platform-tests
     - web-platform-tests-crashtests
     - web-platform-tests-reftests
 
 web-platform-tests-1604:
-    - web-platform-tests
     - web-platform-tests-wdspec
 
 web-platform-tests-wdspec-headless:
@@ -329,9 +327,6 @@ awsy:
     - awsy-base-dmd
     - awsy-tp6
 
-awsy-stylo-sequential:
-    - awsy-stylo-sequential
-
 ##
 # Limited test sets for specific platforms
 
@@ -392,6 +387,8 @@ linux1804-ccov-tests:
     - mochitest-webgl1-ext
     - mochitest-webgl2-core
     - mochitest-webgl2-ext
+    - reftest
+    - reftest-no-accel
 
 linux-qr-tests:
     - mochitest
@@ -609,7 +606,7 @@ mochitest-headless:
 marionette-headless:
     - marionette-headless
 
-android-hw-arm7-opt-unittests:
+android-hw-aarch64-opt-unittests:
     - mochitest-media
     - mochitest-webgl1-core
     - mochitest-webgl1-ext
@@ -618,17 +615,21 @@ android-hw-arm7-opt-unittests:
 android-hw-arm7-pgo-unittests:
     - jittest
     - jsreftest
+
+android-hw-aarch64-pgo-unittests:
     - mochitest-media
 
 android-hw-arm7-debug-unittests:
     - jittest
     - jsreftest
+
+android-hw-aarch64-debug-unittests:
     - mochitest-media
     - mochitest-webgl1-core
     - mochitest-webgl1-ext
     - mochitest-webgl2-core
 
-android-hw-arm7-qr:
+android-hw-aarch64-qr:
     - crashtest
     - reftest
 

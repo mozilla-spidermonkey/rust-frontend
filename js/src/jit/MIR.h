@@ -1322,7 +1322,7 @@ class MStart : public MNullaryInstruction {
 };
 
 // Instruction marking on entrypoint for on-stack replacement.
-// OSR may occur at loop headers (at JSOP_TRACE).
+// OSR may occur at loop headers (at JSOp::LoopHead).
 // There is at most one MOsrEntry per MIRGraph.
 class MOsrEntry : public MNullaryInstruction {
  protected:
@@ -2713,7 +2713,7 @@ class MCall : public MVariadicInstruction, public CallPolicy::Data {
   // Original value of argc from the bytecode.
   uint32_t numActualArgs_;
 
-  // True if the call is for JSOP_NEW.
+  // True if the call is for JSOp::New.
   bool construct_ : 1;
 
   // True if the caller does not use the return value.
@@ -3225,7 +3225,7 @@ class MCompare : public MBinaryInstruction, public ComparePolicy::Data {
   bool operandsAreNeverNaN() const { return operandsAreNeverNaN_; }
   AliasSet getAliasSet() const override {
     // Strict equality is never effectful.
-    if (jsop_ == JSOP_STRICTEQ || jsop_ == JSOP_STRICTNE) {
+    if (jsop_ == JSOp::StrictEq || jsop_ == JSOp::StrictNe) {
       return AliasSet::None();
     }
     if (compareType_ == Compare_Unknown) {
@@ -3508,7 +3508,7 @@ class MAssertRange : public MUnaryInstruction, public NoTypePolicy::Data {
 };
 
 // Caller-side allocation of |this| for |new|:
-// Given a templateobject, construct |this| for JSOP_NEW
+// Given a templateobject, construct |this| for JSOp::New
 class MCreateThisWithTemplate : public MUnaryInstruction,
                                 public NoTypePolicy::Data {
   gc::InitialHeap initialHeap_;
@@ -3543,7 +3543,7 @@ class MCreateThisWithTemplate : public MUnaryInstruction,
 };
 
 // Caller-side allocation of |this| for |new|:
-// Given a prototype operand, construct |this| for JSOP_NEW.
+// Given a prototype operand, construct |this| for JSOp::New.
 class MCreateThisWithProto : public MTernaryInstruction,
                              public MixPolicy<ObjectPolicy<0>, ObjectPolicy<1>,
                                               ObjectPolicy<2>>::Data {
@@ -6758,8 +6758,6 @@ class MClassConstructor : public MNullaryInstruction {
   TRIVIAL_NEW_WRAPPERS
 
   jsbytecode* pc() const { return pc_; }
-
-  AliasSet getAliasSet() const override { return AliasSet::None(); }
 };
 
 class MModuleMetadata : public MNullaryInstruction {
@@ -10205,7 +10203,7 @@ class MGetFrameArgument : public MUnaryInstruction,
     return congruentIfOperandsEqual(ins);
   }
   AliasSet getAliasSet() const override {
-    // If the script doesn't have any JSOP_SETARG ops, then this instruction is
+    // If the script doesn't have any JSOp::SetArg ops, then this instruction is
     // never aliased.
     if (scriptHasSetArg_) {
       return AliasSet::Load(AliasSet::FrameArgument);

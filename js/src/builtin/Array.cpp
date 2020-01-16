@@ -38,6 +38,7 @@
 #include "vm/JSObject.h"
 #include "vm/SelfHosting.h"
 #include "vm/Shape.h"
+#include "vm/ToSource.h"  // js::ValueToSource
 #include "vm/TypedArrayObject.h"
 #include "vm/WrapperObject.h"
 
@@ -1965,24 +1966,24 @@ static ComparatorMatchResult MatchNumericComparator(JSContext* cx,
   jsbytecode* pc = script->code();
 
   uint16_t arg0, arg1;
-  if (JSOp(*pc) != JSOP_GETARG) {
+  if (JSOp(*pc) != JSOp::GetArg) {
     return Match_None;
   }
   arg0 = GET_ARGNO(pc);
-  pc += JSOP_GETARG_LENGTH;
+  pc += JSOpLength_GetArg;
 
-  if (JSOp(*pc) != JSOP_GETARG) {
+  if (JSOp(*pc) != JSOp::GetArg) {
     return Match_None;
   }
   arg1 = GET_ARGNO(pc);
-  pc += JSOP_GETARG_LENGTH;
+  pc += JSOpLength_GetArg;
 
-  if (JSOp(*pc) != JSOP_SUB) {
+  if (JSOp(*pc) != JSOp::Sub) {
     return Match_None;
   }
-  pc += JSOP_SUB_LENGTH;
+  pc += JSOpLength_Sub;
 
-  if (JSOp(*pc) != JSOP_RETURN) {
+  if (JSOp(*pc) != JSOp::Return) {
     return Match_None;
   }
 

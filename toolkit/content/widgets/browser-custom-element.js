@@ -1464,16 +1464,6 @@
       }
     }
 
-    updateSecurityUIForContentBlockingEvent(aEvent) {
-      if (this.isRemoteBrowser && this.messageManager) {
-        // Invoking this getter triggers the generation of the underlying object,
-        // which we need to access with ._securityUI, because .securityUI returns
-        // a wrapper that makes _update inaccessible.
-        void this.securityUI;
-        this._securityUI._updateContentBlockingEvent(aEvent);
-      }
-    }
-
     get remoteWebProgressManager() {
       return this._remoteWebProgressManager;
     }
@@ -2081,12 +2071,19 @@
     }
 
     getContentBlockingLog() {
-      if (this.isRemoteBrowser) {
-        return this.frameLoader.remoteTab.getContentBlockingLog();
+      let windowGlobal = this.browsingContext.currentWindowGlobal;
+      if (!windowGlobal) {
+        return null;
       }
-      return this.docShell
-        ? this.docShell.getContentBlockingLog()
-        : Promise.reject("docshell isn't available");
+      return windowGlobal.contentBlockingLog;
+    }
+
+    getContentBlockingEvents() {
+      let windowGlobal = this.browsingContext.currentWindowGlobal;
+      if (!windowGlobal) {
+        return 0;
+      }
+      return windowGlobal.contentBlockingEvents;
     }
 
     // Send an asynchronous message to the remote child via an actor.

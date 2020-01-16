@@ -60,7 +60,6 @@
 #include "nsITextControlFrame.h"
 #include "nsCommandManager.h"
 #include "nsCommandParams.h"
-#include "nsNumberControlFrame.h"
 #include "nsUnicharUtils.h"
 #include "nsContentList.h"
 #include "nsCSSPseudoElements.h"
@@ -1808,13 +1807,28 @@ void Document::GetFailedCertSecurityInfo(FailedCertSecurityInfo& aInfo,
   attrs = nsContentUtils::GetOriginAttributes(this);
   nsCOMPtr<nsIURI> aURI;
   mFailedChannel->GetURI(getter_AddRefs(aURI));
-  ContentChild* cc = ContentChild::GetSingleton();
-  mozilla::ipc::URIParams uri;
-  SerializeURI(aURI, uri);
-  cc->SendIsSecureURI(nsISiteSecurityService::HEADER_HSTS, uri, flags, attrs,
-                      &aInfo.mHasHSTS);
-  cc->SendIsSecureURI(nsISiteSecurityService::HEADER_HPKP, uri, flags, attrs,
-                      &aInfo.mHasHPKP);
+  if (XRE_IsContentProcess()) {
+    ContentChild* cc = ContentChild::GetSingleton();
+    MOZ_ASSERT(cc);
+    mozilla::ipc::URIParams uri;
+    SerializeURI(aURI, uri);
+    cc->SendIsSecureURI(nsISiteSecurityService::HEADER_HSTS, uri, flags, attrs,
+                        &aInfo.mHasHSTS);
+    cc->SendIsSecureURI(nsISiteSecurityService::HEADER_HPKP, uri, flags, attrs,
+                        &aInfo.mHasHPKP);
+  } else {
+    nsCOMPtr<nsISiteSecurityService> sss =
+        do_GetService(NS_SSSERVICE_CONTRACTID);
+    if (NS_WARN_IF(!sss)) {
+      return;
+    }
+    Unused << NS_WARN_IF(NS_FAILED(
+        sss->IsSecureURI(nsISiteSecurityService::HEADER_HSTS, aURI, flags,
+                         attrs, nullptr, nullptr, &aInfo.mHasHSTS)));
+    Unused << NS_WARN_IF(NS_FAILED(
+        sss->IsSecureURI(nsISiteSecurityService::HEADER_HPKP, aURI, flags,
+                         attrs, nullptr, nullptr, &aInfo.mHasHPKP)));
+  }
 }
 
 bool Document::IsAboutPage() const {
@@ -2091,9 +2105,15 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(Document)
     uint32_t nsid = tmp->GetDefaultNamespaceID();
     nsAutoCString uri;
     if (tmp->mDocumentURI) uri = tmp->mDocumentURI->GetSpecOrDefault();
-    const char* nsuri = nsNameSpaceManager::GetNameSpaceDisplayName(nsid);
-    SprintfLiteral(name, "Document %s %s %s", loadedAsData.get(), nsuri,
-                   uri.get());
+    static const char* kNSURIs[] = {"([none])", "(xmlns)", "(xml)",
+                                    "(xhtml)",  "(XLink)", "(XSLT)",
+                                    "(MathML)", "(RDF)",   "(XUL)"};
+    if (nsid < ArrayLength(kNSURIs)) {
+      SprintfLiteral(name, "Document %s %s %s", loadedAsData.get(),
+                     kNSURIs[nsid], uri.get());
+    } else {
+      SprintfLiteral(name, "Document %s %s", loadedAsData.get(), uri.get());
+    }
     cb.DescribeRefCountedNode(tmp->mRefCnt.get(), name);
   } else {
     NS_IMPL_CYCLE_COLLECTION_DESCRIBE(Document, tmp->mRefCnt.get())
@@ -3108,10 +3128,10 @@ nsresult Document::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
   // immutable after being set here.
   nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(aContainer);
 
-  // If this is an error page, don't inherit sandbox flags from docshell
+  // If this is an error page, don't inherit sandbox flags
   nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
   if (docShell && !loadInfo->GetLoadErrorPage()) {
-    mSandboxFlags = docShell->GetBrowsingContext()->GetSandboxFlags();
+    mSandboxFlags = loadInfo->GetSandboxFlags();
     WarnIfSandboxIneffective(docShell, mSandboxFlags, GetChannel());
   }
 
@@ -12329,9 +12349,7 @@ already_AddRefed<nsDOMCaretPosition> Document::CaretPositionFromPoint(
     nsIContent* nonanon = node->FindFirstNonChromeOnlyAccessContent();
     HTMLTextAreaElement* textArea = HTMLTextAreaElement::FromNode(nonanon);
     nsITextControlFrame* textFrame = do_QueryFrame(nonanon->GetPrimaryFrame());
-    nsNumberControlFrame* numberFrame =
-        do_QueryFrame(nonanon->GetPrimaryFrame());
-    if (textFrame || numberFrame) {
+    if (textFrame) {
       // If the anonymous content node has a child, then we need to make sure
       // that we get the appropriate child, as otherwise the offset may not be
       // correct when we construct a range for it.
