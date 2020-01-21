@@ -1712,6 +1712,7 @@ class alignas(uint32_t) ImmutableScriptData final {
                 "Structure packing is broken");
 
   friend class ::JSScript;
+  friend class ::js::frontend::Jsparagus;
 
  private:
   // Offsets (in bytes) from 'this' to each component array. The delta between
