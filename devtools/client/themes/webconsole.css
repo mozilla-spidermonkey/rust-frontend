@@ -516,7 +516,7 @@ html #webconsole-notificationbox {
 }
 
 .eager-evaluation-result .objectBox {
-  height: 15px;
+  height: 18px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -970,6 +970,14 @@ a.learn-more-link.webconsole-learn-more-link {
   margin-top: -1px;
   -moz-context-properties: fill;
   fill: var(--theme-icon-dimmed-color);
+}
+
+/* In RTL the tree arrows should usually point to the left, but in
+   this context it should point to the right.
+   This overrides the rule from other stylesheets that does the opposite. */
+.webconsole-app .tree .arrow:dir(rtl),
+.webconsole-app .object-inspector .tree-node .arrow:dir(rtl) {
+  transform: rotate(-90deg);
 }
 
 .webconsole-app .tree .arrow.expanded,

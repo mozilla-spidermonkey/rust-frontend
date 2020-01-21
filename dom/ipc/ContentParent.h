@@ -656,7 +656,8 @@ class ContentParent final
 
   mozilla::ipc::IPCResult RecvWindowClose(BrowsingContext* aContext,
                                           bool aTrustedCaller);
-  mozilla::ipc::IPCResult RecvWindowFocus(BrowsingContext* aContext);
+  mozilla::ipc::IPCResult RecvWindowFocus(BrowsingContext* aContext,
+                                          CallerType aCallerType);
   mozilla::ipc::IPCResult RecvWindowBlur(BrowsingContext* aContext);
   mozilla::ipc::IPCResult RecvWindowPostMessage(
       BrowsingContext* aContext, const ClonedMessageData& aMessage,
@@ -1068,7 +1069,11 @@ class ContentParent final
   mozilla::ipc::IPCResult RecvPrivateDocShellsExist(const bool& aExist);
 
   mozilla::ipc::IPCResult RecvCommitBrowsingContextTransaction(
-      BrowsingContext* aContext, BrowsingContext::Transaction&& aTransaction,
+      BrowsingContext* aContext,
+      BrowsingContext::BaseTransaction&& aTransaction, uint64_t aEpoch);
+
+  mozilla::ipc::IPCResult RecvCommitWindowContextTransaction(
+      WindowContext* aContext, WindowContext::BaseTransaction&& aTransaction,
       uint64_t aEpoch);
 
   mozilla::ipc::IPCResult RecvFirstIdle();

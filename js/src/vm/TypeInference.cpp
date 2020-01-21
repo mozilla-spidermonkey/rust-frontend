@@ -9,13 +9,13 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/Move.h"
 #include "mozilla/PodOperations.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Sprintf.h"
 
 #include <algorithm>
 #include <new>
+#include <utility>
 
 #include "jsapi.h"
 
@@ -2897,6 +2897,43 @@ void js::AddTypePropertyId(JSContext* cx, ObjectGroup* group, JSObject* obj,
 void js::AddTypePropertyId(JSContext* cx, ObjectGroup* group, JSObject* obj,
                            jsid id, const Value& value) {
   AddTypePropertyId(cx, group, obj, id, TypeSet::GetValueType(value));
+}
+
+void js::AddMagicTypePropertyId(JSContext* cx, JSObject* obj, jsid id,
+                                JSWhyMagic type) {
+  // Some MagicValues can be stored in environment object slots but are not
+  // exposed to script. We don't want to add MagicValue types to HeapTypeSets
+  // but there's one case we need to handle: Ion can add a freeze constraint to
+  // the global lexical environment (in IonBuilder::testGlobalLexicalBinding) to
+  // guard a lexical binding does not exist, so we need to trigger this
+  // constraint when defining an uninitialized lexical as part of JSOP_DEFLET or
+  // JSOP_DEFCONST.
+  //
+  // Also note that the global lexical is the only environment object for which
+  // we track property types. See CreateEnvironmentObject.
+
+  MOZ_ASSERT(type == JS_UNINITIALIZED_LEXICAL || type == JS_OPTIMIZED_OUT);
+  MOZ_ASSERT(obj->is<EnvironmentObject>());
+
+  if (type != JS_UNINITIALIZED_LEXICAL) {
+    return;
+  }
+
+  id = IdToTypeId(id);
+  if (!TrackPropertyTypes(obj, id)) {
+    return;
+  }
+
+  MOZ_ASSERT(obj->isSingleton());
+  MOZ_ASSERT(obj->is<LexicalEnvironmentObject>());
+  MOZ_ASSERT(obj->as<LexicalEnvironmentObject>().isGlobal());
+
+  AutoEnterAnalysis enter(cx);
+  AutoSweepObjectGroup sweep(obj->group());
+
+  if (HeapTypeSet* types = obj->group()->maybeGetProperty(sweep, id)) {
+    types->markLexicalBindingExists(sweep, cx);
+  }
 }
 
 void ObjectGroup::markPropertyNonData(JSContext* cx, JSObject* obj, jsid id) {

@@ -537,9 +537,7 @@ def set_defaults(config, tests):
             # loopback-video is always true for Android, but false for other
             # platform phyla
             test['loopback-video'] = True
-        else:
-            # all non-android tests want to run the bits that require node
-            test['mozharness']['set-moz-node-path'] = True
+        test['mozharness']['set-moz-node-path'] = True
 
         # software-gl-layers is only meaningful on linux unittests, where it defaults to True
         if test['test-platform'].startswith('linux') and test['suite'] not in ['talos', 'raptor']:
@@ -1314,7 +1312,6 @@ CHUNK_SUITES_BLACKLIST = (
     'web-platform-tests-crashtests',
     'web-platform-tests-reftests',
     'web-platform-tests-wdspec',
-    'xpcshell',
 )
 """These suites will be chunked at test runtime rather than here in the taskgraph."""
 

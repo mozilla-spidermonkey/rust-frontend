@@ -332,6 +332,10 @@ pref("browser.urlbar.usepreloadedtopurls.expire_days", 14);
 // focused in design update 1.
 pref("browser.urlbar.update1.expandTextOnFocus", false);
 
+// If true, we show new users and those about to start an organic search a tip
+// encouraging them to use the Urlbar.
+pref("browser.urlbar.update1.searchTips", false);
+
 pref("browser.urlbar.eventTelemetry.enabled", false);
 
 pref("browser.altClickSave", false);
@@ -442,6 +446,7 @@ pref("browser.link.open_newwindow.restriction", 2);
 pref("browser.tabs.multiselect", true);
 pref("browser.tabs.closeTabByDblclick", false);
 pref("browser.tabs.closeWindowWithLastTab", true);
+pref("browser.tabs.allowTabDetach", true);
 // Open related links to a tab, e.g., link in current tab, at next to the
 // current tab if |insertRelatedAfterCurrent| is true.  Otherwise, always
 // append new tab to the end.
@@ -968,9 +973,6 @@ pref("security.certerrors.mitm.priming.endpoint", "https://mitmdetection.service
 pref("security.certerrors.mitm.auto_enable_enterprise_roots", true);
 
 pref("security.aboutcertificate.enabled", true);
-
-// Whether to start the private browsing mode at application startup
-pref("browser.privatebrowsing.autostart", false);
 
 // Whether the bookmark panel should be shown when bookmarking a page.
 pref("browser.bookmarks.editDialog.showForNewBookmarks", true);
@@ -1683,7 +1685,9 @@ pref("browser.tabs.crashReporting.requestEmail", false);
 pref("browser.tabs.crashReporting.emailMe", false);
 pref("browser.tabs.crashReporting.email", "");
 
-pref("extensions.legacy.enabled", false);
+// If true, unprivileged extensions may use experimental APIs on
+// nightly and developer edition.
+pref("extensions.experiments.enabled", false);
 
 // Causes access on unsafe CPOWs from browser code to throw by default.
 pref("dom.ipc.cpows.forbid-unsafe-from-browser", true);
@@ -1817,6 +1821,12 @@ pref("extensions.screenshots.disabled", false);
 // Preference that allows individual users to leave Screenshots enabled, but
 // disable uploading to the server.
 pref("extensions.screenshots.upload-disabled", false);
+
+// DoH Rollout: the earliest date of profile creation for which we don't need
+// to show the doorhanger. This is when the version of the privacy statement
+// that includes DoH went live - Oct 31, 2019. This has to be a string because
+// the number is outside the signed 32-bit integer range.
+pref("doh-rollout.profileCreationThreshold", "1572476400000");
 
 // URL for Learn More link for browser error logging in preferences
 pref("browser.chrome.errorReporter.infoURL",
@@ -2286,13 +2296,6 @@ pref("devtools.debugger.features.map-await-expression", true);
 // This is currently not exposed by any UI to avoid making
 // about:devtools-toolbox tabs unusable by mistake.
 pref("devtools.popup.disable_autohide", false);
-
-// Load the DevTools toolbox in a frame with type=content instead of type=chrome
-// See Bug 1539979 for more details.
-// We keep the option of running devtools in a chrome frame while we fix racy
-// tests that started failing when using type=content, but this ultimately
-// should be removed.
-pref("devtools.toolbox.content-frame", true);
 
 // Visibility switch preference for the WhatsNew panel.
 pref("devtools.whatsnew.enabled", true);

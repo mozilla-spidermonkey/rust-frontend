@@ -80,6 +80,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   UpdateUtils: "resource://gre/modules/UpdateUtils.jsm",
   UrlbarInput: "resource:///modules/UrlbarInput.jsm",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
+  UrlbarProviderSearchTips: "resource:///modules/UrlbarProviderSearchTips.jsm",
   UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.jsm",
   UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
   UrlbarValueFormatter: "resource:///modules/UrlbarValueFormatter.jsm",
@@ -1591,7 +1592,7 @@ function LoadInOtherProcess(browser, loadOptions, historyIndex = -1) {
 
 // Called when a docshell has attempted to load a page in an incorrect process.
 // This function is responsible for loading the page in the correct process.
-function RedirectLoad({ target: browser, data }) {
+function RedirectLoad(browser, data) {
   if (browser.getAttribute("preloadedState") === "consumed") {
     browser.removeAttribute("preloadedState");
     data.loadOptions.newFrameloader = true;
@@ -1803,8 +1804,6 @@ var gBrowserInit = {
 
     let mm = window.getGroupMessageManager("browsers");
     mm.loadFrameScript("chrome://browser/content/tab-content.js", true, true);
-
-    window.messageManager.addMessageListener("Browser:LoadURI", RedirectLoad);
 
     if (!gMultiProcessBrowser) {
       // There is a Content:Click message manually sent from content.
@@ -2488,10 +2487,6 @@ var gBrowserInit = {
         gKeywordURIFixup
       );
       Services.obs.removeObserver(gKeywordURIFixupObs, "keyword-uri-fixup");
-      window.messageManager.removeMessageListener(
-        "Browser:LoadURI",
-        RedirectLoad
-      );
 
       if (AppConstants.isPlatformAndVersionAtLeast("win", "10")) {
         MenuTouchModeObserver.uninit();
@@ -2892,7 +2887,10 @@ function focusAndSelectUrlBar() {
   // finished leaving customize mode, and the url bar will still be disabled.
   // We can't focus it when it's disabled, so we need to re-run ourselves when
   // we've finished leaving customize mode.
-  if (CustomizationHandler.isCustomizing()) {
+  if (
+    CustomizationHandler.isCustomizing() ||
+    CustomizationHandler.isExitingCustomizeMode
+  ) {
     gNavToolbox.addEventListener("aftercustomization", focusAndSelectUrlBar, {
       once: true,
     });
@@ -5454,6 +5452,8 @@ var XULBrowserWindow = {
       BrowserPageActions.onLocationChange();
 
       SafeBrowsingNotificationBox.onLocationChange(aLocationURI);
+
+      UrlbarProviderSearchTips.onLocationChange(aLocationURI);
 
       gTabletModePageCounter.inc();
 

@@ -81,7 +81,7 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
 
     // Persistent cache for remote endpoint data.
     this.cache = new PersistentCache(CACHE_KEY, true);
-    this.locale = Services.locale.appLocaleAsLangTag;
+    this.locale = Services.locale.appLocaleAsBCP47;
     this._impressionId = this.getOrCreateImpressionId();
     // Internal in-memory cache for parsing json prefs.
     this._prefCache = {};
@@ -717,6 +717,15 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
       );
 
       this.domainAffinitiesLastUpdated = affinities._timestamp;
+
+      this.store.dispatch(
+        ac.BroadcastToContent({
+          type: at.DISCOVERY_STREAM_PERSONALIZATION_LAST_UPDATED,
+          data: {
+            lastUpdated: this.domainAffinitiesLastUpdated,
+          },
+        })
+      );
     }
   }
 
@@ -741,6 +750,15 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
 
     const affinities = this.affinityProvider.getAffinities();
     this.domainAffinitiesLastUpdated = Date.now();
+
+    this.store.dispatch(
+      ac.BroadcastToContent({
+        type: at.DISCOVERY_STREAM_PERSONALIZATION_LAST_UPDATED,
+        data: {
+          lastUpdated: this.domainAffinitiesLastUpdated,
+        },
+      })
+    );
     affinities._timestamp = this.domainAffinitiesLastUpdated;
     this.cache.set("affinities", affinities);
   }
@@ -755,6 +773,7 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
 
   scoreItems(items) {
     const filtered = [];
+    const scoreStart = perfService.absNow();
     const data = items
       .map(item => this.scoreItem(item))
       // Remove spocs that are scored too low.
@@ -767,6 +786,19 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
       })
       // Sort by highest scores.
       .sort((a, b) => b.score - a.score);
+
+    if (this.affinityProvider) {
+      if (this.affinityProvider.dispatchRelevanceScoreDuration) {
+        this.affinityProvider.dispatchRelevanceScoreDuration(scoreStart);
+      } else {
+        this.store.dispatch(
+          ac.PerfEvent({
+            event: "PERSONALIZATION_V1_ITEM_RELEVANCE_SCORE_DURATION",
+            value: Math.round(perfService.absNow() - scoreStart),
+          })
+        );
+      }
+    }
     return { data, filtered };
   }
 
@@ -1022,7 +1054,7 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
   }
 
   /**
-   * @typedef {Object} RefreshAllOptions
+   * @typedef {Object} RefreshAll
    * @property {boolean} updateOpenTabs - Sends updates to open tabs immediately if true,
    *                                      updates in background if false
    * @property {boolean} isStartup - When the function is called at browser startup
@@ -1031,13 +1063,17 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
    * @param {RefreshAllOptions} options
    */
   async refreshAll(options = {}) {
+    this.loadAffinityScoresCache();
+    await this.refreshContent(options);
+  }
+
+  async refreshContent(options = {}) {
     const { updateOpenTabs, isStartup } = options;
     const storiesEnabled = this.store.getState().Prefs.values[PREF_TOPSTORIES];
     const dispatch = updateOpenTabs
       ? action => this.store.dispatch(ac.BroadcastToContent(action))
       : this.store.dispatch;
 
-    this.loadAffinityScoresCache();
     await this.loadLayout(dispatch, isStartup);
     if (storiesEnabled) {
       await Promise.all([
@@ -1206,6 +1242,9 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
     if (this.loaded) {
       Services.obs.removeObserver(this, "idle-daily");
     }
+    if (this.affinityProvider && this.affinityProvider.teardown) {
+      this.affinityProvider.teardown();
+    }
     this.resetState();
   }
 
@@ -1227,6 +1266,7 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
     this.store.dispatch(
       ac.BroadcastToContent({ type: at.DISCOVERY_STREAM_LAYOUT_RESET })
     );
+    this.domainAffinitiesLastUpdated = null;
     this.loaded = false;
     this.layoutRequestTime = undefined;
     this.spocsRequestTime = undefined;

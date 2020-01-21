@@ -8,27 +8,13 @@
 
 #include <utility>
 
-#include "nsAutoPtr.h"
-#include "nsContentUtils.h"
-#include "nsIConsoleReportCollector.h"
-#include "nsINetworkInterceptController.h"
-#include "nsIScriptError.h"
-#include "mozilla/Encoding.h"
-#include "nsContentPolicyUtils.h"
-#include "nsContentUtils.h"
-#include "nsComponentManagerUtils.h"
-#include "nsServiceManagerUtils.h"
-#include "nsStreamUtils.h"
-#include "nsNetCID.h"
-#include "nsNetUtil.h"
-#include "nsSerializationHelper.h"
-#include "nsQueryObject.h"
 #include "ServiceWorker.h"
 #include "ServiceWorkerManager.h"
-
+#include "js/Conversions.h"
+#include "js/TypeDecls.h"
+#include "mozilla/Encoding.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/LoadInfo.h"
-#include "mozilla/Move.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/BodyUtil.h"
 #include "mozilla/dom/Client.h"
@@ -40,15 +26,25 @@
 #include "mozilla/dom/PushMessageDataBinding.h"
 #include "mozilla/dom/PushUtil.h"
 #include "mozilla/dom/Request.h"
+#include "mozilla/dom/Response.h"
 #include "mozilla/dom/ServiceWorkerOp.h"
 #include "mozilla/dom/TypedArray.h"
-#include "mozilla/dom/Response.h"
-#include "mozilla/dom/WorkerScope.h"
 #include "mozilla/dom/WorkerPrivate.h"
+#include "mozilla/dom/WorkerScope.h"
 #include "mozilla/net/NeckoChannelParams.h"
-
-#include "js/Conversions.h"
-#include "js/TypeDecls.h"
+#include "nsAutoPtr.h"
+#include "nsComponentManagerUtils.h"
+#include "nsContentPolicyUtils.h"
+#include "nsContentUtils.h"
+#include "nsIConsoleReportCollector.h"
+#include "nsINetworkInterceptController.h"
+#include "nsIScriptError.h"
+#include "nsNetCID.h"
+#include "nsNetUtil.h"
+#include "nsQueryObject.h"
+#include "nsSerializationHelper.h"
+#include "nsServiceManagerUtils.h"
+#include "nsStreamUtils.h"
 #include "xpcpublic.h"
 
 using namespace mozilla;
@@ -782,7 +778,7 @@ void RespondWithHandler::CancelRequest(nsresult aStatus) {
 }  // namespace
 
 void FetchEvent::RespondWith(JSContext* aCx, Promise& aArg, ErrorResult& aRv) {
-  if (EventPhase() == Event_Binding::NONE || mWaitToRespond) {
+  if (!GetDispatchFlag() || mWaitToRespond) {
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
   }
@@ -951,6 +947,27 @@ NS_IMPL_ISUPPORTS0(WaitUntilHandler)
 
 }  // anonymous namespace
 
+ExtendableEvent::ExtensionsHandler::~ExtensionsHandler() {
+  MOZ_ASSERT(!mExtendableEvent);
+}
+
+bool ExtendableEvent::ExtensionsHandler::GetDispatchFlag() const {
+  // mExtendableEvent should set itself as nullptr in its destructor, and we
+  // can't be dispatching an event that doesn't exist, so this should work for
+  // as long as it's not needed to determine whether the event is still alive,
+  // which seems unlikely.
+  if (!mExtendableEvent) {
+    return false;
+  }
+
+  return mExtendableEvent->GetDispatchFlag();
+}
+
+void ExtendableEvent::ExtensionsHandler::SetExtendableEvent(
+    const ExtendableEvent* const aExtendableEvent) {
+  mExtendableEvent = aExtendableEvent;
+}
+
 NS_IMPL_ADDREF_INHERITED(FetchEvent, ExtendableEvent)
 NS_IMPL_RELEASE_INHERITED(FetchEvent, ExtendableEvent)
 
@@ -976,6 +993,7 @@ void ExtendableEvent::SetKeepAliveHandler(
   MOZ_ASSERT(worker);
   worker->AssertIsOnWorkerThread();
   mExtensionsHandler = aExtensionsHandler;
+  mExtensionsHandler->SetExtendableEvent(this);
 }
 
 void ExtendableEvent::WaitUntil(JSContext* aCx, Promise& aPromise,

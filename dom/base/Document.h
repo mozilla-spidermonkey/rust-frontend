@@ -213,6 +213,7 @@ class SVGUseElement;
 class Touch;
 class TouchList;
 class TreeWalker;
+enum class ViewportFitType : uint8_t;
 class XPathEvaluator;
 class XPathExpression;
 class XPathNSResolver;
@@ -1110,6 +1111,13 @@ class Document : public nsINode,
   }
 
   /**
+   * Return a promise which resolves to the content blocking events.
+   */
+  typedef MozPromise<uint32_t, bool, true> GetContentBlockingEventsPromise;
+  MOZ_MUST_USE RefPtr<GetContentBlockingEventsPromise>
+  GetContentBlockingEvents();
+
+  /**
    * Get the content blocking log.
    */
   ContentBlockingLog* GetContentBlockingLog() { return &mContentBlockingLog; }
@@ -1607,6 +1615,9 @@ class Document : public nsINode,
   void AddMetaViewportElement(HTMLMetaElement* aElement,
                               ViewportMetaData&& aData);
   void RemoveMetaViewportElement(HTMLMetaElement* aElement);
+
+  // Returns a ViewportMetaData for this document.
+  ViewportMetaData GetViewportMetaData() const;
 
   void UpdateForScrollAnchorAdjustment(nscoord aLength);
 
@@ -4059,9 +4070,6 @@ class Document : public nsINode,
   // stored in parent iframe or container's browsingContext (cross process)
   already_AddRefed<mozilla::dom::FeaturePolicy> GetParentFeaturePolicy();
 
-  // Returns a ViewportMetaData for this document.
-  ViewportMetaData GetViewportMetaData() const;
-
   FlashClassification DocumentFlashClassificationInternal();
 
   nsTArray<nsString> mL10nResources;
@@ -5160,6 +5168,10 @@ class Document : public nsINode,
 
   ViewportType mViewportType;
 
+  // viewport-fit described by
+  // https://drafts.csswg.org/css-round-display/#viewport-fit-descriptor
+  ViewportFitType mViewportFit;
+
   PLDHashTable* mSubDocuments;
 
   DocHeaderData* mHeaderData;
@@ -5323,6 +5335,9 @@ class Document : public nsINode,
   // Pres shell resolution saved before entering fullscreen mode.
   float mSavedResolution;
 
+  // Pres shell resolution saved before creating a MobileViewportManager.
+  float mSavedResolutionBeforeMVM;
+
   bool mPendingInitialTranslation;
 
   nsCOMPtr<nsICookieSettings> mCookieSettings;
@@ -5359,6 +5374,11 @@ class Document : public nsINode,
       mL10nProtoElements;
 
   void TraceProtos(JSTracer* aTrc);
+
+  float GetSavedResolutionBeforeMVM() { return mSavedResolutionBeforeMVM; }
+  void SetSavedResolutionBeforeMVM(float aResolution) {
+    mSavedResolutionBeforeMVM = aResolution;
+  }
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(Document, NS_IDOCUMENT_IID)
@@ -5460,6 +5480,7 @@ enum DocumentFlavor {
   DocumentFlavorLegacyGuess,  // compat with old code until made HTML5-compliant
   DocumentFlavorHTML,         // HTMLDocument with HTMLness bit set to true
   DocumentFlavorSVG,          // SVGDocument
+  DocumentFlavorXML,          // XMLDocument
   DocumentFlavorPlain,        // Just a Document
 };
 

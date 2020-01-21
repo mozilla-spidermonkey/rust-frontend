@@ -336,7 +336,8 @@ int32_t Element::TabIndex() {
   return TabIndexDefault();
 }
 
-void Element::Focus(const FocusOptions& aOptions, ErrorResult& aError) {
+void Element::Focus(const FocusOptions& aOptions, CallerType aCallerType,
+                    ErrorResult& aError) {
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   // Also other browsers seem to have the hack to not re-focus (and flush) when
   // the element is already focused.
@@ -348,9 +349,13 @@ void Element::Focus(const FocusOptions& aOptions, ErrorResult& aError) {
     if (fm->CanSkipFocus(this)) {
       fm->NeedsFlushBeforeEventHandling(this);
     } else {
-      aError = fm->SetFocus(
-          this, nsIFocusManager::FLAG_BYELEMENTFOCUS |
-                    nsFocusManager::FocusOptionsToFocusManagerFlags(aOptions));
+      uint32_t fmFlags =
+          nsIFocusManager::FLAG_BYELEMENTFOCUS |
+          nsFocusManager::FocusOptionsToFocusManagerFlags(aOptions);
+      if (aCallerType == CallerType::NonSystem) {
+        fmFlags = nsIFocusManager::FLAG_NONSYSTEMCALLER | fmFlags;
+      }
+      aError = fm->SetFocus(this, fmFlags);
     }
   }
 }
@@ -2170,15 +2175,15 @@ nsresult Element::SetAttr(int32_t aNamespaceID, nsAtom* aName, nsAtom* aPrefix,
     return OnAttrSetButNotChanged(aNamespaceID, aName, value, aNotify);
   }
 
-  if (aNotify) {
-    MutationObservers::NotifyAttributeWillChange(this, aNamespaceID, aName,
-                                                 modType);
-  }
-
   // Hold a script blocker while calling ParseAttribute since that can call
   // out to id-observers
   Document* document = GetComposedDoc();
   mozAutoDocUpdate updateBatch(document, aNotify);
+
+  if (aNotify) {
+    MutationObservers::NotifyAttributeWillChange(this, aNamespaceID, aName,
+                                                 modType);
+  }
 
   nsresult rv = BeforeSetAttr(aNamespaceID, aName, &value, aNotify);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -2217,6 +2222,9 @@ nsresult Element::SetParsedAttr(int32_t aNamespaceID, nsAtom* aName,
     return OnAttrSetButNotChanged(aNamespaceID, aName, value, aNotify);
   }
 
+  Document* document = GetComposedDoc();
+  mozAutoDocUpdate updateBatch(document, aNotify);
+
   if (aNotify) {
     MutationObservers::NotifyAttributeWillChange(this, aNamespaceID, aName,
                                                  modType);
@@ -2227,8 +2235,6 @@ nsresult Element::SetParsedAttr(int32_t aNamespaceID, nsAtom* aName,
 
   PreIdMaybeChange(aNamespaceID, aName, &value);
 
-  Document* document = GetComposedDoc();
-  mozAutoDocUpdate updateBatch(document, aNotify);
   return SetAttrAndNotify(aNamespaceID, aName, aPrefix,
                           oldValueSet ? &oldValue : nullptr, aParsedValue,
                           nullptr, modType, hasListeners, aNotify,

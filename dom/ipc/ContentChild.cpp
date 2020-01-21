@@ -3954,7 +3954,7 @@ mozilla::ipc::IPCResult ContentChild::RecvAttachBrowsingContext(
   if (!child) {
     // Determine the BrowsingContextGroup from our parent or opener fields.
     RefPtr<BrowsingContextGroup> group =
-        BrowsingContextGroup::Select(aInit.mParentId, aInit.mOpenerId);
+        BrowsingContextGroup::Select(aInit.mParentId, aInit.GetOpenerId());
     child = BrowsingContext::CreateFromIPC(std::move(aInit), group, nullptr);
   }
 
@@ -3998,7 +3998,8 @@ mozilla::ipc::IPCResult ContentChild::RecvRestoreBrowsingContextChildren(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvRegisterBrowsingContextGroup(
-    nsTArray<BrowsingContext::IPCInitializer>&& aInits) {
+    nsTArray<BrowsingContext::IPCInitializer>&& aInits,
+    nsTArray<WindowContext::IPCInitializer>&& aWindowInits) {
   RefPtr<BrowsingContextGroup> group = new BrowsingContextGroup();
   // Each of the initializers in aInits is sorted in pre-order, so our parent
   // should always be available before the element itself.
@@ -4024,6 +4025,19 @@ mozilla::ipc::IPCResult ContentChild::RecvRegisterBrowsingContextGroup(
     }
   }
 
+  for (auto& init : aWindowInits) {
+#ifdef DEBUG
+    RefPtr<WindowContext> existing =
+        WindowContext::GetById(init.mInnerWindowId);
+    MOZ_ASSERT(!existing, "WindowContext must not exist yet!");
+    RefPtr<BrowsingContext> parent =
+        BrowsingContext::Get(init.mBrowsingContextId);
+    MOZ_ASSERT(parent && parent->Group() == group);
+#endif
+
+    WindowContext::CreateFromIPC(std::move(init));
+  }
+
   return IPC_OK();
 }
 
@@ -4047,8 +4061,8 @@ mozilla::ipc::IPCResult ContentChild::RecvWindowClose(BrowsingContext* aContext,
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult ContentChild::RecvWindowFocus(
-    BrowsingContext* aContext) {
+mozilla::ipc::IPCResult ContentChild::RecvWindowFocus(BrowsingContext* aContext,
+                                                      CallerType aCallerType) {
   if (!aContext) {
     MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
             ("ChildIPC: Trying to send a message to dead or detached context"));
@@ -4062,7 +4076,7 @@ mozilla::ipc::IPCResult ContentChild::RecvWindowFocus(
         ("ChildIPC: Trying to send a message to a context without a window"));
     return IPC_OK();
   }
-  nsGlobalWindowOuter::Cast(window)->FocusOuter();
+  nsGlobalWindowOuter::Cast(window)->FocusOuter(aCallerType);
   return IPC_OK();
 }
 
@@ -4114,9 +4128,10 @@ mozilla::ipc::IPCResult ContentChild::RecvWindowPostMessage(
   // Create and asynchronously dispatch a runnable which will handle actual DOM
   // event creation and dispatch.
   RefPtr<BrowsingContext> sourceBc = aData.source();
-  RefPtr<PostMessageEvent> event = new PostMessageEvent(
-      sourceBc, aData.origin(), window, providedPrincipal,
-      aData.callerDocumentURI(), aData.isFromPrivateWindow());
+  RefPtr<PostMessageEvent> event =
+      new PostMessageEvent(sourceBc, aData.origin(), window, providedPrincipal,
+                           aData.innerWindowId(), aData.callerURI(),
+                           aData.scriptLocation(), aData.isFromPrivateWindow());
   event->UnpackFrom(aMessage);
 
   event->DispatchToTargetThread(IgnoredErrorResult());
@@ -4124,19 +4139,34 @@ mozilla::ipc::IPCResult ContentChild::RecvWindowPostMessage(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvCommitBrowsingContextTransaction(
-    BrowsingContext* aContext, BrowsingContext::Transaction&& aTransaction,
+    BrowsingContext* aContext, BrowsingContext::BaseTransaction&& aTransaction,
     uint64_t aEpoch) {
-  if (!aContext || aContext->IsDiscarded()) {
-    MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
-            ("ChildIPC: Trying to send a message to dead or detached context"));
+  return aTransaction.CommitFromIPC(aContext, aEpoch, this);
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvCommitWindowContextTransaction(
+    WindowContext* aContext, WindowContext::BaseTransaction&& aTransaction,
+    uint64_t aEpoch) {
+  return aTransaction.CommitFromIPC(aContext, aEpoch, this);
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvCreateWindowContext(
+    WindowContext::IPCInitializer&& aInit) {
+  WindowContext::CreateFromIPC(std::move(aInit));
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvDiscardWindowContext(
+    uint64_t aContextId, DiscardWindowContextResolver&& aResolve) {
+  // Resolve immediately to acknowledge call
+  aResolve(true);
+
+  RefPtr<WindowContext> window = WindowContext::GetById(aContextId);
+  if (NS_WARN_IF(!window) || NS_WARN_IF(window->IsDiscarded())) {
     return IPC_OK();
   }
 
-  if (!aTransaction.ValidateEpochs(aContext, aEpoch)) {
-    return IPC_FAIL(this, "Invalid BrowsingContext transaction from Parent");
-  }
-
-  aTransaction.Apply(aContext);
+  window->Discard();
   return IPC_OK();
 }
 
@@ -4212,7 +4242,7 @@ mozilla::ipc::IPCResult ContentChild::RecvInternalLoad(
 
   if (aTakeFocus) {
     if (nsCOMPtr<nsPIDOMWindowOuter> domWin = aContext->GetDOMWindow()) {
-      nsFocusManager::FocusWindow(domWin);
+      nsFocusManager::FocusWindow(domWin, CallerType::System);
     }
   }
 

@@ -5,7 +5,7 @@ import {
 } from "common/Actions.jsm";
 import { combineReducers, createStore } from "redux";
 import { GlobalOverrider } from "test/unit/utils";
-import injector from "inject!lib/DiscoveryStreamFeed.jsm";
+import { DiscoveryStreamFeed } from "lib/DiscoveryStreamFeed.jsm";
 import { reducers } from "common/Reducers.jsm";
 
 const CONFIG_PREF_NAME = "discoverystream.config";
@@ -20,7 +20,6 @@ const FAKE_UUID = "{foo-123-foo}";
 
 // eslint-disable-next-line max-statements
 describe("DiscoveryStreamFeed", () => {
-  let DiscoveryStreamFeed;
   let feed;
   let sandbox;
   let fetchStub;
@@ -43,38 +42,11 @@ describe("DiscoveryStreamFeed", () => {
   beforeEach(() => {
     sandbox = sinon.createSandbox();
 
-    class FakeUserDomainAffinityProvider {
-      constructor(
-        timeSegments,
-        parameterSets,
-        maxHistoryQueryResults,
-        version,
-        scores
-      ) {
-        this.timeSegments = timeSegments;
-        this.parameterSets = parameterSets;
-        this.maxHistoryQueryResults = maxHistoryQueryResults;
-        this.version = version;
-        this.scores = scores;
-      }
-
-      getAffinities() {
-        return {};
-      }
-    }
-
     // Fetch
     fetchStub = sandbox.stub(global, "fetch");
 
     // Time
     clock = sinon.useFakeTimers();
-
-    // Injector
-    ({ DiscoveryStreamFeed } = injector({
-      "lib/UserDomainAffinityProvider.jsm": {
-        UserDomainAffinityProvider: FakeUserDomainAffinityProvider,
-      },
-    }));
 
     globals = new GlobalOverrider();
     globals.set("gUUIDGenerator", { generateUUID: () => FAKE_UUID });
@@ -968,6 +940,29 @@ describe("DiscoveryStreamFeed", () => {
       );
 
       assert.equal(result[3].id, "first");
+    });
+  });
+
+  describe("#reset", () => {
+    it("should fire all teardown based functions", async () => {
+      sandbox.stub(global.Services.obs, "removeObserver").returns();
+
+      sandbox.stub(feed, "resetDataPrefs").returns();
+      sandbox.stub(feed, "resetCache").returns(Promise.resolve());
+      sandbox.stub(feed, "resetState").returns();
+
+      feed.affinityProvider = {
+        teardown: sandbox.stub().returns(),
+      };
+      feed.loaded = true;
+
+      await feed.reset();
+
+      assert.calledOnce(feed.resetDataPrefs);
+      assert.calledOnce(feed.resetCache);
+      assert.calledOnce(feed.resetState);
+      assert.calledOnce(feed.affinityProvider.teardown);
+      assert.calledOnce(global.Services.obs.removeObserver);
     });
   });
 
@@ -2505,16 +2500,28 @@ describe("DiscoveryStreamFeed", () => {
   });
 
   describe("#updateDomainAffinityScores", () => {
+    it("should call updateDomainAffinityScores on idle daily", async () => {
+      sandbox.stub(feed, "updateDomainAffinityScores").returns();
+      feed.observe(null, "idle-daily");
+      assert.calledOnce(feed.updateDomainAffinityScores);
+    });
     it("should update affinity provider on idle daily", async () => {
       feed._prefCache.config = {
         personalized: true,
       };
+      const DEFAULT_TIME_SEGMENTS = [
+        { id: "hour", startTime: 3600, endTime: 0, weightPosition: 1 },
+        { id: "day", startTime: 86400, endTime: 3600, weightPosition: 0.75 },
+        { id: "week", startTime: 604800, endTime: 86400, weightPosition: 0.5 },
+        { id: "weekPlus", startTime: 0, endTime: 604800, weightPosition: 0.25 },
+        { id: "alltime", startTime: 0, endTime: 0, weightPosition: 0.25 },
+      ];
       feed.affinities = {
         parameterSets: {
           default: {},
         },
         maxHistoryQueryResults: 1000,
-        timeSegments: [],
+        timeSegments: DEFAULT_TIME_SEGMENTS,
         version: "123",
       };
 
@@ -2548,6 +2555,29 @@ describe("DiscoveryStreamFeed", () => {
       assert.deepEqual(filtered, [
         { item_score: 0.5, min_score: 0.6, score: 0.5 },
       ]);
+    });
+    it("should fire dispatchRelevanceScoreDuration if available", () => {
+      feed.affinityProvider = {
+        dispatchRelevanceScoreDuration: sandbox.stub().returns(),
+      };
+      feed.scoreItems([]);
+
+      assert.calledOnce(feed.affinityProvider.dispatchRelevanceScoreDuration);
+    });
+    it("should fire PERSONALIZATION_V1_ITEM_RELEVANCE_SCORE_DURATION", () => {
+      feed.affinityProvider = {};
+      sandbox.spy(feed.store, "dispatch");
+      feed.scoreItems([]);
+
+      assert.calledWith(
+        feed.store.dispatch,
+        ac.PerfEvent({
+          event: "PERSONALIZATION_V1_ITEM_RELEVANCE_SCORE_DURATION",
+          value: 0,
+        })
+      );
+
+      assert.calledOnce(feed.store.dispatch);
     });
   });
 
