@@ -148,11 +148,6 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
 
   *unimplemented = false;
 
-  ScriptSource* ss = cx->new_<ScriptSource>();
-  if (!ss) {
-    return nullptr;
-  }
-
   RootedScriptSourceObject sso(cx, frontend::CreateScriptSourceObject(cx, info.getOptions()));
   if (!sso) {
     return nullptr;
