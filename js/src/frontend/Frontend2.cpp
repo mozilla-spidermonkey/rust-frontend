@@ -64,8 +64,15 @@ bool Jsparagus::initScript(JSContext* cx, JS::Handle<JSScript*> script,
   }
 
   uint32_t codeLength = jsparagus.bytecode.len;
+
+  // We only want one byte of notes, but JSScript::createImmutableScriptData
+  // requires us to pad them to fill the space before the next (32-bit-aligned)
+  // field. See the layout comment on class ImmutableScriptData.
   uint32_t noteLength =
-      roundUp(1 + jsparagus.bytecode.len, 4) - (1 + jsparagus.bytecode.len);
+      roundUp(sizeof(ImmutableScriptData::Flags) + jsparagus.bytecode.len + 1,
+              4) -
+      (sizeof(ImmutableScriptData::Flags) + jsparagus.bytecode.len);
+
   uint32_t numResumeOffsets = 0;
   uint32_t numScopeNotes = 0;
   uint32_t numTryNotes = 0;
