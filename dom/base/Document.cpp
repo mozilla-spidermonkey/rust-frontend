@@ -4698,7 +4698,7 @@ bool Document::ExecCommand(const nsAString& aHTMLCommandName, bool aShowUI,
 
   // Do security check first.
   if (commandData.IsCutOrCopyCommand()) {
-    if (!nsContentUtils::IsCutCopyAllowed(aSubjectPrincipal)) {
+    if (!nsContentUtils::IsCutCopyAllowed(this, aSubjectPrincipal)) {
       // We have rejected the event due to it not being performed in an
       // input-driven context therefore, we report the error to the console.
       nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
@@ -4904,7 +4904,7 @@ bool Document::QueryCommandEnabled(const nsAString& aHTMLCommandName,
 
   // cut & copy are always allowed
   if (commandData.IsCutOrCopyCommand()) {
-    return nsContentUtils::IsCutCopyAllowed(aSubjectPrincipal);
+    return nsContentUtils::IsCutCopyAllowed(this, aSubjectPrincipal);
   }
 
   // Report false for restricted commands
@@ -6570,11 +6570,11 @@ void Document::InsertSheetAt(size_t aIndex, StyleSheet& aSheet) {
   }
 }
 
-void Document::SetStyleSheetApplicableState(StyleSheet& aSheet,
-                                            bool aApplicable) {
+void Document::StyleSheetApplicableStateChanged(StyleSheet& aSheet) {
+  const bool applicable = aSheet.IsApplicable();
   // If we're actually in the document style sheet list
   if (mStyleSheets.IndexOf(&aSheet) != mStyleSheets.NoIndex) {
-    if (aApplicable) {
+    if (applicable) {
       AddStyleSheetToStyleSets(&aSheet);
     } else {
       RemoveStyleSheetFromStyleSets(&aSheet);
@@ -6586,7 +6586,7 @@ void Document::SetStyleSheetApplicableState(StyleSheet& aSheet,
     init.mBubbles = true;
     init.mCancelable = true;
     init.mStylesheet = &aSheet;
-    init.mApplicable = aApplicable;
+    init.mApplicable = applicable;
 
     RefPtr<StyleSheetApplicableStateChangeEvent> event =
         StyleSheetApplicableStateChangeEvent::Constructor(
@@ -10481,24 +10481,10 @@ bool Document::CanSavePresentation(nsIRequest* aNewRequest,
   return ret;
 }
 
-static bool HasHttpScheme(nsIURI* aURI) {
-  return aURI && (aURI->SchemeIs("http") || aURI->SchemeIs("https"));
-}
-
 void Document::Destroy() {
   // The ContentViewer wants to release the document now.  So, tell our content
   // to drop any references to the document so that it can be destroyed.
   if (mIsGoingAway) return;
-
-  // Make sure to report before IPC closed.
-  if (!nsContentUtils::IsInPrivateBrowsing(this) &&
-      IsTopLevelContentDocument()) {
-    mContentBlockingLog.ReportLog(NodePrincipal());
-
-    if (HasHttpScheme(GetDocumentURI())) {
-      mContentBlockingLog.ReportOrigins();
-    }
-  }
 
   ReportUseCounters();
 

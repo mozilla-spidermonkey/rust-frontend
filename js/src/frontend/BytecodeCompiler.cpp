@@ -504,7 +504,7 @@ JSScript* frontend::ScriptCompiler<Unit>::compileScript(
 
   // We are about to start parsing the source. Record this information for
   // telemetry purposes.
-  info.script->scriptSource()->recordParseStarted();
+  info.parseInfo.sourceObject->source()->recordParseStarted();
 
   TokenStreamPosition startPosition(info.keepAtoms, parser->tokenStream);
 
@@ -528,7 +528,7 @@ JSScript* frontend::ScriptCompiler<Unit>::compileScript(
     if (pn) {
       // We are about to start emitting bytecode. Record this information for
       // telemetry purposes.
-      info.script->scriptSource()->recordEmitStarted();
+      info.parseInfo.sourceObject->source()->recordEmitStarted();
 
       // Publish deferred items
       if (!parser->publishDeferredFunctions()) {
@@ -560,7 +560,7 @@ JSScript* frontend::ScriptCompiler<Unit>::compileScript(
 
   // We have just finished parsing the source. Inform the source so that we
   // can compute statistics (e.g. how much time our functions remain lazy).
-  info.script->scriptSource()->recordParseEnded();
+  info.parseInfo.sourceObject->source()->recordParseEnded();
 
   // Enqueue an off-thread source compression task after finishing parsing.
   if (!info.scriptSource()->tryCompressOffThread(cx)) {
@@ -591,7 +591,8 @@ ModuleObject* frontend::ModuleCompiler<Unit>::compile(
   ModuleBuilder builder(cx, module, parser.ptr());
 
   RootedScope enclosingScope(cx, &cx->global()->emptyGlobalScope());
-  ModuleSharedContext modulesc(cx, module, enclosingScope, builder);
+  ModuleSharedContext modulesc(cx, module, info.parseInfo, enclosingScope,
+                               builder);
   ParseNode* pn = parser->moduleBody(&modulesc);
   if (!pn) {
     return nullptr;
@@ -759,7 +760,7 @@ static JSScript* CompileGlobalBinASTScriptImpl(
   }
 
   Directives directives(options.forceStrictMode());
-  GlobalSharedContext globalsc(cx, ScopeKind::Global, directives,
+  GlobalSharedContext globalsc(cx, ScopeKind::Global, parseInfo, directives,
                                options.extraWarningsOption);
 
   frontend::BinASTParser<ParserT> parser(cx, parseInfo, options,
@@ -1047,13 +1048,6 @@ static bool CompileLazyFunctionImpl(JSContext* cx, Handle<LazyScript*> lazy,
     return false;
   }
 
-  if (lazy->isLikelyConstructorWrapper()) {
-    script->setIsLikelyConstructorWrapper();
-  }
-  if (lazy->hasBeenCloned()) {
-    script->setHasBeenCloned();
-  }
-
   FieldInitializers fieldInitializers = FieldInitializers::Invalid();
   if (fun->isClassConstructor()) {
     fieldInitializers = lazy->getFieldInitializers();
@@ -1118,13 +1112,8 @@ static bool CompileLazyBinASTFunctionImpl(JSContext* cx,
   parseInfo.initFromSourceObject(lazy->sourceObject());
 
   RootedScript script(cx, JSScript::CreateFromLazy(cx, lazy));
-
   if (!script) {
     return false;
-  }
-
-  if (lazy->hasBeenCloned()) {
-    script->setHasBeenCloned();
   }
 
   frontend::BinASTParser<ParserT> parser(cx, parseInfo, options,
@@ -1209,7 +1198,7 @@ static bool CompileStandaloneFunction(JSContext* cx, MutableHandleFunction fun,
   // interpreted script.
   if (info.getScript()) {
     if (parameterListEnd) {
-      info.getScript()->scriptSource()->setParameterListEnd(*parameterListEnd);
+      parseInfo.sourceObject->source()->setParameterListEnd(*parameterListEnd);
     }
     tellDebuggerAboutCompiledScript(cx, info.getScript());
   }

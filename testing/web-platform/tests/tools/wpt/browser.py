@@ -888,8 +888,10 @@ class EdgeChromium(Browser):
             if not binary:
                 # Use paths from different Edge channels starting with Release\Beta\Dev\Canary
                 winpaths = [os.path.expanduser("~\\AppData\\Local\\Microsoft\\Edge\\Application"),
+                            os.path.expandvars("$SYSTEMDRIVE\\Program Files\\Microsoft\\Edge\\Application"),
                             os.path.expandvars("$SYSTEMDRIVE\\Program Files\\Microsoft\\Edge Beta\\Application"),
                             os.path.expandvars("$SYSTEMDRIVE\\Program Files\\Microsoft\\Edge Dev\\Application"),
+                            os.path.expandvars("$SYSTEMDRIVE\\Program Files (x86)\\Microsoft\\Edge\\Application"),
                             os.path.expandvars("$SYSTEMDRIVE\\Program Files (x86)\\Microsoft\\Edge Beta\\Application"),
                             os.path.expandvars("$SYSTEMDRIVE\\Program Files (x86)\\Microsoft\\Edge Dev\\Application"),
                             os.path.expanduser("~\\AppData\Local\\Microsoft\\Edge SxS\\Application")]
@@ -1212,7 +1214,7 @@ class WebKitGTKMiniBrowser(WebKit):
         gcc = find_executable("gcc")
         if gcc:
             try:
-                triplet = call(gcc, "-dumpmachine").strip()
+                triplet = call(gcc, "-dumpmachine").decode().strip()
             except subprocess.CalledProcessError:
                 pass
         # Add Debian/Ubuntu path
@@ -1231,7 +1233,7 @@ class WebKitGTKMiniBrowser(WebKit):
         if binary is None:
             return None
         try:  # WebKitGTK MiniBrowser before 2.26.0 doesn't support --version
-            output = call(binary, "--version").strip()
+            output = call(binary, "--version").decode().strip()
         except subprocess.CalledProcessError:
             return None
         # Example output: "WebKitGTK 2.26.1"

@@ -312,45 +312,34 @@ FOR_EACH_ALLOCKIND(CHECK_THING_SIZE);
 
 template <typename T>
 struct ArenaLayout {
-  static constexpr size_t MarkBytesPerCell = 1;
   static constexpr size_t thingSize() { return sizeof(T); }
   static constexpr size_t thingsPerArena() {
-    return (ArenaSize - ArenaHeaderSize) / (thingSize() + MarkBytesPerCell);
+    return (ArenaSize - ArenaHeaderSize) / thingSize();
   }
   static constexpr size_t firstThingOffset() {
     return ArenaSize - thingSize() * thingsPerArena();
   }
-  static constexpr size_t reciprocalOfThingSize() {
-    return (1 << ReciprocalThingSizeShift) / thingSize();
-  }
 };
 
-const uint8_t js::gc::ThingSizes[] = {
+const uint8_t Arena::ThingSizes[] = {
 #define EXPAND_THING_SIZE(_1, _2, _3, sizedType, _4, _5, _6) \
   ArenaLayout<sizedType>::thingSize(),
     FOR_EACH_ALLOCKIND(EXPAND_THING_SIZE)
 #undef EXPAND_THING_SIZE
 };
 
-const uint16_t js::gc::FirstThingOffsets[] = {
+const uint8_t Arena::FirstThingOffsets[] = {
 #define EXPAND_FIRST_THING_OFFSET(_1, _2, _3, sizedType, _4, _5, _6) \
   ArenaLayout<sizedType>::firstThingOffset(),
     FOR_EACH_ALLOCKIND(EXPAND_FIRST_THING_OFFSET)
 #undef EXPAND_FIRST_THING_OFFSET
 };
 
-const uint8_t js::gc::ThingsPerArena[] = {
+const uint8_t Arena::ThingsPerArena[] = {
 #define EXPAND_THINGS_PER_ARENA(_1, _2, _3, sizedType, _4, _5, _6) \
   ArenaLayout<sizedType>::thingsPerArena(),
     FOR_EACH_ALLOCKIND(EXPAND_THINGS_PER_ARENA)
-#undef EXPAND_THING_INDEXf_FACTOR
-};
-
-JS_PUBLIC_DATA const uint16_t js::gc::ReciprocalOfThingSize[] = {
-#define EXPAND_RECIPROCAL_OF_THING_SIZE(_1, _2, _3, sizedType, _4, _5, _6) \
-  ArenaLayout<sizedType>::reciprocalOfThingSize(),
-    FOR_EACH_ALLOCKIND(EXPAND_RECIPROCAL_OF_THING_SIZE)
-#undef EXPAND_RECIPROCAL_OF_THING_SIZE
+#undef EXPAND_THINGS_PER_ARENA
 };
 
 FreeSpan FreeLists::emptySentinel;
@@ -402,7 +391,10 @@ static constexpr FinalizePhase BackgroundFinalizePhases[] = {
      {AllocKind::SHAPE, AllocKind::ACCESSOR_SHAPE, AllocKind::BASE_SHAPE,
       AllocKind::OBJECT_GROUP}}};
 
-void Arena::unmarkAll() { memset(data, 0, getThingsPerArena()); }
+void Arena::unmarkAll() {
+  uintptr_t* word = chunk()->bitmap.arenaBits(this);
+  memset(word, 0, ArenaBitmapWords * sizeof(uintptr_t));
+}
 
 void Arena::unmarkPreMarkedFreeCells() {
   for (ArenaFreeCellIter iter(this); !iter.done(); iter.next()) {
@@ -1266,6 +1258,21 @@ bool GCRuntime::init(uint32_t maxbytes) {
   return true;
 }
 
+void GCRuntime::freezeSelfHostingZone() {
+  MOZ_ASSERT(!selfHostingZoneFrozen);
+  MOZ_ASSERT(!isIncrementalGCInProgress());
+
+  for (ZonesIter zone(this, WithAtoms); !zone.done(); zone.next()) {
+    MOZ_ASSERT(!zone->isGCScheduled());
+    if (zone->isSelfHostingZone()) {
+      zone->scheduleGC();
+    }
+  }
+
+  gc(GC_SHRINK, JS::GCReason::INIT_SELF_HOSTING);
+  selfHostingZoneFrozen = true;
+}
+
 void GCRuntime::finish() {
   // Wait for nursery background free to end and disable it to release memory.
   if (nursery().isEnabled()) {
@@ -1712,8 +1719,16 @@ AutoDisableCompactingGC::~AutoDisableCompactingGC() {
   --cx->compactingDisabledCount;
 }
 
-static bool CanRelocateZone(Zone* zone) {
-  return !zone->isAtomsZone() && !zone->isSelfHostingZone();
+bool GCRuntime::canRelocateZone(Zone* zone) const {
+  if (zone->isAtomsZone()) {
+    return false;
+  }
+
+  if (zone->isSelfHostingZone() && selfHostingZoneFrozen) {
+    return false;
+  }
+
+  return true;
 }
 
 Arena* ArenaList::removeRemainingArenas(Arena** arenap) {
@@ -2026,7 +2041,7 @@ bool GCRuntime::relocateArenas(Zone* zone, JS::GCReason reason,
   gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::COMPACT_MOVE);
 
   MOZ_ASSERT(!zone->isPreservingCode());
-  MOZ_ASSERT(CanRelocateZone(zone));
+  MOZ_ASSERT(canRelocateZone(zone));
 
   js::CancelOffThreadIonCompile(rt, JS::Zone::Compact);
 
@@ -3849,7 +3864,7 @@ bool GCRuntime::prepareZonesForCollection(JS::GCReason reason,
       MOZ_ASSERT(zone->canCollect());
       any = true;
       zone->changeGCState(Zone::NoGC, Zone::MarkBlackOnly);
-    } else {
+    } else if (zone->canCollect()) {
       *isFullOut = false;
     }
 
@@ -3919,7 +3934,7 @@ void GCRuntime::relazifyFunctionsForShrinkingGC() {
 void GCRuntime::purgeShapeCachesForShrinkingGC() {
   gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::PURGE_SHAPE_CACHES);
   for (GCZonesIter zone(this); !zone.done(); zone.next()) {
-    if (!CanRelocateZone(zone) || zone->keepShapeCaches()) {
+    if (!canRelocateZone(zone) || zone->keepShapeCaches()) {
       continue;
     }
     for (auto baseShape = zone->cellIterUnsafe<BaseShape>(); !baseShape.done();
@@ -3935,7 +3950,7 @@ void GCRuntime::purgeSourceURLsForShrinkingGC() {
   gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::PURGE_SOURCE_URLS);
   for (GCZonesIter zone(this); !zone.done(); zone.next()) {
     // URLs are not tracked for realms in the system zone.
-    if (!CanRelocateZone(zone) || zone->isSystem) {
+    if (!canRelocateZone(zone) || zone->isSystem) {
       continue;
     }
     for (CompartmentsInZoneIter comp(zone); !comp.done(); comp.next()) {
@@ -6135,7 +6150,7 @@ void GCRuntime::beginCompactPhase() {
 
   MOZ_ASSERT(zonesToMaybeCompact.ref().isEmpty());
   for (GCZonesIter zone(this); !zone.done(); zone.next()) {
-    if (CanRelocateZone(zone)) {
+    if (canRelocateZone(zone)) {
       zonesToMaybeCompact.ref().append(zone);
     }
   }

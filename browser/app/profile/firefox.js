@@ -886,6 +886,9 @@ pref("accessibility.blockautorefresh", false);
 // Whether history is enabled or not.
 pref("places.history.enabled", true);
 
+// Whether or not diacritics must match in history text searches.
+pref("places.search.matchDiacritics", false);
+
 // the (maximum) number of the recent visits to sample
 // when calculating frecency
 pref("places.frecency.numVisits", 10);
@@ -1632,19 +1635,14 @@ pref("privacy.usercontext.about_newtab_segregation.enabled", true);
 #ifdef NIGHTLY_BUILD
   pref("privacy.userContext.enabled", true);
   pref("privacy.userContext.ui.enabled", true);
-
-  // 0 disables long press, 1 when clicked, the menu is shown, 2 the menu is
-  // shown after X milliseconds.
-  pref("privacy.userContext.longPressBehavior", 2);
 #else
   pref("privacy.userContext.enabled", false);
   pref("privacy.userContext.ui.enabled", false);
-
-  // 0 disables long press, 1 when clicked, the menu is shown, 2 the menu is
-  // shown after X milliseconds.
-  pref("privacy.userContext.longPressBehavior", 0);
 #endif
 pref("privacy.userContext.extension", "");
+// allows user to open container menu on a left click instead of a new
+// tab in the default container
+pref("privacy.userContext.newTabContainerOnLeftClick.enabled", false);
 
 // Start the browser in e10s mode
 pref("browser.tabs.remote.autostart", true);
@@ -1821,12 +1819,6 @@ pref("extensions.screenshots.disabled", false);
 // Preference that allows individual users to leave Screenshots enabled, but
 // disable uploading to the server.
 pref("extensions.screenshots.upload-disabled", false);
-
-// DoH Rollout: the earliest date of profile creation for which we don't need
-// to show the doorhanger. This is when the version of the privacy statement
-// that includes DoH went live - Oct 31, 2019. This has to be a string because
-// the number is outside the signed 32-bit integer range.
-pref("doh-rollout.profileCreationThreshold", "1572476400000");
 
 // URL for Learn More link for browser error logging in preferences
 pref("browser.chrome.errorReporter.infoURL",
@@ -2081,8 +2073,12 @@ pref("devtools.netmonitor.enabled", true);
 pref("devtools.netmonitor.features.search", true);
 pref("devtools.netmonitor.features.requestBlocking", true);
 
-// Enable the Application panel
-pref("devtools.application.enabled", false);
+// Enable the Application panel on Nightly
+#if defined(NIGHTLY_BUILD)
+  pref("devtools.application.enabled", true);
+#else
+  pref("devtools.application.enabled", false);
+#endif
 
 // The default Network Monitor UI settings
 pref("devtools.netmonitor.panes-network-details-width", 550);
@@ -2155,7 +2151,11 @@ pref("devtools.webconsole.input.autocomplete",true);
 
 // Set to true to eagerly show the results of webconsole terminal evaluations
 // when they don't have side effects.
-pref("devtools.webconsole.input.eagerEvaluation", false);
+#if defined(NIGHTLY_BUILD)
+  pref("devtools.webconsole.input.eagerEvaluation", true);
+#else
+  pref("devtools.webconsole.input.eagerEvaluation", false);
+#endif
 
 // Browser console filters
 pref("devtools.browserconsole.filter.error", true);
@@ -2291,6 +2291,12 @@ pref("devtools.aboutdebugging.collapsibilities.temporaryExtension", false);
 
 // Map top-level await expressions in the console
 pref("devtools.debugger.features.map-await-expression", true);
+
+#ifdef NIGHTLY_BUILD
+pref("devtools.debugger.features.async-live-stacks", true);
+#else
+pref("devtools.debugger.features.async-live-stacks", false);
+#endif
 
 // Disable autohide for DevTools popups and tooltips.
 // This is currently not exposed by any UI to avoid making

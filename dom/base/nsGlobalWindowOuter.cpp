@@ -25,7 +25,6 @@
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/ContentFrameMessageManager.h"
 #include "mozilla/dom/EventTarget.h"
-#include "mozilla/dom/JSWindowActorChild.h"
 #include "mozilla/dom/LocalStorage.h"
 #include "mozilla/dom/LSObject.h"
 #include "mozilla/dom/Storage.h"
@@ -4563,34 +4562,13 @@ void nsGlobalWindowOuter::MakeScriptDialogTitle(
   // Try to get a host from the running principal -- this will do the
   // right thing for javascript: and data: documents.
 
-  nsCOMPtr<nsIURI> uri;
-  nsresult rv = aSubjectPrincipal->GetURI(getter_AddRefs(uri));
-  if (NS_SUCCEEDED(rv) && uri) {
-    // remove user:pass for privacy and spoof prevention
-
-    nsCOMPtr<nsIURIFixup> fixup(components::URIFixup::Service());
-    if (fixup) {
-      nsCOMPtr<nsIURI> fixedURI;
-      rv = fixup->CreateExposableURI(uri, getter_AddRefs(fixedURI));
-      if (NS_SUCCEEDED(rv) && fixedURI) {
-        nsAutoCString host;
-        fixedURI->GetHost(host);
-
-        if (!host.IsEmpty()) {
-          // if this URI has a host we'll show it. For other
-          // schemes (e.g. file:) we fall back to the localized
-          // generic string
-
-          nsAutoCString prepath;
-          fixedURI->GetDisplayPrePath(prepath);
-
-          NS_ConvertUTF8toUTF16 ucsPrePath(prepath);
-          nsContentUtils::FormatLocalizedString(
-              aOutTitle, nsContentUtils::eCOMMON_DIALOG_PROPERTIES,
-              "ScriptDlgHeading", ucsPrePath);
-        }
-      }
-    }
+  nsAutoCString prepath;
+  nsresult rv = aSubjectPrincipal->GetExposablePrePath(prepath);
+  if (NS_SUCCEEDED(rv) && !prepath.IsEmpty()) {
+    NS_ConvertUTF8toUTF16 ucsPrePath(prepath);
+    nsContentUtils::FormatLocalizedString(
+        aOutTitle, nsContentUtils::eCOMMON_DIALOG_PROPERTIES,
+        "ScriptDlgHeading", ucsPrePath);
   }
 
   if (aOutTitle.IsEmpty()) {
@@ -4973,59 +4951,69 @@ void nsGlobalWindowOuter::PrintOuter(ErrorResult& aError) {
     return;
   }
 
-  nsCOMPtr<nsIPrintSettingsService> printSettingsService =
-      do_GetService("@mozilla.org/gfx/printsettings-service;1");
-  if (!printSettingsService) {
-    aError.Throw(NS_ERROR_NOT_AVAILABLE);
-    return;
-  }
+  nsCOMPtr<nsIWebBrowserPrint> webBrowserPrint;
+  if (NS_SUCCEEDED(GetInterface(NS_GET_IID(nsIWebBrowserPrint),
+                                getter_AddRefs(webBrowserPrint)))) {
+    nsAutoSyncOperation sync(GetCurrentInnerWindowInternal()
+                                 ? GetCurrentInnerWindowInternal()->mDoc.get()
+                                 : nullptr);
 
-  WindowGlobalChild* wgc = mInnerWindow->GetWindowGlobalChild();
-  if (!wgc) {
-    aError.Throw(NS_ERROR_NOT_AVAILABLE);
-    return;
-  }
+    nsCOMPtr<nsIPrintSettingsService> printSettingsService =
+        do_GetService("@mozilla.org/gfx/printsettings-service;1");
 
-  RefPtr<JSWindowActorChild> actor =
-      wgc->GetActor(NS_LITERAL_STRING("BrowserElement"), IgnoreErrors());
-  if (!actor) {
-    aError.Throw(NS_ERROR_NOT_AVAILABLE);
-    return;
-  }
+    nsCOMPtr<nsIPrintSettings> printSettings;
+    if (printSettingsService) {
+      bool printSettingsAreGlobal =
+          Preferences::GetBool("print.use_global_printsettings", false);
 
-  bool havePrintableSelection = false;
-  if (!mDoc->GetRootElement()->HasAttr(kNameSpaceID_None,
-                                       nsGkAtoms::mozdisallowselectionprint)) {
-    if (Selection* selection = GetSelectionOuter()) {
-      if (int32_t rangeCount = selection->RangeCount()) {
-        havePrintableSelection =
-            rangeCount > 1 ||
-            // check to make sure it isn't an insertion selection
-            (selection->GetRangeAt(0) && !selection->IsCollapsed());
+      if (printSettingsAreGlobal) {
+        printSettingsService->GetGlobalPrintSettings(
+            getter_AddRefs(printSettings));
+
+        nsAutoString printerName;
+        printSettings->GetPrinterName(printerName);
+
+        bool shouldGetDefaultPrinterName = printerName.IsEmpty();
+#  ifdef MOZ_X11
+        // In Linux, GTK backend does not support per printer settings.
+        // Calling GetDefaultPrinterName causes a sandbox violation (see Bug
+        // 1329216). The printer name is not needed anywhere else on Linux
+        // before it gets to the parent. In the parent, we will then query the
+        // default printer name if no name is set. Unless we are in the parent,
+        // we will skip this part.
+        if (!XRE_IsParentProcess()) {
+          shouldGetDefaultPrinterName = false;
+        }
+#  endif
+        if (shouldGetDefaultPrinterName) {
+          printSettingsService->GetDefaultPrinterName(printerName);
+          printSettings->SetPrinterName(printerName);
+        }
+        printSettingsService->InitPrintSettingsFromPrinter(printerName,
+                                                           printSettings);
+        printSettingsService->InitPrintSettingsFromPrefs(
+            printSettings, true, nsIPrintSettings::kInitSaveAll);
+      } else {
+        printSettingsService->GetNewPrintSettings(
+            getter_AddRefs(printSettings));
       }
+
+      EnterModalState();
+      webBrowserPrint->Print(printSettings, nullptr);
+      LeaveModalState();
+
+      bool savePrintSettings =
+          Preferences::GetBool("print.save_print_settings", false);
+      if (printSettingsAreGlobal && savePrintSettings) {
+        printSettingsService->SavePrintSettingsToPrefs(
+            printSettings, true, nsIPrintSettings::kInitSaveAll);
+        printSettingsService->SavePrintSettingsToPrefs(
+            printSettings, false, nsIPrintSettings::kInitSavePrinterName);
+      }
+    } else {
+      webBrowserPrint->GetGlobalPrintSettings(getter_AddRefs(printSettings));
+      webBrowserPrint->Print(printSettings, nullptr);
     }
-  }
-
-  // We don't init the AutoJSAPI with ourselves because we don't want it
-  // reporting errors to our onerror handlers.
-  AutoJSAPI jsapi;
-  jsapi.Init();
-  JSContext* cx = jsapi.cx();
-  JSAutoRealm ar(cx, actor->GetParentObject()->GetGlobalJSObject());
-
-  // The frontend code doesn't yet make use of the `data` we send here, but it
-  // will do in future work in order to avoid a roundtrip to the content
-  // process.
-  // Note: if we want more complex detail, create something like
-  // DOMWindowResizeEventDetail.
-  JS::Rooted<JS::Value> msgData(cx, JS::BooleanValue(havePrintableSelection));
-
-  IgnoredErrorResult res;
-  actor->SendAsyncMessage(cx, NS_LITERAL_STRING("ContentRequestedPrint"),
-                          msgData, res);
-  if (res.Failed()) {
-    aError.Throw(NS_ERROR_NOT_AVAILABLE);
-    return;
   }
 #endif  // NS_PRINTING
 }
@@ -5500,13 +5488,9 @@ bool nsGlobalWindowOuter::SameLoadingURI(Document* aDoc, nsIChannel* aChannel) {
     // return false
     return false;
   }
-  nsCOMPtr<nsIURI> channelLoadingURI;
-  channelLoadingPrincipal->GetURI(getter_AddRefs(channelLoadingURI));
-  if (!channelLoadingURI) {
-    return false;
-  }
   bool equals = false;
-  nsresult rv = docURI->EqualsExceptRef(channelLoadingURI, &equals);
+  nsresult rv = channelLoadingPrincipal->EqualsURI(docURI, &equals);
+
   return NS_SUCCEEDED(rv) && equals;
 }
 
@@ -5595,13 +5579,7 @@ void nsGlobalWindowOuter::FireAbuseEvents(
     const nsAString& aPopupURL, const nsAString& aPopupWindowName,
     const nsAString& aPopupWindowFeatures) {
   // fetch the URI of the window requesting the opened window
-
-  nsCOMPtr<nsPIDOMWindowOuter> window = GetInProcessTop();
-  if (!window) {
-    return;
-  }
-
-  nsCOMPtr<Document> topDoc = window->GetDoc();
+  nsCOMPtr<Document> currentDoc = GetDoc();
   nsCOMPtr<nsIURI> popupURI;
 
   // build the URI of the would-have-been popup window
@@ -5621,7 +5599,7 @@ void nsGlobalWindowOuter::FireAbuseEvents(
                 getter_AddRefs(popupURI));
 
   // fire an event block full of informative URIs
-  FirePopupBlockedEvent(topDoc, popupURI, aPopupWindowName,
+  FirePopupBlockedEvent(currentDoc, popupURI, aPopupWindowName,
                         aPopupWindowFeatures);
 }
 
@@ -5787,14 +5765,11 @@ bool nsGlobalWindowOuter::GatherPostMessageData(
     return false;
   }
 
-  nsCOMPtr<nsIURI> callerOuterURI;
-  if (NS_FAILED(callerPrin->GetURI(getter_AddRefs(callerOuterURI)))) {
-    return false;
-  }
-
-  if (callerOuterURI) {
-    // if the principal has a URI, use that to generate the origin
-    nsContentUtils::GetUTFOrigin(callerPrin, aOrigin);
+  // if the principal has a URI, use that to generate the origin
+  if (!callerPrin->IsSystemPrincipal()) {
+    nsAutoCString asciiOrigin;
+    callerPrin->GetAsciiOrigin(asciiOrigin);
+    aOrigin = NS_ConvertUTF8toUTF16(asciiOrigin);
   } else if (callerInnerWin) {
     if (!*aCallerURI) {
       return false;
@@ -5871,13 +5846,11 @@ bool nsGlobalWindowOuter::GetPrincipalForPostMessage(
       auto principal = BasePrincipal::Cast(GetPrincipal());
 
       if (attrs != principal->OriginAttributesRef()) {
-        nsCOMPtr<nsIURI> targetURI;
         nsAutoCString targetURL;
         nsAutoCString sourceOrigin;
         nsAutoCString targetOrigin;
 
-        if (NS_FAILED(principal->GetURI(getter_AddRefs(targetURI))) ||
-            NS_FAILED(targetURI->GetAsciiSpec(targetURL)) ||
+        if (NS_FAILED(principal->GetAsciiSpec(targetURL)) ||
             NS_FAILED(principal->GetOrigin(targetOrigin)) ||
             NS_FAILED(aSubjectPrincipal.GetOrigin(sourceOrigin))) {
           NS_WARNING("Failed to get source and target origins");

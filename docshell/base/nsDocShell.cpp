@@ -162,7 +162,6 @@
 
 #include "nsArray.h"
 #include "nsArrayUtils.h"
-#include "nsAutoPtr.h"
 #include "nsCExternalHandlerService.h"
 #include "nsContentDLF.h"
 #include "nsContentPolicyUtils.h"  // NS_CheckContentLoadPolicy(...)
@@ -6795,7 +6794,7 @@ void nsDocShell::ReattachEditorToWindow(nsISHEntry* aSHEntry) {
     return;
   }
 
-  mEditorData = aSHEntry->ForgetEditorData();
+  mEditorData = WrapUnique(aSHEntry->ForgetEditorData());
   if (mEditorData) {
 #ifdef DEBUG
     nsresult rv =
@@ -6824,7 +6823,7 @@ void nsDocShell::DetachEditorFromWindow() {
       MOZ_ASSERT(!mIsBeingDestroyed || !mOSHE->HasDetachedEditor(),
                  "We should not set the editor data again once after we "
                  "detached the editor data during destroying this docshell");
-      mOSHE->SetEditorData(mEditorData.forget());
+      mOSHE->SetEditorData(mEditorData.release());
     } else {
       mEditorData = nullptr;
     }
@@ -7316,13 +7315,13 @@ nsresult nsDocShell::RestoreFromHistory() {
 
   // Hack to keep nsDocShellEditorData alive across the
   // SetContentViewer(nullptr) call below.
-  nsAutoPtr<nsDocShellEditorData> data(mLSHE->ForgetEditorData());
+  UniquePtr<nsDocShellEditorData> data(mLSHE->ForgetEditorData());
 
   // Now remove it from the cached presentation.
   mLSHE->SetContentViewer(nullptr);
   mEODForCurrentDocument = false;
 
-  mLSHE->SetEditorData(data.forget());
+  mLSHE->SetEditorData(data.release());
 
 #ifdef DEBUG
   {
@@ -10490,15 +10489,6 @@ bool nsDocShell::OnNewURI(nsIURI* aURI, nsIChannel* aChannel,
           ("  shAvailable=%i updateSHistory=%i updateGHistory=%i"
            " equalURI=%i\n",
            shAvailable, updateSHistory, updateGHistory, equalUri));
-
-  if (shAvailable && mCurrentURI && !mOSHE && aLoadType != LOAD_ERROR_PAGE) {
-    // XXX mCurrentURI can be changed from any caller regardless what actual
-    // loaded document is, so testing mCurrentURI isn't really a reliable way.
-    // Session restore is one example which changes current URI in order to
-    // show address before loading. See bug 1301399.
-    NS_ASSERTION(NS_IsAboutBlank(mCurrentURI),
-                 "no SHEntry for a non-transient viewer?");
-  }
 #endif
 
   /* If the url to be loaded is the same as the one already there,
@@ -11827,7 +11817,7 @@ nsresult nsDocShell::EnsureEditorData() {
     // we're shutting down, or we already have a detached editor data
     // stored in the session history. We should only have one editordata
     // per docshell.
-    mEditorData = new nsDocShellEditorData(this);
+    mEditorData = MakeUnique<nsDocShellEditorData>(this);
   }
 
   return mEditorData ? NS_OK : NS_ERROR_NOT_AVAILABLE;

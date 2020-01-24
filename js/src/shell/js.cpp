@@ -2761,7 +2761,9 @@ static bool CpuNow(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 static bool ClearKeptObjects(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
   JS::ClearKeptObjects(cx);
+  args.rval().setUndefined();
   return true;
 }
 
@@ -3715,7 +3717,6 @@ static void SetStandardRealmOptions(JS::RealmOptions& options) {
       .setWeakRefsEnabled(enableWeakRefs)
       .setToSourceEnabled(enableToSource)
       .setPropertyErrorMessageFixEnabled(enablePropertyErrorMessageFix);
-  options.behaviors().setDeferredParserAlloc(enableDeferredMode);
 }
 
 static MOZ_MUST_USE bool CheckRealmOptions(JSContext* cx,
@@ -5244,7 +5245,8 @@ static bool BinParse(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   Directives directives(false);
-  GlobalSharedContext globalsc(cx, ScopeKind::Global, directives, false);
+  GlobalSharedContext globalsc(cx, ScopeKind::Global, parseInfo, directives,
+                               false);
 
   auto parseFunc = mode == Multipart
                        ? ParseBinASTData<frontend::BinASTTokenReaderMultipart>
@@ -5420,6 +5422,11 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
     if (!FullParseTest<char16_t>(cx, options, chars, length, parseInfo, sourceObject, goal)) {
       return false;
     }
+
+    ModuleBuilder builder(cx, module, &parser);
+
+    ModuleSharedContext modulesc(cx, module, parseInfo, nullptr, builder);
+    pn = parser.moduleBody(&modulesc);
   }
   args.rval().setUndefined();
   return true;
@@ -6390,13 +6397,6 @@ static bool NewGlobal(JSContext* cx, unsigned argc, Value* vp) {
     }
     if (v.isBoolean()) {
       principals.reset(&ShellPrincipals::fullyTrusted);
-    }
-
-    if (!JS_GetProperty(cx, opts, "deferredParserAlloc", &v)) {
-      return false;
-    }
-    if (v.isBoolean()) {
-      behaviors.setDeferredParserAlloc(v.toBoolean());
     }
 
     if (!JS_GetProperty(cx, opts, "principal", &v)) {

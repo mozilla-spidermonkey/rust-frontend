@@ -100,7 +100,6 @@
 #include "PLDHashTable.h"
 #include "nscore.h"
 #include "nsXPCOM.h"
-#include "nsAutoPtr.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsDebug.h"
 #include "nsISupports.h"
@@ -687,28 +686,22 @@ class MOZ_STACK_CLASS XPCCallContext final {
   inline XPCCallContext* GetPrevCallContext() const;
 
   inline JSObject* GetFlattenedJSObject() const;
-  inline nsISupports* GetIdentityObject() const;
   inline XPCWrappedNative* GetWrapper() const;
-  inline XPCWrappedNativeProto* GetProto() const;
 
   inline bool CanGetTearOff() const;
   inline XPCWrappedNativeTearOff* GetTearOff() const;
 
   inline nsIXPCScriptable* GetScriptable() const;
-  inline bool CanGetSet() const;
   inline XPCNativeSet* GetSet() const;
   inline bool CanGetInterface() const;
   inline XPCNativeInterface* GetInterface() const;
   inline XPCNativeMember* GetMember() const;
   inline bool HasInterfaceAndMember() const;
-  inline jsid GetName() const;
   inline bool GetStaticMemberIsLocal() const;
   inline unsigned GetArgc() const;
   inline JS::Value* GetArgv() const;
-  inline JS::Value* GetRetVal() const;
 
   inline uint16_t GetMethodIndex() const;
-  inline void SetMethodIndex(uint16_t index);
 
   inline jsid GetResolveName() const;
   inline jsid SetResolveName(JS::HandleId name);
@@ -886,7 +879,7 @@ class XPCWrappedNativeScope final
                         JS::HandleObject aFirstGlobal);
   virtual ~XPCWrappedNativeScope();
 
-  nsAutoPtr<JSObject2JSObjectMap> mWaiverWrapperMap;
+  mozilla::UniquePtr<JSObject2JSObjectMap> mWaiverWrapperMap;
 
   JS::Compartment* Compartment() const { return mCompartment; }
 
@@ -1051,7 +1044,6 @@ class XPCNativeInterface final {
   inline const char* GetNameString() const;
   inline XPCNativeMember* FindMember(jsid name) const;
 
-  inline bool HasAncestor(const nsIID* iid) const;
   static inline size_t OffsetOfMembers();
 
   uint16_t GetMemberCount() const { return mMemberCount; }
@@ -1166,10 +1158,6 @@ class XPCNativeSet final {
                          XPCNativeSet* protoSet, bool* pIsLocal) const;
 
   inline bool HasInterface(XPCNativeInterface* aInterface) const;
-  inline bool HasInterfaceWithAncestor(XPCNativeInterface* aInterface) const;
-  inline bool HasInterfaceWithAncestor(const nsIID* iid) const;
-
-  inline XPCNativeInterface* FindInterfaceWithIID(const nsIID& iid) const;
 
   uint16_t GetInterfaceCount() const { return mInterfaceCount; }
   XPCNativeInterface** GetInterfaceArray() { return mInterfaces; }
@@ -1472,8 +1460,6 @@ class XPCWrappedNative final : public nsIXPConnectWrappedNative {
   static bool SetAttribute(XPCCallContext& ccx) {
     return CallMethod(ccx, CALL_SETTER);
   }
-
-  inline bool HasInterfaceNoQI(const nsIID& iid);
 
   XPCWrappedNativeTearOff* FindTearOff(JSContext* cx,
                                        XPCNativeInterface* aInterface,

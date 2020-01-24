@@ -686,8 +686,9 @@ static nsresult CompareToRangeStart(const nsINode* aCompareNode,
       aCompareNode->SubtreeRoot() != start->SubtreeRoot()) {
     *aCmp = 1;
   } else {
-    *aCmp = nsContentUtils::ComparePoints_Deprecated(
-        aCompareNode, aCompareOffset, start, aRange->StartOffset());
+    // The points are in the same subtree, hence there has to be an order.
+    *aCmp = *nsContentUtils::ComparePoints(aCompareNode, aCompareOffset, start,
+                                           aRange->StartOffset());
   }
   return NS_OK;
 }
@@ -704,8 +705,9 @@ static nsresult CompareToRangeEnd(const nsINode* aCompareNode,
       aCompareNode->SubtreeRoot() != end->SubtreeRoot()) {
     *aCmp = 1;
   } else {
-    *aCmp = nsContentUtils::ComparePoints_Deprecated(
-        aCompareNode, aCompareOffset, end, aRange->EndOffset());
+    // The points are in the same subtree, hence there has to be an order.
+    *aCmp = *nsContentUtils::ComparePoints(aCompareNode, aCompareOffset, end,
+                                           aRange->EndOffset());
   }
   return NS_OK;
 }
@@ -1361,7 +1363,7 @@ nsresult Selection::GetPrimaryOrCaretFrameForNodeOffset(nsIContent* aContent,
   return NS_OK;
 }
 
-void Selection::SelectFramesForContent(nsIContent* aContent, bool aSelected) {
+void Selection::SelectFramesOf(nsIContent* aContent, bool aSelected) const {
   nsIFrame* frame = aContent->GetPrimaryFrame();
   if (!frame) {
     return;
@@ -1370,20 +1372,20 @@ void Selection::SelectFramesForContent(nsIContent* aContent, bool aSelected) {
   // as a text frame.
   if (frame->IsTextFrame()) {
     nsTextFrame* textFrame = static_cast<nsTextFrame*>(frame);
-    textFrame->SetSelectedRange(0, textFrame->TextFragment()->GetLength(),
-                                aSelected, mSelectionType);
+    textFrame->SelectionStateChanged(0, textFrame->TextFragment()->GetLength(),
+                                     aSelected, mSelectionType);
   } else {
-    frame->InvalidateFrameSubtree();  // frame continuations?
+    frame->SelectionStateChanged();
   }
 }
 
-// select all content children of aContent
-nsresult Selection::SelectAllFramesForContent(
-    PostContentIterator& aPostOrderIter, nsIContent* aContent, bool aSelected) {
+nsresult Selection::SelectFramesOfInclusiveDescendantsOfContent(
+    PostContentIterator& aPostOrderIter, nsIContent* aContent,
+    bool aSelected) const {
   // If aContent doesn't have children, we should avoid to use the content
   // iterator for performance reason.
   if (!aContent->HasChildren()) {
-    SelectFramesForContent(aContent, aSelected);
+    SelectFramesOf(aContent, aSelected);
     return NS_OK;
   }
 
@@ -1395,7 +1397,7 @@ nsresult Selection::SelectAllFramesForContent(
     nsINode* node = aPostOrderIter.GetCurrentNode();
     MOZ_ASSERT(node);
     nsIContent* innercontent = node->IsContent() ? node->AsContent() : nullptr;
-    SelectFramesForContent(innercontent, aSelected);
+    SelectFramesOf(innercontent, aSelected);
   }
 
   return NS_OK;
@@ -1427,8 +1429,19 @@ nsresult Selection::SelectFrames(nsPresContext* aPresContext, nsRange* aRange,
                           ? node->AsContent()->GetPrimaryFrame()
                           : aPresContext->PresShell()->GetRootFrame();
     if (frame) {
-      frame->InvalidateFrameSubtree();
+      if (frame->IsTextFrame()) {
+        nsTextFrame* textFrame = static_cast<nsTextFrame*>(frame);
+
+        MOZ_ASSERT(node == aRange->GetStartContainer());
+        MOZ_ASSERT(node == aRange->GetEndContainer());
+        textFrame->SelectionStateChanged(aRange->StartOffset(),
+                                         aRange->EndOffset(), aSelect,
+                                         mSelectionType);
+      } else {
+        frame->SelectionStateChanged();
+      }
     }
+
     return NS_OK;
   }
 
@@ -1462,10 +1475,10 @@ nsresult Selection::SelectFrames(nsPresContext* aPresContext, nsRange* aRange,
         } else {
           endOffset = startContent->Length();
         }
-        textFrame->SetSelectedRange(startOffset, endOffset, aSelect,
-                                    mSelectionType);
+        textFrame->SelectionStateChanged(startOffset, endOffset, aSelect,
+                                         mSelectionType);
       } else {
-        frame->InvalidateFrameSubtree();
+        frame->SelectionStateChanged();
       }
     }
   }
@@ -1475,7 +1488,7 @@ nsresult Selection::SelectFrames(nsPresContext* aPresContext, nsRange* aRange,
   if (aRange->Collapsed() ||
       (startNode == endNode && !startNode->HasChildren())) {
     if (!isFirstContentTextNode) {
-      SelectFramesForContent(startContent, aSelect);
+      SelectFramesOf(startContent, aSelect);
     }
     return NS_OK;
   }
@@ -1491,7 +1504,8 @@ nsresult Selection::SelectFrames(nsPresContext* aPresContext, nsRange* aRange,
     nsINode* node = subtreeIter.GetCurrentNode();
     MOZ_ASSERT(node);
     nsIContent* content = node->IsContent() ? node->AsContent() : nullptr;
-    SelectAllFramesForContent(postOrderIter, content, aSelect);
+    SelectFramesOfInclusiveDescendantsOfContent(postOrderIter, content,
+                                                aSelect);
   }
 
   // We must now do the last one if it is not the same as the first
@@ -1509,8 +1523,8 @@ nsresult Selection::SelectFrames(nsPresContext* aPresContext, nsRange* aRange,
       // The frame could be an SVG text frame, in which case we'll ignore it.
       if (frame && frame->IsTextFrame()) {
         nsTextFrame* textFrame = static_cast<nsTextFrame*>(frame);
-        textFrame->SetSelectedRange(0, aRange->EndOffset(), aSelect,
-                                    mSelectionType);
+        textFrame->SelectionStateChanged(0, aRange->EndOffset(), aSelect,
+                                         mSelectionType);
       }
     }
   }
@@ -1938,9 +1952,8 @@ void Selection::AddRangeAndSelectFramesAndNotifyListeners(nsRange& aRange,
     }
   }
 
-  if (rangeIndex < 0) {
-    return;
-  }
+  MOZ_ASSERT(rangeIndex >= 0);
+  MOZ_ASSERT(rangeIndex < static_cast<int32_t>(mRanges.Length()));
 
   SetAnchorFocusRange(rangeIndex);
 

@@ -4180,19 +4180,6 @@ nsresult nsContentUtils::DispatchInputEvent(
   }
 #endif  // #ifdef DEBUG
 
-  // If the event target is an <input> element, we need to update
-  // validationMessage value before dispatching "input" event because
-  // "input" event listener may need to check it.
-  if (aEventMessage == eEditorInput) {
-    HTMLInputElement* inputElement =
-        HTMLInputElement::FromNode(aEventTargetElement);
-    if (inputElement) {
-      MOZ_KnownLive(inputElement)->MaybeUpdateAllValidityStates(true);
-      // XXX Should we stop dispatching "input" event if the target is removed
-      //     from the DOM tree?
-    }
-  }
-
   if (!useInputEvent) {
     MOZ_ASSERT(aEventMessage == eEditorInput);
     MOZ_ASSERT(aEditorInputType == EditorInputType::eUnknown);
@@ -6612,9 +6599,10 @@ bool nsContentUtils::ChannelShouldInheritPrincipal(
 }
 
 /* static */
-bool nsContentUtils::IsCutCopyAllowed(nsIPrincipal& aSubjectPrincipal) {
-  if (StaticPrefs::dom_allow_cut_copy() &&
-      UserActivation::IsHandlingUserInput()) {
+bool nsContentUtils::IsCutCopyAllowed(Document* aDocument,
+                                      nsIPrincipal& aSubjectPrincipal) {
+  if (StaticPrefs::dom_allow_cut_copy() && aDocument &&
+      aDocument->HasValidTransientUserGestureActivation()) {
     return true;
   }
 

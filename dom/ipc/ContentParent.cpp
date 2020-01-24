@@ -204,7 +204,6 @@
 #include "nsISound.h"
 #include "nsIStringBundle.h"
 #include "nsITimer.h"
-#include "nsITrackingDBService.h"
 #include "nsIURIFixup.h"
 #include "nsIURL.h"
 #include "nsIWebBrowserChrome.h"
@@ -1658,10 +1657,14 @@ void ContentParent::MarkAsDead() {
   nsCOMPtr<nsIEventTarget> launcherThread(GetIPCLauncher());
   MOZ_ASSERT(launcherThread);
 
-  launcherThread->Dispatch(
-      NS_NewRunnableFunction("ContentParent::MarkAsDead", []() {
-        java::GeckoProcessManager::MarkAsDead(
-            XRE_GeckoProcessTypeToString(GeckoProcessType_Content));
+  auto procType = java::GeckoProcessType::CONTENT();
+  auto selector =
+      java::GeckoProcessManager::Selector::New(procType, OtherPid());
+
+  launcherThread->Dispatch(NS_NewRunnableFunction(
+      "ContentParent::MarkAsDead",
+      [selector = java::GeckoProcessManager::Selector::GlobalRef(selector)]() {
+        java::GeckoProcessManager::MarkAsDead(selector);
       }));
 #endif
 }
@@ -5748,32 +5751,6 @@ mozilla::ipc::IPCResult ContentParent::RecvRecordDiscardedData(
     const mozilla::Telemetry::DiscardedData& aDiscardedData) {
   TelemetryIPC::RecordDiscardedData(GetTelemetryProcessID(mRemoteType),
                                     aDiscardedData);
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult ContentParent::RecvRecordOrigin(
-    const uint32_t& aMetricId, const nsCString& aOrigin) {
-  Telemetry::RecordOrigin(static_cast<Telemetry::OriginMetricID>(aMetricId),
-                          aOrigin);
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult ContentParent::RecvReportContentBlockingLog(
-    const IPCStream& aIPCStream) {
-  nsCOMPtr<nsITrackingDBService> trackingDBService =
-      do_GetService("@mozilla.org/tracking-db-service;1");
-  if (NS_WARN_IF(!trackingDBService)) {
-    return IPC_FAIL_NO_REASON(this);
-  }
-
-  nsCOMPtr<nsIInputStream> stream = DeserializeIPCStream(aIPCStream);
-  nsCOMPtr<nsIAsyncInputStream> asyncStream;
-  nsresult rv = NS_MakeAsyncNonBlockingInputStream(stream.forget(),
-                                                   getter_AddRefs(asyncStream));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return IPC_FAIL_NO_REASON(this);
-  }
-  trackingDBService->RecordContentBlockingLog(asyncStream);
   return IPC_OK();
 }
 

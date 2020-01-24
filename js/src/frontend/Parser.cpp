@@ -324,8 +324,9 @@ FunctionBox* PerHandlerParser<ParseHandler>::newFunctionBox(
    * function.
    */
   FunctionBox* funbox = alloc_.new_<FunctionBox>(
-      cx_, traceListHead_, fun, toStringStart, inheritedDirectives,
-      options().extraWarningsOption, generatorKind, asyncKind);
+      cx_, traceListHead_, fun, toStringStart, this->getParseInfo(),
+      inheritedDirectives, options().extraWarningsOption, generatorKind,
+      asyncKind);
   if (!funbox) {
     ReportOutOfMemory(cx_);
     return nullptr;
@@ -352,22 +353,10 @@ FunctionBox* PerHandlerParser<ParseHandler>::newFunctionBox(
    * function.
    */
 
-  FunctionBox* funbox;
-
-  if (getParseInfo().isDeferred()) {
-    funbox = alloc_.new_<FunctionBox>(
-        cx_, traceListHead_, fcd, toStringStart, inheritedDirectives,
-        options().extraWarningsOption, generatorKind, asyncKind);
-  } else {
-    RootedFunction fun(cx_, AllocNewFunction(cx_, fcd));
-    if (!fun) {
-      ReportOutOfMemory(cx_);
-      return nullptr;
-    }
-    funbox = alloc_.new_<FunctionBox>(
-        cx_, traceListHead_, fun, toStringStart, inheritedDirectives,
-        options().extraWarningsOption, generatorKind, asyncKind);
-  }
+  FunctionBox* funbox = alloc_.new_<FunctionBox>(
+      cx_, traceListHead_, fcd, toStringStart, this->getParseInfo(),
+      inheritedDirectives, options().extraWarningsOption, generatorKind,
+      asyncKind);
 
   if (!funbox) {
     ReportOutOfMemory(cx_);
@@ -439,8 +428,8 @@ typename ParseHandler::ListNodeType GeneralParser<ParseHandler, Unit>::parse() {
   MOZ_ASSERT(checkOptionsCalled_);
 
   Directives directives(options().forceStrictMode());
-  GlobalSharedContext globalsc(cx_, ScopeKind::Global, directives,
-                               options().extraWarningsOption);
+  GlobalSharedContext globalsc(cx_, ScopeKind::Global, this->getParseInfo(),
+                               directives, options().extraWarningsOption);
   SourceParseContext globalpc(this, &globalsc, /* newDirectives = */ nullptr);
   if (!globalpc.init()) {
     return null();
@@ -1767,17 +1756,10 @@ bool PerHandlerParser<SyntaxParseHandler>::finishFunction(
     return false;
   }
 
-  // If we can defer the LazyScript creation, we are now done.
-  if (getParseInfo().isDeferred()) {
-    // Move data into funbox
-    MOZ_ASSERT(funbox->functionCreationData());
-    funbox->functionCreationData()->lazyScriptData =
-        mozilla::Some(std::move(data));
-    return true;
-  }
-
-  // Eager Function tree mode, emit the lazy script now.
-  return data.create(cx_, funbox, sourceObject_);
+  MOZ_ASSERT(funbox->functionCreationData());
+  funbox->functionCreationData()->lazyScriptData =
+      mozilla::Some(std::move(data));
+  return true;
 }
 
 bool ParserBase::publishDeferredFunctions(FunctionTree* root) {
@@ -9784,38 +9766,27 @@ RegExpLiteral* Parser<FullParseHandler, Unit>::newRegExp() {
   mozilla::Range<const char16_t> range(chars.begin(), chars.length());
   RegExpFlags flags = anyChars.currentToken().regExpFlags();
 
-  if (this->getParseInfo().isDeferred()) {
-    if (!handler_.canSkipRegexpSyntaxParse()) {
-      // Verify that the Regexp will syntax parse when the time comes to
-      // instantiate it. If we have already done a syntax parse, we can
-      // skip this.
-      LifoAllocScope allocScope(&cx_->tempLifoAlloc());
-      if (!irregexp::ParsePatternSyntax(anyChars, allocScope.alloc(), range,
-                                        flags.unicode())) {
-        return nullptr;
-      }
-    }
-
-    RegExpIndex index(this->getParseInfo().regExpData.length());
-    if (!this->getParseInfo().regExpData.emplaceBack()) {
+  if (!handler_.canSkipRegexpSyntaxParse()) {
+    // Verify that the Regexp will syntax parse when the time comes to
+    // instantiate it. If we have already done a syntax parse, we can
+    // skip this.
+    LifoAllocScope allocScope(&cx_->tempLifoAlloc());
+    if (!irregexp::ParsePatternSyntax(anyChars, allocScope.alloc(), range,
+                                      flags.unicode())) {
       return nullptr;
     }
-
-    if (!this->getParseInfo().regExpData[index].init(cx_, range, flags)) {
-      return nullptr;
-    }
-
-    return handler_.newRegExp(index, pos());
   }
 
-  Rooted<RegExpObject*> reobj(cx_);
-  reobj = RegExpObject::create(cx_, chars.begin(), chars.length(), flags,
-                               anyChars, TenuredObject);
-  if (!reobj) {
-    return null();
+  RegExpIndex index(this->getParseInfo().regExpData.length());
+  if (!this->getParseInfo().regExpData.emplaceBack()) {
+    return nullptr;
   }
 
-  return handler_.newRegExp(reobj, pos(), *this);
+  if (!this->getParseInfo().regExpData[index].init(cx_, range, flags)) {
+    return nullptr;
+  }
+
+  return handler_.newRegExp(index, pos());
 }
 
 template <typename Unit>
@@ -9853,32 +9824,18 @@ BigIntLiteral* Parser<FullParseHandler, Unit>::newBigInt() {
   // productions start with 0[bBoOxX], indicating binary/octal/hex.
   const auto& chars = tokenStream.getCharBuffer();
 
-  if (this->getParseInfo().isDeferred()) {
-    BigIntIndex index(this->getParseInfo().bigIntData.length());
-    if (!this->getParseInfo().bigIntData.emplaceBack()) {
-      return null();
-    }
-
-    if (!this->getParseInfo().bigIntData[index].init(this->cx_, chars)) {
-      return null();
-    }
-
-    // Should the operations below fail, the buffer held by data will
-    // be cleaned up by the ParseInfo destructor.
-    return handler_.newBigInt(index, this->getParseInfo(), pos());
-  }
-
-  mozilla::Range<const char16_t> source(chars.begin(), chars.length());
-
-  BigInt* b = js::ParseBigIntLiteral(cx_, source);
-  if (!b) {
+  BigIntIndex index(this->getParseInfo().bigIntData.length());
+  if (!this->getParseInfo().bigIntData.emplaceBack()) {
     return null();
   }
 
-  // newBigInt immediately puts "b" in a BigIntBox, which is allocated using
-  // tempLifoAlloc, avoiding any potential GC.  Therefore it's OK to pass a
-  // raw pointer.
-  return handler_.newBigInt(b, pos(), *this);
+  if (!this->getParseInfo().bigIntData[index].init(this->cx_, chars)) {
+    return null();
+  }
+
+  // Should the operations below fail, the buffer held by data will
+  // be cleaned up by the ParseInfo destructor.
+  return handler_.newBigInt(index, this->getParseInfo(), pos());
 }
 
 template <typename Unit>
