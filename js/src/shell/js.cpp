@@ -5292,7 +5292,7 @@ static bool FullParseTest(JSContext* cx,
 
     ModuleBuilder builder(cx, module, &parser);
 
-    ModuleSharedContext modulesc(cx, module, nullptr, builder);
+    ModuleSharedContext modulesc(cx, module, parseInfo, nullptr, builder);
     pn = parser.moduleBody(&modulesc);
   }
   if (!pn) {
@@ -5422,11 +5422,6 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
     if (!FullParseTest<char16_t>(cx, options, chars, length, parseInfo, sourceObject, goal)) {
       return false;
     }
-
-    ModuleBuilder builder(cx, module, &parser);
-
-    ModuleSharedContext modulesc(cx, module, parseInfo, nullptr, builder);
-    pn = parser.moduleBody(&modulesc);
   }
   args.rval().setUndefined();
   return true;
