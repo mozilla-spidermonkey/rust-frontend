@@ -1,6 +1,6 @@
 extern crate parser;
 
-use ast::types::Program;
+use ast::types_generated::Program;
 use bumpalo;
 use emitter::{emit, EmitResult, EmitError};
 use parser::{parse_module, parse_script, ParseError};
