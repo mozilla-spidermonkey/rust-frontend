@@ -113,14 +113,14 @@ class AutoFreeJsparagusResult {
   }
 };
 
-void ReportVisageCompileError(JSContext* cx, ErrorMetadata&& metadata, int errorNumber, ...) {
+void ReportVisageCompileError(JSContext* cx, ErrorMetadata&& metadata,
+                              int errorNumber, ...) {
   va_list args;
   va_start(args, errorNumber);
-  ReportCompileError(cx, std::move(metadata), /* notes = */ nullptr, JSREPORT_ERROR,
-                     errorNumber, &args);
+  ReportCompileErrorUTF8(cx, std::move(metadata), /* notes = */ nullptr,
+                         JSREPORT_ERROR, errorNumber, &args);
   va_end(args);
 }
-
 
 /* static */
 JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
@@ -148,8 +148,9 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
     metadata.lineNumber = 1;
     metadata.columnNumber = 0;
     metadata.isMuted = false;
-    ReportVisageCompileError(cx, std::move(metadata), JSMSG_VISAGE_COMPILE_ERROR,
-                             reinterpret_cast<const char*>(jsparagus.error.data));
+    ReportVisageCompileError(
+        cx, std::move(metadata), JSMSG_VISAGE_COMPILE_ERROR,
+        reinterpret_cast<const char*>(jsparagus.error.data));
     return nullptr;
   }
 
@@ -196,8 +197,7 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
   return script;
 }
 
-bool RustParseScript(JSContext* cx, const uint8_t* bytes, size_t length)
-{
+bool RustParseScript(JSContext* cx, const uint8_t* bytes, size_t length) {
   if (test_parse_script(bytes, length)) {
     return true;
   }
@@ -205,8 +205,7 @@ bool RustParseScript(JSContext* cx, const uint8_t* bytes, size_t length)
   return false;
 }
 
-bool RustParseModule(JSContext* cx, const uint8_t* bytes, size_t length)
-{
+bool RustParseModule(JSContext* cx, const uint8_t* bytes, size_t length) {
   if (test_parse_module(bytes, length)) {
     return true;
   }
