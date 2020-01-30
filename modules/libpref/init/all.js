@@ -200,10 +200,10 @@ pref("security.remote_settings.intermediates.downloads_per_poll", 100);
 pref("security.remote_settings.intermediates.parallel_downloads", 8);
 pref("security.remote_settings.intermediates.signer", "onecrl.content-signature.mozilla.org");
 
-#if defined(RELEASE_OR_BETA) || defined(MOZ_WIDGET_ANDROID)
-  pref("security.remote_settings.crlite_filters.enabled", false);
-#else
+#if defined(EARLY_BETA_OR_EARLIER) && !defined(MOZ_WIDGET_ANDROID)
   pref("security.remote_settings.crlite_filters.enabled", true);
+#else
+  pref("security.remote_settings.crlite_filters.enabled", false);
 #endif
 pref("security.remote_settings.crlite_filters.bucket", "security-state");
 pref("security.remote_settings.crlite_filters.collection", "cert-revocations");
@@ -568,13 +568,6 @@ pref("media.video-queue.send-to-compositor-size", 9999);
 // Log level for cubeb, the audio input/output system. Valid values are
 // "verbose", "normal" and "" (log disabled).
 pref("media.cubeb.logging_level", "");
-
-// Cubeb sandbox (remoting) control
-#if defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID)
-  pref("media.audioipc.pool_size", 1);
-  // 64 * 4 kB stack per pool thread.
-  pref("media.audioipc.stack_size", 262144);
-#endif
 
 #if defined(XP_MACOSX)
   pref("media.cubeb.backend", "audiounit-rust");
@@ -1210,7 +1203,7 @@ pref("javascript.options.mem.gc_max_empty_chunk_count", 30);
 
 pref("javascript.options.showInConsole", false);
 
-#if defined(NIGHTLY_BUILD)
+#ifdef EARLY_BETA_OR_EARLIER
 pref("javascript.options.shared_memory", true);
 #else
 pref("javascript.options.shared_memory", false);

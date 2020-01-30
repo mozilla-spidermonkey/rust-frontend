@@ -68,6 +68,20 @@ struct ClonedMessageData
   MessagePortIdentifier[] identifiers;
 };
 
+struct RefMessageData {
+  nsID uuid;
+};
+
+union MessageDataType {
+  ClonedMessageData;
+  RefMessageData;
+};
+
+struct MessageData {
+  nsID? agentClusterId;
+  MessageDataType data;
+};
+
 union IPCDataTransferData
 {
   nsString;  // text

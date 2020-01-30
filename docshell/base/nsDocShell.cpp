@@ -1058,16 +1058,16 @@ nsDOMNavigationTiming* nsDocShell::GetNavigationTiming() const {
 // frame navigation regardless of script accessibility (bug 420425)
 //
 /* static */
-bool nsDocShell::ValidateOrigin(nsIDocShellTreeItem* aOriginTreeItem,
-                                nsIDocShellTreeItem* aTargetTreeItem) {
-  MOZ_ASSERT(aOriginTreeItem && aTargetTreeItem, "need two docshells");
-
-  // Get origin document principal
-  RefPtr<Document> originDocument = aOriginTreeItem->GetDocument();
+bool nsDocShell::ValidateOrigin(BrowsingContext* aOrigin,
+                                BrowsingContext* aTarget) {
+  nsIDocShell* originDocShell = aOrigin->GetDocShell();
+  MOZ_ASSERT(originDocShell, "originDocShell must not be null");
+  Document* originDocument = originDocShell->GetDocument();
   NS_ENSURE_TRUE(originDocument, false);
 
-  // Get target principal
-  RefPtr<Document> targetDocument = aTargetTreeItem->GetDocument();
+  nsIDocShell* targetDocShell = aTarget->GetDocShell();
+  MOZ_ASSERT(targetDocShell, "targetDocShell must not be null");
+  Document* targetDocument = targetDocShell->GetDocument();
   NS_ENSURE_TRUE(targetDocument, false);
 
   bool equal;
@@ -3350,28 +3350,6 @@ nsDocShell::GetMessageManager(ContentFrameMessageManager** aMessageManager) {
     mm = win->GetMessageManager();
   }
   mm.forget(aMessageManager);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDocShell::GetContentBlockingLog(Promise** aPromise) {
-  NS_ENSURE_ARG_POINTER(aPromise);
-
-  Document* doc = mContentViewer->GetDocument();
-  ErrorResult rv;
-  RefPtr<Promise> promise = Promise::Create(doc->GetOwnerGlobal(), rv);
-  if (NS_WARN_IF(rv.Failed())) {
-    return rv.StealNSResult();
-  }
-
-  if (mContentViewer) {
-    promise->MaybeResolve(
-        NS_ConvertUTF8toUTF16(doc->GetContentBlockingLog()->Stringify()));
-  } else {
-    promise->MaybeRejectWithUndefined();
-  }
-
-  promise.forget(aPromise);
   return NS_OK;
 }
 
@@ -9858,11 +9836,6 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
     return rv;
   }
 
-  // Document loads should set the reload flag on the channel so that it
-  // can be exposed on the service worker FetchEvent.
-  rv = loadInfo->SetIsDocshellReload(mLoadType & LOAD_CMD_RELOAD);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   if (aLoadState->GetIsFromProcessingFrameAttributes()) {
     loadInfo->SetIsFromProcessingFrameAttributes();
   }
@@ -10498,10 +10471,12 @@ bool nsDocShell::OnNewURI(nsIURI* aURI, nsIChannel* aChannel,
    * if this page has any frame children, it also will be handled
    * properly. see bug 83684
    *
-   * NB: If mOSHE is null but we have a current URI, then it means
-   * that we must be at the transient about:blank content viewer
-   * (asserted above) and we should let the normal load continue,
-   * since there's nothing to replace.
+   * NB: If mOSHE is null but we have a current URI, then it probably
+   * means that we must be at the transient about:blank content viewer;
+   * we should let the normal load continue, since there's nothing to
+   * replace. Sometimes this happens after a session restore (eg process
+   * switch) and mCurrentURI is not about:blank; we assume we can let the load
+   * continue (Bug 1301399).
    *
    * XXX Hopefully changing the loadType at this time will not hurt
    *  anywhere. The other way to take care of sequentially repeating

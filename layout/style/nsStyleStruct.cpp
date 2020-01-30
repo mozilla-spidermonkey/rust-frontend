@@ -771,7 +771,7 @@ nsStyleSVG::nsStyleSVG(const Document& aDocument)
       mShapeRendering(StyleShapeRendering::Auto),
       mStrokeLinecap(StyleStrokeLinecap::Butt),
       mStrokeLinejoin(StyleStrokeLinejoin::Miter),
-      mDominantBaseline(NS_STYLE_DOMINANT_BASELINE_AUTO),
+      mDominantBaseline(StyleDominantBaseline::Auto),
       mTextAnchor(StyleTextAnchor::Start),
       mContextFlags(
           (eStyleSVGOpacitySource_Normal << FILL_OPACITY_SOURCE_SHIFT) |
@@ -1057,7 +1057,7 @@ nsStyleSVGReset::nsStyleSVGReset(const Document& aDocument)
       mStopOpacity(1.0f),
       mFloodOpacity(1.0f),
       mVectorEffect(NS_STYLE_VECTOR_EFFECT_NONE),
-      mMaskType(NS_STYLE_MASK_TYPE_LUMINANCE) {
+      mMaskType(StyleMaskType::Luminance) {
   MOZ_COUNT_CTOR(nsStyleSVGReset);
 }
 
@@ -2685,7 +2685,7 @@ nsStyleDisplay::nsStyleDisplay(const Document& aDocument)
       mIsolation(StyleIsolation::Auto),
       mTopLayer(StyleTopLayer::None),
       mTouchAction(StyleTouchAction::AUTO),
-      mScrollBehavior(NS_STYLE_SCROLL_BEHAVIOR_AUTO),
+      mScrollBehavior(StyleScrollBehavior::Auto),
       mOverscrollBehaviorX(StyleOverscrollBehavior::Auto),
       mOverscrollBehaviorY(StyleOverscrollBehavior::Auto),
       mOverflowAnchor(StyleOverflowAnchor::Auto),
@@ -3127,10 +3127,10 @@ nsChangeHint nsStyleDisplay::CalcDifference(
 
 nsStyleVisibility::nsStyleVisibility(const Document& aDocument)
     : mDirection(aDocument.GetBidiOptions() == IBMBIDI_TEXTDIRECTION_RTL
-                     ? NS_STYLE_DIRECTION_RTL
-                     : NS_STYLE_DIRECTION_LTR),
+                     ? StyleDirection::Rtl
+                     : StyleDirection::Ltr),
       mVisible(StyleVisibility::Visible),
-      mImageRendering(NS_STYLE_IMAGE_RENDERING_AUTO),
+      mImageRendering(StyleImageRendering::Auto),
       mWritingMode(NS_STYLE_WRITING_MODE_HORIZONTAL_TB),
       mTextOrientation(StyleTextOrientation::Mixed),
       mColorAdjust(StyleColorAdjust::Economy) {

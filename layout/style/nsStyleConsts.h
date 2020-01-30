@@ -334,8 +334,7 @@ enum class StyleBorderCollapse : uint8_t { Collapse, Separate };
 enum class StyleBorderImageRepeat : uint8_t { Stretch, Repeat, Round, Space };
 
 // See nsStyleVisibility
-#define NS_STYLE_DIRECTION_LTR 0
-#define NS_STYLE_DIRECTION_RTL 1
+enum class StyleDirection : uint8_t { Ltr, Rtl };
 
 // See nsStyleVisibility
 // NOTE: WritingModes.h depends on the particular values used here.
@@ -733,25 +732,31 @@ enum class StyleWindowShadow : uint8_t {
 };
 
 // dominant-baseline
-#define NS_STYLE_DOMINANT_BASELINE_AUTO 0
-#define NS_STYLE_DOMINANT_BASELINE_IDEOGRAPHIC 1
-#define NS_STYLE_DOMINANT_BASELINE_ALPHABETIC 2
-#define NS_STYLE_DOMINANT_BASELINE_HANGING 3
-#define NS_STYLE_DOMINANT_BASELINE_MATHEMATICAL 4
-#define NS_STYLE_DOMINANT_BASELINE_CENTRAL 5
-#define NS_STYLE_DOMINANT_BASELINE_MIDDLE 6
-#define NS_STYLE_DOMINANT_BASELINE_TEXT_AFTER_EDGE 7
-#define NS_STYLE_DOMINANT_BASELINE_TEXT_BEFORE_EDGE 8
+enum class StyleDominantBaseline : uint8_t {
+  Auto,
+  Ideographic,
+  Alphabetic,
+  Hanging,
+  Mathematical,
+  Central,
+  Middle,
+  TextAfterEdge,
+  TextBeforeEdge,
+};
 
 // image-rendering
-#define NS_STYLE_IMAGE_RENDERING_AUTO 0
-#define NS_STYLE_IMAGE_RENDERING_OPTIMIZESPEED 1
-#define NS_STYLE_IMAGE_RENDERING_OPTIMIZEQUALITY 2
-#define NS_STYLE_IMAGE_RENDERING_CRISP_EDGES 3
+enum class StyleImageRendering : uint8_t {
+  Auto,
+  Optimizespeed,
+  Optimizequality,
+  CrispEdges,
+};
 
 // mask-type
-#define NS_STYLE_MASK_TYPE_LUMINANCE 0
-#define NS_STYLE_MASK_TYPE_ALPHA 1
+enum class StyleMaskType : uint8_t {
+  Luminance,
+  Alpha,
+};
 
 // shape-rendering
 enum class StyleShapeRendering : uint8_t {
@@ -868,9 +873,11 @@ enum class StyleColorAdjust : uint8_t {
 #define NS_STYLE_COUNTER_SPEAKAS_SPELL_OUT 3
 #define NS_STYLE_COUNTER_SPEAKAS_OTHER 255  // refer to another style
 
-// See nsStyleDisplay::mScrollBehavior
-#define NS_STYLE_SCROLL_BEHAVIOR_AUTO 0
-#define NS_STYLE_SCROLL_BEHAVIOR_SMOOTH 1
+// scroll-behavior
+enum class StyleScrollBehavior : uint8_t {
+  Auto,
+  Smooth,
+};
 
 }  // namespace mozilla
 

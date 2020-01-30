@@ -54,8 +54,6 @@ const char* js::ScopeKindString(ScopeKind kind) {
       return "function";
     case ScopeKind::FunctionBodyVar:
       return "function body var";
-    case ScopeKind::ParameterExpressionVar:
-      return "parameter expression var";
     case ScopeKind::Lexical:
       return "lexical";
     case ScopeKind::SimpleCatch:
@@ -407,8 +405,7 @@ Scope* Scope::clone(JSContext* cx, HandleScope scope, HandleScope enclosing) {
       break;
     }
 
-    case ScopeKind::FunctionBodyVar:
-    case ScopeKind::ParameterExpressionVar: {
+    case ScopeKind::FunctionBodyVar: {
       Rooted<UniquePtr<VarScope::Data>> dataClone(cx);
       dataClone = CopyScopeData<VarScope>(cx, &scope->as<VarScope>().data());
       if (!dataClone) {
@@ -518,7 +515,6 @@ uint32_t LexicalScope::nextFrameSlot(const AbstractScope& scope) {
         continue;
       case ScopeKind::Function:
       case ScopeKind::FunctionBodyVar:
-      case ScopeKind::ParameterExpressionVar:
       case ScopeKind::Lexical:
       case ScopeKind::SimpleCatch:
       case ScopeKind::Catch:
@@ -642,19 +638,15 @@ template
     LexicalScope::XDR(XDRState<XDR_DECODE>* xdr, ScopeKind kind,
                       HandleScope enclosing, MutableHandleScope scope);
 
-static inline uint32_t FunctionScopeEnvShapeFlags(bool hasParameterExprs) {
-  if (hasParameterExprs) {
-    return BaseShape::DELEGATE;
-  }
-  return BaseShape::QUALIFIED_VAROBJ | BaseShape::DELEGATE;
-}
+static constexpr uint32_t FunctionScopeEnvShapeFlags =
+    BaseShape::QUALIFIED_VAROBJ | BaseShape::DELEGATE;
 
 bool FunctionScope::prepareForScopeCreation(
     JSContext* cx, MutableHandle<UniquePtr<Data>> data, bool hasParameterExprs,
     IsFieldInitializer isFieldInitializer, bool needsEnvironment,
     HandleFunction fun, MutableHandleShape envShape) {
   BindingIter bi(*data, hasParameterExprs);
-  uint32_t shapeFlags = FunctionScopeEnvShapeFlags(hasParameterExprs);
+  uint32_t shapeFlags = FunctionScopeEnvShapeFlags;
   if (!PrepareScopeData<FunctionScope>(cx, bi, data, &CallObject::class_,
                                        shapeFlags, envShape)) {
     return false;
@@ -671,7 +663,7 @@ bool FunctionScope::prepareForScopeCreation(
   //   - Being a derived class constructor
   //   - Being a generator
   if (!envShape && needsEnvironment) {
-    envShape.set(getEmptyEnvironmentShape(cx, hasParameterExprs));
+    envShape.set(getEmptyEnvironmentShape(cx));
     if (!envShape) {
       return false;
     }
@@ -712,10 +704,9 @@ bool FunctionScope::isSpecialName(JSContext* cx, JSAtom* name) {
 }
 
 /* static */
-Shape* FunctionScope::getEmptyEnvironmentShape(JSContext* cx,
-                                               bool hasParameterExprs) {
+Shape* FunctionScope::getEmptyEnvironmentShape(JSContext* cx) {
   const JSClass* cls = &CallObject::class_;
-  uint32_t shapeFlags = FunctionScopeEnvShapeFlags(hasParameterExprs);
+  uint32_t shapeFlags = FunctionScopeEnvShapeFlags;
   return EmptyEnvironmentShape(cx, cls, JSSLOT_FREE(cls), shapeFlags);
 }
 
@@ -1077,8 +1068,8 @@ bool EvalScope::prepareForScopeCreation(JSContext* cx, ScopeKind scopeKind,
     }
   }
 
-  // Strict eval and direct eval in parameter expressions always get their own
-  // var environment even if there are no bindings.
+  // Strict eval always gets its own var environment even if there are no
+  // bindings.
   if (!envShape && scopeKind == ScopeKind::StrictEval) {
     envShape.set(getEmptyEnvironmentShape(cx));
     if (!envShape) {
@@ -1108,7 +1099,6 @@ Scope* EvalScope::nearestVarScopeForDirectEval(Scope* scope) {
     switch (si.kind()) {
       case ScopeKind::Function:
       case ScopeKind::FunctionBodyVar:
-      case ScopeKind::ParameterExpressionVar:
       case ScopeKind::Global:
       case ScopeKind::NonSyntactic:
         return scope;
@@ -1457,7 +1447,6 @@ BindingIter::BindingIter(Scope* scope) {
       break;
     }
     case ScopeKind::FunctionBodyVar:
-    case ScopeKind::ParameterExpressionVar:
       init(scope->as<VarScope>().data(),
            scope->as<VarScope>().firstFrameSlot());
       break;

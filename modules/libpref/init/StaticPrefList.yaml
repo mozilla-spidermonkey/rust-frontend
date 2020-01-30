@@ -3833,7 +3833,7 @@
 
 - name: gfx.webrender.compositor
   type: bool
-#if defined(XP_MACOSX)
+#if defined(XP_WIN) || defined(XP_MACOSX)
   value: true
 #else
   value: false
@@ -3866,6 +3866,11 @@
 #else
   value: false
 #endif
+  mirror: once
+
+- name: gfx.webrender.enable-item-cache
+  type: bool
+  value: false
   mirror: once
 
 #ifdef NIGHTLY_BUILD
@@ -5877,6 +5882,8 @@
   mirror: always
 #if defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID)
   value: true
+#elif defined(XP_WIN) && !defined(_ARM64_)
+  value: @IS_NIGHTLY_BUILD@
 #else
   value: false
 #endif
@@ -7889,6 +7896,27 @@
 - name: toolkit.scrollbox.verticalScrollDistance
   type: RelaxedAtomicInt32
   value: 3
+  mirror: always
+
+# The lateWriteChecksStage and fastShutdownStage below represent the stage
+# of shutdown after which we (for lateWriteChecksStage) crash / gather
+# telemetry data on file writes, or (for fastShutdownStage) we call _exit(0).
+# Higher values are earlier during shutdown, and the full enumeration can
+# be found in AppShutdown.h in the AppShutdownPhase enum.
+- name: toolkit.shutdown.lateWriteChecksStage
+  type: int32_t
+#if defined(NIGHTLY_BUILD) && !defined(MOZ_CODE_COVERAGE)
+  value: 1
+#else
+  value: 0
+#endif
+  mirror: always
+
+# See the comment above toolkit.shutdown.lateWriteChecksStage. A higher value
+# for this pref means we call _exit(0) earlier during shutdown.
+- name: toolkit.shutdown.fastShutdownStage
+  type: int32_t
+  value: 0
   mirror: always
 
 # Sending each remote accumulation immediately places undue strain on the IPC

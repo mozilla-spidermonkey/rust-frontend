@@ -107,6 +107,7 @@
 #include "mozilla/dom/PushNotifier.h"
 #include "mozilla/dom/SHEntryParent.h"
 #include "mozilla/dom/SHistoryParent.h"
+#include "mozilla/dom/ServiceWorkerManager.h"
 #include "mozilla/dom/ServiceWorkerRegistrar.h"
 #include "mozilla/dom/ServiceWorkerUtils.h"
 #include "mozilla/dom/StorageIPC.h"
@@ -1770,11 +1771,7 @@ void ContentParent::ActorDestroy(ActorDestroyReason why) {
           dumpID = mCrashReporter->MinidumpID();
         }
       } else {
-        CrashReporter::FinalizeOrphanedMinidump(
-            OtherPid(), GeckoProcessType_Content, &dumpID);
-        CrashReporterHost::RecordCrash(GeckoProcessType_Content,
-                                       nsICrashService::CRASH_TYPE_CRASH,
-                                       dumpID);
+        HandleOrphanedMinidump(&dumpID);
       }
 
       if (!dumpID.IsEmpty()) {
@@ -3593,6 +3590,19 @@ void ContentParent::GeneratePairedMinidump(const char* aReason) {
             this, nullptr, NS_LITERAL_CSTRING("browser"))) {
       mCreatedPairedMinidumps = mCrashReporter->FinalizeCrashReport();
     }
+  }
+}
+
+void ContentParent::HandleOrphanedMinidump(nsString* aDumpId) {
+  if (CrashReporter::FinalizeOrphanedMinidump(
+          OtherPid(), GeckoProcessType_Content, aDumpId)) {
+    CrashReporterHost::RecordCrash(GeckoProcessType_Content,
+                                   nsICrashService::CRASH_TYPE_CRASH, *aDumpId);
+  } else {
+    NS_WARNING(nsPrintfCString("content process pid = %d crashed without "
+                               "leaving a minidump behind",
+                               OtherPid())
+                   .get());
   }
 }
 
@@ -6368,6 +6378,16 @@ PFileDescriptorSetParent* ContentParent::SendPFileDescriptorSetConstructor(
     const FileDescriptor& aFD) {
   MOZ_ASSERT(NS_IsMainThread());
   return PContentParent::SendPFileDescriptorSetConstructor(aFD);
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvReportServiceWorkerShutdownProgress(
+    uint32_t aShutdownStateId, ServiceWorkerShutdownState::Progress aProgress) {
+  RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
+  MOZ_RELEASE_ASSERT(swm, "ServiceWorkers should shutdown before SWM.");
+
+  swm->ReportServiceWorkerShutdownProgress(aShutdownStateId, aProgress);
+
+  return IPC_OK();
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvCommitWindowContextTransaction(

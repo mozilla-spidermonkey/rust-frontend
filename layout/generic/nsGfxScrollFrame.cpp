@@ -4151,20 +4151,16 @@ nsPoint ScrollFrameHelper::GetVisualViewportOffset() const {
 
 nsRect ScrollFrameHelper::GetVisualOptimalViewingRect() const {
   PresShell* presShell = mOuter->PresShell();
+  nsRect rect = mScrollPort;
   if (mIsRoot && presShell->IsVisualViewportSizeSet() &&
       presShell->IsVisualViewportOffsetSet()) {
-    // FIXME(emilio): Account for scroll-padding here? If so we should probably
-    // resolve scroll-padding percentages against it rather than the scrollport.
-    //
-    // It's unclear whether we should use the scrollport here or the visual
-    // viewport, see:
-    //
-    // https://github.com/w3c/csswg-drafts/issues/4393
-    return nsRect(mScrollPort.TopLeft() - GetScrollPosition() +
+    rect = nsRect(mScrollPort.TopLeft() - GetScrollPosition() +
                       presShell->GetVisualViewportOffset(),
                   presShell->GetVisualViewportSize());
   }
-  nsRect rect = mScrollPort;
+  // NOTE: We intentionally resolve scroll-padding percentages against the
+  // scrollport even when the visual viewport is set, see
+  // https://github.com/w3c/csswg-drafts/issues/4393.
   rect.Deflate(GetScrollPadding());
   return rect;
 }
@@ -6439,7 +6435,7 @@ nsRect ScrollFrameHelper::GetScrolledRect() const {
       snappedScrolledAreaBottom - snappedScrollPortBottom;
   result.SetBottomEdge(scrollPort.height + maximumScrollOffsetY);
 
-  if (GetScrolledFrameDir() == NS_STYLE_DIRECTION_LTR) {
+  if (GetScrolledFrameDir() == StyleDirection::Ltr) {
     nscoord snappedScrolledAreaRight =
         SnapCoord(scrolledRect.XMost(), scale.width, appUnitsPerDevPixel);
     nscoord snappedScrollPortRight =
@@ -6464,20 +6460,18 @@ nsRect ScrollFrameHelper::GetScrolledRect() const {
   return result;
 }
 
-uint8_t ScrollFrameHelper::GetScrolledFrameDir() const {
+StyleDirection ScrollFrameHelper::GetScrolledFrameDir() const {
   // If the scrolled frame has unicode-bidi: plaintext, the paragraph
   // direction set by the text content overrides the direction of the frame
   if (mScrolledFrame->StyleTextReset()->mUnicodeBidi &
       NS_STYLE_UNICODE_BIDI_PLAINTEXT) {
-    nsIFrame* childFrame = mScrolledFrame->PrincipalChildList().FirstChild();
-    if (childFrame) {
-      return (nsBidiPresUtils::ParagraphDirection(childFrame) == NSBIDI_LTR)
-                 ? NS_STYLE_DIRECTION_LTR
-                 : NS_STYLE_DIRECTION_RTL;
+    if (nsIFrame* child = mScrolledFrame->PrincipalChildList().FirstChild()) {
+      return nsBidiPresUtils::ParagraphDirection(child) == NSBIDI_LTR
+                 ? StyleDirection::Ltr
+                 : StyleDirection::Rtl;
     }
   }
-
-  return IsBidiLTR() ? NS_STYLE_DIRECTION_LTR : NS_STYLE_DIRECTION_RTL;
+  return IsBidiLTR() ? StyleDirection::Ltr : StyleDirection::Rtl;
 }
 
 nsRect ScrollFrameHelper::GetUnsnappedScrolledRectInternal(
@@ -7192,5 +7186,5 @@ bool ScrollFrameHelper::IsSmoothScroll(dom::ScrollBehavior aBehavior) const {
   }
   return (aBehavior == dom::ScrollBehavior::Auto &&
           styleFrame->StyleDisplay()->mScrollBehavior ==
-              NS_STYLE_SCROLL_BEHAVIOR_SMOOTH);
+              StyleScrollBehavior::Smooth);
 }

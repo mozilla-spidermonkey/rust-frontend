@@ -4803,7 +4803,7 @@ pub extern "C" fn Servo_DeclarationBlock_SetKeywordValue(
 
     let prop = match_wrap_declared! { long,
         MozUserModify => longhands::_moz_user_modify::SpecifiedValue::from_gecko_keyword(value),
-        Direction => longhands::direction::SpecifiedValue::from_gecko_keyword(value),
+        Direction => get_from_computed::<longhands::direction::SpecifiedValue>(value),
         Display => get_from_computed::<Display>(value),
         Float => get_from_computed::<Float>(value),
         Clear => get_from_computed::<Clear>(value),
@@ -6859,4 +6859,18 @@ pub extern "C" fn Servo_LengthPercentage_ToCss(
     result: &mut nsAString
 ) {
     lp.to_css(&mut CssWriter::new(result)).unwrap();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Servo_CursorKind_Parse(
+    cursor: &nsACString,
+    result: &mut computed::ui::CursorKind,
+) -> bool {
+    match computed::ui::CursorKind::from_ident(cursor.as_str_unchecked()) {
+        Ok(c) => {
+            *result = c;
+            true
+        }
+        Err(..) => false,
+    }
 }

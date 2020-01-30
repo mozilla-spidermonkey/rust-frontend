@@ -1274,6 +1274,8 @@ void GCRuntime::freezeSelfHostingZone() {
 }
 
 void GCRuntime::finish() {
+  MOZ_ASSERT(inPageLoadCount == 0);
+
   // Wait for nursery background free to end and disable it to release memory.
   if (nursery().isEnabled()) {
     nursery().disable();
@@ -3981,6 +3983,12 @@ static void BufferGrayRoots(GCParallelTask* task) {
   task->gc->bufferGrayRoots();
 }
 
+static bool IsShutdownGC(JS::GCReason reason) {
+  return reason == JS::GCReason::WORKER_SHUTDOWN ||
+         reason == JS::GCReason::SHUTDOWN_CC ||
+         reason == JS::GCReason::DESTROY_RUNTIME;
+}
+
 bool GCRuntime::beginMarkPhase(JS::GCReason reason, AutoGCSession& session) {
 #ifdef DEBUG
   if (fullCompartmentChecks) {
@@ -4064,6 +4072,13 @@ bool GCRuntime::beginMarkPhase(JS::GCReason reason, AutoGCSession& session) {
      * it. This object might never be marked, so a GC hazard would exist.
      */
     purgeRuntime();
+
+    if (IsShutdownGC(reason)) {
+      /* Clear any engine roots that may hold external data live. */
+      for (GCZonesIter zone(this, SkipAtoms); !zone.done(); zone.next()) {
+        zone->clearRootsForShutdownGC();
+      }
+    }
   }
 
   /*
@@ -4929,18 +4944,12 @@ static void SweepUniqueIds(GCParallelTask* task) {
   }
 }
 
-static bool IsShutdownGC(JS::GCReason reason) {
-  return reason == JS::GCReason::WORKER_SHUTDOWN ||
-         reason == JS::GCReason::SHUTDOWN_CC ||
-         reason == JS::GCReason::DESTROY_RUNTIME;
-}
-
 void GCRuntime::sweepFinalizationGroupsOnMainThread() {
   // This calls back into the browser which expects to be called from the main
   // thread.
   gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::SWEEP_FINALIZATION_GROUPS);
   for (SweepGroupZonesIter zone(this); !zone.done(); zone.next()) {
-    sweepFinalizationGroups(zone, IsShutdownGC(initialReason));
+    sweepFinalizationGroups(zone);
   }
 }
 
@@ -8681,4 +8690,34 @@ JS_PUBLIC_API void js::gc::FinalizeDeadNurseryObject(JSContext* cx,
 
   const JSClass* jsClass = js::GetObjectClass(obj);
   jsClass->doFinalize(cx->defaultFreeOp(), obj);
+}
+
+JS_FRIEND_API void js::gc::SetPerformanceHint(JSContext* cx,
+                                              PerformanceHint hint) {
+  CHECK_THREAD(cx);
+  MOZ_ASSERT(!JS::RuntimeHeapIsCollecting());
+
+  cx->runtime()->gc.setPerformanceHint(hint);
+}
+
+void GCRuntime::setPerformanceHint(PerformanceHint hint) {
+  bool wasInPageLoad = inPageLoadCount != 0;
+
+  if (hint == PerformanceHint::InPageLoad) {
+    inPageLoadCount++;
+  } else {
+    MOZ_ASSERT(inPageLoadCount);
+    inPageLoadCount--;
+  }
+
+  bool inPageLoad = inPageLoadCount != 0;
+  if (inPageLoad == wasInPageLoad) {
+    return;
+  }
+
+  schedulingState.inPageLoad = inPageLoad;
+
+  AutoLockGC lock(this);
+  atomsZone->updateGCThresholds(*this, invocationKind, lock);
+  maybeAllocTriggerZoneGC(atomsZone);
 }

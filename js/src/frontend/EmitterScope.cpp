@@ -206,7 +206,6 @@ NameLocation EmitterScope::searchInEnclosingScope(JSAtom* name, Scope* scope,
         break;
 
       case ScopeKind::FunctionBodyVar:
-      case ScopeKind::ParameterExpressionVar:
       case ScopeKind::Lexical:
       case ScopeKind::NamedLambda:
       case ScopeKind::StrictNamedLambda:
@@ -628,10 +627,9 @@ bool EmitterScope::enterFunction(BytecodeEmitter* bce, FunctionBox* funbox) {
   }
 
   // If the function's scope may be extended at runtime due to sloppy direct
-  // eval and there is no extra var scope, any names beyond the function
-  // scope must be accessed dynamically as we don't know if the name will
-  // become a 'var' binding due to direct eval.
-  if (!funbox->hasParameterExprs && funbox->hasExtensibleScope()) {
+  // eval, any names beyond the function scope must be accessed dynamically as
+  // we don't know if the name will become a 'var' binding due to direct eval.
+  if (funbox->hasExtensibleScope()) {
     fallbackFreeNameLocation_ = Some(NameLocation::Dynamic());
   }
 
@@ -733,44 +731,6 @@ bool EmitterScope::enterFunctionExtraBodyVar(BytecodeEmitter* bce,
     if (!bce->emitInternedScopeOp(index(), JSOp::PushVarEnv)) {
       return false;
     }
-  }
-
-  // The extra var scope needs a note to be mapped from a pc.
-  if (!appendScopeNote(bce)) {
-    return false;
-  }
-
-  return checkEnvironmentChainLength(bce);
-}
-
-bool EmitterScope::enterParameterExpressionVar(BytecodeEmitter* bce) {
-  MOZ_ASSERT(this == bce->innermostEmitterScopeNoCheck());
-
-  if (!ensureCache(bce)) {
-    return false;
-  }
-
-  // Parameter expressions var scopes have no pre-set bindings and are
-  // always extensible, as they are needed for eval.
-  fallbackFreeNameLocation_ = Some(NameLocation::Dynamic());
-
-  // Create and intern the scope.
-  uint32_t firstFrameSlot = frameSlotStart();
-  auto createScope = [firstFrameSlot, bce](JSContext* cx,
-                                           Handle<AbstractScope> enclosing,
-                                           ScopeIndex* index) {
-    return ScopeCreationData::create(
-        cx, bce->parseInfo, ScopeKind::ParameterExpressionVar,
-        /* dataArg = */ nullptr, firstFrameSlot,
-        /* needsEnvironment = */ true, enclosing, index);
-  };
-  if (!internScopeCreationData(bce, createScope)) {
-    return false;
-  }
-
-  MOZ_ASSERT(hasEnvironment());
-  if (!bce->emitInternedScopeOp(index(), JSOp::PushVarEnv)) {
-    return false;
   }
 
   // The extra var scope needs a note to be mapped from a pc.
@@ -900,7 +860,7 @@ bool EmitterScope::enterEval(BytecodeEmitter* bce, EvalSharedContext* evalsc) {
     }
   } else {
     // Resolve binding names and emit DefVar prologue ops if we don't have
-    // an environment (i.e., a sloppy eval not in a parameter expression).
+    // an environment (i.e., a sloppy eval).
     // Eval scripts always have their own lexical scope, but non-strict
     // scopes may introduce 'var' bindings to the nearest var scope.
     //
@@ -1050,13 +1010,6 @@ bool EmitterScope::leave(BytecodeEmitter* bce, bool nonLocal) {
 
     case ScopeKind::With:
       if (!bce->emit1(JSOp::LeaveWith)) {
-        return false;
-      }
-      break;
-
-    case ScopeKind::ParameterExpressionVar:
-      MOZ_ASSERT(hasEnvironment());
-      if (!bce->emit1(JSOp::PopVarEnv)) {
         return false;
       }
       break;

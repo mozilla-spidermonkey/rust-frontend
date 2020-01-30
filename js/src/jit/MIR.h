@@ -161,6 +161,16 @@ static inline MIRType MIRTypeFromValue(const js::Value& vp) {
    */                                                                          \
   _(IncompleteObject)                                                          \
                                                                                \
+  /* For WebAssembly, there are functions with multiple results.  Instead of   \
+   * having the results defined by one call instruction, they are instead      \
+   * captured in subsequent result capture instructions, because modelling     \
+   * multi-value results in Ion is too complicated.  However since they        \
+   * capture ambient live registers, it would be an error to move an unrelated \
+   * instruction between the call and the result capture.  This flag is used   \
+   * to prevent code motion from moving instructions in invalid ways.          \
+   */                                                                          \
+  _(CallResultCapture)                                                         \
+                                                                               \
   /* The current instruction got discarded from the MIR Graph. This is useful  \
    * when we want to iterate over resume points and instructions, while        \
    * handling instructions which are discarded without reporting to the        \
@@ -11970,9 +11980,7 @@ class MWasmResultBase : public MNullaryInstruction {
   MWasmResultBase(Opcode op, MIRType type, Location loc)
       : MNullaryInstruction(op), loc_(loc) {
     setResultType(type);
-    // Prevent reordering.  Although there's no problem eliding call result
-    // definitions, there's also no need, as they cause no codegen.
-    setGuard();
+    setCallResultCapture();
   }
 
  public:
@@ -12131,6 +12139,9 @@ class MRotate : public MBinaryInstruction, public NoTypePolicy::Data {
         isLeftRotate_(isLeftRotate) {
     setMovable();
     setResultType(type);
+    // Prevent reordering.  Although there's no problem eliding call result
+    // definitions, there's also no need, as they cause no codegen.
+    setGuard();
   }
 
  public:

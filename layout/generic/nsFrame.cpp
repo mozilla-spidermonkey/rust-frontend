@@ -1332,7 +1332,7 @@ void nsFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle) {
   // does not contain any characters that would activate the Unicode
   // bidi algorithm, we need to call |SetBidiEnabled| on the pres
   // context before reflow starts.  See bug 115921.
-  if (StyleVisibility()->mDirection == NS_STYLE_DIRECTION_RTL) {
+  if (StyleVisibility()->mDirection == StyleDirection::Rtl) {
     PresContext()->SetBidiEnabled();
   }
 
@@ -1353,8 +1353,16 @@ void nsFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle) {
           gfxPlatform::GetPlatform()
               ->ScreenReferenceDrawTarget()
               ->CreatePathBuilder(gfx::FillRule::FILL_WINDING);
-      SetProperty(nsIFrame::OffsetPathCache(),
-                  MotionPathUtils::BuildPath(newPath.AsPath(), builder).take());
+      RefPtr<gfx::Path> path =
+          MotionPathUtils::BuildPath(newPath.AsPath(), builder);
+      if (path) {
+        // The newPath could be path('') (i.e. empty path), so its gfx path
+        // could be nullptr, and so we only set property for a non-empty path.
+        SetProperty(nsIFrame::OffsetPathCache(), path.forget().take());
+      } else {
+        // May have an old cached path, so we have to delete it.
+        DeleteProperty(nsIFrame::OffsetPathCache());
+      }
     } else if (oldPath) {
       DeleteProperty(nsIFrame::OffsetPathCache());
     }
@@ -2890,9 +2898,12 @@ static Maybe<nsRect> ComputeClipForMaskItem(nsDisplayListBuilder* aBuilder,
 
   Maybe<gfxRect> combinedClip;
   if (maskUsage.shouldApplyBasicShapeOrPath) {
-    Rect result = nsCSSClipPathInstance::GetBoundingRectForBasicShapeOrPathClip(
-        aMaskedFrame, svgReset->mClipPath);
-    combinedClip = Some(ThebesRect(result));
+    Maybe<Rect> result =
+        nsCSSClipPathInstance::GetBoundingRectForBasicShapeOrPathClip(
+            aMaskedFrame, svgReset->mClipPath);
+    if (result) {
+      combinedClip = Some(ThebesRect(*result));
+    }
   } else if (maskUsage.shouldApplyClipPath) {
     gfxRect result = nsSVGUtils::GetBBox(
         aMaskedFrame,
@@ -5371,8 +5382,7 @@ static nsIFrame::ContentOffsets OffsetsForSingleFrame(nsIFrame* aFrame,
   nsRect rect(nsPoint(0, 0), aFrame->GetSize());
 
   bool isBlock = !aFrame->StyleDisplay()->IsInlineFlow();
-  bool isRtl =
-      (aFrame->StyleVisibility()->mDirection == NS_STYLE_DIRECTION_RTL);
+  bool isRtl = (aFrame->StyleVisibility()->mDirection == StyleDirection::Rtl);
   if ((isBlock && rect.y < aPoint.y) ||
       (!isBlock && ((isRtl && rect.x + rect.width / 2 > aPoint.x) ||
                     (!isRtl && rect.x + rect.width / 2 < aPoint.x)))) {
@@ -6021,8 +6031,7 @@ LogicalSize nsFrame::ComputeSize(gfxContext* aRenderingContext, WritingMode aWM,
       result.BSize(aWM) = nsLayoutUtils::ComputeBSizeValue(
           aCBSize.BSize(aWM), boxSizingAdjust.BSize(aWM),
           blockStyleCoord->AsLengthPercentage());
-    } else if (MOZ_UNLIKELY(isGridItem) &&
-               blockStyleCoord->BehavesLikeInitialValueOnBlockAxis() &&
+    } else if (MOZ_UNLIKELY(isGridItem) && blockStyleCoord->IsAuto() &&
                !IS_TRUE_OVERFLOW_CONTAINER(this)) {
       auto cbSize = aCBSize.BSize(aWM);
       if (cbSize != NS_UNCONSTRAINEDSIZE) {
@@ -8047,8 +8056,7 @@ const nsFrameSelection* nsIFrame::GetConstFrameSelection() const {
 bool nsIFrame::IsFrameSelected() const {
   NS_ASSERTION(!GetContent() || GetContent()->IsSelectionDescendant(),
                "use the public IsSelected() instead");
-  return nsRange::IsNodeSelected(GetContent(), 0,
-                                 GetContent()->GetChildCount());
+  return GetContent()->IsSelected(0, GetContent()->GetChildCount());
 }
 
 nsresult nsFrame::GetPointFromOffset(int32_t inOffset, nsPoint* outPoint) {
@@ -8067,9 +8075,9 @@ nsresult nsFrame::GetPointFromOffset(int32_t inOffset, nsPoint* outPoint) {
       // property.
       bool hasBidiData;
       FrameBidiData bidiData = GetProperty(BidiDataProperty(), &hasBidiData);
-      bool isRTL =
-          hasBidiData ? IS_LEVEL_RTL(bidiData.embeddingLevel)
-                      : StyleVisibility()->mDirection == NS_STYLE_DIRECTION_RTL;
+      bool isRTL = hasBidiData
+                       ? IS_LEVEL_RTL(bidiData.embeddingLevel)
+                       : StyleVisibility()->mDirection == StyleDirection::Rtl;
       if ((!isRTL && inOffset > newOffset) ||
           (isRTL && inOffset <= newOffset)) {
         pt = contentRect.TopRight();
@@ -10103,21 +10111,21 @@ bool nsIFrame::IsFocusable(int32_t* aTabIndex, bool aWithMouse) {
 bool nsIFrame::HasSignificantTerminalNewline() const { return false; }
 
 static StyleVerticalAlignKeyword ConvertSVGDominantBaselineToVerticalAlign(
-    uint8_t aDominantBaseline) {
+    StyleDominantBaseline aDominantBaseline) {
   // Most of these are approximate mappings.
   switch (aDominantBaseline) {
-    case NS_STYLE_DOMINANT_BASELINE_HANGING:
-    case NS_STYLE_DOMINANT_BASELINE_TEXT_BEFORE_EDGE:
+    case StyleDominantBaseline::Hanging:
+    case StyleDominantBaseline::TextBeforeEdge:
       return StyleVerticalAlignKeyword::TextTop;
-    case NS_STYLE_DOMINANT_BASELINE_TEXT_AFTER_EDGE:
-    case NS_STYLE_DOMINANT_BASELINE_IDEOGRAPHIC:
+    case StyleDominantBaseline::TextAfterEdge:
+    case StyleDominantBaseline::Ideographic:
       return StyleVerticalAlignKeyword::TextBottom;
-    case NS_STYLE_DOMINANT_BASELINE_CENTRAL:
-    case NS_STYLE_DOMINANT_BASELINE_MIDDLE:
-    case NS_STYLE_DOMINANT_BASELINE_MATHEMATICAL:
+    case StyleDominantBaseline::Central:
+    case StyleDominantBaseline::Middle:
+    case StyleDominantBaseline::Mathematical:
       return StyleVerticalAlignKeyword::Middle;
-    case NS_STYLE_DOMINANT_BASELINE_AUTO:
-    case NS_STYLE_DOMINANT_BASELINE_ALPHABETIC:
+    case StyleDominantBaseline::Auto:
+    case StyleDominantBaseline::Alphabetic:
       return StyleVerticalAlignKeyword::Baseline;
     default:
       MOZ_ASSERT_UNREACHABLE("unexpected aDominantBaseline value");
@@ -10127,7 +10135,7 @@ static StyleVerticalAlignKeyword ConvertSVGDominantBaselineToVerticalAlign(
 
 Maybe<StyleVerticalAlignKeyword> nsIFrame::VerticalAlignEnum() const {
   if (nsSVGUtils::IsInSVGTextSubtree(this)) {
-    uint8_t dominantBaseline = StyleSVG()->mDominantBaseline;
+    StyleDominantBaseline dominantBaseline = StyleSVG()->mDominantBaseline;
     return Some(ConvertSVGDominantBaselineToVerticalAlign(dominantBaseline));
   }
 

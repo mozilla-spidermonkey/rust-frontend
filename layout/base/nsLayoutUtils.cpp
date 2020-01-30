@@ -2088,11 +2088,11 @@ nsIScrollableFrame* nsLayoutUtils::GetNearestScrollableFrame(nsIFrame* aFrame,
 nsRect nsLayoutUtils::GetScrolledRect(nsIFrame* aScrolledFrame,
                                       const nsRect& aScrolledFrameOverflowArea,
                                       const nsSize& aScrollPortSize,
-                                      uint8_t aDirection) {
+                                      StyleDirection aDirection) {
   WritingMode wm = aScrolledFrame->GetWritingMode();
   // Potentially override the frame's direction to use the direction found
   // by ScrollFrameHelper::GetScrolledFrameDir()
-  wm.SetDirectionFromBidiLevel(aDirection == NS_STYLE_DIRECTION_RTL ? 1 : 0);
+  wm.SetDirectionFromBidiLevel(aDirection == StyleDirection::Rtl ? 1 : 0);
 
   nscoord x1 = aScrolledFrameOverflowArea.x,
           x2 = aScrolledFrameOverflowArea.XMost(),
@@ -6550,11 +6550,11 @@ SamplingFilter nsLayoutUtils::GetSamplingFilterForFrame(nsIFrame* aForFrame) {
   }
 
   switch (sc->StyleVisibility()->mImageRendering) {
-    case NS_STYLE_IMAGE_RENDERING_OPTIMIZESPEED:
+    case StyleImageRendering::Optimizespeed:
       return SamplingFilter::POINT;
-    case NS_STYLE_IMAGE_RENDERING_OPTIMIZEQUALITY:
+    case StyleImageRendering::Optimizequality:
       return SamplingFilter::LINEAR;
-    case NS_STYLE_IMAGE_RENDERING_CRISP_EDGES:
+    case StyleImageRendering::CrispEdges:
       return SamplingFilter::POINT;
     default:
       return defaultFilter;

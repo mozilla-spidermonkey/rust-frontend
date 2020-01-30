@@ -3062,7 +3062,7 @@ struct MOZ_STACK_CLASS nsGridContainerFrame::Grid {
    */
   struct CellMap {
     struct Cell {
-      Cell() : mIsOccupied(false) {}
+      constexpr Cell() : mIsOccupied(false) {}
       bool mIsOccupied : 1;
     };
 
@@ -3248,30 +3248,41 @@ static void CopyUsedTrackSizes(nsTArray<TrackSize>& aResult,
     SubgridComputeMarginBorderPadding(info, pmPercentageBasis);
   }
   const LogicalMargin& mbp = aSubgrid->mMarginBorderPadding;
+  nscoord startMBP;
+  nscoord endMBP;
   if (MOZ_LIKELY(cbwm.ParallelAxisStartsOnSameSide(parentAxis, wm))) {
+    startMBP = mbp.Start(parentAxis, cbwm);
+    endMBP = mbp.End(parentAxis, cbwm);
     uint32_t i = range.mStart;
-    nscoord startMBP = mbp.Start(parentAxis, cbwm);
     nscoord startPos = parentSizes[i].mPosition + startMBP;
     for (auto& sz : aResult) {
       sz = parentSizes[i++];
       sz.mPosition -= startPos;
     }
-    aResult[0].mPosition = 0;
-    aResult[0].mBase -= startMBP;
-    aResult.LastElement().mBase -= mbp.End(parentAxis, cbwm);
   } else {
-    const uint32_t first = range.mEnd - 1;
-    uint32_t i = first;
-    const auto& parentEnd = parentSizes[first];
-    nscoord startMBP = mbp.End(parentAxis, cbwm);
+    startMBP = mbp.End(parentAxis, cbwm);
+    endMBP = mbp.Start(parentAxis, cbwm);
+    uint32_t i = range.mEnd - 1;
+    const auto& parentEnd = parentSizes[i];
     nscoord parentEndPos = parentEnd.mPosition + parentEnd.mBase - startMBP;
     for (auto& sz : aResult) {
       sz = parentSizes[i--];
       sz.mPosition = parentEndPos - (sz.mPosition + sz.mBase);
     }
-    aResult[0].mPosition = 0;
-    aResult[0].mBase -= startMBP;
-    aResult.LastElement().mBase -= mbp.Start(parentAxis, cbwm);
+  }
+  auto& startTrack = aResult[0];
+  startTrack.mPosition = 0;
+  startTrack.mBase -= startMBP;
+  if (MOZ_UNLIKELY(startTrack.mBase < nscoord(0))) {
+    // Our MBP doesn't fit in the start track.  Adjust the track position
+    // to maintain track alignment with our parent.
+    startTrack.mPosition = startTrack.mBase;
+    startTrack.mBase = nscoord(0);
+  }
+  auto& endTrack = aResult.LastElement();
+  endTrack.mBase -= endMBP;
+  if (MOZ_UNLIKELY(endTrack.mBase < nscoord(0))) {
+    endTrack.mBase = nscoord(0);
   }
 }
 
@@ -6450,8 +6461,7 @@ void nsGridContainerFrame::ReflowInFlowChild(
   if (isConstrainedBSize && !wm.IsOrthogonalTo(childWM)) {
     bool stretch = false;
     if (!childRI.mStyleMargin->HasBlockAxisAuto(childWM) &&
-        (childRI.mStylePosition->BSize(childWM).IsAuto() ||
-         childRI.mStylePosition->BSize(childWM).IsExtremumLength())) {
+        childRI.mStylePosition->BSize(childWM).IsAuto()) {
       auto blockAxisAlignment = childRI.mStylePosition->UsedAlignSelf(Style());
       if (blockAxisAlignment == NS_STYLE_ALIGN_NORMAL ||
           blockAxisAlignment == NS_STYLE_ALIGN_STRETCH) {
@@ -7454,7 +7464,7 @@ void nsGridContainerFrame::Reflow(nsPresContext* aPresContext,
       if (computedBSize == NS_UNCONSTRAINEDSIZE) {
         bSize = gridReflowInput.mRows.GridLineEdge(rowSizes.Length(),
                                                    GridLineSide::BeforeGridGap);
-        contentArea.BSize(wm) = bSize;
+        contentArea.BSize(wm) = std::max(bSize, nscoord(0));
       }
     }
     // Save the final row sizes for use by subgrids, if needed.
@@ -7865,16 +7875,67 @@ nsFrameState nsGridContainerFrame::ComputeSelfSubgridBits() const {
     parent = parent->GetParent();
   }
   nsFrameState bits = nsFrameState(0);
-  if (parent && parent->IsGridContainerFrame()) {
+  const nsGridContainerFrame* gridParent = do_QueryFrame(parent);
+  if (gridParent) {
+    // NOTE: our NS_FRAME_OUT_OF_FLOW isn't set yet so we check our style.
+    bool isOutOfFlow = StyleDisplay()->IsAbsolutelyPositionedStyle();
     const auto* pos = StylePosition();
-    if (pos->mGridTemplateColumns.IsSubgrid()) {
+    bool isColSubgrid = pos->mGridTemplateColumns.IsSubgrid();
+    // OOF subgrids don't create tracks in the parent, so we need to check that
+    // it has one anyway. Otherwise we refuse to subgrid that axis since we
+    // can't place grid items inside a subgrid without at least one track.
+    if (isColSubgrid && isOutOfFlow) {
+      bool isOrthogonal =
+          GetWritingMode().IsOrthogonalTo(parent->GetWritingMode());
+      auto parentAxis = isOrthogonal ? eLogicalAxisBlock : eLogicalAxisInline;
+      if (!gridParent->WillHaveAtLeastOneTrackInAxis(parentAxis)) {
+        isColSubgrid = false;
+      }
+    }
+    if (isColSubgrid) {
       bits |= NS_STATE_GRID_IS_COL_SUBGRID;
     }
-    if (pos->mGridTemplateRows.IsSubgrid()) {
+
+    bool isRowSubgrid = pos->mGridTemplateRows.IsSubgrid();
+    if (isRowSubgrid && isOutOfFlow) {
+      bool isOrthogonal =
+          GetWritingMode().IsOrthogonalTo(parent->GetWritingMode());
+      auto parentAxis = isOrthogonal ? eLogicalAxisInline : eLogicalAxisBlock;
+      if (!gridParent->WillHaveAtLeastOneTrackInAxis(parentAxis)) {
+        isRowSubgrid = false;
+      }
+    }
+    if (isRowSubgrid) {
       bits |= NS_STATE_GRID_IS_ROW_SUBGRID;
     }
   }
   return bits;
+}
+
+bool nsGridContainerFrame::WillHaveAtLeastOneTrackInAxis(
+    LogicalAxis aAxis) const {
+  if (IsSubgrid(aAxis)) {
+    // This is enforced by refusing to be a subgrid unless our parent has
+    // at least one track in aAxis by ComputeSelfSubgridBits above.
+    return true;
+  }
+  const auto* pos = StylePosition();
+  const auto& gridTemplate = aAxis == eLogicalAxisBlock
+                                 ? pos->mGridTemplateRows
+                                 : pos->mGridTemplateColumns;
+  if (!gridTemplate.IsNone()) {
+    return true;
+  }
+  for (nsIFrame* child : PrincipalChildList()) {
+    if (!child->IsPlaceholderFrame()) {
+      // A grid item triggers at least one implicit track in each axis.
+      return true;
+    }
+  }
+  if (!pos->mGridTemplateAreas.IsNone()) {
+    return true;
+  }
+  return false;
 }
 
 void nsGridContainerFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
