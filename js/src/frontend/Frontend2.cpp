@@ -14,7 +14,7 @@
 
 #include "jsapi.h"
 
-#include "frontend-rs/frontend-rs.h"  // CVec, JsparagusResult, free_jsparagus, run_jsparagus
+#include "frontend-rs/frontend-rs.h"  // CVec, JsparagusResult, JsparagusCompileOptions, free_jsparagus, run_jsparagus
 #include "frontend/BytecodeCompilation.h"  // GlobalScriptInfo
 #include "frontend/SourceNotes.h"          // jssrcnote
 #include "gc/Rooting.h"                    // RootedScriptSourceObject
@@ -133,7 +133,12 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
   size_t length = srcBuf.length();
 
   JSContext* cx = info.context();
-  JsparagusResult jsparagus = run_jsparagus(bytes, length);
+
+  const auto& options = info.getOptions();
+  JsparagusCompileOptions compileOptions;
+  compileOptions.no_script_rval = options.noScriptRval;
+
+  JsparagusResult jsparagus = run_jsparagus(bytes, length, &compileOptions);
   AutoFreeJsparagusResult afjr(&jsparagus);
 
   if (jsparagus.error.data) {
@@ -155,7 +160,7 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
 
   *unimplemented = false;
 
-  RootedScriptSourceObject sso(cx, frontend::CreateScriptSourceObject(cx, info.getOptions()));
+  RootedScriptSourceObject sso(cx, frontend::CreateScriptSourceObject(cx, options));
   if (!sso) {
     return nullptr;
   }
@@ -166,7 +171,7 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
     return nullptr;
   }
 
-  RootedScript script(cx, JSScript::Create(cx, cx->global(), info.getOptions(),
+  RootedScript script(cx, JSScript::Create(cx, cx->global(), options,
                                            sso, 0, length, 0, length, 1, 0));
 
   if (!initScript(cx, script, jsparagus)) {

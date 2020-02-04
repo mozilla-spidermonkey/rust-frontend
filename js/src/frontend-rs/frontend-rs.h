@@ -26,11 +26,17 @@ struct JsparagusResult {
   uint32_t num_ic_entries;
 };
 
+struct JsparagusCompileOptions {
+  bool no_script_rval;
+};
+
 extern "C" {
 
 void free_jsparagus(JsparagusResult result);
 
-JsparagusResult run_jsparagus(const uint8_t *text, uintptr_t text_len);
+JsparagusResult run_jsparagus(const uint8_t *text,
+                              uintptr_t text_len,
+                              const JsparagusCompileOptions *options);
 
 bool test_parse_module(const uint8_t *text, uintptr_t text_len);
 
