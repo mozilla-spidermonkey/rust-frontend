@@ -67,9 +67,9 @@ enum JsparagusError {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize, options: *const JsparagusCompileOptions) -> JsparagusResult {
+pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize, options: &JsparagusCompileOptions) -> JsparagusResult {
     let text = str::from_utf8(slice::from_raw_parts(text, text_len)).expect("Invalid UTF8");
-    match jsparagus(text, &*options) {
+    match jsparagus(text, options) {
         Ok(mut result) => JsparagusResult {
             unimplemented: false,
             error: CVec::empty(),
