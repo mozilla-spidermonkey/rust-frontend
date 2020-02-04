@@ -2,8 +2,8 @@ extern crate parser;
 
 use ast::types::Program;
 use bumpalo;
-use emitter::{emit, EmitResult, EmitError};
-use parser::{parse_module, parse_script, ParseError};
+use emitter::{emit, EmitResult, EmitError, EmitOptions};
+use parser::{parse_module, parse_script, ParseError, ParseOptions};
 use std::{mem, slice, str};
 
 #[repr(C)]
@@ -38,6 +38,11 @@ impl<T> CVec<T> {
 }
 
 #[repr(C)]
+pub struct JsparagusCompileOptions {
+    no_script_rval: bool,
+}
+
+#[repr(C)]
 pub struct JsparagusResult {
     unimplemented: bool,
     error: CVec<u8>,
@@ -62,9 +67,9 @@ enum JsparagusError {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize) -> JsparagusResult {
+pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize, options: *const JsparagusCompileOptions) -> JsparagusResult {
     let text = str::from_utf8(slice::from_raw_parts(text, text_len)).expect("Invalid UTF8");
-    match jsparagus(text) {
+    match jsparagus(text, &*options) {
         Ok(mut result) => JsparagusResult {
             unimplemented: false,
             error: CVec::empty(),
@@ -105,7 +110,8 @@ pub unsafe extern "C" fn test_parse_script(text: *const u8, text_len: usize) -> 
         Err(_) => return false, // .expect("Invalid UTF8")
     };
     let allocator = bumpalo::Bump::new();
-    match parse_script(&allocator, text) {
+    let parse_options = ParseOptions::new();
+    match parse_script(&allocator, text, &parse_options) {
         Ok(_) => true,
         Err(_) => false,
     }
@@ -119,7 +125,8 @@ pub unsafe extern "C" fn test_parse_module(text: *const u8, text_len: usize) -> 
         Err(_) => return false, // .expect("Invalid UTF8")
     };
     let allocator = bumpalo::Bump::new();
-    match parse_module(&allocator, text) {
+    let parse_options = ParseOptions::new();
+    match parse_module(&allocator, text, &parse_options) {
         Ok(_) => true,
         Err(_) => false,
     }
@@ -135,9 +142,10 @@ pub unsafe extern "C" fn free_jsparagus(result: JsparagusResult) {
     //Vec::from_raw_parts(bytecode.data, bytecode.len, bytecode.capacity);
 }
 
-fn jsparagus(text: &str) -> Result<EmitResult, JsparagusError> {
+fn jsparagus(text: &str, options: &JsparagusCompileOptions) -> Result<EmitResult, JsparagusError> {
     let allocator = bumpalo::Bump::new();
-    let parse_result = match parse_script(&allocator, text) {
+    let parse_options = ParseOptions::new();
+    let parse_result = match parse_script(&allocator, text, &parse_options) {
         Ok(result) => result,
         Err(err) => match err {
             ParseError::NotImplemented(_) => {
@@ -150,7 +158,9 @@ fn jsparagus(text: &str) -> Result<EmitResult, JsparagusError> {
         },
     };
 
-    match emit(&mut Program::Script(parse_result.unbox())) {
+    let mut emit_options = EmitOptions::new();
+    emit_options.no_script_rval = options.no_script_rval;
+    match emit(&mut Program::Script(parse_result.unbox()), &emit_options) {
         Ok(result) => Ok(result),
         Err(EmitError::NotImplemented(message)) => {
             println!("Unimplemented: {}", message);
