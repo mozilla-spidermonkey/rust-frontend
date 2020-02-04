@@ -148,6 +148,8 @@ rusty-enums = [
     "mozilla::StyleTopLayer",
     "mozilla::StyleIsolation",
     "mozilla::StyleTextOrientation",
+    "mozilla::StyleTableLayout",
+    "mozilla::StyleEmptyCells",
     "nsStyleImageType",
     "nsINode_BooleanFlag",
     "mozilla::PseudoStyleType",
@@ -481,6 +483,7 @@ cbindgen-types = [
     { gecko = "StyleZIndex", servo = "values::computed::ZIndex" },
     { gecko = "StyleGenericZIndex", servo = "values::generics::position::ZIndex" },
     { gecko = "StyleTransformOrigin", servo = "values::computed::TransformOrigin" },
+    { gecko = "StyleTransformStyle", servo = "values::computed::TransformStyle" },
     { gecko = "StyleGenericBorderRadius", servo = "values::generics::border::BorderRadius" },
     { gecko = "StyleLetterSpacing", servo = "values::computed::text::LetterSpacing" },
     { gecko = "StyleGenericLineHeight", servo = "values::generics::text::LineHeight" },
@@ -553,6 +556,13 @@ cbindgen-types = [
     { gecko = "StyleContent", servo = "values::computed::counters::Content" },
     { gecko = "StyleSymbolsType", servo = "values::generics::SymbolsType" },
     { gecko = "StyleCounterStyle", servo = "values::generics::CounterStyle" },
+    { gecko = "StyleComputedJustifyItems", servo = "values::computed::align::ComputedJustifyItems" },
+    { gecko = "StyleAlignItems", servo = "values::computed::AlignItems" },
+    { gecko = "StyleJustifySelf", servo = "values::computed::JustifySelf" },
+    { gecko = "StyleAlignSelf", servo = "values::computed::AlignSelf" },
+    { gecko = "StyleAlignContent", servo = "values::computed::align::AlignContent" },
+    { gecko = "StyleJustifyContent", servo = "values::computed::align::JustifyContent" },
+    { gecko = "StyleComputedValueFlags", servo = "computed_value_flags::ComputedValueFlags" },
 ]
 
 mapped-generic-types = [
@@ -562,7 +572,6 @@ mapped-generic-types = [
     { generic = false, gecko = "mozilla::ServoCustomPropertiesMap", servo = "Option<::servo_arc::Arc<::custom_properties::CustomPropertiesMap>>" },
     { generic = false, gecko = "mozilla::ServoRuleNode", servo = "Option<::rule_tree::StrongRuleNode>" },
     { generic = false, gecko = "mozilla::ServoVisitedStyle", servo = "Option<::servo_arc::RawOffsetArc<::properties::ComputedValues>>" },
-    { generic = false, gecko = "mozilla::ServoComputedValueFlags", servo = "::properties::computed_value_flags::ComputedValueFlags" },
     { generic = true, gecko = "mozilla::ServoRawOffsetArc", servo = "::servo_arc::RawOffsetArc" },
     { generic = true, gecko = "mozilla::ServoManuallyDrop", servo = "::std::mem::ManuallyDrop" },
     { generic = false, gecko = "nsACString", servo = "nsstring::nsACString" },

@@ -48,13 +48,25 @@ class nsRange final : public mozilla::dom::AbstractRange,
   typedef mozilla::RawRangeBoundary RawRangeBoundary;
 
   virtual ~nsRange();
-
- public:
   explicit nsRange(nsINode* aNode);
 
+  bool MaybeCacheToReuse();
+
+ public:
   /**
-   * Create() may return `nsRange` instance which is initialized with
-   * given range or points.  If it fails initializing new range with the
+   * Called when the process is shutting down.
+   */
+  static void Shutdown();
+
+  /**
+   * The following Create() returns `nsRange` instance which is initialized
+   * only with aNode.  The result is never positioned.
+   */
+  static already_AddRefed<nsRange> Create(nsINode* aNode);
+
+  /**
+   * The following Create() may return `nsRange` instance which is initialized
+   * with given range or points.  If it fails initializing new range with the
    * arguments, returns `nullptr`.  `ErrorResult` is set to an error only
    * when this returns `nullptr`.  The error code indicates the reason why
    * it couldn't initialize the instance.
@@ -118,16 +130,6 @@ class nsRange final : public mozilla::dom::AbstractRange,
   void SetIsGenerated(bool aIsGenerated) { mIsGenerated = aIsGenerated; }
 
   void Reset();
-
-  /**
-   * ResetTemporarily() is called when Selection starts to cache the instance
-   * to reuse later.  This method clears mStart, mEnd and mIsPositioned but
-   * does not clear mRoot for reducing the cost to register this as a mutation
-   * observer again.
-   */
-  void ResetTemporarily() {
-    DoSetRange(RawRangeBoundary(), RawRangeBoundary(), mRoot);
-  }
 
   /**
    * SetStart() and SetEnd() sets start point or end point separately.
@@ -196,7 +198,7 @@ class nsRange final : public mozilla::dom::AbstractRange,
   // (pass 0 to just get the list of faces, without recording exact ranges
   // where each face was used).
   nsresult GetUsedFontFaces(
-      nsTArray<nsAutoPtr<mozilla::dom::InspectorFontFace>>& aResult,
+      nsTArray<mozilla::UniquePtr<mozilla::dom::InspectorFontFace>>& aResult,
       uint32_t aMaxRanges, bool aSkipCollapsedWhitespace);
 
   // nsIMutationObserver methods
@@ -444,6 +446,9 @@ class nsRange final : public mozilla::dom::AbstractRange,
   // notifications while holding a strong reference to the new child.
   nsIContent* MOZ_NON_OWNING_REF mNextStartRef;
   nsIContent* MOZ_NON_OWNING_REF mNextEndRef;
+
+  static nsTArray<RefPtr<nsRange>>* sCachedRanges;
+  static bool sHasShutDown;
 
   friend class mozilla::dom::AbstractRange;
 };

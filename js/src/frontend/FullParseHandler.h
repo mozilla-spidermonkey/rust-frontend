@@ -77,6 +77,11 @@ class FullParseHandler {
            node->isKind(ParseNodeKind::ElemExpr);
   }
 
+  bool isOptionalPropertyAccess(Node node) {
+    return node->isKind(ParseNodeKind::OptionalDotExpr) ||
+           node->isKind(ParseNodeKind::OptionalElemExpr);
+  }
+
   bool isFunctionCall(Node node) {
     // Note: super() is a special form, *not* a function call.
     return node->isKind(ParseNodeKind::CallExpr);
@@ -253,7 +258,7 @@ class FullParseHandler {
 
     if (expr->isKind(ParseNodeKind::OptionalChain)) {
       Node kid = expr->as<UnaryNode>().kid();
-      // Handle property deletion explictly. OptionalCall is handled
+      // Handle property deletion explicitly. OptionalCall is handled
       // via DeleteExpr.
       if (kid->isKind(ParseNodeKind::DotExpr) ||
           kid->isKind(ParseNodeKind::OptionalDotExpr) ||
@@ -1061,8 +1066,8 @@ class FullParseHandler {
   }
 
   PropertyName* maybeDottedProperty(Node pn) {
-    return pn->is<PropertyAccess>() ? &pn->as<PropertyAccess>().name()
-                                    : nullptr;
+    return pn->is<PropertyAccessBase>() ? &pn->as<PropertyAccessBase>().name()
+                                        : nullptr;
   }
   JSAtom* isStringExprStatement(Node pn, TokenPos* pos) {
     if (pn->is<UnaryNode>()) {

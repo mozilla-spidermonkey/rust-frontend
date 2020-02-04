@@ -169,7 +169,6 @@ static mut DUMMY_URL_DATA: *mut URLExtraData = 0 as *mut _;
 #[no_mangle]
 pub unsafe extern "C" fn Servo_Initialize(dummy_url_data: *mut URLExtraData) {
     use style::gecko_bindings::sugar::origin_flags;
-    use style::properties::computed_value_flags;
 
     // Pretend that we're a Servo Layout thread, to make some assertions happy.
     thread_state::initialize(thread_state::ThreadState::LAYOUT);
@@ -177,7 +176,6 @@ pub unsafe extern "C" fn Servo_Initialize(dummy_url_data: *mut URLExtraData) {
     // Perform some debug-only runtime assertions.
     origin_flags::assert_flags_match();
     parser::assert_parsing_mode_match();
-    computed_value_flags::assert_match();
     traversal_flags::assert_traversal_flags_match();
     specified::font::assert_variant_east_asian_matches();
     specified::font::assert_variant_ligatures_matches();
@@ -1696,6 +1694,12 @@ pub unsafe extern "C" fn Servo_AuthorStyles_RemoveStyleSheet(
 pub unsafe extern "C" fn Servo_AuthorStyles_ForceDirty(styles: &mut RawServoAuthorStyles) {
     let styles = AuthorStyles::<GeckoStyleSheet>::from_ffi_mut(styles);
     styles.stylesheets.force_dirty();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Servo_AuthorStyles_IsDirty(styles: &RawServoAuthorStyles) -> bool {
+    let styles = AuthorStyles::<GeckoStyleSheet>::from_ffi(styles);
+    styles.stylesheets.dirty()
 }
 
 #[no_mangle]
@@ -5447,7 +5451,6 @@ fn create_context_for_animation<'a>(
     rule_cache_conditions: &'a mut RuleCacheConditions,
 ) -> Context<'a> {
     Context {
-        is_root_element: false,
         builder: StyleBuilder::for_animation(per_doc_data.stylist.device(), style, parent_style),
         font_metrics_provider: font_metrics_provider,
         cached_system_font: None,

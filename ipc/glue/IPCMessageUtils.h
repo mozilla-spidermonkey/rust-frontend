@@ -78,18 +78,14 @@ struct SerializedStructuredCloneBuffer final {
   SerializedStructuredCloneBuffer()
       : data(JS::StructuredCloneScope::Unassigned) {}
 
-  SerializedStructuredCloneBuffer(const SerializedStructuredCloneBuffer& aOther)
-      : SerializedStructuredCloneBuffer() {
-    *this = aOther;
-  }
-
+  SerializedStructuredCloneBuffer(SerializedStructuredCloneBuffer&&) = default;
   SerializedStructuredCloneBuffer& operator=(
-      const SerializedStructuredCloneBuffer& aOther) {
-    data.Clear();
-    data.initScope(aOther.data.scope());
-    MOZ_RELEASE_ASSERT(data.Append(aOther.data), "out of memory");
-    return *this;
-  }
+      SerializedStructuredCloneBuffer&&) = default;
+
+  SerializedStructuredCloneBuffer(const SerializedStructuredCloneBuffer&) =
+      delete;
+  SerializedStructuredCloneBuffer& operator=(
+      const SerializedStructuredCloneBuffer& aOther) = delete;
 
   bool operator==(const SerializedStructuredCloneBuffer& aOther) const {
     // The copy assignment operator and the equality operator are

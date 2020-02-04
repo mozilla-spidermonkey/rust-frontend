@@ -77,6 +77,7 @@ include = [
   "ComputedFontStyleDescriptor",
   "ComputedFontWeightRange",
   "ComputedTimingFunction",
+  "ComputedValueFlags",
   "CursorKind",
   "DisplayOutside",
   "DisplayInside",
@@ -187,9 +188,15 @@ include = [
   "CounterSetOrReset",
   "CounterIncrement",
   "WritingMode",
-  "VecU8",
   "Content",
   "ContentItem",
+  "AlignSelf",
+  "JustifySelf",
+  "AlignItems",
+  "ComputedJustifyItems",
+  "AlignContent",
+  "JustifyContent",
+  "TransformStyle",
 ]
 item_types = ["enums", "structs", "unions", "typedefs", "functions", "constants"]
 renaming_overrides_prefixing = true
@@ -391,6 +398,7 @@ renaming_overrides_prefixing = true
 
 "TextUnderlinePosition" = """
   inline bool IsAuto() const;
+  inline bool IsFromFont() const;
   inline bool IsUnder() const;
   inline bool IsLeft() const;
   inline bool IsRight() const;

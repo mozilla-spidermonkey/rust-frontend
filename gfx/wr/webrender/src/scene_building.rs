@@ -27,7 +27,7 @@ use crate::prim_store::{PrimitiveInstance, PrimitiveSceneData};
 use crate::prim_store::{PrimitiveInstanceKind, NinePatchDescriptor, PrimitiveStore};
 use crate::prim_store::{ScrollNodeAndClipChain, PictureIndex};
 use crate::prim_store::{InternablePrimitive, SegmentInstanceIndex};
-use crate::prim_store::{register_prim_chase_id, get_line_decoration_sizes};
+use crate::prim_store::{register_prim_chase_id, get_line_decoration_size};
 use crate::prim_store::{SpaceSnapper};
 use crate::prim_store::backdrop::Backdrop;
 use crate::prim_store::borders::{ImageBorder, NormalBorderPrim};
@@ -2749,33 +2749,28 @@ impl<'a> SceneBuilder<'a> {
         // pixel ratio or transform.
         let mut info = info.clone();
 
-        let size = get_line_decoration_sizes(
+        let size = get_line_decoration_size(
             &info.rect.size,
             orientation,
             style,
             wavy_line_thickness,
         );
 
-        let cache_key = size.map(|(inline_size, block_size)| {
-            let size = match orientation {
-                LineOrientation::Horizontal => LayoutSize::new(inline_size, block_size),
-                LineOrientation::Vertical => LayoutSize::new(block_size, inline_size),
-            };
-
+        let cache_key = size.map(|size| {
             // If dotted, adjust the clip rect to ensure we don't draw a final
             // partial dot.
             if style == LineStyle::Dotted {
                 let clip_size = match orientation {
                     LineOrientation::Horizontal => {
                         LayoutSize::new(
-                            inline_size * (info.rect.size.width / inline_size).floor(),
+                            size.width * (info.rect.size.width / size.width).floor(),
                             info.rect.size.height,
                         )
                     }
                     LineOrientation::Vertical => {
                         LayoutSize::new(
                             info.rect.size.width,
-                            inline_size * (info.rect.size.height / inline_size).floor(),
+                            size.height * (info.rect.size.height / size.height).floor(),
                         )
                     }
                 };
@@ -3611,6 +3606,7 @@ impl FlattenedStackingContext {
         struct SliceInfo {
             cluster_index: usize,
             scroll_root: SpatialNodeIndex,
+            cluster_flags: ClusterFlags,
         }
 
         let mut content_slice_count = 0;
@@ -3626,8 +3622,19 @@ impl FlattenedStackingContext {
             // (1) This cluster is a scrollbar
             // (2) Certain conditions when the scroll root changes (see below)
             // (3) No slice exists yet
-            let create_new_slice =
-                cluster.flags.contains(ClusterFlags::SCROLLBAR_CONTAINER) ||
+            let mut cluster_flags = ClusterFlags::empty();
+
+            if cluster.flags.contains(ClusterFlags::SCROLLBAR_CONTAINER) {
+                // Scrollbar containers need to ensure that a new slice is
+                // created both before and after the scrollbar, so that no
+                // other prims with the same scroll root sneak into this slice.
+                cluster_flags.insert(
+                    ClusterFlags::CREATE_PICTURE_CACHE_PRE |
+                    ClusterFlags::CREATE_PICTURE_CACHE_POST
+                );
+            }
+
+            let create_new_slice_for_scroll_root =
                 slices.last().map(|slice| {
                     match (slice.scroll_root, scroll_root) {
                         (ROOT_SPATIAL_NODE_INDEX, ROOT_SPATIAL_NODE_INDEX) => {
@@ -3676,11 +3683,16 @@ impl FlattenedStackingContext {
                     }
                 }).unwrap_or(true);
 
+            if create_new_slice_for_scroll_root {
+                cluster_flags.insert(ClusterFlags::CREATE_PICTURE_CACHE_PRE);
+            }
+
             // Create a new slice if required
-            if create_new_slice {
+            if !cluster_flags.is_empty() {
                 slices.push(SliceInfo {
                     cluster_index,
-                    scroll_root
+                    scroll_root,
+                    cluster_flags,
                 });
             }
         }
@@ -3707,7 +3719,7 @@ impl FlattenedStackingContext {
                 content_slice_count += 1;
                 let cluster = &mut self.prim_list.clusters[slice.cluster_index];
                 // Mark that this cluster creates a picture cache slice
-                cluster.flags.insert(ClusterFlags::CREATE_PICTURE_CACHE_PRE);
+                cluster.flags.insert(slice.cluster_flags);
                 cluster.cache_scroll_root = Some(slice.scroll_root);
             }
         }

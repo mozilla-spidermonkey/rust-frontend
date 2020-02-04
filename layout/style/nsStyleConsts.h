@@ -99,8 +99,6 @@ enum class StyleDisplay : uint16_t {
                                  StyleDisplayInside::MozGridLine),
   MozDeck =
       StyleDisplayFrom(StyleDisplayOutside::XUL, StyleDisplayInside::MozDeck),
-  MozGroupbox = StyleDisplayFrom(StyleDisplayOutside::XUL,
-                                 StyleDisplayInside::MozGroupbox),
   MozPopup =
       StyleDisplayFrom(StyleDisplayOutside::XUL, StyleDisplayInside::MozPopup),
 };
@@ -353,55 +351,6 @@ enum class StyleDirection : uint8_t { Ltr, Rtl };
   (NS_STYLE_WRITING_MODE_VERTICAL_RL | NS_STYLE_WRITING_MODE_SIDEWAYS_MASK)
 #define NS_STYLE_WRITING_MODE_SIDEWAYS_LR \
   (NS_STYLE_WRITING_MODE_VERTICAL_LR | NS_STYLE_WRITING_MODE_SIDEWAYS_MASK)
-
-// Shared constants for all align/justify properties (nsStylePosition):
-#define NS_STYLE_ALIGN_AUTO 0
-#define NS_STYLE_ALIGN_NORMAL 1
-#define NS_STYLE_ALIGN_START 2
-#define NS_STYLE_ALIGN_END 3
-#define NS_STYLE_ALIGN_FLEX_START 4
-#define NS_STYLE_ALIGN_FLEX_END 5
-#define NS_STYLE_ALIGN_CENTER 6
-#define NS_STYLE_ALIGN_LEFT 7
-#define NS_STYLE_ALIGN_RIGHT 8
-#define NS_STYLE_ALIGN_BASELINE 9
-#define NS_STYLE_ALIGN_LAST_BASELINE 10
-#define NS_STYLE_ALIGN_STRETCH 11
-#define NS_STYLE_ALIGN_SELF_START 12
-#define NS_STYLE_ALIGN_SELF_END 13
-#define NS_STYLE_ALIGN_SPACE_BETWEEN 14
-#define NS_STYLE_ALIGN_SPACE_AROUND 15
-#define NS_STYLE_ALIGN_SPACE_EVENLY 16
-#define NS_STYLE_ALIGN_LEGACY 0x20  // mutually exclusive w. SAFE & UNSAFE
-#define NS_STYLE_ALIGN_SAFE 0x40
-#define NS_STYLE_ALIGN_UNSAFE 0x80  // mutually exclusive w. SAFE
-#define NS_STYLE_ALIGN_FLAG_BITS 0xE0
-#define NS_STYLE_ALIGN_ALL_BITS 0xFF
-#define NS_STYLE_ALIGN_ALL_SHIFT 8
-
-#define NS_STYLE_JUSTIFY_AUTO NS_STYLE_ALIGN_AUTO
-#define NS_STYLE_JUSTIFY_NORMAL NS_STYLE_ALIGN_NORMAL
-#define NS_STYLE_JUSTIFY_START NS_STYLE_ALIGN_START
-#define NS_STYLE_JUSTIFY_END NS_STYLE_ALIGN_END
-#define NS_STYLE_JUSTIFY_FLEX_START NS_STYLE_ALIGN_FLEX_START
-#define NS_STYLE_JUSTIFY_FLEX_END NS_STYLE_ALIGN_FLEX_END
-#define NS_STYLE_JUSTIFY_CENTER NS_STYLE_ALIGN_CENTER
-#define NS_STYLE_JUSTIFY_LEFT NS_STYLE_ALIGN_LEFT
-#define NS_STYLE_JUSTIFY_RIGHT NS_STYLE_ALIGN_RIGHT
-#define NS_STYLE_JUSTIFY_BASELINE NS_STYLE_ALIGN_BASELINE
-#define NS_STYLE_JUSTIFY_LAST_BASELINE NS_STYLE_ALIGN_LAST_BASELINE
-#define NS_STYLE_JUSTIFY_STRETCH NS_STYLE_ALIGN_STRETCH
-#define NS_STYLE_JUSTIFY_SELF_START NS_STYLE_ALIGN_SELF_START
-#define NS_STYLE_JUSTIFY_SELF_END NS_STYLE_ALIGN_SELF_END
-#define NS_STYLE_JUSTIFY_SPACE_BETWEEN NS_STYLE_ALIGN_SPACE_BETWEEN
-#define NS_STYLE_JUSTIFY_SPACE_AROUND NS_STYLE_ALIGN_SPACE_AROUND
-#define NS_STYLE_JUSTIFY_SPACE_EVENLY NS_STYLE_ALIGN_SPACE_EVENLY
-#define NS_STYLE_JUSTIFY_LEGACY NS_STYLE_ALIGN_LEGACY
-#define NS_STYLE_JUSTIFY_SAFE NS_STYLE_ALIGN_SAFE
-#define NS_STYLE_JUSTIFY_UNSAFE NS_STYLE_ALIGN_UNSAFE
-#define NS_STYLE_JUSTIFY_FLAG_BITS NS_STYLE_ALIGN_FLAG_BITS
-#define NS_STYLE_JUSTIFY_ALL_BITS NS_STYLE_ALIGN_ALL_BITS
-#define NS_STYLE_JUSTIFY_ALL_SHIFT NS_STYLE_ALIGN_ALL_SHIFT
 
 // See nsStylePosition
 enum class StyleFlexDirection : uint8_t {
@@ -668,11 +617,15 @@ enum class StyleTextOrientation : uint8_t {
 #define NS_STYLE_UNICODE_BIDI_ISOLATE_OVERRIDE 0x6
 #define NS_STYLE_UNICODE_BIDI_PLAINTEXT 0x8
 
-#define NS_STYLE_TABLE_LAYOUT_AUTO 0
-#define NS_STYLE_TABLE_LAYOUT_FIXED 1
+enum class StyleTableLayout : uint8_t {
+  Auto,
+  Fixed,
+};
 
-#define NS_STYLE_TABLE_EMPTY_CELLS_HIDE 0
-#define NS_STYLE_TABLE_EMPTY_CELLS_SHOW 1
+enum class StyleEmptyCells : uint8_t {
+    Hide,
+    Show,
+};
 
 // Constants for the caption-side property. Note that despite having "physical"
 // names, these are actually interpreted according to the table's writing-mode:
@@ -824,9 +777,6 @@ enum class StyleColorAdjust : uint8_t {
 // 3d Transforms - Backface visibility
 #define NS_STYLE_BACKFACE_VISIBILITY_VISIBLE 1
 #define NS_STYLE_BACKFACE_VISIBILITY_HIDDEN 0
-
-#define NS_STYLE_TRANSFORM_STYLE_FLAT 0
-#define NS_STYLE_TRANSFORM_STYLE_PRESERVE_3D 1
 
 // blending
 #define NS_STYLE_BLEND_NORMAL 0

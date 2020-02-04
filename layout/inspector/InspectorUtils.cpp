@@ -11,7 +11,6 @@
 
 #include "gfxTextRun.h"
 #include "nsArray.h"
-#include "nsAutoPtr.h"
 #include "nsString.h"
 #include "nsIStyleSheetLinkingElement.h"
 #include "nsIContentInlines.h"
@@ -588,8 +587,16 @@ void InspectorUtils::GetUsedFontFaces(
     GlobalObject& aGlobalObject, nsRange& aRange, uint32_t aMaxRanges,
     bool aSkipCollapsedWhitespace,
     nsTArray<nsAutoPtr<InspectorFontFace>>& aResult, ErrorResult& aRv) {
+  nsLayoutUtils::UsedFontFaceList faces;
   nsresult rv =
-      aRange.GetUsedFontFaces(aResult, aMaxRanges, aSkipCollapsedWhitespace);
+      aRange.GetUsedFontFaces(faces, aMaxRanges, aSkipCollapsedWhitespace);
+
+  // Move the UniquePtr results to the nsAutoPtr results.
+  aResult.SetCapacity(faces.Length() + aResult.Length());
+  for (auto& face : faces) {
+    aResult.AppendElement(face.release());
+  }
+
   if (NS_FAILED(rv)) {
     aRv.Throw(rv);
   }
@@ -666,7 +673,7 @@ void InspectorUtils::ParseStyleSheet(GlobalObject& aGlobalObject,
                                      StyleSheet& aSheet,
                                      const nsACString& aInput,
                                      ErrorResult& aRv) {
-  aRv = aSheet.ReparseSheet(aInput);
+  aSheet.ReparseSheet(aInput, aRv);
 }
 
 bool InspectorUtils::IsCustomElementName(GlobalObject&, const nsAString& aName,

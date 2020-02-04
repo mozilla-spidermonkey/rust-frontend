@@ -36,7 +36,7 @@
 #include "vm/AsyncFunction.h"
 #include "vm/AsyncIteration.h"
 #include "vm/BigIntType.h"
-#include "vm/BytecodeUtil.h"
+#include "vm/BytecodeUtil.h"        // JSDVG_SEARCH_STACK
 #include "vm/EqualityOperations.h"  // js::StrictlyEqual
 #include "vm/GeneratorObject.h"
 #include "vm/Instrumentation.h"
@@ -259,10 +259,11 @@ bool js::GetImportOperation(JSContext* cx, HandleObject envChain,
 }
 
 static bool SetPropertyOperation(JSContext* cx, JSOp op, HandleValue lval,
-                                 HandleId id, HandleValue rval) {
+                                 int lvalIndex, HandleId id, HandleValue rval) {
   MOZ_ASSERT(op == JSOp::SetProp || op == JSOp::StrictSetProp);
 
-  RootedObject obj(cx, ToObjectFromStackForPropertyAccess(cx, lval, id));
+  RootedObject obj(cx,
+                   ToObjectFromStackForPropertyAccess(cx, lval, lvalIndex, id));
   if (!obj) {
     return false;
   }
@@ -324,6 +325,25 @@ JSFunction* js::MakeDefaultConstructor(JSContext* cx, HandleScript script,
   DebugAPI::onNewScript(cx, ctorScript);
 
   return ctor;
+}
+
+static JSObject* SuperFunOperation(JSObject* callee) {
+  MOZ_ASSERT(callee->as<JSFunction>().isClassConstructor());
+  MOZ_ASSERT(
+      callee->as<JSFunction>().baseScript()->isDerivedClassConstructor());
+
+  return callee->as<JSFunction>().staticPrototype();
+}
+
+static JSObject* HomeObjectSuperBase(JSContext* cx, JSObject* homeObj) {
+  MOZ_ASSERT(homeObj->is<PlainObject>() || homeObj->is<JSFunction>());
+
+  if (JSObject* superBase = homeObj->staticPrototype()) {
+    return superBase;
+  }
+
+  ThrowHomeObjectNotObject(cx);
+  return nullptr;
 }
 
 bool js::ReportIsNotFunction(JSContext* cx, HandleValue v, int numToSkip,
@@ -1321,11 +1341,11 @@ again:
 #define POP_COPY_TO(v) (v) = *--REGS.sp
 #define POP_RETURN_VALUE() REGS.fp()->setReturnValue(*--REGS.sp)
 
-#define FETCH_OBJECT(cx, n, obj, key)                             \
-  JS_BEGIN_MACRO                                                  \
-    HandleValue val = REGS.stackHandleAt(n);                      \
-    obj = ToObjectFromStackForPropertyAccess((cx), (val), (key)); \
-    if (!(obj)) goto error;                                       \
+#define FETCH_OBJECT(cx, n, obj, key)                                \
+  JS_BEGIN_MACRO                                                     \
+    HandleValue val = REGS.stackHandleAt(n);                         \
+    obj = ToObjectFromStackForPropertyAccess((cx), (val), n, (key)); \
+    if (!(obj)) goto error;                                          \
   JS_END_MACRO
 
 /*
@@ -2771,11 +2791,13 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     CASE(StrictSetProp) {
       static_assert(JSOpLength_SetProp == JSOpLength_StrictSetProp,
                     "setprop and strictsetprop must be the same size");
-      HandleValue lval = REGS.stackHandleAt(-2);
+      int lvalIndex = -2;
+      HandleValue lval = REGS.stackHandleAt(lvalIndex);
       HandleValue rval = REGS.stackHandleAt(-1);
 
       ReservedRooted<jsid> id(&rootId0, NameToId(script->getName(REGS.pc)));
-      if (!SetPropertyOperation(cx, JSOp(*REGS.pc), lval, id, rval)) {
+      if (!SetPropertyOperation(cx, JSOp(*REGS.pc), lval, lvalIndex, id,
+                                rval)) {
         goto error;
       }
 
@@ -2808,7 +2830,8 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
 
     CASE(GetElem)
     CASE(CallElem) {
-      MutableHandleValue lval = REGS.stackHandleAt(-2);
+      int lvalIndex = -2;
+      MutableHandleValue lval = REGS.stackHandleAt(lvalIndex);
       HandleValue rval = REGS.stackHandleAt(-1);
       MutableHandleValue res = REGS.stackHandleAt(-2);
 
@@ -2818,7 +2841,8 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       }
 
       if (!done) {
-        if (!GetElementOperation(cx, JSOp(*REGS.pc), lval, rval, res)) {
+        if (!GetElementOperationWithStackIndex(cx, JSOp(*REGS.pc), lval,
+                                               lvalIndex, rval, res)) {
           goto error;
         }
       }
@@ -2852,9 +2876,10 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     CASE(StrictSetElem) {
       static_assert(JSOpLength_SetElem == JSOpLength_StrictSetElem,
                     "setelem and strictsetelem must be the same size");
-      HandleValue receiver = REGS.stackHandleAt(-3);
+      int receiverIndex = -3;
+      HandleValue receiver = REGS.stackHandleAt(receiverIndex);
       ReservedRooted<JSObject*> obj(&rootObject0);
-      obj = ToObjectFromStackForPropertyAccess(cx, receiver,
+      obj = ToObjectFromStackForPropertyAccess(cx, receiver, receiverIndex,
                                                REGS.stackHandleAt(-2));
       if (!obj) {
         goto error;
@@ -4113,12 +4138,11 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       MOZ_ASSERT(REGS.stackDepth() >= 2);
 
       /* Load the function to be initialized */
-      ReservedRooted<JSFunction*> func(
-          &rootFunction0, &REGS.sp[-2].toObject().as<JSFunction>());
+      JSFunction* func = &REGS.sp[-2].toObject().as<JSFunction>();
       MOZ_ASSERT(func->allowSuperProperty());
 
       /* Load the home object */
-      ReservedRooted<JSObject*> obj(&rootObject0, &REGS.sp[-1].toObject());
+      JSObject* obj = &REGS.sp[-1].toObject();
       MOZ_ASSERT(obj->is<PlainObject>() || obj->is<JSFunction>());
 
       func->setExtendedSlot(FunctionExtended::METHOD_HOMEOBJECT_SLOT,
@@ -4182,14 +4206,9 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     END_CASE(EnvCallee)
 
     CASE(SuperFun) {
-      ReservedRooted<JSObject*> superEnvFunc(&rootObject0,
-                                             &REGS.sp[-1].toObject());
-      JSObject* superFun = SuperFunOperation(cx, superEnvFunc);
-      if (!superFun) {
-        goto error;
-      }
-
-      REGS.sp[-1].setObject(*superFun);
+      JSObject* superEnvFunc = &REGS.sp[-1].toObject();
+      JSObject* superFun = SuperFunOperation(superEnvFunc);
+      REGS.sp[-1].setObjectOrNull(superFun);
     }
     END_CASE(SuperFun)
 
@@ -4420,7 +4439,8 @@ bool js::GetProperty(JSContext* cx, HandleValue v, HandlePropertyName name,
   }
 
   RootedValue receiver(cx, v);
-  RootedObject obj(cx, ToObjectFromStackForPropertyAccess(cx, v, name));
+  RootedObject obj(
+      cx, ToObjectFromStackForPropertyAccess(cx, v, JSDVG_SEARCH_STACK, name));
   if (!obj) {
     return false;
   }
@@ -4695,7 +4715,8 @@ bool js::GetAndClearException(JSContext* cx, MutableHandleValue res) {
 template <bool strict>
 bool js::DeletePropertyJit(JSContext* cx, HandleValue v,
                            HandlePropertyName name, bool* bp) {
-  RootedObject obj(cx, ToObjectFromStackForPropertyAccess(cx, v, name));
+  RootedObject obj(
+      cx, ToObjectFromStackForPropertyAccess(cx, v, JSDVG_SEARCH_STACK, name));
   if (!obj) {
     return false;
   }
@@ -4725,7 +4746,8 @@ template bool js::DeletePropertyJit<false>(JSContext* cx, HandleValue val,
 template <bool strict>
 bool js::DeleteElementJit(JSContext* cx, HandleValue val, HandleValue index,
                           bool* bp) {
-  RootedObject obj(cx, ToObjectFromStackForPropertyAccess(cx, val, index));
+  RootedObject obj(cx, ToObjectFromStackForPropertyAccess(
+                           cx, val, JSDVG_SEARCH_STACK, index));
   if (!obj) {
     return false;
   }
@@ -5341,44 +5363,14 @@ bool js::ThrowUninitializedThis(JSContext* cx) {
   return false;
 }
 
-JSObject* js::HomeObjectSuperBase(JSContext* cx, HandleObject homeObj) {
-  RootedObject superBase(cx);
-
-  if (!GetPrototype(cx, homeObj, &superBase)) {
-    return nullptr;
-  }
-
-  if (!superBase) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_CANT_CONVERT_TO, "null", "object");
-    return nullptr;
-  }
-
-  return superBase;
-}
-
-JSObject* js::SuperFunOperation(JSContext* cx, HandleObject callee) {
-  MOZ_ASSERT(callee->as<JSFunction>().isClassConstructor());
-  MOZ_ASSERT(
-      callee->as<JSFunction>().baseScript()->isDerivedClassConstructor());
-
-  RootedObject superFun(cx);
-
-  if (!GetPrototype(cx, callee, &superFun)) {
-    return nullptr;
-  }
-
-  if (!superFun || !superFun->isConstructor()) {
-    RootedValue superFunVal(cx, ObjectOrNullValue(superFun));
-    ReportIsNotFunction(cx, superFunVal, JSDVG_IGNORE_STACK, CONSTRUCT);
-    return nullptr;
-  }
-
-  return superFun;
-}
-
 bool js::ThrowInitializedThis(JSContext* cx) {
   JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_REINIT_THIS);
+  return false;
+}
+
+bool js::ThrowHomeObjectNotObject(JSContext* cx) {
+  JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_CANT_CONVERT_TO,
+                            "null", "object");
   return false;
 }
 

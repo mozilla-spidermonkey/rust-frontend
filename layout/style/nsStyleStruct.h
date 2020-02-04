@@ -638,7 +638,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleMargin {
       return false;
     }
 
-    NS_FOR_CSS_SIDES(side) {
+    for (const auto side : mozilla::AllPhysicalSides()) {
       aMargin.Side(side) = mMargin.Get(side).AsLengthPercentage().ToLength();
     }
     return true;
@@ -681,7 +681,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePadding {
       return false;
     }
 
-    NS_FOR_CSS_SIDES(side) {
+    for (const auto side : mozilla::AllPhysicalSides()) {
       // Clamp negative calc() to 0.
       aPadding.Side(side) = std::max(mPadding.Get(side).ToLength(), 0);
     }
@@ -964,6 +964,9 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePosition {
   using StyleFlexBasis = mozilla::StyleFlexBasis;
   using WritingMode = mozilla::WritingMode;
   using StyleImplicitGridTracks = mozilla::StyleImplicitGridTracks;
+  using ComputedStyle = mozilla::ComputedStyle;
+  using StyleAlignSelf = mozilla::StyleAlignSelf;
+  using StyleJustifySelf = mozilla::StyleJustifySelf;
 
   explicit nsStylePosition(const mozilla::dom::Document&);
   nsStylePosition(const nsStylePosition& aOther);
@@ -985,15 +988,15 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePosition {
 
   /**
    * Return the used value for 'align-self' given our parent ComputedStyle
-   * aParent (or null for the root).
+   * (or null for the root).
    */
-  uint8_t UsedAlignSelf(mozilla::ComputedStyle* aParent) const;
+  StyleAlignSelf UsedAlignSelf(const ComputedStyle*) const;
 
   /**
    * Return the used value for 'justify-self' given our parent ComputedStyle
    * aParent (or null for the root).
    */
-  uint8_t UsedJustifySelf(mozilla::ComputedStyle* aParent) const;
+  StyleJustifySelf UsedJustifySelf(const ComputedStyle*) const;
 
   Position mObjectPosition;
   StyleRect<LengthPercentageOrAuto> mOffset;
@@ -1010,23 +1013,12 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePosition {
   uint8_t mGridAutoFlow;  // NS_STYLE_GRID_AUTO_FLOW_*
   mozilla::StyleBoxSizing mBoxSizing;
 
-  // All align/justify properties here take NS_STYLE_ALIGN_* values.
-  uint16_t mAlignContent;  // fallback value in the high byte
-  uint8_t mAlignItems;
-  uint8_t mAlignSelf;
-  uint16_t mJustifyContent;  // fallback value in the high byte
-  // We cascade mSpecifiedJustifyItems, to handle the auto value, but store the
-  // computed value in mJustifyItems.
-  //
-  // They're effectively only different in this regard: mJustifyItems is set to
-  // mSpecifiedJustifyItems, except when the latter is AUTO -- in that case,
-  // mJustifyItems is set to NORMAL, or to the parent ComputedStyle's
-  // mJustifyItems if it has the legacy flag.
-  //
-  // This last part happens in ComputedStyle::ApplyStyleFixups.
-  uint8_t mSpecifiedJustifyItems;
-  uint8_t mJustifyItems;
-  uint8_t mJustifySelf;
+  mozilla::StyleAlignContent mAlignContent;
+  mozilla::StyleAlignItems mAlignItems;
+  mozilla::StyleAlignSelf mAlignSelf;
+  mozilla::StyleJustifyContent mJustifyContent;
+  mozilla::StyleComputedJustifyItems mJustifyItems;
+  mozilla::StyleJustifySelf mJustifySelf;
   mozilla::StyleFlexDirection mFlexDirection;
   mozilla::StyleFlexWrap mFlexWrap;
   mozilla::StyleObjectFit mObjectFit;
@@ -1157,7 +1149,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleText {
   mozilla::StyleLineHeight mLineHeight;
   mozilla::LengthPercentage mTextIndent;
 
-  mozilla::StyleTextDecorationLength mTextUnderlineOffset;
+  mozilla::LengthPercentageOrAuto mTextUnderlineOffset;
   mozilla::StyleTextDecorationSkipInk mTextDecorationSkipInk;
   mozilla::StyleTextUnderlinePosition mTextUnderlinePosition;
 
@@ -1262,7 +1254,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleVisibility {
   mozilla::StyleDirection mDirection;
   mozilla::StyleVisibility mVisible;
   mozilla::StyleImageRendering mImageRendering;
-  uint8_t mWritingMode;     // NS_STYLE_WRITING_MODE_*
+  uint8_t mWritingMode;  // NS_STYLE_WRITING_MODE_*
   mozilla::StyleTextOrientation mTextOrientation;
   mozilla::StyleColorAdjust mColorAdjust;
 
@@ -1285,7 +1277,15 @@ inline StyleTextTransform StyleTextTransform::None() {
 
 inline bool StyleTextTransform::IsNone() const { return *this == None(); }
 
-inline bool StyleTextUnderlinePosition::IsAuto() const { return *this == AUTO; }
+// Note that IsAuto() does not exclude the possibility that `left` or `right`
+// is set; it refers only to behavior in horizontal typographic mode.
+inline bool StyleTextUnderlinePosition::IsAuto() const {
+  return !(*this & (StyleTextUnderlinePosition::FROM_FONT |
+                    StyleTextUnderlinePosition::UNDER));
+}
+inline bool StyleTextUnderlinePosition::IsFromFont() const {
+  return bool(*this & StyleTextUnderlinePosition::FROM_FONT);
+}
 inline bool StyleTextUnderlinePosition::IsUnder() const {
   return bool(*this & StyleTextUnderlinePosition::UNDER);
 }
@@ -1535,7 +1535,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay {
   mozilla::StyleScale mScale;
 
   uint8_t mBackfaceVisibility;
-  uint8_t mTransformStyle;
+  mozilla::StyleTransformStyle mTransformStyle;
   StyleGeometryBox mTransformBox;
 
   mozilla::StyleOffsetPath mOffsetPath;
@@ -1771,7 +1771,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay {
    * property. */
   bool HasTransformStyle() const {
     return HasTransformProperty() || HasIndividualTransform() ||
-           mTransformStyle == NS_STYLE_TRANSFORM_STYLE_PRESERVE_3D ||
+           mTransformStyle == mozilla::StyleTransformStyle::Preserve3d ||
            (mWillChange.bits & mozilla::StyleWillChangeBits::TRANSFORM) ||
            !mOffsetPath.IsNone();
   }
@@ -1894,7 +1894,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleTable {
 
   nsChangeHint CalcDifference(const nsStyleTable& aNewData) const;
 
-  uint8_t mLayoutStrategy;  // NS_STYLE_TABLE_LAYOUT_*
+  mozilla::StyleTableLayout mLayoutStrategy;
   int32_t mXSpan;  // The number of columns spanned by a colgroup or col
 };
 
@@ -1910,7 +1910,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleTableBorder {
   nscoord mBorderSpacingRow;
   mozilla::StyleBorderCollapse mBorderCollapse;
   uint8_t mCaptionSide;
-  uint8_t mEmptyCells;
+  mozilla::StyleEmptyCells mEmptyCells;
 };
 
 struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleContent {
