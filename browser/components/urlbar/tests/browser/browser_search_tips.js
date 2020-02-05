@@ -304,6 +304,189 @@ add_task(async function pickButton() {
   await SpecialPowers.popPrefEnv();
 });
 
+// Clicking in the input while the onboard tip is showing should have the same
+// effect as picking the tip.
+add_task(async function clickInInput_onboard() {
+  UrlbarProviderSearchTips.showedTipInCurrentSession = false;
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.urlbar.eventTelemetry.enabled", true]],
+  });
+
+  Services.telemetry.clearEvents();
+  let tab = await BrowserTestUtils.openNewForegroundTab({
+    gBrowser,
+    url: "about:newtab",
+    waitForLoad: false,
+  });
+  await checkTip(window, TIPS.ONBOARD, false);
+
+  // Click in the input.
+  await UrlbarTestUtils.promisePopupClose(window, () => {
+    EventUtils.synthesizeMouseAtCenter(gURLBar.textbox.parentNode, {});
+  });
+  gURLBar.blur();
+  TelemetryTestUtils.assertEvents(
+    [
+      {
+        category: "urlbar",
+        method: "engagement",
+        object: "click",
+        value: "typed",
+      },
+    ],
+    { category: "urlbar" }
+  );
+
+  Assert.equal(
+    UrlbarPrefs.get("searchTips.shownCount"),
+    MAX_SHOWN_COUNT,
+    "Provider is disabled after tip button is picked."
+  );
+  Assert.equal(gURLBar.value, "", "The Urlbar should be empty.");
+  resetProvider();
+
+  BrowserTestUtils.removeTab(tab);
+  await SpecialPowers.popPrefEnv();
+});
+
+// Pressing Ctrl+L (the open location command) while the onboard tip is showing
+// should have the same effect as picking the tip.
+add_task(async function openLocation_onboard() {
+  UrlbarProviderSearchTips.showedTipInCurrentSession = false;
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.urlbar.eventTelemetry.enabled", true]],
+  });
+
+  Services.telemetry.clearEvents();
+  let tab = await BrowserTestUtils.openNewForegroundTab({
+    gBrowser,
+    url: "about:newtab",
+    waitForLoad: false,
+  });
+  await checkTip(window, TIPS.ONBOARD, false);
+
+  // Trigger the open location command.
+  await UrlbarTestUtils.promisePopupClose(window, () => {
+    document.getElementById("Browser:OpenLocation").doCommand();
+  });
+  gURLBar.blur();
+  TelemetryTestUtils.assertEvents(
+    [
+      {
+        category: "urlbar",
+        method: "engagement",
+        object: "enter",
+        value: "typed",
+      },
+    ],
+    { category: "urlbar" }
+  );
+
+  Assert.equal(
+    UrlbarPrefs.get("searchTips.shownCount"),
+    MAX_SHOWN_COUNT,
+    "Provider is disabled after tip button is picked."
+  );
+  Assert.equal(gURLBar.value, "", "The Urlbar should be empty.");
+  resetProvider();
+
+  BrowserTestUtils.removeTab(tab);
+  await SpecialPowers.popPrefEnv();
+});
+
+// Clicking in the input while the redirect tip is showing should have the same
+// effect as picking the tip.
+add_task(async function clickInInput_redirect() {
+  UrlbarProviderSearchTips.showedTipInCurrentSession = false;
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.urlbar.eventTelemetry.enabled", true]],
+  });
+  Services.telemetry.clearEvents();
+
+  await setDefaultEngine("Google");
+  await BrowserTestUtils.withNewTab("about:blank", async () => {
+    await withDNSRedirect("www.google.com", "/", async url => {
+      await BrowserTestUtils.loadURI(gBrowser.selectedBrowser, url);
+      await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
+      await checkTip(window, TIPS.REDIRECT, false);
+
+      // Click in the input.
+      await UrlbarTestUtils.promisePopupClose(window, () => {
+        EventUtils.synthesizeMouseAtCenter(gURLBar.textbox.parentNode, {});
+      });
+      gURLBar.blur();
+    });
+  });
+
+  TelemetryTestUtils.assertEvents(
+    [
+      {
+        category: "urlbar",
+        method: "engagement",
+        object: "click",
+        value: "typed",
+      },
+    ],
+    { category: "urlbar" }
+  );
+
+  Assert.equal(
+    UrlbarPrefs.get("searchTips.shownCount"),
+    MAX_SHOWN_COUNT,
+    "Provider is disabled after tip button is picked."
+  );
+  Assert.equal(gURLBar.value, "", "The Urlbar should be empty.");
+  resetProvider();
+  await SpecialPowers.popPrefEnv();
+});
+
+// Pressing Ctrl+L (the open location command) while the redirect tip is showing
+// should have the same effect as picking the tip.
+add_task(async function openLocation_redirect() {
+  UrlbarProviderSearchTips.showedTipInCurrentSession = false;
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.urlbar.eventTelemetry.enabled", true]],
+  });
+  Services.telemetry.clearEvents();
+
+  await setDefaultEngine("Google");
+  await BrowserTestUtils.withNewTab("about:blank", async () => {
+    await withDNSRedirect("www.google.com", "/", async url => {
+      await BrowserTestUtils.loadURI(gBrowser.selectedBrowser, url);
+      await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
+      await checkTip(window, TIPS.REDIRECT, false);
+
+      // Trigger the open location command.
+      await UrlbarTestUtils.promisePopupClose(window, () => {
+        EventUtils.synthesizeMouseAtCenter(gURLBar.textbox.parentNode, {});
+        document.getElementById("Browser:OpenLocation").doCommand();
+      });
+      gURLBar.blur();
+    });
+  });
+
+  TelemetryTestUtils.assertEvents(
+    [
+      {
+        category: "urlbar",
+        method: "engagement",
+        object: "click",
+        value: "typed",
+      },
+    ],
+    { category: "urlbar" }
+  );
+
+  Assert.equal(
+    UrlbarPrefs.get("searchTips.shownCount"),
+    MAX_SHOWN_COUNT,
+    "Provider is disabled after tip button is picked."
+  );
+  Assert.equal(gURLBar.value, "", "The Urlbar should be empty.");
+  resetProvider();
+  await SpecialPowers.popPrefEnv();
+});
+
 // When a tip is shown and the user engages with the urlbar, the tip should not
 // be shown again in any session.
 add_task(async function engage() {
@@ -393,6 +576,35 @@ add_task(async function ignoreEndsEngagement() {
       );
     });
   });
+  resetProvider();
+});
+
+// Since we coupled the logic that decides whether to show the tip with our
+// gURLBar.search call, we should make sure search isn't called when
+// the conditions for a tip are met but the provider is disabled.
+add_task(async function noActionWhenDisabled() {
+  await setDefaultEngine("Bing");
+  await withDNSRedirect("www.bing.com", "/", async url => {
+    await checkTab(window, url, TIPS.REDIRECT);
+  });
+
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      [
+        "browser.newtabpage.activity-stream.asrouter.userprefs.cfr.features",
+        false,
+      ],
+    ],
+  });
+
+  await withDNSRedirect("www.bing.com", "/", async url => {
+    Assert.ok(
+      !UrlbarTestUtils.isPopupOpen(window),
+      "The UrlbarView should not be open."
+    );
+  });
+
+  await SpecialPowers.popPrefEnv();
 });
 
 async function checkTip(win, expectedTip, closeView = true) {

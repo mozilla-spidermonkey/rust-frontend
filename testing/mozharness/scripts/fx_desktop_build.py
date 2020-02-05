@@ -53,14 +53,6 @@ class FxDesktopBuild(BuildScript, TryToolsMixin, object):
                 "clone_upstream_url": "https://hg.mozilla.org/mozilla-unified",
                 "repo_base": "https://hg.mozilla.org",
                 "graph_selector": "/server/collect.cgi",
-                # only used for make uploadsymbols
-                'old_packages': [
-                    "%(objdir)s/dist/firefox-*",
-                    "%(objdir)s/dist/fennec*",
-                    "%(objdir)s/dist/seamonkey*",
-                    "%(objdir)s/dist/thunderbird*",
-                    "%(objdir)s/dist/install/sea/*.exe"
-                ],
                 'build_resources_path': '%(upload_path)s/build_resources.json',
                 'nightly_promotion_branches': ['mozilla-central', 'mozilla-aurora'],
 
@@ -82,11 +74,7 @@ class FxDesktopBuild(BuildScript, TryToolsMixin, object):
     def query_abs_dirs(self):
         if self.abs_dirs:
             return self.abs_dirs
-        c = self.config
         abs_dirs = super(FxDesktopBuild, self).query_abs_dirs()
-        if not c.get('app_ini_path'):
-            self.fatal('"app_ini_path" is needed in your config for this '
-                       'script.')
 
         dirs = {
             # BuildFactories in factory.py refer to a 'build' dir on the slave.
@@ -102,11 +90,6 @@ class FxDesktopBuild(BuildScript, TryToolsMixin, object):
                                         'src',
                                         self._query_objdir()),
             'abs_tools_dir': os.path.join(abs_dirs['abs_work_dir'], 'tools'),
-            'abs_app_ini_path': c['app_ini_path'] % {
-                'obj_dir': os.path.join(abs_dirs['abs_work_dir'],
-                                        'src',
-                                        self._query_objdir())
-            },
             'upload_path': self.config["upload_env"]["UPLOAD_PATH"],
         }
         abs_dirs.update(dirs)

@@ -2367,7 +2367,7 @@ class ASRouterUISurface extends react__WEBPACK_IMPORTED_MODULE_6___default.a.Pur
 
     if (endpoint && endpoint.dir === "rtl") {
       //Set `dir = rtl` on the HTML
-      this.props.document.getElementById("root").dir = "rtl";
+      this.props.document.dir = "rtl";
     }
 
     ASRouterUtils.addListener(this.onMessageFromParent);
@@ -3085,7 +3085,8 @@ class Trailhead extends react__WEBPACK_IMPORTED_MODULE_4___default.a.PureCompone
       fxaEndpoint: this.props.fxaEndpoint,
       UTMTerm: UTMTerm,
       flowParams: this.props.flowParams,
-      onClose: this.closeModal
+      onClose: this.closeModal,
+      showSignInLink: true
     }))), react__WEBPACK_IMPORTED_MODULE_4___default.a.createElement("button", {
       className: "trailheadStart",
       "data-l10n-id": content.skipButton.string_id,

@@ -2910,6 +2910,13 @@
   value: true
   mirror: always
 
+# Enables the dispatching of console log events from worker threads to the
+# main-thread.
+- name: dom.worker.console.dispatch_events_to_main_thread
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 - name: dom.worklet.enabled
   type: bool
   value: false
@@ -3838,6 +3845,11 @@
   type: bool
   value: false
   mirror: once
+
+- name: gfx.webrender.enable-multithreading
+  type: bool
+  value: true
+  mirror: always
 
 - name: gfx.webrender.compositor
   type: bool

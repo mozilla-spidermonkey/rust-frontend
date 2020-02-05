@@ -40,6 +40,13 @@ XPCOMUtils.defineLazyServiceGetter(
   "nsIUpdateManager"
 );
 
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "cfrFeaturesUserPref",
+  "browser.newtabpage.activity-stream.asrouter.userprefs.cfr.features",
+  true
+);
+
 // The possible tips to show.
 const TIPS = {
   NONE: "",
@@ -92,8 +99,6 @@ class ProviderSearchTips extends UrlbarProvider {
     this.showedTipInCurrentSession = false;
     // Whether we've shown a tip in the current engagement.
     this.showedTipInCurrentEngagement = false;
-
-    this._l10n = new Localization(["browser/browser.ftl"]);
   }
 
   get PRIORITY() {
@@ -125,7 +130,11 @@ class ProviderSearchTips extends UrlbarProvider {
    * @returns {boolean} Whether this provider should be invoked for the search.
    */
   isActive(queryContext) {
-    return UrlbarPrefs.get("update1.searchTips") && this.currentTip;
+    return (
+      UrlbarPrefs.get("update1.searchTips") &&
+      this.currentTip &&
+      cfrFeaturesUserPref
+    );
   }
 
   /**
@@ -160,7 +169,7 @@ class ProviderSearchTips extends UrlbarProvider {
       UrlbarUtils.RESULT_TYPE.TIP,
       UrlbarUtils.RESULT_SOURCE.OTHER_LOCAL,
       {
-        buttonText: await this._l10n.formatValue("urlbar-search-tips-confirm"),
+        buttonTextData: { id: "urlbar-search-tips-confirm" },
         icon: defaultEngine.iconURI.spec,
       }
     );
@@ -168,21 +177,21 @@ class ProviderSearchTips extends UrlbarProvider {
     switch (tip) {
       case TIPS.ONBOARD:
         result.heuristic = true;
-        result.payload.text = await this._l10n.formatValue(
-          "urlbar-search-tips-onboard",
-          {
+        result.payload.textData = {
+          id: "urlbar-search-tips-onboard",
+          args: {
             engineName: defaultEngine.name,
-          }
-        );
+          },
+        };
         break;
       case TIPS.REDIRECT:
         result.heuristic = false;
-        result.payload.text = await this._l10n.formatValue(
-          "urlbar-search-tips-redirect",
-          {
+        result.payload.textData = {
+          id: "urlbar-search-tips-redirect",
+          args: {
             engineName: defaultEngine.name,
-          }
-        );
+          },
+        };
         break;
     }
 
@@ -315,6 +324,10 @@ class ProviderSearchTips extends UrlbarProvider {
       }
 
       this.currentTip = tip;
+      if (!this.isActive()) {
+        return;
+      }
+
       let window = BrowserWindowTracker.getTopWindow();
       window.gURLBar.search("", { focus: tip == TIPS.ONBOARD });
     }, SHOW_TIP_DELAY_MS);
