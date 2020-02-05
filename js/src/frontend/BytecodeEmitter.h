@@ -113,7 +113,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   ParseInfo& parseInfo;
 
-  // First line and column, for JSScript::initFromEmitter.
+  // First line and column, for JSScript::fullyInitFromStencil.
   unsigned firstLine = 0;
   unsigned firstColumn = 0;
 

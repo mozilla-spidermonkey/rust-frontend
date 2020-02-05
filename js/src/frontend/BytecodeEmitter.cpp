@@ -27,6 +27,7 @@
 
 #include "ds/Nestable.h"  // Nestable
 #include "frontend/AbstractScope.h"
+#include "frontend/BCEScriptStencil.h"           // BCEScriptStencil
 #include "frontend/BytecodeControlStructures.h"  // NestableControl, BreakableControl, LabelControl, LoopControl, TryFinallyControl
 #include "frontend/CallOrNewEmitter.h"           // CallOrNewEmitter
 #include "frontend/CForEmitter.h"                // CForEmitter
@@ -2485,7 +2486,12 @@ bool BytecodeEmitter::emitScript(ParseNode* body) {
     return false;
   }
 
-  if (!JSScript::fullyInitFromEmitter(cx, script, this)) {
+  BCEScriptStencil stencil(*this);
+  if (!stencil.init()) {
+    return false;
+  }
+
+  if (!JSScript::fullyInitFromStencil(cx, script, stencil)) {
     return false;
   }
 
