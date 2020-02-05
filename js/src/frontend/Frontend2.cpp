@@ -6,8 +6,7 @@
 
 #include "frontend/Frontend2.h"
 
-#include "mozilla/ScopeExit.h"
-#include "mozilla/Span.h"  // mozilla::Span
+#include "mozilla/Span.h"  // mozilla::{Span, MakeSpan}
 
 #include <stddef.h>  // size_t
 #include <stdint.h>  // uint8_t, uint32_t
@@ -20,9 +19,9 @@
 #include "gc/Rooting.h"                    // RootedScriptSourceObject
 #include "js/HeapAPI.h"                    // JS::GCCellPtr
 #include "js/RootingAPI.h"                 // JS::Handle
-#include "js/TypeDecls.h"  // Rooted{Script,Value,String,Object}, jsbytecode
-#include "vm/JSAtom.h"     // AtomizeUTF8Chars
-#include "vm/JSScript.h"   // JSScript
+#include "js/TypeDecls.h"                  // Rooted{Script,Value,String,Object}
+#include "vm/JSAtom.h"                     // AtomizeUTF8Chars
+#include "vm/JSScript.h"                   // JSScript
 
 #include "vm/JSContext-inl.h"  // AutoKeepAtoms (used by BytecodeCompiler)
 
@@ -32,71 +31,78 @@ using namespace js::gc;
 using namespace js::frontend;
 using namespace js;
 
-// https://stackoverflow.com/questions/3407012/c-rounding-up-to-the-nearest-multiple-of-a-number
-int roundUp(int numToRound, int multiple) {
-  // assert(multiple && ((multiple & (multiple - 1)) == 0));
-  return (numToRound + multiple - 1) & -multiple;
-}
-
 namespace js {
 
 namespace frontend {
 
-/* static */
-bool Jsparagus::initScript(JSContext* cx, JS::Handle<JSScript*> script,
-                           const JsparagusResult& jsparagus) {
-  uint32_t numGCThings = 1;
-  if (!JSScript::createPrivateScriptData(cx, script, numGCThings)) {
-    return false;
+class SmooshScriptStencil : public ScriptStencil {
+  const JsparagusResult& jsparagus_;
+
+ public:
+  explicit SmooshScriptStencil(const JsparagusResult& jsparagus)
+      : jsparagus_(jsparagus) {}
+
+  void init() {
+    lineno = 1;
+    column = 0;
+
+    natoms = jsparagus_.strings.len;
+
+    ngcthings = 1;
+
+    numResumeOffsets = 0;
+    numScopeNotes = 0;
+    numTryNotes = 0;
+
+    mainOffset = 0;
+    nfixed = 0;
+    nslots = nfixed + jsparagus_.maximum_stack_depth;
+    bodyScopeIndex = 0;
+    numICEntries = jsparagus_.num_ic_entries;
+    numBytecodeTypeSets = 0;
+
+    strict = false;
+    bindingsAccessedDynamically = false;
+    hasCallSiteObj = false;
+    isForEval = false;
+    isModule = false;
+    isFunction = false;
+    hasNonSyntacticScope = false;
+    needsFunctionEnvironmentObjects = false;
+    hasModuleGoal = false;
+
+    code = mozilla::MakeSpan(jsparagus_.bytecode.data, jsparagus_.bytecode.len);
+    MOZ_ASSERT(notes.IsEmpty());
   }
 
-  mozilla::Span<JS::GCCellPtr> gcthings = script->data_->gcthings();
-  gcthings[0] = JS::GCCellPtr(&cx->global()->emptyGlobalScope());
-
-  uint32_t natoms = jsparagus.strings.len;
-  if (!script->createScriptData(cx, natoms)) {
-    return false;
-  }
-  for (uint32_t i = 0; i < natoms; i++) {
-    const CVec<uint8_t>& string = jsparagus.strings.data[i];
-    script->getAtom(i) =
-        AtomizeUTF8Chars(cx, (const char*)string.data, string.len);
+  virtual bool finishGCThings(JSContext* cx,
+                              mozilla::Span<JS::GCCellPtr> gcthings) const {
+    gcthings[0] = JS::GCCellPtr(&cx->global()->emptyGlobalScope());
+    return true;
   }
 
-  uint32_t codeLength = jsparagus.bytecode.len;
+  virtual bool initAtomMap(JSContext* cx, GCPtrAtom* atoms) const {
+    for (uint32_t i = 0; i < natoms; i++) {
+      const CVec<uint8_t>& string = jsparagus_.strings.data[i];
+      JSAtom* atom = AtomizeUTF8Chars(cx, (const char*)string.data, string.len);
+      if (!atom) {
+        return false;
+      }
+      atoms[i] = atom;
+    }
 
-  // We only want one byte of notes, but JSScript::createImmutableScriptData
-  // requires us to pad them to fill the space before the next (32-bit-aligned)
-  // field. See the layout comment on class ImmutableScriptData.
-  uint32_t noteLength =
-      roundUp(sizeof(ImmutableScriptData::Flags) + jsparagus.bytecode.len + 1,
-              4) -
-      (sizeof(ImmutableScriptData::Flags) + jsparagus.bytecode.len);
-
-  uint32_t numResumeOffsets = 0;
-  uint32_t numScopeNotes = 0;
-  uint32_t numTryNotes = 0;
-  if (!script->createImmutableScriptData(cx, codeLength, noteLength,
-                                         numResumeOffsets, numScopeNotes,
-                                         numTryNotes)) {
-    return false;
+    return true;
   }
-  js::ImmutableScriptData* data = script->immutableScriptData();
 
-  // Initialize POD fields
-  data->mainOffset = 0;
-  data->nfixed = 0;
-  data->nslots = data->nfixed + jsparagus.maximum_stack_depth;
-  data->bodyScopeIndex = 0;
-  data->numICEntries = jsparagus.num_ic_entries;
-  data->numBytecodeTypeSets = 0;
+  virtual void finishResumeOffsets(
+      mozilla::Span<uint32_t> resumeOffsets) const {}
 
-  // Initialize trailing arrays
-  std::copy_n(jsparagus.bytecode.data, codeLength, data->code());
-  std::fill_n(data->notes(), noteLength, SRC_NULL);
+  virtual void finishScopeNotes(mozilla::Span<ScopeNote> scopeNotes) const {}
 
-  return script->shareScriptData(cx);
-}
+  virtual void finishTryNotes(mozilla::Span<JSTryNote> tryNotes) const {}
+
+  virtual void finishInnerFunctions() const {}
+};
 
 // Free given JsparagusResult on leaving scope.
 class AutoFreeJsparagusResult {
@@ -113,14 +119,14 @@ class AutoFreeJsparagusResult {
   }
 };
 
-void ReportVisageCompileError(JSContext* cx, ErrorMetadata&& metadata, int errorNumber, ...) {
+void ReportVisageCompileError(JSContext* cx, ErrorMetadata&& metadata,
+                              int errorNumber, ...) {
   va_list args;
   va_start(args, errorNumber);
-  ReportCompileError(cx, std::move(metadata), /* notes = */ nullptr, JSREPORT_ERROR,
-                     errorNumber, &args);
+  ReportCompileError(cx, std::move(metadata), /* notes = */ nullptr,
+                     JSREPORT_ERROR, errorNumber, &args);
   va_end(args);
 }
-
 
 /* static */
 JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
@@ -148,8 +154,9 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
     metadata.lineNumber = 1;
     metadata.columnNumber = 0;
     metadata.isMuted = false;
-    ReportVisageCompileError(cx, std::move(metadata), JSMSG_VISAGE_COMPILE_ERROR,
-                             reinterpret_cast<const char*>(jsparagus.error.data));
+    ReportVisageCompileError(
+        cx, std::move(metadata), JSMSG_VISAGE_COMPILE_ERROR,
+        reinterpret_cast<const char*>(jsparagus.error.data));
     return nullptr;
   }
 
@@ -160,7 +167,8 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
 
   *unimplemented = false;
 
-  RootedScriptSourceObject sso(cx, frontend::CreateScriptSourceObject(cx, options));
+  RootedScriptSourceObject sso(cx,
+                               frontend::CreateScriptSourceObject(cx, options));
   if (!sso) {
     return nullptr;
   }
@@ -171,10 +179,12 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
     return nullptr;
   }
 
-  RootedScript script(cx, JSScript::Create(cx, cx->global(), options,
-                                           sso, 0, length, 0, length, 1, 0));
+  RootedScript script(cx, JSScript::Create(cx, cx->global(), options, sso, 0,
+                                           length, 0, length, 1, 0));
 
-  if (!initScript(cx, script, jsparagus)) {
+  SmooshScriptStencil stencil(jsparagus);
+  stencil.init();
+  if (!JSScript::fullyInitFromStencil(cx, script, stencil)) {
     return nullptr;
   }
 
@@ -196,8 +206,7 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
   return script;
 }
 
-bool RustParseScript(JSContext* cx, const uint8_t* bytes, size_t length)
-{
+bool RustParseScript(JSContext* cx, const uint8_t* bytes, size_t length) {
   if (test_parse_script(bytes, length)) {
     return true;
   }
@@ -205,8 +214,7 @@ bool RustParseScript(JSContext* cx, const uint8_t* bytes, size_t length)
   return false;
 }
 
-bool RustParseModule(JSContext* cx, const uint8_t* bytes, size_t length)
-{
+bool RustParseModule(JSContext* cx, const uint8_t* bytes, size_t length) {
   if (test_parse_module(bytes, length)) {
     return true;
   }
