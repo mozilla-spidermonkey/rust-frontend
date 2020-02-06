@@ -1,4 +1,17 @@
 #!/bin/bash
+#
+# merge-mc.sh - Merge from mozilla-central to rust-frontend
+#
+# This requires three directories side by side:
+#
+# -   mozilla-central/ is an hg clone of mozilla-central
+# -   mozilla-central-cinnabar/ is a git-cinnabar clone of mozilla-central
+# -   rust-frontend/ is a git clone of rust-frontend
+#
+# rust-frontend and rust-frontend/js/jsparagus must be clean.
+# The script refuses to run if you've got changes in rust-frontend/js/jsparagus.
+# Updating rust-frontend to the current jsparagus revision is a separate step,
+# something like: `git add js/jsparagus; git commit -m "Update jsparagus."`
 
 set -eux
 
