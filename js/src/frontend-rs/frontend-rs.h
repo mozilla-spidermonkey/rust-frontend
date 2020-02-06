@@ -24,6 +24,8 @@ struct JsparagusResult {
   ///
   /// A function of `bytecode`. See `JOF_IC`.
   uint32_t num_ic_entries;
+  /// Number of instructions in this script that have JOF_TYPESET.
+  uint32_t num_type_sets;
 };
 
 struct JsparagusCompileOptions {
