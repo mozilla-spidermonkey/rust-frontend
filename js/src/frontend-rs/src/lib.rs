@@ -59,6 +59,9 @@ pub struct JsparagusResult {
     ///
     /// A function of `bytecode`. See `JOF_IC`.
     num_ic_entries: u32,
+
+    /// Number of instructions in this script that have JOF_TYPESET.
+    num_type_sets: u32,
 }
 
 enum JsparagusError {
@@ -83,6 +86,7 @@ pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize, options
             ),
             maximum_stack_depth: result.maximum_stack_depth,
             num_ic_entries: result.num_ic_entries,
+            num_type_sets: result.num_type_sets,
         },
         Err(JsparagusError::GenericError(message)) => JsparagusResult {
             unimplemented: false,
@@ -91,6 +95,7 @@ pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize, options
             strings: CVec::empty(),
             maximum_stack_depth: 0,
             num_ic_entries: 0,
+            num_type_sets: 0,
         },
         Err(JsparagusError::NotImplemented) => JsparagusResult {
             unimplemented: true,
@@ -99,6 +104,7 @@ pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize, options
             strings: CVec::empty(),
             maximum_stack_depth: 0,
             num_ic_entries: 0,
+            num_type_sets: 0,
         },
     }
 }

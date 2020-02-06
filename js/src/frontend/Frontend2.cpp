@@ -55,7 +55,7 @@ class SmooshScriptStencil : public ScriptStencil {
     nslots = nfixed + jsparagus_.maximum_stack_depth;
     bodyScopeIndex = 0;
     numICEntries = jsparagus_.num_ic_entries;
-    numBytecodeTypeSets = 0;
+    numBytecodeTypeSets = jsparagus_.num_type_sets;
 
     strict = false;
     bindingsAccessedDynamically = false;
