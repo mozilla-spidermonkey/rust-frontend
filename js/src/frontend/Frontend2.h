@@ -31,9 +31,6 @@ class GlobalScriptInfo;
 // This is declarated as a class mostly to solve dependency around `friend`
 // declarations in the simple way.
 class Jsparagus {
-  static bool initScript(JSContext* cx, JS::Handle<JSScript*> script,
-                         const JsparagusResult& jsparagus);
-
  public:
   static JSScript* compileGlobalScript(
       CompilationInfo& compilationInfo, JS::SourceText<mozilla::Utf8Unit>& srcBuf,
@@ -42,8 +39,10 @@ class Jsparagus {
 
 // Use the Rust frontend to parse and free the generated AST. Returns true if no
 // error were detected while parsing.
-MOZ_MUST_USE bool RustParseScript(JSContext* cx, const uint8_t* bytes, size_t length);
-MOZ_MUST_USE bool RustParseModule(JSContext* cx, const uint8_t* bytes, size_t length);
+MOZ_MUST_USE bool RustParseScript(JSContext* cx, const uint8_t* bytes,
+                                  size_t length);
+MOZ_MUST_USE bool RustParseModule(JSContext* cx, const uint8_t* bytes,
+                                  size_t length);
 
 }  // namespace frontend
 
