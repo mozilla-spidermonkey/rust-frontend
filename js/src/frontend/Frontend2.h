@@ -36,7 +36,7 @@ class Jsparagus {
 
  public:
   static JSScript* compileGlobalScript(
-      GlobalScriptInfo& info, JS::SourceText<mozilla::Utf8Unit>& srcBuf,
+      CompilationInfo& compilationInfo, JS::SourceText<mozilla::Utf8Unit>& srcBuf,
       bool* unimplemented);
 };
 

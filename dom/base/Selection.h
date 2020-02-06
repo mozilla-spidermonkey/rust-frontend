@@ -153,7 +153,7 @@ class Selection final : public nsSupportsWeakReference,
                           ScrollAxis aVertical = ScrollAxis(),
                           ScrollAxis aHorizontal = ScrollAxis(),
                           int32_t aFlags = 0);
-  static nsresult SubtractRange(StyledRange* aRange, nsRange* aSubtract,
+  static nsresult SubtractRange(StyledRange& aRange, nsRange& aSubtract,
                                 nsTArray<StyledRange>* aOutput);
 
  private:
@@ -734,19 +734,18 @@ class Selection final : public nsSupportsWeakReference,
   /**
    * Binary searches the given sorted array of ranges for the insertion point
    * for the given node/offset. The given comparator is used, and the index
-   * where the point should appear in the array is placed in *aInsertionPoint.
+   * where the point should appear in the array is returned.
 
    * If there is an item in the array equal to the input point (aPointNode,
    * aPointOffset), we will return the index of this item.
    *
-   * @param aInsertionPoint can be in [0, `aElementArray->Length()`].
+   * @return the index where the point should appear in the array. In
+   *         [0, `aElementArray->Length()`].
    */
-  static nsresult FindInsertionPoint(
-      const nsTArray<StyledRange>* aElementArray, const nsINode* aPointNode,
+  static int32_t FindInsertionPoint(
+      const nsTArray<StyledRange>* aElementArray, const nsINode& aPointNode,
       int32_t aPointOffset,
-      nsresult (*aComparator)(const nsINode*, int32_t, const nsRange*,
-                              int32_t*),
-      int32_t* aInsertionPoint);
+      int32_t (*aComparator)(const nsINode&, int32_t, const nsRange&));
 
   bool HasEqualRangeBoundariesAt(const nsRange& aRange,
                                  int32_t aRangeIndex) const;

@@ -673,54 +673,50 @@ void Selection::SetAnchorFocusRange(int32_t indx) {
   }
 }
 
-static nsresult CompareToRangeStart(const nsINode* aCompareNode,
-                                    int32_t aCompareOffset,
-                                    const nsRange* aRange, int32_t* aCmp) {
-  nsINode* start = aRange->GetStartContainer();
-  NS_ENSURE_STATE(aCompareNode && start);
+static int32_t CompareToRangeStart(const nsINode& aCompareNode,
+                                   int32_t aCompareOffset,
+                                   const nsRange& aRange) {
+  MOZ_ASSERT(aRange.GetStartContainer());
+  nsINode* start = aRange.GetStartContainer();
   // If the nodes that we're comparing are not in the same document or in the
   // same subtree, assume that aCompareNode will fall at the end of the ranges.
-  if (aCompareNode->GetComposedDoc() != start->GetComposedDoc() ||
+  if (aCompareNode.GetComposedDoc() != start->GetComposedDoc() ||
       !start->GetComposedDoc() ||
-      aCompareNode->SubtreeRoot() != start->SubtreeRoot()) {
+      aCompareNode.SubtreeRoot() != start->SubtreeRoot()) {
     NS_WARNING(
         "`CompareToRangeStart` couldn't compare nodes, pretending some order.");
-    *aCmp = 1;
-  } else {
-    // The points are in the same subtree, hence there has to be an order.
-    *aCmp = *nsContentUtils::ComparePoints(aCompareNode, aCompareOffset, start,
-                                           aRange->StartOffset());
+    return 1;
   }
-  return NS_OK;
+
+  // The points are in the same subtree, hence there has to be an order.
+  return *nsContentUtils::ComparePoints(&aCompareNode, aCompareOffset, start,
+                                        aRange.StartOffset());
 }
 
-static nsresult CompareToRangeEnd(const nsINode* aCompareNode,
-                                  int32_t aCompareOffset, const nsRange* aRange,
-                                  int32_t* aCmp) {
-  nsINode* end = aRange->GetEndContainer();
-  NS_ENSURE_STATE(aCompareNode && end);
+static int32_t CompareToRangeEnd(const nsINode& aCompareNode,
+                                 int32_t aCompareOffset,
+                                 const nsRange& aRange) {
+  MOZ_ASSERT(aRange.IsPositioned());
+  nsINode* end = aRange.GetEndContainer();
   // If the nodes that we're comparing are not in the same document or in the
   // same subtree, assume that aCompareNode will fall at the end of the ranges.
-  if (aCompareNode->GetComposedDoc() != end->GetComposedDoc() ||
+  if (aCompareNode.GetComposedDoc() != end->GetComposedDoc() ||
       !end->GetComposedDoc() ||
-      aCompareNode->SubtreeRoot() != end->SubtreeRoot()) {
+      aCompareNode.SubtreeRoot() != end->SubtreeRoot()) {
     NS_WARNING(
         "`CompareToRangeEnd` couldn't compare nodes, pretending some order.");
-    *aCmp = 1;
-  } else {
-    // The points are in the same subtree, hence there has to be an order.
-    *aCmp = *nsContentUtils::ComparePoints(aCompareNode, aCompareOffset, end,
-                                           aRange->EndOffset());
+    return 1;
   }
-  return NS_OK;
+
+  // The points are in the same subtree, hence there has to be an order.
+  return *nsContentUtils::ComparePoints(&aCompareNode, aCompareOffset, end,
+                                        aRange.EndOffset());
 }
 
-nsresult Selection::FindInsertionPoint(
-    const nsTArray<StyledRange>* aElementArray, const nsINode* aPointNode,
+int32_t Selection::FindInsertionPoint(
+    const nsTArray<StyledRange>* aElementArray, const nsINode& aPointNode,
     int32_t aPointOffset,
-    nsresult (*aComparator)(const nsINode*, int32_t, const nsRange*, int32_t*),
-    int32_t* aInsertionPoint) {
-  *aInsertionPoint = 0;
+    int32_t (*aComparator)(const nsINode&, int32_t, const nsRange&)) {
   int32_t beginSearch = 0;
   int32_t endSearch = aElementArray->Length();  // one beyond what to check
 
@@ -729,9 +725,7 @@ nsresult Selection::FindInsertionPoint(
     do {
       const nsRange* range = (*aElementArray)[center].mRange;
 
-      int32_t cmp;
-      nsresult rv = aComparator(aPointNode, aPointOffset, range, &cmp);
-      NS_ENSURE_SUCCESS(rv, rv);
+      int32_t cmp{aComparator(aPointNode, aPointOffset, *range)};
 
       if (cmp < 0) {  // point < cur
         endSearch = center;
@@ -745,8 +739,7 @@ nsresult Selection::FindInsertionPoint(
     } while (endSearch - beginSearch > 0);
   }
 
-  *aInsertionPoint = beginSearch;
-  return NS_OK;
+  return beginSearch;
 }
 
 // Selection::SubtractRange
@@ -756,21 +749,21 @@ nsresult Selection::FindInsertionPoint(
 //    difference to aOutput. It is assumed that the caller has checked that
 //    aRange and aSubtract do indeed overlap
 
-nsresult Selection::SubtractRange(StyledRange* aRange, nsRange* aSubtract,
+nsresult Selection::SubtractRange(StyledRange& aRange, nsRange& aSubtract,
                                   nsTArray<StyledRange>* aOutput) {
-  nsRange* range = aRange->mRange;
+  nsRange* range = aRange.mRange;
+
+  if (NS_WARN_IF(!range->IsPositioned())) {
+    return NS_ERROR_UNEXPECTED;
+  }
 
   // First we want to compare to the range start
-  int32_t cmp;
-  nsresult rv = CompareToRangeStart(range->GetStartContainer(),
-                                    range->StartOffset(), aSubtract, &cmp);
-  NS_ENSURE_SUCCESS(rv, rv);
+  int32_t cmp{CompareToRangeStart(*range->GetStartContainer(),
+                                  range->StartOffset(), aSubtract)};
 
   // Also, make a comparison to the range end
-  int32_t cmp2;
-  rv = CompareToRangeEnd(range->GetEndContainer(), range->EndOffset(),
-                         aSubtract, &cmp2);
-  NS_ENSURE_SUCCESS(rv, rv);
+  int32_t cmp2{CompareToRangeEnd(*range->GetEndContainer(), range->EndOffset(),
+                                 aSubtract)};
 
   // If the existing range left overlaps the new range (aSubtract) then
   // cmp < 0, and cmp2 < 0
@@ -782,7 +775,7 @@ nsresult Selection::SubtractRange(StyledRange* aRange, nsRange* aSubtract,
     // the end of aSubtract to the end of range
     ErrorResult error;
     RefPtr<nsRange> postOverlap =
-        nsRange::Create(aSubtract->EndRef(), range->EndRef(), error);
+        nsRange::Create(aSubtract.EndRef(), range->EndRef(), error);
     if (NS_WARN_IF(error.Failed())) {
       return error.StealNSResult();
     }
@@ -791,7 +784,7 @@ nsresult Selection::SubtractRange(StyledRange* aRange, nsRange* aSubtract,
       if (!aOutput->InsertElementAt(0, StyledRange(postOverlap))) {
         return NS_ERROR_OUT_OF_MEMORY;
       }
-      (*aOutput)[0].mTextRangeStyle = aRange->mTextRangeStyle;
+      (*aOutput)[0].mTextRangeStyle = aRange.mTextRangeStyle;
     }
   }
 
@@ -800,7 +793,7 @@ nsresult Selection::SubtractRange(StyledRange* aRange, nsRange* aSubtract,
     // the start of the range to the start of aSubtract
     ErrorResult error;
     RefPtr<nsRange> preOverlap =
-        nsRange::Create(range->StartRef(), aSubtract->StartRef(), error);
+        nsRange::Create(range->StartRef(), aSubtract.StartRef(), error);
     if (NS_WARN_IF(error.Failed())) {
       return error.StealNSResult();
     }
@@ -809,7 +802,7 @@ nsresult Selection::SubtractRange(StyledRange* aRange, nsRange* aSubtract,
       if (!aOutput->InsertElementAt(0, StyledRange(preOverlap))) {
         return NS_ERROR_OUT_OF_MEMORY;
       }
-      (*aOutput)[0].mTextRangeStyle = aRange->mTextRangeStyle;
+      (*aOutput)[0].mTextRangeStyle = aRange.mTextRangeStyle;
     }
   }
 
@@ -1012,16 +1005,15 @@ nsresult Selection::MaybeAddRangeAndTruncateOverlaps(nsRange* aRange,
 
   nsTArray<StyledRange> temp;
   for (int32_t i = overlaps.Length() - 1; i >= 0; i--) {
-    nsresult rv = SubtractRange(&overlaps[i], aRange, &temp);
+    nsresult rv = SubtractRange(overlaps[i], *aRange, &temp);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
   // Insert the new element into our "leftovers" array
-  int32_t insertionPoint;
-  rv = FindInsertionPoint(&temp, aRange->GetStartContainer(),
-                          aRange->StartOffset(), CompareToRangeStart,
-                          &insertionPoint);
-  NS_ENSURE_SUCCESS(rv, rv);
+  // `aRange` is positioned, so it has to have a start container.
+  int32_t insertionPoint{FindInsertionPoint(&temp, *aRange->GetStartContainer(),
+                                            aRange->StartOffset(),
+                                            CompareToRangeStart)};
 
   if (!temp.InsertElementAt(insertionPoint, StyledRange(aRange))) {
     return NS_ERROR_OUT_OF_MEMORY;
@@ -1124,6 +1116,14 @@ void Selection::GetRangesForInterval(nsINode& aBeginNode, int32_t aBeginOffset,
 nsresult Selection::GetRangesForIntervalArray(
     nsINode* aBeginNode, int32_t aBeginOffset, nsINode* aEndNode,
     int32_t aEndOffset, bool aAllowAdjacent, nsTArray<nsRange*>* aRanges) {
+  if (NS_WARN_IF(!aBeginNode)) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  if (NS_WARN_IF(!aEndNode)) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
   aRanges->Clear();
   int32_t startIndex, endIndex;
   nsresult res =
@@ -1145,6 +1145,14 @@ nsresult Selection::GetIndicesForInterval(
     const nsINode* aBeginNode, int32_t aBeginOffset, const nsINode* aEndNode,
     int32_t aEndOffset, bool aAllowAdjacent, int32_t& aStartIndex,
     int32_t& aEndIndex) const {
+  if (NS_WARN_IF(!aBeginNode)) {
+    return NS_ERROR_INVALID_POINTER;
+  }
+
+  if (NS_WARN_IF(!aEndNode)) {
+    return NS_ERROR_INVALID_POINTER;
+  }
+
   aStartIndex = -1;
   aEndIndex = -1;
 
@@ -1155,11 +1163,8 @@ nsresult Selection::GetIndicesForInterval(
 
   // Ranges that end before the given interval and begin after the given
   // interval can be discarded
-  int32_t endsBeforeIndex;
-  if (NS_FAILED(FindInsertionPoint(&mRanges, aEndNode, aEndOffset,
-                                   &CompareToRangeStart, &endsBeforeIndex))) {
-    return NS_OK;
-  }
+  int32_t endsBeforeIndex{FindInsertionPoint(&mRanges, *aEndNode, aEndOffset,
+                                             &CompareToRangeStart)};
 
   if (endsBeforeIndex == 0) {
     const nsRange* endRange = mRanges[endsBeforeIndex].mRange;
@@ -1180,11 +1185,9 @@ nsresult Selection::GetIndicesForInterval(
   }
   aEndIndex = endsBeforeIndex;
 
-  int32_t beginsAfterIndex;
-  if (NS_FAILED(FindInsertionPoint(&mRanges, aBeginNode, aBeginOffset,
-                                   &CompareToRangeEnd, &beginsAfterIndex))) {
-    return NS_OK;
-  }
+  int32_t beginsAfterIndex{FindInsertionPoint(
+      &mRanges, *aBeginNode, aBeginOffset, &CompareToRangeEnd)};
+
   if (beginsAfterIndex == (int32_t)mRanges.Length())
     return NS_OK;  // optimization: all ranges are strictly before us
 

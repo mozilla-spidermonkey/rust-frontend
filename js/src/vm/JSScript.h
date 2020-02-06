@@ -78,10 +78,10 @@ class DebugAPI;
 class DebugScript;
 
 namespace frontend {
-struct BytecodeEmitter;
 class FunctionBox;
 class ModuleSharedContext;
 class Jsparagus;
+class ScriptStencil;
 }  // namespace frontend
 
 namespace gc {
@@ -1573,8 +1573,8 @@ class alignas(uintptr_t) PrivateScriptData final {
   static bool Clone(JSContext* cx, js::HandleScript src, js::HandleScript dst,
                     js::MutableHandle<JS::GCVector<js::Scope*>> scopes);
 
-  static bool InitFromEmitter(JSContext* cx, js::HandleScript script,
-                              js::frontend::BytecodeEmitter* bce);
+  static bool InitFromStencil(JSContext* cx, js::HandleScript script,
+                              const js::frontend::ScriptStencil& stencil);
 
   void trace(JSTracer* trc);
 
@@ -1834,9 +1834,8 @@ class alignas(uint32_t) ImmutableScriptData final {
   static MOZ_MUST_USE XDRResult XDR(js::XDRState<mode>* xdr,
                                     js::HandleScript script);
 
-  static bool InitFromEmitter(JSContext* cx, js::HandleScript script,
-                              js::frontend::BytecodeEmitter* bce,
-                              uint32_t nslots);
+  static bool InitFromStencil(JSContext* cx, js::HandleScript script,
+                              const js::frontend::ScriptStencil& stencil);
 
   // ImmutableScriptData has trailing data so isn't copyable or movable.
   ImmutableScriptData(const ImmutableScriptData&) = delete;
@@ -1919,9 +1918,8 @@ class RuntimeScriptData final {
   // Mark this RuntimeScriptData for use in a new zone.
   void markForCrossZone(JSContext* cx);
 
-  static bool InitFromEmitter(JSContext* cx, js::HandleScript script,
-                              js::frontend::BytecodeEmitter* bce,
-                              uint32_t nslots);
+  static bool InitFromStencil(JSContext* cx, js::HandleScript script,
+                              const js::frontend::ScriptStencil& stencil);
 
   size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) {
     return mallocSizeOf(this) + mallocSizeOf(isd_.get());
@@ -2593,13 +2591,13 @@ class JSScript : public js::BaseScript {
   friend js::XDRResult js::ImmutableScriptData::XDR(js::XDRState<mode>* xdr,
                                                     js::HandleScript script);
 
-  friend bool js::RuntimeScriptData::InitFromEmitter(
+  friend bool js::RuntimeScriptData::InitFromStencil(
       JSContext* cx, js::HandleScript script,
-      js::frontend::BytecodeEmitter* bce, uint32_t nslot);
+      const js::frontend::ScriptStencil& stencil);
 
-  friend bool js::ImmutableScriptData::InitFromEmitter(
+  friend bool js::ImmutableScriptData::InitFromStencil(
       JSContext* cx, js::HandleScript script,
-      js::frontend::BytecodeEmitter* bce, uint32_t nslot);
+      const js::frontend::ScriptStencil& stencil);
 
   template <js::XDRMode mode>
   friend js::XDRResult js::PrivateScriptData::XDR(
@@ -2611,9 +2609,9 @@ class JSScript : public js::BaseScript {
       JSContext* cx, js::HandleScript src, js::HandleScript dst,
       js::MutableHandle<JS::GCVector<js::Scope*>> scopes);
 
-  friend bool js::PrivateScriptData::InitFromEmitter(
+  friend bool js::PrivateScriptData::InitFromStencil(
       JSContext* cx, js::HandleScript script,
-      js::frontend::BytecodeEmitter* bce);
+      const js::frontend::ScriptStencil& stencil);
 
   friend JSScript* js::detail::CopyScript(
       JSContext* cx, js::HandleScript src, js::HandleObject functionOrGlobal,
@@ -2643,7 +2641,7 @@ class JSScript : public js::BaseScript {
                                   js::Handle<js::LazyScript*> lazy);
 
   // NOTE: If you use createPrivateScriptData directly instead of via
-  // fullyInitFromEmitter, you are responsible for notifying the debugger
+  // fullyInitFromStencil, you are responsible for notifying the debugger
   // after successfully creating the script.
   static bool createPrivateScriptData(JSContext* cx,
                                       JS::Handle<JSScript*> script,
@@ -2653,8 +2651,8 @@ class JSScript : public js::BaseScript {
   void initFromFunctionBox(js::frontend::FunctionBox* funbox);
 
  public:
-  static bool fullyInitFromEmitter(JSContext* cx, js::HandleScript script,
-                                   js::frontend::BytecodeEmitter* bce);
+  static bool fullyInitFromStencil(JSContext* cx, js::HandleScript script,
+                                   const js::frontend::ScriptStencil& stencil);
 
 #ifdef DEBUG
  private:
@@ -2689,7 +2687,7 @@ class JSScript : public js::BaseScript {
 
   bool isUncompleted() const {
     // code() becomes non-null only if this script is complete.
-    // See the comment in JSScript::fullyInitFromEmitter.
+    // See the comment in JSScript::fullyInitFromStencil.
     return !code();
   }
 

@@ -75,9 +75,9 @@
 #if defined(JS_BUILD_BINAST)
 #  include "frontend/BinASTParser.h"
 #endif  // defined(JS_BUILD_BINAST)
+#include "frontend/CompilationInfo.h"
 #include "frontend/Frontend2.h"
 #include "frontend/ModuleSharedContext.h"
-#include "frontend/ParseInfo.h"
 #include "frontend/Parser.h"
 #include "gc/PublicIterators.h"
 #include "jit/arm/Simulator-arm.h"
@@ -5121,21 +5121,21 @@ static bool GetModuleLoadPath(JSContext* cx, unsigned argc, Value* vp) {
 #if defined(JS_BUILD_BINAST)
 
 using js::frontend::BinASTParser;
+using js::frontend::CompilationInfo;
 using js::frontend::Directives;
 using js::frontend::GlobalSharedContext;
-using js::frontend::ParseInfo;
 using js::frontend::ParseNode;
 
 template <typename Tok>
 static bool ParseBinASTData(JSContext* cx, uint8_t* buf_data,
                             uint32_t buf_length, GlobalSharedContext* globalsc,
-                            ParseInfo& pci,
+                            CompilationInfo& compilationInfo,
                             const JS::ReadOnlyCompileOptions& options,
                             HandleScriptSourceObject sourceObj) {
   MOZ_ASSERT(globalsc);
 
   // Note: We need to keep `reader` alive as long as we can use `parsed`.
-  BinASTParser<Tok> reader(cx, pci, options, sourceObj);
+  BinASTParser<Tok> reader(cx, compilationInfo, options, sourceObj);
 
   JS::Result<ParseNode*> parsed = reader.parse(globalsc, buf_data, buf_length);
 
@@ -5239,20 +5239,20 @@ static bool BinParse(JSContext* cx, unsigned argc, Value* vp) {
       .setFileAndLine("<ArrayBuffer>", 1);
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  ParseInfo parseInfo(cx, allocScope);
-  if (!parseInfo.initFromOptions(cx, options)) {
+  CompilationInfo compilationInfo(cx, allocScope, options);
+  if (!compilationInfo.init(cx)) {
     return false;
   }
 
   Directives directives(false);
-  GlobalSharedContext globalsc(cx, ScopeKind::Global, parseInfo, directives,
-                               false);
+  GlobalSharedContext globalsc(cx, ScopeKind::Global, compilationInfo,
+                               directives, false);
 
   auto parseFunc = mode == Multipart
                        ? ParseBinASTData<frontend::BinASTTokenReaderMultipart>
                        : ParseBinASTData<frontend::BinASTTokenReaderContext>;
-  if (!parseFunc(cx, buf_data, buf_length, &globalsc, parseInfo, options,
-                 parseInfo.sourceObject)) {
+  if (!parseFunc(cx, buf_data, buf_length, &globalsc, compilationInfo, options,
+                 compilationInfo.sourceObject)) {
     return false;
   }
 
@@ -5266,11 +5266,11 @@ template <typename Unit>
 static bool FullParseTest(JSContext* cx,
                           const JS::ReadOnlyCompileOptions& options,
                           const Unit* units, size_t length,
-                          ParseInfo& parseInfo, ScriptSourceObject* sourceObject,
+                          CompilationInfo& compilationInfo, ScriptSourceObject* sourceObject,
                           js::frontend::ParseGoal goal) {
   using namespace js::frontend;
   Parser<FullParseHandler, Unit> parser(cx, options, units, length,
-                                        /* foldConstants = */ false, parseInfo,
+                                        /* foldConstants = */ false, compilationInfo,
                                         nullptr, nullptr,
                                         sourceObject);
   if (!parser.checkOptions()) {
@@ -5292,7 +5292,7 @@ static bool FullParseTest(JSContext* cx,
 
     ModuleBuilder builder(cx, module, &parser);
 
-    ModuleSharedContext modulesc(cx, module, parseInfo, nullptr, builder);
+    ModuleSharedContext modulesc(cx, module, compilationInfo, nullptr, builder);
     pn = parser.moduleBody(&modulesc);
   }
   if (!pn) {
@@ -5398,8 +5398,8 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  ParseInfo parseInfo(cx, allocScope);
-  if (!parseInfo.initFromOptions(cx, options)) {
+  CompilationInfo compilationInfo(cx, allocScope, options);
+  if (!compilationInfo.init(cx)) {
     return false;
   }
 
@@ -5412,14 +5412,14 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
   if (stableChars.isLatin1()) {
     const Latin1Char* chars_ = stableChars.latin1Range().begin().get();
     auto chars = reinterpret_cast<const mozilla::Utf8Unit*>(chars_);
-    if (!FullParseTest<mozilla::Utf8Unit>(cx, options, chars, length, parseInfo, sourceObject,
+    if (!FullParseTest<mozilla::Utf8Unit>(cx, options, chars, length, compilationInfo, sourceObject,
                                           goal)) {
       return false;
     }
   } else {
     MOZ_ASSERT(stableChars.isTwoByte());
     const char16_t* chars = stableChars.twoByteRange().begin().get();
-    if (!FullParseTest<char16_t>(cx, options, chars, length, parseInfo, sourceObject, goal)) {
+    if (!FullParseTest<char16_t>(cx, options, chars, length, compilationInfo, sourceObject, goal)) {
       return false;
     }
   }
@@ -5456,14 +5456,14 @@ static bool SyntaxParse(JSContext* cx, unsigned argc, Value* vp) {
   size_t length = scriptContents->length();
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  ParseInfo parseInfo(cx, allocScope);
-  if (!parseInfo.initFromOptions(cx, options)) {
+  CompilationInfo compilationInfo(cx, allocScope, options);
+  if (!compilationInfo.init(cx)) {
     return false;
   }
 
   Parser<frontend::SyntaxParseHandler, char16_t> parser(
-      cx, options, chars, length, false, parseInfo, nullptr, nullptr,
-      parseInfo.sourceObject);
+      cx, options, chars, length, false, compilationInfo, nullptr, nullptr,
+      compilationInfo.sourceObject);
   if (!parser.checkOptions()) {
     return false;
   }

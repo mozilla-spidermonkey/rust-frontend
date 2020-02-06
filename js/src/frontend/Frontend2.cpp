@@ -15,7 +15,7 @@
 #include "jsapi.h"
 
 #include "frontend-rs/frontend-rs.h"  // CVec, JsparagusResult, JsparagusCompileOptions, free_jsparagus, run_jsparagus
-#include "frontend/BytecodeCompilation.h"  // GlobalScriptInfo
+#include "frontend/CompilationInfo.h"      // CompilationInfo
 #include "frontend/SourceNotes.h"          // jssrcnote
 #include "gc/Rooting.h"                    // RootedScriptSourceObject
 #include "js/HeapAPI.h"                    // JS::GCCellPtr
@@ -123,7 +123,7 @@ void ReportVisageCompileError(JSContext* cx, ErrorMetadata&& metadata,
 }
 
 /* static */
-JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
+JSScript* Jsparagus::compileGlobalScript(CompilationInfo& compilationInfo,
                                          JS::SourceText<Utf8Unit>& srcBuf,
                                          bool* unimplemented) {
   // FIXME: check info members and return with *unimplemented = true
@@ -132,9 +132,9 @@ JSScript* Jsparagus::compileGlobalScript(GlobalScriptInfo& info,
   auto bytes = reinterpret_cast<const uint8_t*>(srcBuf.get());
   size_t length = srcBuf.length();
 
-  JSContext* cx = info.context();
+  JSContext* cx = compilationInfo.cx;
 
-  const auto& options = info.getOptions();
+  const auto& options = compilationInfo.options;
   JsparagusCompileOptions compileOptions;
   compileOptions.no_script_rval = options.noScriptRval;
 
