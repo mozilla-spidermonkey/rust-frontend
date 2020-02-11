@@ -37,11 +37,11 @@ class Smoosh {
       JS::SourceText<mozilla::Utf8Unit>& srcBuf, bool* unimplemented);
 };
 
-// Use the Rust frontend to parse and free the generated AST. Returns true if no
-// error were detected while parsing.
-MOZ_MUST_USE bool RustParseScript(JSContext* cx, const uint8_t* bytes,
+// Use the SmooshMonkey frontend to parse and free the generated AST. Returns
+// true if no error were detected while parsing.
+MOZ_MUST_USE bool SmooshParseScript(JSContext* cx, const uint8_t* bytes,
                                   size_t length);
-MOZ_MUST_USE bool RustParseModule(JSContext* cx, const uint8_t* bytes,
+MOZ_MUST_USE bool SmooshParseModule(JSContext* cx, const uint8_t* bytes,
                                   size_t length);
 
 }  // namespace frontend

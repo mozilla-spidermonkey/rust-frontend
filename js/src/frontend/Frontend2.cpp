@@ -207,19 +207,19 @@ JSScript* Smoosh::compileGlobalScript(CompilationInfo& compilationInfo,
   return script;
 }
 
-bool RustParseScript(JSContext* cx, const uint8_t* bytes, size_t length) {
+bool SmooshParseScript(JSContext* cx, const uint8_t* bytes, size_t length) {
   if (test_parse_script(bytes, length)) {
     return true;
   }
-  JS_ReportErrorASCII(cx, "Rust parse script failed");
+  JS_ReportErrorASCII(cx, "Smoosh parse script failed");
   return false;
 }
 
-bool RustParseModule(JSContext* cx, const uint8_t* bytes, size_t length) {
+bool SmooshParseModule(JSContext* cx, const uint8_t* bytes, size_t length) {
   if (test_parse_module(bytes, length)) {
     return true;
   }
-  JS_ReportErrorASCII(cx, "Rust parse module failed");
+  JS_ReportErrorASCII(cx, "Smoosh parse module failed");
   return false;
 }
 

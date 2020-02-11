@@ -221,7 +221,7 @@ JSScript* frontend::CompileGlobalScript(CompilationInfo& compilationInfo,
 JSScript* frontend::CompileGlobalScript(CompilationInfo& compilationInfo,
                                         GlobalSharedContext& globalsc,
                                         JS::SourceText<Utf8Unit>& srcBuf) {
-  if (compilationInfo.cx->options().tryRustFrontend()) {
+  if (compilationInfo.cx->options().trySmoosh()) {
     bool unimplemented = false;
     auto script =
         Smoosh::compileGlobalScript(compilationInfo, srcBuf, &unimplemented);
