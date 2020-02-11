@@ -49,11 +49,24 @@ pub struct JsparagusResult {
     bytecode: CVec<u8>,
     strings: CVec<CVec<u8>>,
 
+    /// Line and column numbers for the first character of source.
+    lineno: usize,
+    column: usize,
+
+    /// Offset of main entry point from code, after predef'ing prologue.
+    main_offset: usize,
+
+    /// Fixed frame slots.
+    max_fixed_slots: u32,
+
     /// Maximum stack depth before any instruction.
     ///
     /// This value is a function of `bytecode`: there's only one correct value
     /// for a given script.
     maximum_stack_depth: u32,
+
+    /// Index into the gcthings array of the body scope.
+    body_scope_index: u32,
 
     /// Number of instructions in this script that have IC entries.
     ///
@@ -62,6 +75,17 @@ pub struct JsparagusResult {
 
     /// Number of instructions in this script that have JOF_TYPESET.
     num_type_sets: u32,
+
+    /// `See BaseScript::ImmutableFlags`.
+    strict: bool,
+    bindings_accessed_dynamically: bool,
+    has_call_site_obj: bool,
+    is_for_eval: bool,
+    is_module: bool,
+    is_function: bool,
+    has_non_syntactic_scope: bool,
+    needs_function_environment_objects: bool,
+    has_module_goal: bool,
 }
 
 enum JsparagusError {
@@ -84,27 +108,69 @@ pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize, options
                     .map(|s| CVec::from(s.into_bytes()))
                     .collect(),
             ),
+            lineno: result.lineno,
+            column: result.column,
+            main_offset: result.main_offset,
+            max_fixed_slots: result.max_fixed_slots,
             maximum_stack_depth: result.maximum_stack_depth,
+            body_scope_index: result.body_scope_index,
             num_ic_entries: result.num_ic_entries,
             num_type_sets: result.num_type_sets,
+            strict: result.strict,
+            bindings_accessed_dynamically: result.bindings_accessed_dynamically,
+            has_call_site_obj: result.has_call_site_obj,
+            is_for_eval: result.is_for_eval,
+            is_module: result.is_module,
+            is_function: result.is_function,
+            has_non_syntactic_scope: result.has_non_syntactic_scope,
+            needs_function_environment_objects: result.needs_function_environment_objects,
+            has_module_goal: result.has_module_goal,
         },
         Err(JsparagusError::GenericError(message)) => JsparagusResult {
             unimplemented: false,
             error: CVec::from(format!("{}\0", message).into_bytes()),
             bytecode: CVec::empty(),
             strings: CVec::empty(),
+            lineno: 0,
+            column: 0,
+            main_offset: 0,
+            max_fixed_slots: 0,
             maximum_stack_depth: 0,
+            body_scope_index: 0,
             num_ic_entries: 0,
             num_type_sets: 0,
+            strict: false,
+            bindings_accessed_dynamically: false,
+            has_call_site_obj: false,
+            is_for_eval: false,
+            is_module: false,
+            is_function: false,
+            has_non_syntactic_scope: false,
+            needs_function_environment_objects: false,
+            has_module_goal: false,
         },
         Err(JsparagusError::NotImplemented) => JsparagusResult {
             unimplemented: true,
             error: CVec::empty(),
             bytecode: CVec::empty(),
             strings: CVec::empty(),
+            lineno: 0,
+            column: 0,
+            main_offset: 0,
+            max_fixed_slots: 0,
             maximum_stack_depth: 0,
+            body_scope_index: 0,
             num_ic_entries: 0,
             num_type_sets: 0,
+            strict: false,
+            bindings_accessed_dynamically: false,
+            has_call_site_obj: false,
+            is_for_eval: false,
+            is_module: false,
+            is_function: false,
+            has_non_syntactic_scope: false,
+            needs_function_environment_objects: false,
+            has_module_goal: false,
         },
     }
 }

@@ -39,8 +39,8 @@ class SmooshScriptStencil : public ScriptStencil {
   const JsparagusResult& jsparagus_;
 
   void init() {
-    lineno = 1;
-    column = 0;
+    lineno = jsparagus_.lineno;
+    column = jsparagus_.column;
 
     natoms = jsparagus_.strings.len;
 
@@ -50,22 +50,23 @@ class SmooshScriptStencil : public ScriptStencil {
     numScopeNotes = 0;
     numTryNotes = 0;
 
-    mainOffset = 0;
-    nfixed = 0;
+    mainOffset = jsparagus_.main_offset;
+    nfixed = jsparagus_.max_fixed_slots;
     nslots = nfixed + jsparagus_.maximum_stack_depth;
-    bodyScopeIndex = 0;
+    bodyScopeIndex = jsparagus_.body_scope_index;
     numICEntries = jsparagus_.num_ic_entries;
     numBytecodeTypeSets = jsparagus_.num_type_sets;
 
-    strict = false;
-    bindingsAccessedDynamically = false;
-    hasCallSiteObj = false;
-    isForEval = false;
-    isModule = false;
-    isFunction = false;
-    hasNonSyntacticScope = false;
-    needsFunctionEnvironmentObjects = false;
-    hasModuleGoal = false;
+    strict = jsparagus_.strict;
+    bindingsAccessedDynamically = jsparagus_.bindings_accessed_dynamically;
+    hasCallSiteObj = jsparagus_.has_call_site_obj;
+    isForEval = jsparagus_.is_for_eval;
+    isModule = jsparagus_.is_module;
+    isFunction = jsparagus_.is_function;
+    hasNonSyntacticScope = jsparagus_.has_non_syntactic_scope;
+    needsFunctionEnvironmentObjects =
+        jsparagus_.needs_function_environment_objects;
+    hasModuleGoal = jsparagus_.has_module_goal;
 
     code = mozilla::MakeSpan(jsparagus_.bytecode.data, jsparagus_.bytecode.len);
     MOZ_ASSERT(notes.IsEmpty());
