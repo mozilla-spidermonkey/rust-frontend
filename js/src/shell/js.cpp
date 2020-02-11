@@ -5320,7 +5320,7 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   frontend::ParseGoal goal = frontend::ParseGoal::Script;
-  bool rustFrontend = false;
+  bool smoosh = false;
 
   if (args.length() >= 2) {
     if (!args[1].isObject()) {
@@ -5347,16 +5347,24 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
 
-    RootedValue optionRustFrontend(cx);
-    if (!JS_GetProperty(cx, objOptions, "rustFrontend", &optionRustFrontend)) {
+    bool found = false;
+    if (!JS_HasProperty(cx, objOptions, "rustFrontend", &found)) {
+      return false;
+    }
+    if (found) {
+      JS_ReportErrorASCII(cx, "'rustFrontend' option is renamed to 'smoosh'");
+    }
+
+    RootedValue optionSmoosh(cx);
+    if (!JS_GetProperty(cx, objOptions, "smoosh", &optionSmoosh)) {
       return false;
     }
 
-    if (optionRustFrontend.isBoolean()) {
-      rustFrontend = optionRustFrontend.toBoolean();
-    } else if (!optionRustFrontend.isUndefined()) {
-      const char* typeName = InformalValueTypeName(optionRustFrontend);
-      JS_ReportErrorASCII(cx, "option `rustFrontend` should be a boolean, got %s",
+    if (optionSmoosh.isBoolean()) {
+      smoosh = optionSmoosh.toBoolean();
+    } else if (!optionSmoosh.isUndefined()) {
+      const char* typeName = InformalValueTypeName(optionSmoosh);
+      JS_ReportErrorASCII(cx, "option `smoosh` should be a boolean, got %s",
                           typeName);
       return false;
     }
@@ -5370,22 +5378,22 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   size_t length = scriptContents->length();
-  if (rustFrontend) {
+  if (smoosh) {
     if (stableChars.isLatin1()) {
       const Latin1Char* chars = stableChars.latin1Range().begin().get();
       if (goal == frontend::ParseGoal::Script) {
-        if (!RustParseScript(cx, chars, length)) {
+        if (!SmooshParseScript(cx, chars, length)) {
           return false;
         }
       } else {
-        if (!RustParseModule(cx, chars, length)) {
+        if (!SmooshParseModule(cx, chars, length)) {
           return false;
         }
       }
       args.rval().setUndefined();
       return true;
     }
-    JS_ReportErrorASCII(cx, "Rust parser does not support two-byte chars yet");
+    JS_ReportErrorASCII(cx, "SmooshMonkey does not support two-byte chars yet");
     return false;
   }
 
@@ -10274,8 +10282,8 @@ static MOZ_MUST_USE bool ProcessArgs(JSContext* cx, OptionParser* op) {
     JS::ContextOptionsRef(cx).toggleExtraWarnings();
   }
 
-  if (op->getBoolOption("rust-frontend")) {
-    JS::ContextOptionsRef(cx).setTryRustFrontend(true);
+  if (op->getBoolOption("smoosh")) {
+    JS::ContextOptionsRef(cx).setTrySmoosh(true);
   }
 
   /* |scriptArgs| gets bound on the global before any code is run. */
@@ -11471,7 +11479,7 @@ int main(int argc, char** argv, char** envp) {
       !op.addBoolOption('\0', "wasm-compile-and-serialize",
                         "Compile the wasm bytecode from stdin and serialize "
                         "the results to stdout") ||
-      !op.addBoolOption('\0', "rust-frontend", "Use Rust frontend")) {
+      !op.addBoolOption('\0', "smoosh", "Use SmooshMonkey")) {
     return EXIT_FAILURE;
   }
 

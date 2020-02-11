@@ -38,7 +38,7 @@ class JS_PUBLIC_API ContextOptions {
         werror_(false),
         strictMode_(false),
         extraWarnings_(false),
-        tryRustFrontend_(false),
+        trySmoosh_(false),
         fuzzing_(false) {
   }
 
@@ -179,11 +179,11 @@ class JS_PUBLIC_API ContextOptions {
     return *this;
   }
 
-  // Try compiling Rust frontend first, and fallback to C++ implementation when
-  // it fails.
-  bool tryRustFrontend() const { return tryRustFrontend_; }
-  ContextOptions& setTryRustFrontend(bool flag) {
-    tryRustFrontend_ = flag;
+  // Try compiling SmooshMonkey frontend first, and fallback to C++
+  // implementation when it fails.
+  bool trySmoosh() const { return trySmoosh_; }
+  ContextOptions& setTrySmoosh(bool flag) {
+    trySmoosh_ = flag;
     return *this;
   }
 
@@ -220,7 +220,7 @@ class JS_PUBLIC_API ContextOptions {
   bool werror_ : 1;
   bool strictMode_ : 1;
   bool extraWarnings_ : 1;
-  bool tryRustFrontend_ : 1;
+  bool trySmoosh_ : 1;
   bool fuzzing_ : 1;
 };
 
