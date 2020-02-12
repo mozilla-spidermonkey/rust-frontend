@@ -69,9 +69,9 @@ dependencies = [
 name = "ast"
 version = "0.1.0"
 dependencies = [
- "bumpalo 2.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde 1.0.102 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde_json 1.0.44 (registry+https://github.com/rust-lang/crates.io-index)",
+ "bumpalo",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -416,6 +416,7 @@ checksum = "8380105befe91099e6f69206164072c05bc92427ff6aa8a5171388317346dd75"
 name = "bumpalo"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad807f2fc2bf185eeb98ff3a901bd46dc5ad58163d0fa4577ba0d25674d71708"
 
 [[package]]
 name = "byte-tools"
@@ -464,16 +465,17 @@ checksum = "926013f2860c46252efceabb19f4a6b308197505082c609025aa6706c011d427"
 name = "cbindgen"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d94e15ad254cde8d71f12f8eeab1aa7ea997f02849f8eba4e81e6e7f46592b2"
 dependencies = [
- "clap 2.31.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
- "proc-macro2 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "quote 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde 1.0.102 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde_json 1.0.44 (registry+https://github.com/rust-lang/crates.io-index)",
- "syn 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "tempfile 3.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "toml 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "clap",
+ "log",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn",
+ "tempfile",
+ "toml 0.5.1",
 ]
 
 [[package]]
@@ -1155,8 +1157,9 @@ checksum = "18785c1ba806c258137c937e44ada9ee7e69a37e3c72077542cd2f069d78562a"
 name = "emitter"
 version = "0.1.0"
 dependencies = [
- "ast 0.1.0",
- "bumpalo 2.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ast",
+ "bumpalo",
+ "byteorder",
 ]
 
 [[package]]
@@ -1348,17 +1351,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "frontend-rs"
-version = "0.1.0"
-dependencies = [
- "ast 0.1.0",
- "bumpalo 2.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "cbindgen 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "emitter 0.1.0",
- "parser 0.1.0",
-]
-
-[[package]]
 name = "fuchsia-cprng"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1467,8 +1459,8 @@ dependencies = [
 name = "generated_parser"
 version = "0.1.0"
 dependencies = [
- "ast 0.1.0",
- "bumpalo 2.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ast",
+ "bumpalo",
 ]
 
 [[package]]
@@ -2011,10 +2003,10 @@ version = "0.1.0"
 dependencies = [
  "baldrdash",
  "encoding_c",
- "frontend-rs",
  "encoding_c_mem",
  "mozglue-static",
  "mozilla-central-workspace-hack",
+ "smoosh",
 ]
 
 [[package]]
@@ -2645,7 +2637,7 @@ dependencies = [
  "neqo-common",
  "serde",
  "serde_derive",
- "toml",
+ "toml 0.4.5",
 ]
 
 [[package]]
@@ -2967,9 +2959,10 @@ dependencies = [
 name = "parser"
 version = "0.1.0"
 dependencies = [
- "ast 0.1.0",
- "bumpalo 2.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "generated_parser 0.1.0",
+ "ast",
+ "bumpalo",
+ "generated_parser",
+ "unic-ucd-ident",
 ]
 
 [[package]]
@@ -3889,6 +3882,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ecf3b85f68e8abaa7555aa5abdb1153079387e60b718283d732f03897fcfc86"
 
 [[package]]
+name = "smoosh"
+version = "0.1.0"
+dependencies = [
+ "ast",
+ "bumpalo",
+ "cbindgen",
+ "emitter",
+ "parser",
+]
+
+[[package]]
 name = "socket2"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4016,7 +4020,7 @@ dependencies = [
  "time",
  "to_shmem",
  "to_shmem_derive",
- "toml",
+ "toml 0.4.5",
  "uluru",
  "unicode-bidi",
  "unicode-segmentation",
@@ -4445,8 +4449,9 @@ dependencies = [
 name = "toml"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8c96d7873fa7ef8bdeb3a9cda3ac48389b4154f32b9803b4bc26220b677b039"
 dependencies = [
- "serde 1.0.102 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
 ]
 
 [[package]]
@@ -4469,6 +4474,27 @@ checksum = "6d7b39d0c32eba57d52d334e4bdd150df6e755264eefaa1ae2e7cd125f35e1ca"
 dependencies = [
  "arrayvec",
 ]
+
+[[package]]
+name = "unic-char-property"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8c57a407d9b6fa02b4795eb81c5b6652060a15a7903ea981f3d723e6c0be221"
+dependencies = [
+ "unic-char-range",
+]
+
+[[package]]
+name = "unic-char-range"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0398022d5f700414f6b899e10b8348231abf9173fa93144cbc1a43b9793c1fbc"
+
+[[package]]
+name = "unic-common"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80d7ff825a6a654ee85a63e80f92f054f904f21e7d12da4e22f9834a4aaa35bc"
 
 [[package]]
 name = "unic-langid"
@@ -4497,6 +4523,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "86ab4a5be993d5b9d082476a7dd7149c083cf63a72469e700c09e69784511957"
 dependencies = [
  "tinystr",
+]
+
+[[package]]
+name = "unic-ucd-ident"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e230a37c0381caa9219d67cf063aa3a375ffed5bf541a452db16e744bdab6987"
+dependencies = [
+ "unic-char-property",
+ "unic-char-range",
+ "unic-ucd-version",
+]
+
+[[package]]
+name = "unic-ucd-version"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96bd2f2237fe450fcd0a1d2f5f4e91711124f7857ba2e964247776ebeeb7b0c4"
+dependencies = [
+ "unic-common",
 ]
 
 [[package]]

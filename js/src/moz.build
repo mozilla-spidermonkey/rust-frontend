@@ -459,7 +459,6 @@ DIRS += [
     'build',
     'debugger',
     'frontend',
-    'frontend-rs',
     'gc',
     'jit',
     'wasm',

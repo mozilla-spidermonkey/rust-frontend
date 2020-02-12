@@ -17,5 +17,5 @@ extern crate baldrdash;
 
 extern crate encoding_c;
 extern crate encoding_c_mem;
-extern crate frontend_rs;
+extern crate smoosh;
 extern crate mozglue_static;
