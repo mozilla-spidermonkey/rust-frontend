@@ -20,7 +20,7 @@
 #include "frontend/EitherParser.h"
 #include "frontend/ErrorReporter.h"
 #include "frontend/FoldConstants.h"
-#include "frontend/Frontend2.h"  // Jsparagus
+#include "frontend/Frontend2.h"  // Smoosh
 #include "frontend/ModuleSharedContext.h"
 #include "frontend/Parser.h"
 #include "js/SourceText.h"
@@ -223,7 +223,8 @@ JSScript* frontend::CompileGlobalScript(CompilationInfo& compilationInfo,
                                         JS::SourceText<Utf8Unit>& srcBuf) {
   if (compilationInfo.cx->options().tryRustFrontend()) {
     bool unimplemented = false;
-    auto script = Jsparagus::compileGlobalScript(compilationInfo, srcBuf, &unimplemented);
+    auto script =
+        Smoosh::compileGlobalScript(compilationInfo, srcBuf, &unimplemented);
     if (!unimplemented) {
       return script;
     }

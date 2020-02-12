@@ -18,7 +18,7 @@
 
 struct JSContext;
 
-struct JsparagusResult;
+struct SmooshResult;
 
 namespace js {
 
@@ -30,11 +30,11 @@ class GlobalScriptInfo;
 
 // This is declarated as a class mostly to solve dependency around `friend`
 // declarations in the simple way.
-class Jsparagus {
+class Smoosh {
  public:
   static JSScript* compileGlobalScript(
-      CompilationInfo& compilationInfo, JS::SourceText<mozilla::Utf8Unit>& srcBuf,
-      bool* unimplemented);
+      CompilationInfo& compilationInfo,
+      JS::SourceText<mozilla::Utf8Unit>& srcBuf, bool* unimplemented);
 };
 
 // Use the Rust frontend to parse and free the generated AST. Returns true if no

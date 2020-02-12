@@ -13,15 +13,15 @@
 
 #include "jsapi.h"
 
-#include "frontend/CompilationInfo.h"      // CompilationInfo
-#include "frontend/smoosh/smoosh.h"        // CVec, JsparagusResult, JsparagusCompileOptions, free_jsparagus, run_jsparagus
-#include "frontend/SourceNotes.h"          // jssrcnote
-#include "gc/Rooting.h"                    // RootedScriptSourceObject
-#include "js/HeapAPI.h"                    // JS::GCCellPtr
-#include "js/RootingAPI.h"                 // JS::Handle
-#include "js/TypeDecls.h"                  // Rooted{Script,Value,String,Object}
-#include "vm/JSAtom.h"                     // AtomizeUTF8Chars
-#include "vm/JSScript.h"                   // JSScript
+#include "frontend/CompilationInfo.h"  // CompilationInfo
+#include "frontend/smoosh/smoosh.h"  // CVec, SmooshResult, SmooshCompileOptions, free_smoosh, run_smoosh
+#include "frontend/SourceNotes.h"  // jssrcnote
+#include "gc/Rooting.h"            // RootedScriptSourceObject
+#include "js/HeapAPI.h"            // JS::GCCellPtr
+#include "js/RootingAPI.h"         // JS::Handle
+#include "js/TypeDecls.h"          // Rooted{Script,Value,String,Object}
+#include "vm/JSAtom.h"             // AtomizeUTF8Chars
+#include "vm/JSScript.h"           // JSScript
 
 #include "vm/JSContext-inl.h"  // AutoKeepAtoms (used by BytecodeCompiler)
 
@@ -36,13 +36,13 @@ namespace js {
 namespace frontend {
 
 class SmooshScriptStencil : public ScriptStencil {
-  const JsparagusResult& jsparagus_;
+  const SmooshResult& result_;
 
   void init() {
-    lineno = jsparagus_.lineno;
-    column = jsparagus_.column;
+    lineno = result_.lineno;
+    column = result_.column;
 
-    natoms = jsparagus_.strings.len;
+    natoms = result_.strings.len;
 
     ngcthings = 1;
 
@@ -50,31 +50,30 @@ class SmooshScriptStencil : public ScriptStencil {
     numScopeNotes = 0;
     numTryNotes = 0;
 
-    mainOffset = jsparagus_.main_offset;
-    nfixed = jsparagus_.max_fixed_slots;
-    nslots = nfixed + jsparagus_.maximum_stack_depth;
-    bodyScopeIndex = jsparagus_.body_scope_index;
-    numICEntries = jsparagus_.num_ic_entries;
-    numBytecodeTypeSets = jsparagus_.num_type_sets;
+    mainOffset = result_.main_offset;
+    nfixed = result_.max_fixed_slots;
+    nslots = nfixed + result_.maximum_stack_depth;
+    bodyScopeIndex = result_.body_scope_index;
+    numICEntries = result_.num_ic_entries;
+    numBytecodeTypeSets = result_.num_type_sets;
 
-    strict = jsparagus_.strict;
-    bindingsAccessedDynamically = jsparagus_.bindings_accessed_dynamically;
-    hasCallSiteObj = jsparagus_.has_call_site_obj;
-    isForEval = jsparagus_.is_for_eval;
-    isModule = jsparagus_.is_module;
-    isFunction = jsparagus_.is_function;
-    hasNonSyntacticScope = jsparagus_.has_non_syntactic_scope;
+    strict = result_.strict;
+    bindingsAccessedDynamically = result_.bindings_accessed_dynamically;
+    hasCallSiteObj = result_.has_call_site_obj;
+    isForEval = result_.is_for_eval;
+    isModule = result_.is_module;
+    isFunction = result_.is_function;
+    hasNonSyntacticScope = result_.has_non_syntactic_scope;
     needsFunctionEnvironmentObjects =
-        jsparagus_.needs_function_environment_objects;
-    hasModuleGoal = jsparagus_.has_module_goal;
+        result_.needs_function_environment_objects;
+    hasModuleGoal = result_.has_module_goal;
 
-    code = mozilla::MakeSpan(jsparagus_.bytecode.data, jsparagus_.bytecode.len);
+    code = mozilla::MakeSpan(result_.bytecode.data, result_.bytecode.len);
     MOZ_ASSERT(notes.IsEmpty());
   }
 
  public:
-  explicit SmooshScriptStencil(const JsparagusResult& jsparagus)
-      : jsparagus_(jsparagus) {
+  explicit SmooshScriptStencil(const SmooshResult& result) : result_(result) {
     init();
   }
 
@@ -86,7 +85,7 @@ class SmooshScriptStencil : public ScriptStencil {
 
   virtual bool initAtomMap(JSContext* cx, GCPtrAtom* atoms) const {
     for (uint32_t i = 0; i < natoms; i++) {
-      const CVec<uint8_t>& string = jsparagus_.strings.data[i];
+      const CVec<uint8_t>& string = result_.strings.data[i];
       JSAtom* atom = AtomizeUTF8Chars(cx, (const char*)string.data, string.len);
       if (!atom) {
         return false;
@@ -107,17 +106,17 @@ class SmooshScriptStencil : public ScriptStencil {
   virtual void finishInnerFunctions() const {}
 };
 
-// Free given JsparagusResult on leaving scope.
-class AutoFreeJsparagusResult {
-  JsparagusResult* result_;
+// Free given SmooshResult on leaving scope.
+class AutoFreeSmooshResult {
+  SmooshResult* result_;
 
  public:
-  AutoFreeJsparagusResult() = delete;
+  AutoFreeSmooshResult() = delete;
 
-  AutoFreeJsparagusResult(JsparagusResult* result) : result_(result) {}
-  ~AutoFreeJsparagusResult() {
+  AutoFreeSmooshResult(SmooshResult* result) : result_(result) {}
+  ~AutoFreeSmooshResult() {
     if (result_) {
-      free_jsparagus(*result_);
+      free_smoosh(*result_);
     }
   }
 };
@@ -132,11 +131,11 @@ void ReportVisageCompileError(JSContext* cx, ErrorMetadata&& metadata,
 }
 
 /* static */
-JSScript* Jsparagus::compileGlobalScript(CompilationInfo& compilationInfo,
-                                         JS::SourceText<Utf8Unit>& srcBuf,
-                                         bool* unimplemented) {
+JSScript* Smoosh::compileGlobalScript(CompilationInfo& compilationInfo,
+                                      JS::SourceText<Utf8Unit>& srcBuf,
+                                      bool* unimplemented) {
   // FIXME: check info members and return with *unimplemented = true
-  //        if any field doesn't match to run_jsparagus.
+  //        if any field doesn't match to run_smoosh.
 
   auto bytes = reinterpret_cast<const uint8_t*>(srcBuf.get());
   size_t length = srcBuf.length();
@@ -144,26 +143,26 @@ JSScript* Jsparagus::compileGlobalScript(CompilationInfo& compilationInfo,
   JSContext* cx = compilationInfo.cx;
 
   const auto& options = compilationInfo.options;
-  JsparagusCompileOptions compileOptions;
+  SmooshCompileOptions compileOptions;
   compileOptions.no_script_rval = options.noScriptRval;
 
-  JsparagusResult jsparagus = run_jsparagus(bytes, length, &compileOptions);
-  AutoFreeJsparagusResult afjr(&jsparagus);
+  SmooshResult smoosh = run_smoosh(bytes, length, &compileOptions);
+  AutoFreeSmooshResult afsr(&smoosh);
 
-  if (jsparagus.error.data) {
+  if (smoosh.error.data) {
     *unimplemented = false;
     ErrorMetadata metadata;
     metadata.filename = "<unknown>";
     metadata.lineNumber = 1;
     metadata.columnNumber = 0;
     metadata.isMuted = false;
-    ReportVisageCompileError(
-        cx, std::move(metadata), JSMSG_VISAGE_COMPILE_ERROR,
-        reinterpret_cast<const char*>(jsparagus.error.data));
+    ReportVisageCompileError(cx, std::move(metadata),
+                             JSMSG_VISAGE_COMPILE_ERROR,
+                             reinterpret_cast<const char*>(smoosh.error.data));
     return nullptr;
   }
 
-  if (jsparagus.unimplemented) {
+  if (smoosh.unimplemented) {
     *unimplemented = true;
     return nullptr;
   }
@@ -185,7 +184,7 @@ JSScript* Jsparagus::compileGlobalScript(CompilationInfo& compilationInfo,
   RootedScript script(cx, JSScript::Create(cx, cx->global(), options, sso, 0,
                                            length, 0, length, 1, 0));
 
-  SmooshScriptStencil stencil(jsparagus);
+  SmooshScriptStencil stencil(smoosh);
   if (!JSScript::fullyInitFromStencil(cx, script, stencil)) {
     return nullptr;
   }
