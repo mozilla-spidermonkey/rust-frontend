@@ -10,7 +10,7 @@ struct CVec {
   uintptr_t capacity;
 };
 
-struct JsparagusResult {
+struct SmooshResult {
   bool unimplemented;
   CVec<uint8_t> error;
   CVec<uint8_t> bytecode;
@@ -47,17 +47,17 @@ struct JsparagusResult {
   bool has_module_goal;
 };
 
-struct JsparagusCompileOptions {
+struct SmooshCompileOptions {
   bool no_script_rval;
 };
 
 extern "C" {
 
-void free_jsparagus(JsparagusResult result);
+void free_smoosh(SmooshResult result);
 
-JsparagusResult run_jsparagus(const uint8_t *text,
-                              uintptr_t text_len,
-                              const JsparagusCompileOptions *options);
+SmooshResult run_smoosh(const uint8_t *text,
+                        uintptr_t text_len,
+                        const SmooshCompileOptions *options);
 
 bool test_parse_module(const uint8_t *text, uintptr_t text_len);
 

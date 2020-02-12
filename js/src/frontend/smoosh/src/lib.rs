@@ -38,12 +38,12 @@ impl<T> CVec<T> {
 }
 
 #[repr(C)]
-pub struct JsparagusCompileOptions {
+pub struct SmooshCompileOptions {
     no_script_rval: bool,
 }
 
 #[repr(C)]
-pub struct JsparagusResult {
+pub struct SmooshResult {
     unimplemented: bool,
     error: CVec<u8>,
     bytecode: CVec<u8>,
@@ -88,16 +88,16 @@ pub struct JsparagusResult {
     has_module_goal: bool,
 }
 
-enum JsparagusError {
+enum SmooshError {
     GenericError(String),
     NotImplemented,
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize, options: &JsparagusCompileOptions) -> JsparagusResult {
+pub unsafe extern "C" fn run_smoosh(text: *const u8, text_len: usize, options: &SmooshCompileOptions) -> SmooshResult {
     let text = str::from_utf8(slice::from_raw_parts(text, text_len)).expect("Invalid UTF8");
-    match jsparagus(text, options) {
-        Ok(mut result) => JsparagusResult {
+    match smoosh(text, options) {
+        Ok(mut result) => SmooshResult {
             unimplemented: false,
             error: CVec::empty(),
             bytecode: CVec::from(result.bytecode),
@@ -126,7 +126,7 @@ pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize, options
             needs_function_environment_objects: result.needs_function_environment_objects,
             has_module_goal: result.has_module_goal,
         },
-        Err(JsparagusError::GenericError(message)) => JsparagusResult {
+        Err(SmooshError::GenericError(message)) => SmooshResult {
             unimplemented: false,
             error: CVec::from(format!("{}\0", message).into_bytes()),
             bytecode: CVec::empty(),
@@ -149,7 +149,7 @@ pub unsafe extern "C" fn run_jsparagus(text: *const u8, text_len: usize, options
             needs_function_environment_objects: false,
             has_module_goal: false,
         },
-        Err(JsparagusError::NotImplemented) => JsparagusResult {
+        Err(SmooshError::NotImplemented) => SmooshResult {
             unimplemented: true,
             error: CVec::empty(),
             bytecode: CVec::empty(),
@@ -205,7 +205,7 @@ pub unsafe extern "C" fn test_parse_module(text: *const u8, text_len: usize) -> 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_jsparagus(result: JsparagusResult) {
+pub unsafe extern "C" fn free_smoosh(result: SmooshResult) {
     let _ = result.bytecode.into();
     for v in result.strings.into() {
         let _ = v.into();
@@ -214,7 +214,7 @@ pub unsafe extern "C" fn free_jsparagus(result: JsparagusResult) {
     //Vec::from_raw_parts(bytecode.data, bytecode.len, bytecode.capacity);
 }
 
-fn jsparagus(text: &str, options: &JsparagusCompileOptions) -> Result<EmitResult, JsparagusError> {
+fn smoosh(text: &str, options: &SmooshCompileOptions) -> Result<EmitResult, SmooshError> {
     let allocator = bumpalo::Bump::new();
     let parse_options = ParseOptions::new();
     let parse_result = match parse_script(&allocator, text, &parse_options) {
@@ -222,10 +222,10 @@ fn jsparagus(text: &str, options: &JsparagusCompileOptions) -> Result<EmitResult
         Err(err) => match err {
             ParseError::NotImplemented(_) => {
                 println!("Unimplemented: {}", err.message());
-                return Err(JsparagusError::NotImplemented);
+                return Err(SmooshError::NotImplemented);
             }
             _ => {
-                return Err(JsparagusError::GenericError(err.message()));
+                return Err(SmooshError::GenericError(err.message()));
             }
         },
     };
@@ -236,7 +236,7 @@ fn jsparagus(text: &str, options: &JsparagusCompileOptions) -> Result<EmitResult
         Ok(result) => Ok(result),
         Err(EmitError::NotImplemented(message)) => {
             println!("Unimplemented: {}", message);
-            return Err(JsparagusError::NotImplemented);
+            return Err(SmooshError::NotImplemented);
         }
     }
 }
