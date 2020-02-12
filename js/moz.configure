@@ -601,3 +601,17 @@ def enable_new_regexp(value):
 
 set_config('ENABLE_NEW_REGEXP', enable_new_regexp)
 set_define('ENABLE_NEW_REGEXP', enable_new_regexp)
+
+# SmooshMonkey (new frontend)
+# ==================================================
+
+js_option('--enable-smoosh', default=False,
+          help='Enable SmooshMonkey (new JS engine frontend)')
+
+@depends('--enable-smoosh')
+def enable_smoosh(value):
+    if value:
+        return True
+
+set_config('JS_ENABLE_SMOOSH', enable_smoosh)
+set_define('JS_ENABLE_SMOOSH', enable_smoosh)

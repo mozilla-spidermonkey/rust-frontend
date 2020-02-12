@@ -39,7 +39,6 @@ UNIFIED_SOURCES += [
     'ForInEmitter.cpp',
     'ForOfEmitter.cpp',
     'ForOfLoopControl.cpp',
-    'Frontend2.cpp',
     'FunctionEmitter.cpp',
     'IfEmitter.cpp',
     'JumpList.cpp',
@@ -62,6 +61,12 @@ UNIFIED_SOURCES += [
     'TryEmitter.cpp',
     'WhileEmitter.cpp',
 ]
+
+if CONFIG['JS_ENABLE_SMOOSH']:
+    UNIFIED_SOURCES += [
+        'Frontend2.cpp',
+    ]
+
 
 # Parser.cpp cannot be built in unified mode because of explicit
 #   template instantiations.

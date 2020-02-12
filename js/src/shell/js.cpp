@@ -5266,12 +5266,13 @@ template <typename Unit>
 static bool FullParseTest(JSContext* cx,
                           const JS::ReadOnlyCompileOptions& options,
                           const Unit* units, size_t length,
-                          CompilationInfo& compilationInfo, ScriptSourceObject* sourceObject,
+                          CompilationInfo& compilationInfo,
+                          ScriptSourceObject* sourceObject,
                           js::frontend::ParseGoal goal) {
   using namespace js::frontend;
   Parser<FullParseHandler, Unit> parser(cx, options, units, length,
-                                        /* foldConstants = */ false, compilationInfo,
-                                        nullptr, nullptr,
+                                        /* foldConstants = */ false,
+                                        compilationInfo, nullptr, nullptr,
                                         sourceObject);
   if (!parser.checkOptions()) {
     return false;
@@ -5320,7 +5321,9 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   frontend::ParseGoal goal = frontend::ParseGoal::Script;
+#ifdef JS_ENABLE_SMOOSH
   bool smoosh = false;
+#endif
 
   if (args.length() >= 2) {
     if (!args[1].isObject()) {
@@ -5347,6 +5350,7 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
 
+#ifdef JS_ENABLE_SMOOSH
     bool found = false;
     if (!JS_HasProperty(cx, objOptions, "rustFrontend", &found)) {
       return false;
@@ -5368,6 +5372,7 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
                           typeName);
       return false;
     }
+#endif  // JS_ENABLE_SMOOSH
   }
 
   JSString* scriptContents = args[0].toString();
@@ -5378,6 +5383,7 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   size_t length = scriptContents->length();
+#ifdef JS_ENABLE_SMOOSH
   if (smoosh) {
     if (stableChars.isLatin1()) {
       const Latin1Char* chars = stableChars.latin1Range().begin().get();
@@ -5396,6 +5402,7 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
     JS_ReportErrorASCII(cx, "SmooshMonkey does not support two-byte chars yet");
     return false;
   }
+#endif  // JS_ENABLE_SMOOSH
 
   CompileOptions options(cx);
   options.setIntroductionType("js shell parse").setFileAndLine("<string>", 1);
@@ -5420,14 +5427,15 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
   if (stableChars.isLatin1()) {
     const Latin1Char* chars_ = stableChars.latin1Range().begin().get();
     auto chars = reinterpret_cast<const mozilla::Utf8Unit*>(chars_);
-    if (!FullParseTest<mozilla::Utf8Unit>(cx, options, chars, length, compilationInfo, sourceObject,
-                                          goal)) {
+    if (!FullParseTest<mozilla::Utf8Unit>(
+            cx, options, chars, length, compilationInfo, sourceObject, goal)) {
       return false;
     }
   } else {
     MOZ_ASSERT(stableChars.isTwoByte());
     const char16_t* chars = stableChars.twoByteRange().begin().get();
-    if (!FullParseTest<char16_t>(cx, options, chars, length, compilationInfo, sourceObject, goal)) {
+    if (!FullParseTest<char16_t>(cx, options, chars, length, compilationInfo,
+                                 sourceObject, goal)) {
       return false;
     }
   }
@@ -10282,9 +10290,11 @@ static MOZ_MUST_USE bool ProcessArgs(JSContext* cx, OptionParser* op) {
     JS::ContextOptionsRef(cx).toggleExtraWarnings();
   }
 
+#ifdef JS_ENABLE_SMOOSH
   if (op->getBoolOption("smoosh")) {
     JS::ContextOptionsRef(cx).setTrySmoosh(true);
   }
+#endif
 
   /* |scriptArgs| gets bound on the global before any code is run. */
   if (!BindScriptArgs(cx, op)) {
@@ -11476,10 +11486,14 @@ int main(int argc, char** argv, char** envp) {
                                "Dynamically load LIBRARY") ||
       !op.addBoolOption('\0', "suppress-minidump",
                         "Suppress crash minidumps") ||
+#ifdef JS_ENABLE_SMOOSH
+      !op.addBoolOption('\0', "smoosh", "Use SmooshMonkey") ||
+#else
+      !op.addBoolOption('\0', "smoosh", "No-op") ||
+#endif
       !op.addBoolOption('\0', "wasm-compile-and-serialize",
                         "Compile the wasm bytecode from stdin and serialize "
-                        "the results to stdout") ||
-      !op.addBoolOption('\0', "smoosh", "Use SmooshMonkey")) {
+                        "the results to stdout")) {
     return EXIT_FAILURE;
   }
 

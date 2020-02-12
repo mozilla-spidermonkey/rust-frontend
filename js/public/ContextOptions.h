@@ -38,7 +38,9 @@ class JS_PUBLIC_API ContextOptions {
         werror_(false),
         strictMode_(false),
         extraWarnings_(false),
+#ifdef JS_ENABLE_SMOOSH
         trySmoosh_(false),
+#endif
         fuzzing_(false) {
   }
 
@@ -179,6 +181,7 @@ class JS_PUBLIC_API ContextOptions {
     return *this;
   }
 
+#ifdef JS_ENABLE_SMOOSH
   // Try compiling SmooshMonkey frontend first, and fallback to C++
   // implementation when it fails.
   bool trySmoosh() const { return trySmoosh_; }
@@ -186,6 +189,7 @@ class JS_PUBLIC_API ContextOptions {
     trySmoosh_ = flag;
     return *this;
   }
+#endif  // JS_ENABLE_SMOOSH
 
   bool fuzzing() const { return fuzzing_; }
   // Defined out-of-line because it depends on a compile-time option
@@ -220,7 +224,9 @@ class JS_PUBLIC_API ContextOptions {
   bool werror_ : 1;
   bool strictMode_ : 1;
   bool extraWarnings_ : 1;
+#ifdef JS_ENABLE_SMOOSH
   bool trySmoosh_ : 1;
+#endif
   bool fuzzing_ : 1;
 };
 
