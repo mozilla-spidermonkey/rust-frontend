@@ -13,8 +13,8 @@
 
 #include "jsapi.h"
 
-#include "frontend-rs/frontend-rs.h"  // CVec, JsparagusResult, JsparagusCompileOptions, free_jsparagus, run_jsparagus
 #include "frontend/CompilationInfo.h"      // CompilationInfo
+#include "frontend/smoosh/smoosh.h"        // CVec, JsparagusResult, JsparagusCompileOptions, free_jsparagus, run_jsparagus
 #include "frontend/SourceNotes.h"          // jssrcnote
 #include "gc/Rooting.h"                    // RootedScriptSourceObject
 #include "js/HeapAPI.h"                    // JS::GCCellPtr
