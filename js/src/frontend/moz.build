@@ -20,6 +20,13 @@ include('../js-cxxflags.mozbuild')
 GeneratedFile('ReservedWordsGenerated.h', script='GenerateReservedWords.py',
               inputs=['ReservedWords.h'])
 
+if CONFIG['JS_ENABLE_SMOOSH']:
+    GeneratedFile('smoosh_generated.h',
+                  script='/layout/style/RunCbindgen.py',
+                  entry_point='generate',
+                  inputs=[
+                      '/js/src/frontend/smoosh',
+                  ], flags=["--use-same-crate"])
 
 UNIFIED_SOURCES += [
     'AbstractScope.cpp',

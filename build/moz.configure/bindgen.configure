@@ -4,10 +4,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-# cbindgen is needed by the style system build and webrender.
-cbindgen_is_needed = depends(build_project)(lambda build_project: build_project != 'js')
-
-option(env='CBINDGEN', nargs=1, when=cbindgen_is_needed,
+option(env='CBINDGEN', nargs=1,
        help='Path to cbindgen')
 
 
@@ -34,7 +31,7 @@ def check_cbindgen_version(cbindgen, fatal=False):
     '''.format(version, cbindgen_min_version, cbindgen)))
 
 
-@depends_if('CBINDGEN', toolchain_search_path, when=cbindgen_is_needed)
+@depends_if('CBINDGEN', toolchain_search_path)
 @checking('for cbindgen')
 @imports(_from='textwrap', _import='dedent')
 def cbindgen(cbindgen_override, toolchain_search_path):

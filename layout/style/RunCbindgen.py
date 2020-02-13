@@ -19,13 +19,23 @@ def _get_crate_name(crate_path):
 
 CARGO_LOCK = mozpath.join(buildconfig.topsrcdir, "Cargo.lock")
 
+SAME_CRATE_FLAG = '--use-same-crate'
+
 def generate(output, cbindgen_crate_path, *in_tree_dependencies):
+    in_tree_dependencies = list(in_tree_dependencies)
+
     env = os.environ.copy()
     env['CARGO'] = str(buildconfig.substs['CARGO'])
 
+    if SAME_CRATE_FLAG in in_tree_dependencies:
+        crate_path = cbindgen_crate_path
+        in_tree_dependencies.remove(SAME_CRATE_FLAG)
+    else:
+        crate_path = mozpath.join(buildconfig.topsrcdir, "toolkit", "library", "rust")
+
     p = subprocess.Popen([
         buildconfig.substs['CBINDGEN'],
-        mozpath.join(buildconfig.topsrcdir, "toolkit", "library", "rust"),
+        crate_path,
         "--lockfile",
         CARGO_LOCK,
         "--crate",
@@ -44,7 +54,7 @@ def generate(output, cbindgen_crate_path, *in_tree_dependencies):
     deps = set()
     deps.add(CARGO_LOCK)
     deps.add(mozpath.join(cbindgen_crate_path, "cbindgen.toml"))
-    for directory in in_tree_dependencies + (cbindgen_crate_path,):
+    for directory in in_tree_dependencies + [cbindgen_crate_path]:
         for path, dirs, files in os.walk(directory):
             for file in files:
                 if os.path.splitext(file)[1] == ".rs":

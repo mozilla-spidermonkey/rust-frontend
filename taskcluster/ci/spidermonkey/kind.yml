@@ -38,6 +38,7 @@ job-defaults:
             - js/public/**
             - js/rust/**
             - js/src/**
+            - layout/style/RunCbindgen.py
             - layout/tools/reftest/reftest/**
             - Makefile.in
             - media/webrtc/trunk/tools/gyp/**
@@ -63,10 +64,12 @@ job-defaults:
                 .*-b-win2012:
                     - win64-clang-cl
                     - win64-rust
+                    - win64-cbindgen
                 default:
                     - linux64-clang
                     - linux64-gcc
                     - linux64-rust
+                    - linux64-cbindgen
 
 jobs-from:
     - linux.yml

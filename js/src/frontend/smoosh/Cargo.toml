@@ -9,6 +9,3 @@ ast = { path = "../../../jsparagus/rust/ast" }
 bumpalo = "2.6.0"
 emitter = { path = "../../../jsparagus/rust/emitter" }
 parser = { path = "../../../jsparagus/rust/parser" }
-
-[build-dependencies]
-cbindgen = "0.12"
