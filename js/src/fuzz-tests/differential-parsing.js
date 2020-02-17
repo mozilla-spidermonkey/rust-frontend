@@ -44,85 +44,104 @@
 //     Hit MOZ_CRASH(Rust accept more than C++)
 //
 
+/* global crash, os, parse, timeout */
+
 // This global will hold the current fuzzing buffer for each iteration.
 var fuzzBuf;
 
 function timed(sec, f) {
-    // If the function `f` takes more than 3 seconds, then the evaluation ends
-    // prematurely and returns in libFuzzer handler without considering this
-    // test case as interesting.
-    timeout(sec, function () { return false; });
-    f();
+  // If the function `f` takes more than 3 seconds, then the evaluation ends
+  // prematurely and returns in libFuzzer handler without considering this
+  // test case as interesting.
+  timeout(sec, function() {
+    return false;
+  });
+  f();
 
-    // Remove the timeout handler, to not kill future executions.
-    timeout(-1);
+  // Remove the timeout handler, to not kill future executions.
+  timeout(-1);
 }
 
-var parseScriptCpp = {  module: false, rustFrontend: false };
+var parseScriptCpp = { module: false, rustFrontend: false };
 var parseScriptRust = { module: false, rustFrontend: true };
-var parseModuleRust = { module: true,  rustFrontend: true };
-var parseModuleCpp = {  module: true,  rustFrontend: false };
+var parseModuleRust = { module: true, rustFrontend: true };
+var parseModuleCpp = { module: true, rustFrontend: false };
 function test(code, verbose = false) {
-    var isScriptCpp = false,
-        isModuleCpp = false,
-        isScriptRust = false,
-        isModuleRust = false;
-    try {
-        parse(code, parseScriptCpp);
-        isScriptCpp  = true;
-        if (verbose) console.log("Parse Script C++: succeed");
-    } catch(exc) {
-        if (verbose) console.log("Parse Script C++: fail");
+  var isScriptCpp = false,
+    isModuleCpp = false,
+    isScriptRust = false,
+    isModuleRust = false;
+  try {
+    parse(code, parseScriptCpp);
+    isScriptCpp = true;
+    if (verbose) {
+      console.log("Parse Script C++: succeed");
     }
-    try {
-        parse(code, parseModuleCpp);
-        isModuleCpp  = true;
-        if (verbose) console.log("Parse Module C++: succeed");
-    } catch(exc) {
-        if (verbose) console.log("Parse Module C++: fail");
+  } catch (exc) {
+    if (verbose) {
+      console.log("Parse Script C++: fail");
     }
-    try {
-        parse(code, parseScriptRust);
-        isScriptRust  = true;
-        if (verbose) console.log("Parse Script Rust: succeed");
-    } catch(exc) {
-        if (verbose) console.log("Parse Script Rust: fail");
+  }
+  try {
+    parse(code, parseModuleCpp);
+    isModuleCpp = true;
+    if (verbose) {
+      console.log("Parse Module C++: succeed");
     }
-    try {
-        parse(code, parseModuleRust);
-        isModuleRust  = true;
-        if (verbose) console.log("Parse Module Rust: succeed");
-    } catch(exc) {
-        if (verbose) console.log("Parse Module Rust: fail");
+  } catch (exc) {
+    if (verbose) {
+      console.log("Parse Module C++: fail");
     }
-    if ((isScriptRust && !isScriptCpp) ||
-        (isModuleRust && !isModuleCpp)) {
-        crash("Rust accept more than C++");
+  }
+  try {
+    parse(code, parseScriptRust);
+    isScriptRust = true;
+    if (verbose) {
+      console.log("Parse Script Rust: succeed");
     }
+  } catch (exc) {
+    if (verbose) {
+      console.log("Parse Script Rust: fail");
+    }
+  }
+  try {
+    parse(code, parseModuleRust);
+    isModuleRust = true;
+    if (verbose) {
+      console.log("Parse Module Rust: succeed");
+    }
+  } catch (exc) {
+    if (verbose) {
+      console.log("Parse Module Rust: fail");
+    }
+  }
+  if ((isScriptRust && !isScriptCpp) || (isModuleRust && !isModuleCpp)) {
+    crash("Rust accept more than C++");
+  }
 }
 
 function JSFuzzIterate() {
-    // This function is called per iteration. You must ensure that:
-    //
-    //   1) Each of your actions/decisions is only based on fuzzBuf,
-    //      in particular not on Math.random(), Date/Time or other
-    //      external inputs.
-    //
-    //   2) Your actions should be deterministic. The same fuzzBuf
-    //      should always lead to the same set of actions/decisions.
-    //
-    //   3) You can modify the global where needed, but ensure that
-    //      each iteration is isolated from one another by cleaning
-    //      any modifications to the global after each iteration.
-    //      In particular, iterations must not depend on or influence
-    //      each other in any way (see also 1)).
-    //
-    //   4) You must catch all exceptions.
-    let code = String.fromCharCode(...fuzzBuf);
-    timed(3, _ => test(code));
+  // This function is called per iteration. You must ensure that:
+  //
+  //   1) Each of your actions/decisions is only based on fuzzBuf,
+  //      in particular not on Math.random(), Date/Time or other
+  //      external inputs.
+  //
+  //   2) Your actions should be deterministic. The same fuzzBuf
+  //      should always lead to the same set of actions/decisions.
+  //
+  //   3) You can modify the global where needed, but ensure that
+  //      each iteration is isolated from one another by cleaning
+  //      any modifications to the global after each iteration.
+  //      In particular, iterations must not depend on or influence
+  //      each other in any way (see also 1)).
+  //
+  //   4) You must catch all exceptions.
+  let code = String.fromCharCode(...fuzzBuf);
+  timed(3, _ => test(code));
 }
 
 function testFile(file) {
-    let content = os.file.readFile(file);
-    test(content, true);
+  let content = os.file.readFile(file);
+  test(content, true);
 }
