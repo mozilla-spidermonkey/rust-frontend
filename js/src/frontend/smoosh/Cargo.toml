@@ -5,7 +5,7 @@ authors = ["Ashley Hauck <khyperia@mozilla.com>"]
 edition = "2018"
 
 [dependencies]
-ast = { path = "../../../jsparagus/rust/ast" }
+ast = { path = "../../../../../jsparagus/rust/ast" }
 bumpalo = "2.6.0"
-emitter = { path = "../../../jsparagus/rust/emitter" }
-parser = { path = "../../../jsparagus/rust/parser" }
+emitter = { path = "../../../../../jsparagus/rust/emitter" }
+parser = { path = "../../../../../jsparagus/rust/parser" }
