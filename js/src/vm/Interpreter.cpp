@@ -302,6 +302,10 @@ JSFunction* js::MakeDefaultConstructor(JSContext* cx, HandleScript script,
   ctor->setIsConstructor();
   ctor->setIsClassConstructor();
 
+  if (!JSFunction::setTypeForScriptedFunction(cx, ctor)) {
+    return nullptr;
+  }
+
   // Create the script now, so we can fix up its source span below.
   RootedScript ctorScript(cx, JSFunction::getOrCreateScript(cx, ctor));
   if (!ctorScript) {
@@ -407,6 +411,9 @@ bool js::RunScript(JSContext* cx, RunState& state) {
   if (!CheckRecursionLimit(cx)) {
     return false;
   }
+
+  MOZ_ASSERT_IF(cx->runtime()->hasJitRuntime(),
+                !cx->runtime()->jitRuntime()->disallowArbitraryCode());
 
   // Since any script can conceivably GC, make sure it's safe to do so.
   cx->verifyIsSafeToGC();
@@ -1352,11 +1359,11 @@ again:
  * Same for JSOp::SetName and JSOp::SetProp, which differ only slightly but
  * remain distinct for the decompiler.
  */
-JS_STATIC_ASSERT(JSOpLength_SetName == JSOpLength_SetProp);
+static_assert(JSOpLength_SetName == JSOpLength_SetProp);
 
 /* See TRY_BRANCH_AFTER_COND. */
-JS_STATIC_ASSERT(JSOpLength_IfNe == JSOpLength_IfEq);
-JS_STATIC_ASSERT(uint8_t(JSOp::IfNe) == uint8_t(JSOp::IfEq) + 1);
+static_assert(JSOpLength_IfNe == JSOpLength_IfEq);
+static_assert(uint8_t(JSOp::IfNe) == uint8_t(JSOp::IfEq) + 1);
 
 /*
  * Compute the implicit |this| value used by a call expression with an

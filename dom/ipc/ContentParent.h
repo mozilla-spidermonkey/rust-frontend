@@ -97,6 +97,7 @@ class TestShellParent;
 #ifdef FUZZING
 class ProtocolFuzzerHelper;
 #endif
+class SharedPreferenceSerializer;
 }  // namespace ipc
 
 namespace jsipc {
@@ -659,6 +660,23 @@ class ContentParent final
   mozilla::ipc::IPCResult RecvWindowFocus(BrowsingContext* aContext,
                                           CallerType aCallerType);
   mozilla::ipc::IPCResult RecvWindowBlur(BrowsingContext* aContext);
+  mozilla::ipc::IPCResult RecvRaiseWindow(BrowsingContext* aContext,
+                                          CallerType aCallerType);
+  mozilla::ipc::IPCResult RecvClearFocus(BrowsingContext* aContext);
+  mozilla::ipc::IPCResult RecvSetFocusedBrowsingContext(
+      BrowsingContext* aContext);
+  mozilla::ipc::IPCResult RecvSetActiveBrowsingContext(
+      BrowsingContext* aContext);
+  mozilla::ipc::IPCResult RecvUnsetActiveBrowsingContext(
+      BrowsingContext* aContext);
+  mozilla::ipc::IPCResult RecvSetFocusedElement(BrowsingContext* aContext,
+                                                bool aNeedsFocus);
+  mozilla::ipc::IPCResult RecvBlurToParent(
+      BrowsingContext* aFocusedBrowsingContext,
+      BrowsingContext* aBrowsingContextToClear,
+      BrowsingContext* aAncestorBrowsingContextToFocus, bool aIsLeavingDocument,
+      bool aAdjustWidget, bool aBrowsingContextToClearHandled,
+      bool aAncestorBrowsingContextToFocusHandled);
   mozilla::ipc::IPCResult RecvWindowPostMessage(
       BrowsingContext* aContext, const ClonedMessageData& aMessage,
       const PostMessageData& aData);
@@ -673,6 +691,8 @@ class ContentParent final
  protected:
   bool CheckBrowsingContextOwnership(BrowsingContext* aBC,
                                      const char* aOperation) const;
+  bool CheckBrowsingContextEmbedder(BrowsingContext* aBC,
+                                    const char* aOperation) const;
 
   void OnChannelConnected(int32_t pid) override;
 
@@ -748,9 +768,20 @@ class ContentParent final
       hal::ProcessPriority aInitialPriority);
 
   // Common implementation of LaunchSubprocess{Sync,Async}.
-  void LaunchSubprocessInternal(
-      hal::ProcessPriority aInitialPriority,
-      mozilla::Variant<bool*, RefPtr<LaunchPromise>*>&& aRetval);
+  // Return `true` in case of success, `false` if launch was
+  // aborted because of shutdown.
+  bool BeginSubprocessLaunch(bool aIsSync, ProcessPriority aPriority);
+  void LaunchSubprocessReject();
+  bool LaunchSubprocessResolve(bool aIsSync, ProcessPriority aPriority);
+  // Return `nullptr` in case of error.
+  // Return a `ContentParent` in case of success. This `ContentParent`
+  // may either be ready and initialized or in the process of initializing
+  // asynchronously. In the latter case, the caller is responsible for
+  // finishing initialization.
+  static already_AddRefed<ContentParent> GetNewOrUsedBrowserProcessInternal(
+      Element* aFrameElement, const nsAString& aRemoteType,
+      ProcessPriority aPriority, ContentParent* aOpener, bool aPreferUsed,
+      bool aIsSync);
 
   // Common initialization after sub process launch.
   bool InitInternal(ProcessPriority aPriority);
@@ -1227,6 +1258,9 @@ class ContentParent final
   mozilla::ipc::IPCResult RecvNotifyMediaAudibleChanged(
       BrowsingContext* aContext, bool aAudible);
 
+  mozilla::ipc::IPCResult RecvNotifyMediaSessionUpdated(
+      BrowsingContext* aContext, bool aIsCreated);
+
   mozilla::ipc::IPCResult RecvGetModulesTrust(
       ModulePaths&& aModPaths, bool aRunAtNormalPriority,
       GetModulesTrustResolver&& aResolver);
@@ -1452,6 +1486,10 @@ class ContentParent final
 
   // See `BrowsingContext::mEpochs` for an explanation of this field.
   uint64_t mBrowsingContextFieldEpoch = 0;
+
+  // A preference serializer used to share preferences with the process.
+  // Cleared once startup is complete.
+  UniquePtr<mozilla::ipc::SharedPreferenceSerializer> mPrefSerializer;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(ContentParent, NS_CONTENTPARENT_IID)

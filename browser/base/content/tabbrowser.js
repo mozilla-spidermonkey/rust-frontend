@@ -973,10 +973,12 @@
 
       if (title) {
         return {
-          id: "browser-main-window-content-title",
+          id:
+            mode == "private"
+              ? "browser-main-window-content-title-private"
+              : "browser-main-window-content-title-default",
           args: {
             title,
-            mode,
           },
         };
       }
@@ -3891,6 +3893,12 @@
         return false;
       }
 
+      // Do not allow transfering a useRemoteSubframes tab to a
+      // non-useRemoteSubframes window and vice versa.
+      if (gFissionBrowser != aOtherTab.ownerGlobal.gFissionBrowser) {
+        return false;
+      }
+
       let ourBrowser = this.getBrowserForTab(aOurTab);
       let otherBrowser = aOtherTab.linkedBrowser;
 
@@ -6419,7 +6427,10 @@ var TabContextMenu = {
     });
   },
   updateContextMenu(aPopupMenu) {
-    let tab = aPopupMenu.triggerNode && aPopupMenu.triggerNode.closest("tab");
+    let tab =
+      aPopupMenu.triggerNode &&
+      (aPopupMenu.triggerNode.tab || aPopupMenu.triggerNode.closest("tab"));
+
     this.contextTab = tab || gBrowser.selectedTab;
 
     let disabled = gBrowser.tabs.length == 1;

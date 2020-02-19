@@ -97,6 +97,8 @@ enum class StyleDisplay : uint16_t {
                                   StyleDisplayInside::MozGridGroup),
   MozGridLine = StyleDisplayFrom(StyleDisplayOutside::XUL,
                                  StyleDisplayInside::MozGridLine),
+  MozStack =
+      StyleDisplayFrom(StyleDisplayOutside::XUL, StyleDisplayInside::MozStack),
   MozDeck =
       StyleDisplayFrom(StyleDisplayOutside::XUL, StyleDisplayInside::MozDeck),
   MozPopup =
@@ -387,11 +389,6 @@ enum class StyleFlexWrap : uint8_t {
 #define NS_STYLE_FONT_SIZE_NO_KEYWORD \
   10  // Used by Servo to track the "no keyword" case
 
-// grid-auto-flow keywords
-#define NS_STYLE_GRID_AUTO_FLOW_ROW (1 << 0)
-#define NS_STYLE_GRID_AUTO_FLOW_COLUMN (1 << 1)
-#define NS_STYLE_GRID_AUTO_FLOW_DENSE (1 << 2)
-
 // 'subgrid' keyword in grid-template-{columns,rows}
 #define NS_STYLE_GRID_TEMPLATE_SUBGRID 0
 
@@ -432,11 +429,13 @@ enum class StyleGridTrackBreadth : uint8_t {
 #define NS_MATHML_DISPLAYSTYLE_BLOCK 1
 
 // See nsStyleDisplay.mPosition
-#define NS_STYLE_POSITION_STATIC 0
-#define NS_STYLE_POSITION_RELATIVE 1
-#define NS_STYLE_POSITION_ABSOLUTE 2
-#define NS_STYLE_POSITION_FIXED 3
-#define NS_STYLE_POSITION_STICKY 4
+enum class StylePositionProperty : uint8_t {
+  Static,
+  Relative,
+  Absolute,
+  Fixed,
+  Sticky,
+};
 
 // See nsStyleEffects.mClip, mClipFlags
 #define NS_STYLE_CLIP_AUTO 0x00
@@ -623,8 +622,8 @@ enum class StyleTableLayout : uint8_t {
 };
 
 enum class StyleEmptyCells : uint8_t {
-    Hide,
-    Show,
+  Hide,
+  Show,
 };
 
 // Constants for the caption-side property. Note that despite having "physical"

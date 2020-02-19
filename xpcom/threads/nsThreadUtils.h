@@ -38,6 +38,8 @@
 /**
  * Create a new thread, and optionally provide an initial event for the thread.
  *
+ * @param aName
+ *   The name of the thread.
  * @param aResult
  *   The resulting nsIThread object.
  * @param aInitialEvent
@@ -48,13 +50,7 @@
  * @returns NS_ERROR_INVALID_ARG
  *   Indicates that the given name is not unique.
  */
-extern nsresult NS_NewThread(
-    nsIThread** aResult, nsIRunnable* aInitialEvent = nullptr,
-    uint32_t aStackSize = nsIThreadManager::DEFAULT_STACK_SIZE);
 
-/**
- * Creates a named thread, otherwise the same as NS_NewThread
- */
 extern nsresult NS_NewNamedThread(
     const nsACString& aName, nsIThread** aResult,
     nsIRunnable* aInitialEvent = nullptr,
@@ -425,10 +421,10 @@ class IdlePeriod : public nsIIdlePeriod {
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIIDLEPERIOD
 
-  IdlePeriod() {}
+  IdlePeriod() = default;
 
  protected:
-  virtual ~IdlePeriod() {}
+  virtual ~IdlePeriod() = default;
 
  private:
   IdlePeriod(const IdlePeriod&) = delete;
@@ -472,7 +468,7 @@ class Runnable : public nsIRunnable
 #  endif
 
  protected:
-  virtual ~Runnable() {}
+  virtual ~Runnable() = default;
 
 #  ifdef MOZ_COLLECTING_RUNNABLE_TELEMETRY
   const char* mName = nullptr;
@@ -495,7 +491,7 @@ class CancelableRunnable : public Runnable, public nsICancelableRunnable {
   explicit CancelableRunnable(const char* aName) : Runnable(aName) {}
 
  protected:
-  virtual ~CancelableRunnable() {}
+  virtual ~CancelableRunnable() = default;
 
  private:
   CancelableRunnable(const CancelableRunnable&) = delete;
@@ -512,7 +508,7 @@ class IdleRunnable : public CancelableRunnable, public nsIIdleRunnable {
   explicit IdleRunnable(const char* aName) : CancelableRunnable(aName) {}
 
  protected:
-  virtual ~IdleRunnable() {}
+  virtual ~IdleRunnable() = default;
 
  private:
   IdleRunnable(const IdleRunnable&) = delete;
@@ -536,7 +532,8 @@ class PrioritizableRunnable : public Runnable, public nsIRunnablePriority {
   NS_DECL_NSIRUNNABLEPRIORITY
 
  protected:
-  virtual ~PrioritizableRunnable(){};
+  virtual ~PrioritizableRunnable() = default;
+  ;
   nsCOMPtr<nsIRunnable> mRunnable;
   uint32_t mPriority;
 };
@@ -708,7 +705,7 @@ class TimerBehaviour {
   void CancelTimer() {}
 
  protected:
-  ~TimerBehaviour() {}
+  ~TimerBehaviour() = default;
 };
 
 template <>
@@ -1665,7 +1662,7 @@ inline already_AddRefed<T> do_AddRef(nsRevocableEventPtr<T>& aObj) {
  */
 class nsThreadPoolNaming {
  public:
-  nsThreadPoolNaming() : mCounter(0) {}
+  nsThreadPoolNaming() = default;
 
   /**
    * Returns a thread name as "<aPoolName> #<n>" and increments the counter.
@@ -1678,7 +1675,7 @@ class nsThreadPoolNaming {
   }
 
  private:
-  mozilla::Atomic<uint32_t> mCounter;
+  mozilla::Atomic<uint32_t> mCounter{0};
 
   nsThreadPoolNaming(const nsThreadPoolNaming&) = delete;
   void operator=(const nsThreadPoolNaming&) = delete;

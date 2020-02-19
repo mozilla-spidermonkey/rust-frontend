@@ -349,6 +349,7 @@ function ReadManifest(aURL, aFilter, aManifestID)
             AddTestItem({ type: type,
                           expected: expected_status,
                           manifest: aURL.spec,
+                          manifestID: TestIdentifier(aURL.spec, aManifestID),
                           allowSilentFail: allow_silent_fail,
                           minAsserts: minAsserts,
                           maxAsserts: maxAsserts,
@@ -398,6 +399,7 @@ function ReadManifest(aURL, aFilter, aManifestID)
             AddTestItem({ type: type,
                           expected: expected_status,
                           manifest: aURL.spec,
+                          manifestID: TestIdentifier(aURL.spec, aManifestID),
                           allowSilentFail: allow_silent_fail,
                           minAsserts: minAsserts,
                           maxAsserts: maxAsserts,
@@ -584,7 +586,7 @@ sandbox.compareRetainedDisplayLists = g.compareRetainedDisplayLists;
     sandbox.windowsDefaultTheme = g.containingWindow.matchMedia("(-moz-windows-default-theme)").matches;
 
     try {
-        sandbox.nativeThemePref = !prefs.getBoolPref("widget.disable-native-theme");
+        sandbox.nativeThemePref = !prefs.getBoolPref("widget.disable-native-theme-for-content");
     } catch (e) {
         sandbox.nativeThemePref = true;
     }

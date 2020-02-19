@@ -28,6 +28,7 @@ add_task(async function() {
   const requestsListStatus = requestItem.querySelector(".status-code");
   EventUtils.sendMouseEvent({ type: "mouseover" }, requestsListStatus);
   await waitUntil(() => requestsListStatus.title);
+  await waitForDOMIfNeeded(requestItem, ".requests-list-timings-total");
 
   verifyRequestItemTarget(
     document,
@@ -112,7 +113,7 @@ add_task(async function() {
     );
     is(
       values[0].textContent,
-      "Hello third-party JSON!",
+      `"Hello third-party JSON!"`,
       "The first json property value was incorrect."
     );
   }

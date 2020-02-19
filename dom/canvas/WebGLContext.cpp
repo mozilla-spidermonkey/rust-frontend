@@ -129,7 +129,7 @@ bool WebGLContextOptions::operator==(const WebGLContextOptions& r) const {
 
 static std::list<WebGLContext*> sWebglLru;
 
-WebGLContext::LruPosition::LruPosition() : mItr(sWebglLru.end()) {}
+WebGLContext::LruPosition::LruPosition() : mItr(sWebglLru.end()) {}  // NOLINT
 
 WebGLContext::LruPosition::LruPosition(WebGLContext& context)
     : mItr(sWebglLru.insert(sWebglLru.end(), &context)) {}
@@ -995,6 +995,15 @@ Maybe<ICRData> WebGLContext::InitializeCanvasRenderer(
   return Some(ret);
 }
 
+// -
+
+template <typename T, typename... Args>
+constexpr auto MakeArray(Args... args) -> std::array<T, sizeof...(Args)> {
+  return {{static_cast<T>(args)...}};
+}
+
+// -
+
 // For an overview of how WebGL compositing works, see:
 // https://wiki.mozilla.org/Platform/GFX/WebGL/Compositing
 bool WebGLContext::PresentScreenBuffer(gl::GLScreenBuffer* const targetScreen) {
@@ -1037,8 +1046,10 @@ bool WebGLContext::PresentScreenBuffer(gl::GLScreenBuffer* const targetScreen) {
   if (!mOptions.preserveDrawingBuffer) {
     if (gl->IsSupported(gl::GLFeature::invalidate_framebuffer)) {
       gl->fBindFramebuffer(LOCAL_GL_FRAMEBUFFER, mDefaultFB->mFB);
-      const GLenum attachments[] = {LOCAL_GL_COLOR_ATTACHMENT0};
-      gl->fInvalidateFramebuffer(LOCAL_GL_FRAMEBUFFER, 1, attachments);
+      constexpr auto attachments = MakeArray<GLenum>(
+          LOCAL_GL_COLOR_ATTACHMENT0, LOCAL_GL_DEPTH_STENCIL_ATTACHMENT);
+      gl->fInvalidateFramebuffer(LOCAL_GL_FRAMEBUFFER, attachments.size(),
+                                 attachments.data());
     }
     mDefaultFB_IsInvalid = true;
   }
@@ -1758,7 +1769,13 @@ void WebGLContext::EnsureVRReady() {
   if (!IsPremultAlpha() && mOptions.alpha) {
     flags |= layers::TextureFlags::NON_PREMULTIPLIED;
   }
-  auto factory = gl::GLScreenBuffer::CreateFactory(gl, caps, nullptr, flags);
+  RefPtr<layers::ImageBridgeChild> imageBridge =
+      layers::ImageBridgeChild::GetSingleton();
+  if (!imageBridge) {
+    return;
+  }
+  auto factory =
+      gl::GLScreenBuffer::CreateFactory(gl, caps, imageBridge.get(), flags);
   gl->Screen()->Morph(std::move(factory));
 
   bool needsResize = false;

@@ -22,6 +22,13 @@ const DEFAULT_REMOVE_STALE_ROWS_TIMEOUT = 400;
 const getBoundsWithoutFlushing = element =>
   element.ownerGlobal.windowUtils.getBoundsWithoutFlushing(element);
 
+// Used to get a unique id to use for row elements, it wraps at 9999, that
+// should be plenty for our needs.
+let gUniqueIdSerial = 1;
+function getUniqueId(prefix) {
+  return prefix + (gUniqueIdSerial++ % 9999);
+}
+
 /**
  * Receives and displays address bar autocomplete results.
  */
@@ -417,6 +424,12 @@ class UrlbarView {
 
     // Reopen abandoned searches only if the input is focused.
     if (!this.input.focused) {
+      return false;
+    }
+
+    // Tab switch is the only case where we requery if the view is open, because
+    // switching tabs doesn't necessarily close the view.
+    if (this.isOpen && queryOptions.event.type != "tabswitch") {
       return false;
     }
 
@@ -856,6 +869,7 @@ class UrlbarView {
 
     let favicon = this._createElement("img");
     favicon.className = "urlbarView-favicon";
+    favicon.setAttribute("data-l10n-id", "urlbar-tip-icon-description");
     item._content.appendChild(favicon);
     item._elements.set("favicon", favicon);
 
@@ -894,6 +908,7 @@ class UrlbarView {
     let oldResultType = item.result && item.result.type;
     item.result = result;
     item.removeAttribute("stale");
+    item.id = getUniqueId("urlbarView-row-");
 
     let needsNewContent =
       oldResultType === undefined ||
@@ -1057,8 +1072,10 @@ class UrlbarView {
   _updateRowForTip(item, result) {
     let favicon = item._elements.get("favicon");
     favicon.src = result.payload.icon || UrlbarUtils.ICON.TIP;
+    favicon.id = item.id + "-icon";
 
     let title = item._elements.get("title");
+    title.id = item.id + "-title";
     // Add-ons will provide text, rather than l10n ids.
     if (result.payload.textData) {
       this.document.l10n.setAttributes(
@@ -1070,7 +1087,10 @@ class UrlbarView {
       title.textContent = result.payload.text;
     }
 
+    item._content.setAttribute("aria-labelledby", `${favicon.id} ${title.id}`);
+
     let tipButton = item._elements.get("tipButton");
+    tipButton.id = item.id + "-tip-button";
     // Add-ons will provide buttonText, rather than l10n ids.
     if (result.payload.buttonTextData) {
       this.document.l10n.setAttributes(
@@ -1083,6 +1103,7 @@ class UrlbarView {
     }
 
     let helpIcon = item._elements.get("helpButton");
+    helpIcon.id = item.id + "-tip-help";
     helpIcon.style.display = result.payload.helpUrl ? "" : "none";
   }
 
@@ -1090,16 +1111,6 @@ class UrlbarView {
     for (let i = 0; i < this._rows.children.length; i++) {
       let item = this._rows.children[i];
       item.result.rowIndex = i;
-      item.id = "urlbarView-row-" + i;
-      if (item.result.type == UrlbarUtils.RESULT_TYPE.TIP) {
-        let title = item._elements.get("title");
-        title.id = item.id + "-title";
-        item._content.setAttribute("aria-labelledby", title.id);
-        let tipButton = item._elements.get("tipButton");
-        tipButton.id = item.id + "-tip-button";
-        let helpButton = item._elements.get("helpButton");
-        helpButton.id = item.id + "-tip-help";
-      }
     }
     let selectableElement = this._getFirstSelectableElement();
     let uiIndex = 0;

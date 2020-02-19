@@ -152,7 +152,7 @@ void InterceptedHttpChannel::AsyncOpenInternal() {
 
 bool InterceptedHttpChannel::ShouldRedirect() const {
   // Determine if the synthetic response requires us to perform a real redirect.
-  return nsHttpChannel::WillRedirect(mResponseHead) &&
+  return nsHttpChannel::WillRedirect(*mResponseHead) &&
          !mLoadInfo->GetDontFollowRedirects();
 }
 
@@ -204,7 +204,7 @@ nsresult InterceptedHttpChannel::FollowSyntheticRedirect() {
                                redirectFlags);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  mRedirectChannel = newChannel.forget();
+  mRedirectChannel = std::move(newChannel);
 
   rv = gHttpHandler->AsyncOnChannelRedirect(this, mRedirectChannel,
                                             redirectFlags);
@@ -230,10 +230,10 @@ nsresult InterceptedHttpChannel::RedirectForResponseURL(
   // We want to pass ownership of the body callback to the new synthesized
   // channel.  We need to hold a reference to the callbacks on the stack
   // as well, though, so we can call them if a failure occurs.
-  nsCOMPtr<nsIInterceptedBodyCallback> bodyCallback = mBodyCallback.forget();
+  nsCOMPtr<nsIInterceptedBodyCallback> bodyCallback = std::move(mBodyCallback);
 
   RefPtr<InterceptedHttpChannel> newChannel = CreateForSynthesis(
-      mResponseHead, mBodyReader, bodyCallback, mChannelCreationTime,
+      mResponseHead.get(), mBodyReader, bodyCallback, mChannelCreationTime,
       mChannelCreationTimestamp, mAsyncOpenTime);
 
   // If the response has been redirected, propagate all the URLs to content.
@@ -418,7 +418,7 @@ void InterceptedHttpChannel::MaybeCallStatusAndProgress() {
 }
 
 void InterceptedHttpChannel::MaybeCallBodyCallback() {
-  nsCOMPtr<nsIInterceptedBodyCallback> callback = mBodyCallback.forget();
+  nsCOMPtr<nsIInterceptedBodyCallback> callback = std::move(mBodyCallback);
   if (callback) {
     callback->BodyComplete(mStatus);
   }
@@ -452,7 +452,7 @@ InterceptedHttpChannel::CreateForSynthesis(
   RefPtr<InterceptedHttpChannel> ref = new InterceptedHttpChannel(
       aCreationTime, aCreationTimestamp, aAsyncOpenTimestamp);
 
-  ref->mResponseHead = new nsHttpResponseHead(*aHead);
+  ref->mResponseHead = MakeUnique<nsHttpResponseHead>(*aHead);
   ref->mBodyReader = aBody;
   ref->mBodyCallback = aBodyCallback;
 
@@ -651,7 +651,7 @@ InterceptedHttpChannel::ResetInterception(void) {
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  mRedirectChannel = newChannel.forget();
+  mRedirectChannel = std::move(newChannel);
 
   rv = gHttpHandler->AsyncOnChannelRedirect(this, mRedirectChannel, flags);
 
@@ -741,7 +741,7 @@ InterceptedHttpChannel::StartSynthesizedResponse(
     mSynthesizedResponseHead.reset(new nsHttpResponseHead());
   }
 
-  mResponseHead = mSynthesizedResponseHead.release();
+  mResponseHead = std::move(mSynthesizedResponseHead);
 
   if (ShouldRedirect()) {
     rv = FollowSyntheticRedirect();

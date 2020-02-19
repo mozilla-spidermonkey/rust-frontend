@@ -268,6 +268,9 @@ class nsNodeWeakReference final : public nsIWeakReference {
  * of nsIContent children and provides access to them.
  */
 class nsINode : public mozilla::dom::EventTarget {
+#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
+  void AssertInvariantsOnNodeInfoChange();
+#endif
  public:
   typedef mozilla::dom::BoxQuadOptions BoxQuadOptions;
   typedef mozilla::dom::ConvertCoordinateOptions ConvertCoordinateOptions;
@@ -680,6 +683,23 @@ class nsINode : public mozilla::dom::EventTarget {
    */
   inline mozilla::dom::NodeInfo* NodeInfo() const { return mNodeInfo; }
 
+  /**
+   * Called when we have been adopted, and the information of the
+   * node has been changed.
+   *
+   * The new document can be reached via OwnerDoc().
+   *
+   * If you override this method,
+   * please call up to the parent NodeInfoChanged.
+   *
+   * If you change this, change also the similar method in Link.
+   */
+  virtual void NodeInfoChanged(Document* aOldDoc) {
+#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
+    AssertInvariantsOnNodeInfoChange();
+#endif
+  }
+
   inline bool IsInNamespace(int32_t aNamespace) const {
     return mNodeInfo->NamespaceID() == aNamespace;
   }
@@ -864,17 +884,17 @@ class nsINode : public mozilla::dom::EventTarget {
   }
 
   /**
-   * Destroys a property associated with this node. The value is destroyed
-   * using the destruction function given when that value was set.
+   * Removes a property associated with this node. The value is destroyed using
+   * the destruction function given when that value was set.
    *
    * @param aPropertyName  name of property to destroy.
    */
-  void DeleteProperty(const nsAtom* aPropertyName);
+  void RemoveProperty(const nsAtom* aPropertyName);
 
   /**
-   * Unset a property associated with this node. The value will not be
-   * destroyed but rather returned. It is the caller's responsibility to
-   * destroy the value after that point.
+   * Take a property associated with this node. The value will not be destroyed
+   * but rather returned. It is the caller's responsibility to destroy the value
+   * after that point.
    *
    * @param aPropertyName  name of property to unset.
    * @param aStatus        out parameter for storing resulting status.
@@ -884,7 +904,7 @@ class nsINode : public mozilla::dom::EventTarget {
    *                       (though a null return value does not imply the
    *                       property was not set, i.e. it can be set to null).
    */
-  void* UnsetProperty(const nsAtom* aPropertyName, nsresult* aStatus = nullptr);
+  void* TakeProperty(const nsAtom* aPropertyName, nsresult* aStatus = nullptr);
 
   bool HasProperties() const { return HasFlag(NODE_HAS_PROPERTIES); }
 
@@ -1061,8 +1081,6 @@ class nsINode : public mozilla::dom::EventTarget {
    * If aClone is true the nodes will be cloned. If aNewNodeInfoManager is
    * not null, it is used to create new nodeinfos for the nodes. Also reparents
    * the XPConnect wrappers for the nodes into aReparentScope if non-null.
-   * aNodesWithProperties will be filled with all the nodes that have
-   * properties.
    *
    * @param aNode Node to adopt/clone.
    * @param aClone If true the node will be cloned and the cloned node will
@@ -1075,11 +1093,6 @@ class nsINode : public mozilla::dom::EventTarget {
    *                            shouldn't be changed.
    * @param aReparentScope Scope into which wrappers should be reparented, or
    *                             null if no reparenting should be done.
-   * @param aNodesWithProperties All nodes (from amongst aNode and its
-   *                             descendants) with properties. If aClone is
-   *                             true every node will be followed by its
-   *                             clone. Null can be passed to prevent this from
-   *                             being populated.
    * @param aParent If aClone is true the cloned node will be appended to
    *                aParent's children. May be null. If not null then aNode
    *                must be an nsIContent.
@@ -1092,8 +1105,7 @@ class nsINode : public mozilla::dom::EventTarget {
   static already_AddRefed<nsINode> CloneAndAdopt(
       nsINode* aNode, bool aClone, bool aDeep,
       nsNodeInfoManager* aNewNodeInfoManager,
-      JS::Handle<JSObject*> aReparentScope,
-      nsCOMArray<nsINode>* aNodesWithProperties, nsINode* aParent,
+      JS::Handle<JSObject*> aReparentScope, nsINode* aParent,
       mozilla::ErrorResult& aError);
 
  public:
@@ -1101,8 +1113,7 @@ class nsINode : public mozilla::dom::EventTarget {
    * Walks the node, its attributes and descendant nodes. If aNewNodeInfoManager
    * is not null, it is used to create new nodeinfos for the nodes. Also
    * reparents the XPConnect wrappers for the nodes into aReparentScope if
-   * non-null. aNodesWithProperties will be filled with all the nodes that have
-   * properties.
+   * non-null.
    *
    * @param aNewNodeInfoManager The nodeinfo manager to use to create new
    *                            nodeinfos for the node and its attributes and
@@ -1110,20 +1121,16 @@ class nsINode : public mozilla::dom::EventTarget {
    *                            shouldn't be changed.
    * @param aReparentScope New scope for the wrappers, or null if no reparenting
    *                       should be done.
-   * @param aNodesWithProperties All nodes (from amongst the node and its
-   *                             descendants) with properties.
    * @param aError The error, if any.
    */
   void Adopt(nsNodeInfoManager* aNewNodeInfoManager,
              JS::Handle<JSObject*> aReparentScope,
-             nsCOMArray<nsINode>& aNodesWithProperties,
              mozilla::ErrorResult& aError);
 
   /**
    * Clones the node, its attributes and, if aDeep is true, its descendant nodes
    * If aNewNodeInfoManager is not null, it is used to create new nodeinfos for
-   * the clones. aNodesWithProperties will be filled with all the nodes that
-   * have properties, and every node in it will be followed by its clone.
+   * the clones.
    *
    * @param aDeep If true the function will be called recursively on
    *              descendants of the node
@@ -1131,17 +1138,12 @@ class nsINode : public mozilla::dom::EventTarget {
    *                            nodeinfos for the node and its attributes and
    *                            descendants. May be null if the nodeinfos
    *                            shouldn't be changed.
-   * @param aNodesWithProperties All nodes (from amongst the node and its
-   *                             descendants) with properties. Every node will
-   *                             be followed by its clone. Null can be passed to
-   *                             prevent this from being used.
    * @param aError The error, if any.
    *
    * @return The newly created node.  Null in error conditions.
    */
   already_AddRefed<nsINode> Clone(bool aDeep,
                                   nsNodeInfoManager* aNewNodeInfoManager,
-                                  nsCOMArray<nsINode>* aNodesWithProperties,
                                   mozilla::ErrorResult& aError);
 
   /**

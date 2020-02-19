@@ -63,6 +63,7 @@
 #include "nsIIncrementalStreamLoader.h"
 #include "nsStringStream.h"
 #include "nsSyncStreamListener.h"
+#include "nsITextToSubURI.h"
 #include "nsIURIWithSpecialOrigin.h"
 #include "nsIViewSourceChannel.h"
 #include "nsInterfaceRequestorAgg.h"
@@ -2674,6 +2675,19 @@ nsresult NS_GetFilenameFromDisposition(nsAString& aFilename,
 
   if (aFilename.IsEmpty()) return NS_ERROR_NOT_AVAILABLE;
 
+  // Filename may still be percent-encoded. Fix:
+  if (aFilename.FindChar('%') != -1) {
+    nsCOMPtr<nsITextToSubURI> textToSubURI =
+        do_GetService(NS_ITEXTTOSUBURI_CONTRACTID, &rv);
+    if (NS_SUCCEEDED(rv)) {
+      nsAutoString unescaped;
+      textToSubURI->UnEscapeURIForUI(NS_LITERAL_CSTRING("UTF-8"),
+                                     NS_ConvertUTF16toUTF8(aFilename),
+                                     unescaped);
+      aFilename.Assign(unescaped);
+    }
+  }
+
   return NS_OK;
 }
 
@@ -2756,15 +2770,10 @@ void NS_SniffContent(const char* aSnifferType, nsIRequest* aRequest,
        * The JSON-Viewer relies on its own sniffer to determine, if it can
        * render the page, so we need to make an exception if the Server provides
        * a application/ mime, as it might be json.
-
-       * Bug 1594766
-       * We also dont't skip sniffing if the currentContentType is empty
-       * because of legacy page compatibility issues.
        */
       nsAutoCString currentContentType;
       channel->GetContentType(currentContentType);
-      if (!currentContentType.IsEmpty() &&
-          !StringBeginsWith(currentContentType,
+      if (!StringBeginsWith(currentContentType,
                             NS_LITERAL_CSTRING("application/"))) {
         Telemetry::AccumulateCategorical(
             mozilla::Telemetry::LABELS_XCTO_NOSNIFF_TOPLEVEL_NAV_EXCEPTIONS::

@@ -5,6 +5,7 @@
 "use strict";
 
 const { Ci } = require("chrome");
+const Services = require("Services");
 const protocol = require("devtools/shared/protocol");
 const { responsiveSpec } = require("devtools/shared/specs/responsive");
 
@@ -19,6 +20,10 @@ loader.lazyRequireGetter(
   "TouchSimulator",
   "devtools/server/actors/emulation/touch-simulator",
   true
+);
+
+const FLOATING_SCROLLBARS_SHEET = Services.io.newURI(
+  "chrome://devtools/skin/floating-scrollbars-responsive-design.css"
 );
 
 /**
@@ -39,6 +44,10 @@ const ResponsiveActor = protocol.ActorClassWithSpec(responsiveSpec, {
     protocol.Actor.prototype.initialize.call(this, conn);
     this.targetActor = targetActor;
     this.docShell = targetActor.docShell;
+
+    this.onWindowReady = this.onWindowReady.bind(this);
+
+    this.targetActor.on("window-ready", this.onWindowReady);
   },
 
   destroy() {
@@ -48,12 +57,18 @@ const ResponsiveActor = protocol.ActorClassWithSpec(responsiveSpec, {
     this.clearMetaViewportOverride();
     this.clearUserAgentOverride();
 
+    this.targetActor.off("window-ready", this.onWindowReady);
+
     this.targetActor = null;
     this.docShell = null;
     this._screenshotActor = null;
     this._touchSimulator = null;
 
     protocol.Actor.prototype.destroy.call(this);
+  },
+
+  async onWindowReady() {
+    await this.setFloatingScrollbars(true);
   },
 
   /**
@@ -218,8 +233,8 @@ const ResponsiveActor = protocol.ActorClassWithSpec(responsiveSpec, {
    * this is the following:
    * RDM is the only current consumer of the touch simulator. RDM instantiates this actor
    * on its own, whether or not the Toolbox is opened. That means it does so in its own
-   * Debugger Server instance.
-   * When the Toolbox is running, it uses a different DebuggerServer. Therefore, it is not
+   * DevTools Server instance.
+   * When the Toolbox is running, it uses a different DevToolsServer. Therefore, it is not
    * possible for the touch simulator to know whether the picker is active or not. This
    * state has to be sent by the client code of the Toolbox to this actor.
    * If a future use case arises where we want to use the touch simulator from the Toolbox
@@ -363,6 +378,44 @@ const ResponsiveActor = protocol.ActorClassWithSpec(responsiveSpec, {
     if (this.docShell && this.docShell.document) {
       this.docShell.browsingContext.inRDMPane = inRDMPane;
     }
+  },
+
+  /**
+   * Applies a mobile scrollbar overlay to the content document.
+   *
+   * @param {Boolean} applyFloatingScrollbars
+   */
+  async setFloatingScrollbars(applyFloatingScrollbars) {
+    const docShell = this.docShell;
+    const allDocShells = [docShell];
+
+    for (let i = 0; i < docShell.childCount; i++) {
+      const child = docShell.getChildAt(i).QueryInterface(Ci.nsIDocShell);
+      allDocShells.push(child);
+    }
+
+    for (const d of allDocShells) {
+      const win = d.contentViewer.DOMDocument.defaultView;
+      const winUtils = win.windowUtils;
+      try {
+        if (applyFloatingScrollbars) {
+          winUtils.loadSheet(FLOATING_SCROLLBARS_SHEET, this.win.AGENT_SHEET);
+        } else {
+          winUtils.removeSheet(FLOATING_SCROLLBARS_SHEET, this.win.AGENT_SHEET);
+        }
+      } catch (e) {}
+    }
+
+    this.flushStyle();
+  },
+
+  flushStyle() {
+    // Force presContext destruction
+    const isSticky = this.docShell.contentViewer.sticky;
+    this.docShell.contentViewer.sticky = false;
+    this.docShell.contentViewer.hide();
+    this.docShell.contentViewer.show();
+    this.docShell.contentViewer.sticky = isSticky;
   },
 });
 

@@ -41,7 +41,6 @@
 #include "nsTArray.h"
 #include "nsCOMArray.h"
 #include "nsIMutableArray.h"
-#include "nsAutoPtr.h"
 #include "nsReadableUtils.h"
 #include "nsCRT.h"
 #include "prprf.h"
@@ -613,8 +612,7 @@ void nsCookieService::InitDBStates() {
 
   nsCOMPtr<nsIRunnable> runnable =
       NS_NewRunnableFunction("InitDBStates.TryInitDB", [] {
-        NS_ENSURE_TRUE_VOID(gCookieService && gCookieService->mDBState &&
-                            gCookieService->mDefaultDBState);
+        NS_ENSURE_TRUE_VOID(gCookieService);
 
         MonitorAutoLock lock(gCookieService->mMonitor);
 
@@ -2194,7 +2192,8 @@ void nsCookieService::SetCookieStringInternal(
   uint32_t rejectedReason = aRejectedReason;
   nsAutoCString hostFromURI;
   aHostURI->GetHost(hostFromURI);
-  CountCookiesFromHost(hostFromURI, &priorCookieCount);
+  CountCookiesFromHostInternal(hostFromURI, aOriginAttrs.mPrivateBrowsingId,
+                               &priorCookieCount);
   CookieStatus cookieStatus = CheckPrefs(
       cookieSettings, aHostURI, aIsForeign, aIsTrackingResource,
       aIsSocialTrackingResource, aFirstPartyStorageAccessGranted, aCookieHeader,
@@ -2990,7 +2989,8 @@ void nsCookieService::GetCookiesForURI(
   // check default prefs
   uint32_t rejectedReason = aRejectedReason;
   uint32_t priorCookieCount = 0;
-  CountCookiesFromHost(hostFromURI, &priorCookieCount);
+  CountCookiesFromHostInternal(hostFromURI, aOriginAttrs.mPrivateBrowsingId,
+                               &priorCookieCount);
   CookieStatus cookieStatus = CheckPrefs(
       cookieSettings, aHostURI, aIsForeign, aIsTrackingResource,
       aIsSocialTrackingResource, aFirstPartyStorageAccessGranted, VoidCString(),
@@ -3780,6 +3780,8 @@ bool nsCookieService::ParseAttributes(nsCString& aCookieHeader,
     aCookieData.value() = tokenString;
   }
 
+  bool sameSiteSet = false;
+
   // extract remaining attributes
   while (cookieStart != cookieEnd && !newCookie) {
     newCookie = GetTokenValue(cookieStart, cookieEnd, tokenString, tokenValue,
@@ -3816,15 +3818,21 @@ bool nsCookieService::ParseAttributes(nsCString& aCookieHeader,
       if (tokenValue.LowerCaseEqualsLiteral(kSameSiteLax)) {
         aCookieData.sameSite() = nsICookie::SAMESITE_LAX;
         aCookieData.rawSameSite() = nsICookie::SAMESITE_LAX;
+        sameSiteSet = true;
       } else if (tokenValue.LowerCaseEqualsLiteral(kSameSiteStrict)) {
         aCookieData.sameSite() = nsICookie::SAMESITE_STRICT;
         aCookieData.rawSameSite() = nsICookie::SAMESITE_STRICT;
+        sameSiteSet = true;
       } else if (tokenValue.LowerCaseEqualsLiteral(kSameSiteNone)) {
         aCookieData.sameSite() = nsICookie::SAMESITE_NONE;
         aCookieData.rawSameSite() = nsICookie::SAMESITE_NONE;
+        sameSiteSet = true;
       }
     }
   }
+
+  Telemetry::Accumulate(Telemetry::COOKIE_SAMESITE_SET_VS_UNSET,
+                        sameSiteSet ? 1 : 0);
 
   // re-assign aCookieHeader, in case we need to process another cookie
   aCookieHeader.Assign(Substring(cookieStart, cookieEnd));
@@ -4566,6 +4574,15 @@ void nsCookieService::FindStaleCookies(nsCookieEntry* aEntry,
 NS_IMETHODIMP
 nsCookieService::CountCookiesFromHost(const nsACString& aHost,
                                       uint32_t* aCountFromHost) {
+  return CountCookiesFromHostInternal(aHost, 0, aCountFromHost);
+}
+
+nsresult nsCookieService::CountCookiesFromHostInternal(
+    const nsACString& aHost, uint32_t aPrivateBrowsingId,
+    uint32_t* aCountFromHost) {
+  AutoRestore<DBState*> savePrevDBState(mDBState);
+  mDBState = (aPrivateBrowsingId > 0) ? mPrivateDBState : mDefaultDBState;
+
   if (!mDBState) {
     NS_WARNING("No DBState! Profile already closed?");
     return NS_ERROR_NOT_AVAILABLE;
@@ -4582,7 +4599,9 @@ nsCookieService::CountCookiesFromHost(const nsACString& aHost,
   rv = GetBaseDomainFromHost(mTLDService, host, baseDomain);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCookieKey key(baseDomain, OriginAttributes());
+  OriginAttributes attrs;
+  attrs.mPrivateBrowsingId = aPrivateBrowsingId;
+  nsCookieKey key(baseDomain, attrs);
 
   // Return a count of all cookies, including expired.
   nsCookieEntry* entry = mDBState->hostTable.GetEntry(key);

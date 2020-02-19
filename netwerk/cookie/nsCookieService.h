@@ -15,7 +15,6 @@
 #include "nsCookie.h"
 #include "nsCookieKey.h"
 #include "nsString.h"
-#include "nsAutoPtr.h"
 #include "nsHashKeys.h"
 #include "nsIMemoryReporter.h"
 #include "nsTHashtable.h"
@@ -171,8 +170,6 @@ class nsCookieService final : public nsICookieService,
                               public nsIMemoryReporter {
  private:
   size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
-
-  static bool sSameSiteEnabled;  // cached pref
 
  public:
   NS_DECL_ISUPPORTS
@@ -337,6 +334,10 @@ class nsCookieService final : public nsICookieService,
   nsresult RemoveCookiesWithOriginAttributes(
       const mozilla::OriginAttributesPattern& aPattern,
       const nsCString& aBaseDomain);
+
+  nsresult CountCookiesFromHostInternal(const nsACString& aHost,
+                                        uint32_t aPrivateBrowsingId,
+                                        uint32_t* aCountFromHost);
 
  protected:
   nsresult RemoveCookiesFromExactHost(

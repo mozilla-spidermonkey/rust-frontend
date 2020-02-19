@@ -573,9 +573,7 @@ ModuleObject* frontend::ModuleCompiler<Unit>::compile(
     return nullptr;
   }
 
-  module->init(compilationInfo.script);
-
-  ModuleBuilder builder(cx, module, parser.ptr());
+  ModuleBuilder builder(cx, parser.ptr());
 
   RootedScope enclosingScope(cx, &cx->global()->emptyGlobalScope());
   ModuleSharedContext modulesc(cx, module, compilationInfo, enclosingScope,
@@ -598,9 +596,12 @@ ModuleObject* frontend::ModuleCompiler<Unit>::compile(
     return nullptr;
   }
 
-  if (!builder.initModule()) {
+  if (!builder.initModule(module)) {
     return nullptr;
   }
+
+  module->initScriptSlots(compilationInfo.script);
+  module->initStatusSlot();
 
   if (!ModuleObject::createEnvironment(cx, module)) {
     return nullptr;
@@ -952,14 +953,13 @@ static void CheckFlagsOnDelazification(uint32_t lazy, uint32_t nonLazy) {
   // These flags are computed for lazy scripts and may have a different
   // definition for non-lazy scripts.
   //
-  //  HasInnerFunctions:  The full parse performs basic analysis for dead code
-  //                      and may remove inner functions that existed after lazy
-  //                      parse.
+  //  IsLazyScript:       This flag will be removed in Bug 1529456.
+  //
   //  TreatAsRunOnce:     Some conditions depend on parent context and are
   //                      computed during lazy parsing, while other conditions
   //                      need to full parse.
   constexpr uint32_t CustomFlagsMask =
-      uint32_t(BaseScript::ImmutableFlags::HasInnerFunctions) |
+      uint32_t(BaseScript::ImmutableFlags::IsLazyScript) |
       uint32_t(BaseScript::ImmutableFlags::TreatAsRunOnce);
 
   // These flags are expected to match between lazy and full parsing.

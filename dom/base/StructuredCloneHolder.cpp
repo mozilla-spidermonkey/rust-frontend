@@ -113,8 +113,13 @@ bool StructuredCloneCallbacksCanTransfer(JSContext* aCx,
                                           aSameProcessScopeRequired);
 }
 
-void StructuredCloneCallbacksError(JSContext* aCx, uint32_t aErrorId) {
+void StructuredCloneCallbacksError(JSContext* aCx, uint32_t aErrorId,
+                                   void* aClosure, const char* aErrorMessage) {
   NS_WARNING("Failed to clone data.");
+  StructuredCloneHolderBase* holder =
+      static_cast<StructuredCloneHolderBase*>(aClosure);
+  MOZ_ASSERT(holder);
+  return holder->SetErrorMessage(aErrorMessage);
 }
 
 void AssertTagValues() {
@@ -143,7 +148,7 @@ const JSStructuredCloneCallbacks StructuredCloneHolder::sCallbacks = {
     StructuredCloneCallbacksRead,          StructuredCloneCallbacksWrite,
     StructuredCloneCallbacksError,         StructuredCloneCallbacksReadTransfer,
     StructuredCloneCallbacksWriteTransfer, StructuredCloneCallbacksFreeTransfer,
-    StructuredCloneCallbacksCanTransfer,
+    StructuredCloneCallbacksCanTransfer,   nullptr,
 };
 
 // StructuredCloneHolderBase class
@@ -177,10 +182,10 @@ bool StructuredCloneHolderBase::Write(JSContext* aCx,
   return Write(aCx, aValue, JS::UndefinedHandleValue, JS::CloneDataPolicy());
 }
 
-bool StructuredCloneHolderBase::Write(JSContext* aCx,
-                                      JS::Handle<JS::Value> aValue,
-                                      JS::Handle<JS::Value> aTransfer,
-                                      JS::CloneDataPolicy aCloneDataPolicy) {
+bool StructuredCloneHolderBase::Write(
+    JSContext* aCx, JS::Handle<JS::Value> aValue,
+    JS::Handle<JS::Value> aTransfer,
+    const JS::CloneDataPolicy& aCloneDataPolicy) {
   MOZ_ASSERT(!mBuffer, "Double Write is not allowed");
   MOZ_ASSERT(!mClearCalled, "This method cannot be called after Clear.");
 
@@ -193,6 +198,10 @@ bool StructuredCloneHolderBase::Write(JSContext* aCx,
     return false;
   }
 
+  // Let's update our scope to the final one. The new one could be more
+  // restrictive of the current one.
+  MOZ_ASSERT(mStructuredCloneScope >= mBuffer->scope());
+  mStructuredCloneScope = mBuffer->scope();
   return true;
 }
 
@@ -201,9 +210,9 @@ bool StructuredCloneHolderBase::Read(JSContext* aCx,
   return Read(aCx, aValue, JS::CloneDataPolicy());
 }
 
-bool StructuredCloneHolderBase::Read(JSContext* aCx,
-                                     JS::MutableHandle<JS::Value> aValue,
-                                     JS::CloneDataPolicy aCloneDataPolicy) {
+bool StructuredCloneHolderBase::Read(
+    JSContext* aCx, JS::MutableHandle<JS::Value> aValue,
+    const JS::CloneDataPolicy& aCloneDataPolicy) {
   MOZ_ASSERT(mBuffer, "Read() without Write() is not allowed.");
   MOZ_ASSERT(!mClearCalled, "This method cannot be called after Clear.");
 
@@ -268,11 +277,11 @@ void StructuredCloneHolder::Write(JSContext* aCx, JS::Handle<JS::Value> aValue,
 
 void StructuredCloneHolder::Write(JSContext* aCx, JS::Handle<JS::Value> aValue,
                                   JS::Handle<JS::Value> aTransfer,
-                                  JS::CloneDataPolicy cloneDataPolicy,
+                                  const JS::CloneDataPolicy& aCloneDataPolicy,
                                   ErrorResult& aRv) {
   if (!StructuredCloneHolderBase::Write(aCx, aValue, aTransfer,
-                                        cloneDataPolicy)) {
-    aRv.Throw(NS_ERROR_DOM_DATA_CLONE_ERR);
+                                        aCloneDataPolicy)) {
+    aRv.ThrowDataCloneError(mErrorMessage);
     return;
   }
 }
@@ -285,16 +294,17 @@ void StructuredCloneHolder::Read(nsIGlobalObject* aGlobal, JSContext* aCx,
 
 void StructuredCloneHolder::Read(nsIGlobalObject* aGlobal, JSContext* aCx,
                                  JS::MutableHandle<JS::Value> aValue,
-                                 JS::CloneDataPolicy aCloneDataPolicy,
+                                 const JS::CloneDataPolicy& aCloneDataPolicy,
                                  ErrorResult& aRv) {
   MOZ_ASSERT(aGlobal);
 
   mozilla::AutoRestore<nsIGlobalObject*> guard(mGlobal);
+  auto errorMessageGuard = MakeScopeExit([&] { mErrorMessage.Truncate(); });
   mGlobal = aGlobal;
 
   if (!StructuredCloneHolderBase::Read(aCx, aValue, aCloneDataPolicy)) {
     JS_ClearPendingException(aCx);
-    aRv.Throw(NS_ERROR_DOM_DATA_CLONE_ERR);
+    aRv.ThrowDataCloneError(mErrorMessage);
     return;
   }
 
@@ -308,12 +318,10 @@ void StructuredCloneHolder::Read(nsIGlobalObject* aGlobal, JSContext* aCx,
   }
 }
 
-void StructuredCloneHolder::ReadFromBuffer(nsIGlobalObject* aGlobal,
-                                           JSContext* aCx,
-                                           JSStructuredCloneData& aBuffer,
-                                           JS::MutableHandle<JS::Value> aValue,
-                                           JS::CloneDataPolicy aCloneDataPolicy,
-                                           ErrorResult& aRv) {
+void StructuredCloneHolder::ReadFromBuffer(
+    nsIGlobalObject* aGlobal, JSContext* aCx, JSStructuredCloneData& aBuffer,
+    JS::MutableHandle<JS::Value> aValue,
+    const JS::CloneDataPolicy& aCloneDataPolicy, ErrorResult& aRv) {
   ReadFromBuffer(aGlobal, aCx, aBuffer, JS_STRUCTURED_CLONE_VERSION, aValue,
                  aCloneDataPolicy, aRv);
 }
@@ -321,16 +329,18 @@ void StructuredCloneHolder::ReadFromBuffer(nsIGlobalObject* aGlobal,
 void StructuredCloneHolder::ReadFromBuffer(
     nsIGlobalObject* aGlobal, JSContext* aCx, JSStructuredCloneData& aBuffer,
     uint32_t aAlgorithmVersion, JS::MutableHandle<JS::Value> aValue,
-    JS::CloneDataPolicy aCloneDataPolicy, ErrorResult& aRv) {
+    const JS::CloneDataPolicy& aCloneDataPolicy, ErrorResult& aRv) {
   MOZ_ASSERT(!mBuffer, "ReadFromBuffer() must be called without a Write().");
 
   mozilla::AutoRestore<nsIGlobalObject*> guard(mGlobal);
+  auto errorMessageGuard = MakeScopeExit([&] { mErrorMessage.Truncate(); });
   mGlobal = aGlobal;
 
   if (!JS_ReadStructuredClone(aCx, aBuffer, aAlgorithmVersion, CloneScope(),
                               aValue, aCloneDataPolicy, &sCallbacks, this)) {
     JS_ClearPendingException(aCx);
-    aRv.Throw(NS_ERROR_DOM_DATA_CLONE_ERR);
+    aRv.ThrowDataCloneError(mErrorMessage);
+    return;
   }
 }
 

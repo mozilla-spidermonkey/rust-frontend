@@ -22,8 +22,10 @@
 #include "nsXULPopupManager.h"
 #include "nsIWidgetListener.h"
 #include "nsContentUtils.h"  // for nsAutoScriptBlocker
+#include "nsDocShell.h"
 #include "mozilla/TimelineConsumers.h"
 #include "mozilla/CompositeTimelineMarker.h"
+#include "mozilla/StartupTimeline.h"
 
 using namespace mozilla;
 
@@ -1075,6 +1077,9 @@ void nsView::DidCompositeWindow(mozilla::layers::TransactionId aTransactionId,
   if (rootContext) {
     rootContext->NotifyDidPaintForSubtree(aTransactionId, aCompositeEnd);
   }
+
+  mozilla::StartupTimeline::RecordOnce(mozilla::StartupTimeline::FIRST_PAINT2,
+                                       aCompositeEnd);
 
   // If the two timestamps are identical, this was likely a fake composite
   // event which wouldn't be terribly useful to display.

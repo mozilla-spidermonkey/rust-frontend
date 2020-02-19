@@ -519,8 +519,8 @@ package org.mozilla.geckoview {
     method @Nullable public GeckoRuntime getRuntime();
     method @Nullable public Rect getScreenSizeOverride();
     method @Nullable public RuntimeTelemetry.Delegate getTelemetryDelegate();
-    method public boolean getUseContentProcessHint();
     method public boolean getUseMaxScreenDepth();
+    method public boolean getUseMultiprocess();
     method public boolean getWebFontsEnabled();
     method @NonNull public GeckoRuntimeSettings setAboutConfigEnabled(boolean);
     method @NonNull public GeckoRuntimeSettings setAutomaticFontSizeAdjustment(boolean);
@@ -572,8 +572,8 @@ package org.mozilla.geckoview {
     method @NonNull public GeckoRuntimeSettings.Builder remoteDebuggingEnabled(boolean);
     method @NonNull public GeckoRuntimeSettings.Builder screenSizeOverride(int, int);
     method @NonNull public GeckoRuntimeSettings.Builder telemetryDelegate(@NonNull RuntimeTelemetry.Delegate);
-    method @NonNull public GeckoRuntimeSettings.Builder useContentProcessHint(boolean);
     method @NonNull public GeckoRuntimeSettings.Builder useMaxScreenDepth(boolean);
+    method @NonNull public GeckoRuntimeSettings.Builder useMultiprocess(boolean);
     method @NonNull public GeckoRuntimeSettings.Builder webFontsEnabled(boolean);
     method @NonNull protected GeckoRuntimeSettings newSettings(@Nullable GeckoRuntimeSettings);
   }
@@ -1127,7 +1127,6 @@ package org.mozilla.geckoview {
     method public boolean getFullAccessibilityTree();
     method public int getScreenId();
     method public boolean getSuspendMediaWhenInactive();
-    method public boolean getUseMultiprocess();
     method public boolean getUsePrivateMode();
     method public boolean getUseTrackingProtection();
     method public int getUserAgentMode();
@@ -1165,7 +1164,6 @@ package org.mozilla.geckoview {
     method @NonNull public GeckoSessionSettings.Builder fullAccessibilityTree(boolean);
     method @NonNull public GeckoSessionSettings.Builder screenId(int);
     method @NonNull public GeckoSessionSettings.Builder suspendMediaWhenInactive(boolean);
-    method @NonNull public GeckoSessionSettings.Builder useMultiprocess(boolean);
     method @NonNull public GeckoSessionSettings.Builder usePrivateMode(boolean);
     method @NonNull public GeckoSessionSettings.Builder useTrackingProtection(boolean);
     method @NonNull public GeckoSessionSettings.Builder userAgentMode(int);
@@ -1530,6 +1528,7 @@ package org.mozilla.geckoview {
     field public static final int ERROR_NETWORK_FAILURE = -1;
     field public static final int ERROR_SIGNEDSTATE_REQUIRED = -5;
     field public static final int ERROR_UNEXPECTED_ADDON_TYPE = -6;
+    field public static final int ERROR_USER_CANCELED = -100;
   }
 
   @UiThread public static interface WebExtension.MessageDelegate {
@@ -1603,6 +1602,7 @@ package org.mozilla.geckoview {
     method @AnyThread public void setTabActive(@NonNull GeckoSession, boolean);
     method @UiThread public void setTabDelegate(@Nullable WebExtensionController.TabDelegate);
     method @NonNull @AnyThread public GeckoResult<Void> uninstall(@NonNull WebExtension);
+    method @AnyThread @NonNull public GeckoResult<WebExtension> update(@NonNull WebExtension);
   }
 
   public static class WebExtensionController.EnableSource {
@@ -1613,6 +1613,7 @@ package org.mozilla.geckoview {
 
   @UiThread public static interface WebExtensionController.PromptDelegate {
     method @Nullable default public GeckoResult<AllowOrDeny> onInstallPrompt(@NonNull WebExtension);
+    method @Nullable default public GeckoResult<AllowOrDeny> onUpdatePrompt(@NonNull WebExtension, @NonNull WebExtension, @NonNull String[], @NonNull String[]);
   }
 
   public static interface WebExtensionController.TabDelegate {
@@ -1652,7 +1653,7 @@ package org.mozilla.geckoview {
   public class WebPushController {
     method @UiThread public void onPushEvent(@NonNull String);
     method @UiThread public void onPushEvent(@NonNull String, @Nullable byte[]);
-    method @UiThread public void onSubscriptionChanged(@NonNull WebPushSubscription);
+    method @UiThread public void onSubscriptionChanged(@NonNull String);
     method @UiThread public void setDelegate(@Nullable WebPushDelegate);
   }
 

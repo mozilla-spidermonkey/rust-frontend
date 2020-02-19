@@ -231,18 +231,23 @@ class JitRuntime {
   // thread state lock, but may be read from at other times.
   typedef mozilla::Atomic<size_t, mozilla::SequentiallyConsistent,
                           mozilla::recordreplay::Behavior::DontPreserve>
-      NumFinishedBuildersType;
-  NumFinishedBuildersType numFinishedBuilders_;
+      NumFinishedOffThreadTasksType;
+  NumFinishedOffThreadTasksType numFinishedOffThreadTasks_;
 
   // List of Ion compilation waiting to get linked.
-  using IonBuilderList = mozilla::LinkedList<js::jit::IonBuilder>;
-  MainThreadData<IonBuilderList> ionLazyLinkList_;
+  using IonCompileTaskList = mozilla::LinkedList<js::jit::IonCompileTask>;
+  MainThreadData<IonCompileTaskList> ionLazyLinkList_;
   MainThreadData<size_t> ionLazyLinkListSize_;
 
   // Counter used to help dismbiguate stubs in CacheIR
   MainThreadData<uint64_t> disambiguationId_;
 
- private:
+#ifdef DEBUG
+  // Flag that can be set from JIT code to indicate it's invalid to call
+  // arbitrary JS code in a particular region. This is checked in RunScript.
+  MainThreadData<uint32_t> disallowArbitraryCode_{false};
+#endif
+
   bool generateTrampolines(JSContext* cx);
   bool generateBaselineICFallbackCode(JSContext* cx);
 
@@ -298,7 +303,6 @@ class JitRuntime {
   MOZ_MUST_USE bool initialize(JSContext* cx);
 
   static void Trace(JSTracer* trc, const js::AutoAccessAtomsZone& access);
-  static void TraceJitcodeGlobalTableForMinorGC(JSTracer* trc);
   static MOZ_MUST_USE bool MarkJitcodeGlobalTableIteratively(GCMarker* marker);
   static void TraceWeakJitcodeGlobalTable(JSRuntime* rt, JSTracer* trc);
 
@@ -309,6 +313,14 @@ class JitRuntime {
   IonCompilationId nextCompilationId() {
     return IonCompilationId(nextCompilationId_++);
   }
+
+#ifdef DEBUG
+  bool disallowArbitraryCode() const { return disallowArbitraryCode_; }
+  void clearDisallowArbitraryCode() { disallowArbitraryCode_ = false; }
+  const void* addressOfDisallowArbitraryCode() const {
+    return &disallowArbitraryCode_.refNoCheck();
+  }
+#endif
 
   uint8_t* allocateIonOsrTempData(size_t size);
   void freeIonOsrTempData();
@@ -417,18 +429,20 @@ class JitRuntime {
   void setIonBailAfter(uint32_t after) { ionBailAfter_ = after; }
 #endif
 
-  size_t numFinishedBuilders() const { return numFinishedBuilders_; }
-  NumFinishedBuildersType& numFinishedBuildersRef(
+  size_t numFinishedOffThreadTasks() const {
+    return numFinishedOffThreadTasks_;
+  }
+  NumFinishedOffThreadTasksType& numFinishedOffThreadTasksRef(
       const AutoLockHelperThreadState& locked) {
-    return numFinishedBuilders_;
+    return numFinishedOffThreadTasks_;
   }
 
-  IonBuilderList& ionLazyLinkList(JSRuntime* rt);
+  IonCompileTaskList& ionLazyLinkList(JSRuntime* rt);
 
   size_t ionLazyLinkListSize() const { return ionLazyLinkListSize_; }
 
-  void ionLazyLinkListRemove(JSRuntime* rt, js::jit::IonBuilder* builder);
-  void ionLazyLinkListAdd(JSRuntime* rt, js::jit::IonBuilder* builder);
+  void ionLazyLinkListRemove(JSRuntime* rt, js::jit::IonCompileTask* task);
+  void ionLazyLinkListAdd(JSRuntime* rt, js::jit::IonCompileTask* task);
 
   uint64_t nextDisambiguationId() { return disambiguationId_++; }
 };

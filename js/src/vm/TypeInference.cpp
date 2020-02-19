@@ -26,7 +26,6 @@
 #include "jit/Ion.h"
 #include "jit/IonAnalysis.h"
 #include "jit/JitRealm.h"
-#include "jit/OptimizationTracking.h"
 #include "js/MemoryMetrics.h"
 #include "js/UniquePtr.h"
 #include "util/DiagnosticAssertions.h"
@@ -461,8 +460,7 @@ bool TypeSet::objectsIntersect(const TypeSet* other) const {
   return false;
 }
 
-template <class TypeListT>
-bool TypeSet::enumerateTypes(TypeListT* list) const {
+bool TypeSet::enumerateTypes(TypeList* list) const {
   /* If any type is possible, there's no need to worry about specifics. */
   if (flags & TYPE_FLAG_UNKNOWN) {
     return list->append(UnknownType());
@@ -496,10 +494,6 @@ bool TypeSet::enumerateTypes(TypeListT* list) const {
 
   return true;
 }
-
-template bool TypeSet::enumerateTypes<TypeSet::TypeList>(TypeList* list) const;
-template bool TypeSet::enumerateTypes<jit::TempTypeList>(
-    jit::TempTypeList* list) const;
 
 inline bool TypeSet::addTypesToConstraint(JSContext* cx,
                                           TypeConstraint* constraint) {
@@ -634,8 +628,8 @@ void TypeSet::addType(Type type, LifoAlloc* alloc) {
     // have many different classes and prototypes but are still optimizable
     // by IonMonkey.
     if (objectCount >= TYPE_FLAG_OBJECT_COUNT_LIMIT) {
-      JS_STATIC_ASSERT(TYPE_FLAG_DOMOBJECT_COUNT_LIMIT >=
-                       TYPE_FLAG_OBJECT_COUNT_LIMIT);
+      static_assert(TYPE_FLAG_DOMOBJECT_COUNT_LIMIT >=
+                    TYPE_FLAG_OBJECT_COUNT_LIMIT);
       // Examining the entire type set is only required when we first hit
       // the normal object limit.
       if (objectCount == TYPE_FLAG_OBJECT_COUNT_LIMIT) {
@@ -2694,8 +2688,11 @@ void js::PrintTypes(JSContext* cx, Compartment* comp, bool force) {
   }
 
   RootedScript script(cx);
-  for (auto iter = zone->cellIter<JSScript>(); !iter.done(); iter.next()) {
-    script = iter;
+  for (auto base = zone->cellIter<BaseScript>(); !base.done(); base.next()) {
+    if (base->isLazyScript()) {
+      continue;
+    }
+    script = static_cast<JSScript*>(base.get());
     if (JitScript* jitScript = script->maybeJitScript()) {
       jitScript->printTypes(cx, script);
     }

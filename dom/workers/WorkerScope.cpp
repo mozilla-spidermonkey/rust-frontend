@@ -79,7 +79,7 @@ class WorkerScriptTimeoutHandler final : public ScriptTimeoutHandler {
   MOZ_CAN_RUN_SCRIPT virtual bool Call(const char* aExecutionReason) override;
 
  private:
-  virtual ~WorkerScriptTimeoutHandler() {}
+  virtual ~WorkerScriptTimeoutHandler() = default;
 };
 
 NS_IMPL_CYCLE_COLLECTION_INHERITED(WorkerScriptTimeoutHandler,
@@ -536,6 +536,10 @@ WorkerGlobalScope::GetExistingDebuggerNotificationManager() {
   return mDebuggerNotificationManager;
 }
 
+bool WorkerGlobalScope::IsSharedMemoryAllowed() const {
+  return mWorkerPrivate->IsSharedMemoryAllowed();
+}
+
 Maybe<ClientInfo> WorkerGlobalScope::GetClientInfo() const {
   return mWorkerPrivate->GetClientInfo();
 }
@@ -561,10 +565,10 @@ WorkerGlobalScope::GetServiceWorkerRegistration(
       return;
     }
 
-    ref = swr.forget();
+    ref = std::move(swr);
     *aDoneOut = true;
   });
-  return ref.forget();
+  return ref;
 }
 
 RefPtr<ServiceWorkerRegistration>
@@ -577,7 +581,7 @@ WorkerGlobalScope::GetOrCreateServiceWorkerRegistration(
     ref = ServiceWorkerRegistration::CreateForWorker(mWorkerPrivate, this,
                                                      aDescriptor);
   }
-  return ref.forget();
+  return ref;
 }
 
 uint64_t WorkerGlobalScope::WindowID() const {
@@ -693,7 +697,7 @@ ServiceWorkerGlobalScope::ServiceWorkerGlobalScope(
       mRegistration(
           GetOrCreateServiceWorkerRegistration(aRegistrationDescriptor)) {}
 
-ServiceWorkerGlobalScope::~ServiceWorkerGlobalScope() {}
+ServiceWorkerGlobalScope::~ServiceWorkerGlobalScope() = default;
 
 bool ServiceWorkerGlobalScope::WrapGlobalObject(
     JSContext* aCx, JS::MutableHandle<JSObject*> aReflector) {

@@ -1027,6 +1027,7 @@ GeneratedFilesList = StrictOrderingOnAppendListWithFlagsFactory({
     'script': six.text_type,
     'inputs': list,
     'force': bool,
+    'py2': bool,
     'flags': list, })
 
 
@@ -1332,6 +1333,15 @@ VARIABLES = {
 
         The library defined by this moz.build should have a build definition in
         a Cargo.toml file that exists in this moz.build's directory.
+        """
+        ),
+
+    'IS_GKRUST': (
+        bool,
+        bool,
+        """Whether the current library defined by this moz.build is gkrust.
+
+        Indicates whether the current library contains rust for libxul.
         """
         ),
 
@@ -2008,10 +2018,6 @@ VARIABLES = {
                                         """List of manifest files defining firefox-ui-functional tests.
         """),
 
-    'PUPPETEER_FIREFOX_MANIFESTS': (ManifestparserManifestList, list,
-                                    """List of manifest files defining puppeteer unit tests for Firefox.
-        """),
-
     'MARIONETTE_LAYOUT_MANIFESTS': (ManifestparserManifestList, list,
                                     """List of manifest files defining marionette-layout tests.
         """),
@@ -2399,6 +2405,7 @@ TEMPLATE_VARIABLES = {
     'HOST_LIBRARY_NAME',
     'HOST_SIMPLE_PROGRAMS',
     'IS_FRAMEWORK',
+    'IS_GKRUST',
     'LIBRARY_NAME',
     'PROGRAM',
     'SIMPLE_PROGRAMS',
@@ -2829,6 +2836,18 @@ DEPRECATION_HINTS = {
 
             Library('foo') [ or LIBRARY_NAME = 'foo' ]
             IS_FRAMEWORK = True
+        ''',
+
+
+    'IS_GKRUST': '''
+        Please use
+
+            RustLibrary('gkrust', ... is_gkrust=True)
+
+        instead of
+
+            RustLibrary('gkrust') [ or LIBRARY_NAME = 'gkrust' ]
+            IS_GKRUST = True
         ''',
 
     'TOOL_DIRS': 'Please use the DIRS variable instead.',

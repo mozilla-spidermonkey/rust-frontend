@@ -299,6 +299,12 @@ def target_tasks_push_desktop(full_task_graph, parameters, graph_config):
         if task.attributes.get('shipping_product') == parameters['release_product'] and \
                 task.attributes.get('shipping_phase') == 'push':
             return True
+        # XXX: Bug 1612540 - include beetmover jobs for publishing geckoview, along
+        # with the regular Firefox (not Devedition!) releases so that they are at sync
+        if (task.attributes.get('shipping_product') == 'fennec' and
+            task.kind in ('beetmover-geckoview', 'upload-symbols') and
+                parameters['release_product'] == 'firefox'):
+            return True
 
     return [l for l, t in full_task_graph.tasks.iteritems() if filter(t)]
 
@@ -436,6 +442,9 @@ def target_tasks_fennec_v68(full_task_graph, parameters, graph_config):
             return False
         if '-fennec68-' in attributes.get('raptor_try_name'):
             if '-p2' in test_platform and '-arm7' in test_platform:
+                return False
+            if '-youtube-playback-' in attributes.get('raptor_try_name') \
+                    and 'opt' in test_platform:
                 return False
             return True
 

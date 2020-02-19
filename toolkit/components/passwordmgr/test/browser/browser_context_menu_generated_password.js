@@ -52,17 +52,20 @@ add_task(async function test_hidden_by_prefs() {
       let generatedPasswordItem = document.getElementById(
         "fill-login-generated-password"
       );
+      let fillLoginItem = document.getElementById("fill-login");
       let generatedPasswordSeparator = document.getElementById(
-        "generated-password-separator"
+        "fill-login-and-generated-password-separator"
       );
 
       ok(
         !BrowserTestUtils.is_visible(generatedPasswordItem),
         "generated password item is hidden"
       );
-      ok(
-        !BrowserTestUtils.is_visible(generatedPasswordSeparator),
-        "separator is hidden"
+      is(
+        BrowserTestUtils.is_visible(fillLoginItem) ||
+          BrowserTestUtils.is_visible(generatedPasswordItem),
+        BrowserTestUtils.is_visible(generatedPasswordSeparator),
+        "separator should only be visible if one of the login items is visible"
       );
 
       CONTEXT_MENU.hidePopup();
@@ -89,17 +92,20 @@ add_task(async function test_fill_hidden_by_login_saving_disabled() {
       let generatedPasswordItem = document.getElementById(
         "fill-login-generated-password"
       );
+      let fillLoginItem = document.getElementById("fill-login");
       let generatedPasswordSeparator = document.getElementById(
-        "generated-password-separator"
+        "fill-login-and-generated-password-separator"
       );
 
       ok(
         !BrowserTestUtils.is_visible(generatedPasswordItem),
         "generated password item is hidden"
       );
-      ok(
-        !BrowserTestUtils.is_visible(generatedPasswordSeparator),
-        "separator is hidden"
+      is(
+        BrowserTestUtils.is_visible(fillLoginItem) ||
+          BrowserTestUtils.is_visible(generatedPasswordItem),
+        BrowserTestUtils.is_visible(generatedPasswordSeparator),
+        "separator should only be visible if one of the login items is visible"
       );
 
       CONTEXT_MENU.hidePopup();
@@ -186,12 +192,14 @@ add_task(async function fill_generated_password_nonempty_field() {
     },
     async function(browser) {
       await SimpleTest.promiseFocus(browser.ownerGlobal);
+      await changeContentFormValues(browser, {
+        [passwordInputSelector]: "aa",
+      });
       await SpecialPowers.spawn(
         browser,
         [[passwordInputSelector]],
         function checkInitialFieldValue(inputSelector) {
           const input = content.document.querySelector(inputSelector);
-          input.setUserInput("aa");
           is(
             content.getComputedStyle(input).filter,
             "none",
@@ -227,6 +235,8 @@ add_task(async function fill_generated_password_nonempty_field() {
       );
     }
   );
+  LoginTestUtils.clearData();
+  LoginTestUtils.resetGeneratedPasswordsCache();
 });
 
 add_task(async function fill_generated_password_with_matching_logins() {
@@ -461,7 +471,7 @@ add_task(async function test_edited_generated_password_in_new_tab() {
     }
   );
 
-  Services.logins.removeAllLogins();
+  LoginTestUtils.clearData();
   LoginTestUtils.resetGeneratedPasswordsCache();
   await SpecialPowers.popPrefEnv();
 });

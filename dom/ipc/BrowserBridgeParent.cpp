@@ -92,7 +92,7 @@ nsresult BrowserBridgeParent::InitWithProcess(
   }
 
   // Set our BrowserParent object to the newly created browser.
-  mBrowserParent = browserParent.forget();
+  mBrowserParent = std::move(browserParent);
   mBrowserParent->SetOwnerElement(Manager()->GetOwnerElement());
   mBrowserParent->InitRendering();
 
@@ -143,8 +143,8 @@ IPCResult BrowserBridgeParent::RecvResumeLoad(uint64_t aPendingSwitchID) {
 }
 
 IPCResult BrowserBridgeParent::RecvUpdateDimensions(
-    const DimensionInfo& aDimensions) {
-  Unused << mBrowserParent->SendUpdateDimensions(aDimensions);
+    const nsIntRect& aRect, const ScreenIntSize& aSize) {
+  mBrowserParent->UpdateDimensions(aRect, aSize);
   return IPC_OK();
 }
 
@@ -189,8 +189,8 @@ IPCResult BrowserBridgeParent::RecvDispatchSynthesizedMouseEvent(
   return IPC_OK();
 }
 
-IPCResult BrowserBridgeParent::RecvSkipBrowsingContextDetach() {
-  Unused << mBrowserParent->SendSkipBrowsingContextDetach();
+IPCResult BrowserBridgeParent::RecvWillChangeProcess() {
+  Unused << mBrowserParent->SendWillChangeProcess();
   return IPC_OK();
 }
 

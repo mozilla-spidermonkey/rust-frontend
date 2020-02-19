@@ -754,13 +754,6 @@ items from that key's value."
         self._run_tooltool()
         self._create_mozbuild_dir()
         self._ensure_upload_path()
-        mach_props = os.path.join(
-            self.query_abs_dirs()['abs_obj_dir'],
-            'dist',
-            'mach_build_properties.json')
-        if os.path.exists(mach_props):
-            self.info("Removing previous mach property file: %s" % mach_props)
-            self.rmtree(mach_props)
 
     def build(self):
         """builds application."""
@@ -854,17 +847,15 @@ items from that key's value."
         if branch == 'try':
             branch = 'mozilla-central'
 
-        multi_config_pf = self.config.get('multi_locale_config_platform',
-                                          'android')
-
-        multil10n_path = 'build/src/testing/mozharness/scripts/multil10n.py'
+        multil10n_path = os.path.join(
+            dirs['abs_src_dir'],
+            'testing/mozharness/scripts/multil10n.py',
+        )
         base_work_dir = os.path.join(base_work_dir, 'workspace')
 
         cmd = [
             sys.executable,
             multil10n_path,
-            '--config-file',
-            'multi_locale/%s_%s.json' % (branch, multi_config_pf),
             '--config-file',
             'multi_locale/android-mozharness-build.json',
             '--pull-locale-source',
@@ -1044,6 +1035,7 @@ items from that key's value."
             'name': 'sccache hit rate',
             'value': hits,
             'subtests': [],
+            'alertThreshold': 50.0,
             'lowerIsBetter': False
         }
 

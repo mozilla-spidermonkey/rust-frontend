@@ -505,9 +505,13 @@ pref("media.videocontrols.picture-in-picture.video-toggle.always-show", false);
   pref("media.peerconnection.turn.disable", false);
   pref("media.peerconnection.mute_on_bye_or_timeout", false);
 
-  // 770 = DTLS 1.0, 771 = DTLS 1.2
-  pref("media.peerconnection.dtls.version.min", 770);
+  // 770 = DTLS 1.0, 771 = DTLS 1.2, 772 = DTLS 1.3
+  pref("media.peerconnection.dtls.version.min", 771);
+#if defined(NIGHTLY_BUILD)
+  pref("media.peerconnection.dtls.version.max", 772);
+#else
   pref("media.peerconnection.dtls.version.max", 771);
+#endif
 
   // These values (aec, agc, and noise) are from:
   // media/webrtc/trunk/webrtc/modules/audio_processing/include/audio_processing.h
@@ -922,10 +926,6 @@ pref("print.print_footerright", "&D");
 pref("print.show_print_progress", true);
 
 // xxxbsmedberg: more toolkit prefs
-
-// When this is set to false each window has its own PrintSettings
-// and a change in one window does not affect the others
-pref("print.use_global_printsettings", true);
 
 // Save the Printings after each print job
 pref("print.save_print_settings", true);
@@ -2669,14 +2669,6 @@ pref("plugins.favorfallback.rules", "");
   #endif
 #endif
 
-// Whether or not to collect a paired minidump when force-killing a
-// content process.
-#ifdef RELEASE_OR_BETA
-  pref("dom.ipc.tabs.createKillHardCrashReports", false);
-#else
-  pref("dom.ipc.tabs.createKillHardCrashReports", true);
-#endif
-
 pref("dom.ipc.plugins.flash.disable-protected-mode", false);
 
 pref("dom.ipc.plugins.flash.subprocess.crashreporter.enabled", true);
@@ -2747,7 +2739,14 @@ pref("browser.tabs.remote.dataUriInDefaultWebProcess", false);
 // This has been added in case breaking any window references between these
 // sorts of pages, which we have to do when we run them in the normal web
 // content process, causes compatibility issues.
+//
+// This is going away and for now is disabled on nightly because document
+// channel is enabled there.
+#ifdef NIGHTLY_BUILD
+pref("browser.tabs.remote.allowLinkedWebInFileUriProcess", false);
+#else
 pref("browser.tabs.remote.allowLinkedWebInFileUriProcess", true);
+#endif
 
 // This pref will cause assertions when a remoteType triggers a process switch
 // to a new remoteType it should not be able to trigger.
@@ -3007,9 +3006,9 @@ pref("ui.mouse.radius.inputSource.touchOnly", true);
 
   // hkscsm3u.ttf (HKSCS-2001) :  http://www.microsoft.com/hk/hkscs
   // Hong Kong users have the same demand about glyphs for Latin letters (bug 88579)
-  pref("font.name-list.serif.zh-HK", "Times New Roman, MingLiu_HKSCS, Ming(for ISO10646), MingLiU, MingLiU_HKSCS-ExtB");
-  pref("font.name-list.sans-serif.zh-HK", "Arial, MingLiU_HKSCS, Ming(for ISO10646), MingLiU, MingLiU_HKSCS-ExtB");
-  pref("font.name-list.monospace.zh-HK", "MingLiU_HKSCS, Ming(for ISO10646), MingLiU, MingLiU_HKSCS-ExtB");
+  pref("font.name-list.serif.zh-HK", "Times New Roman, MingLiu_HKSCS, Ming(for ISO10646), MingLiU, MingLiU_HKSCS-ExtB, Microsoft JhengHei");
+  pref("font.name-list.sans-serif.zh-HK", "Arial, MingLiU_HKSCS, Ming(for ISO10646), MingLiU, MingLiU_HKSCS-ExtB, Microsoft JhengHei");
+  pref("font.name-list.monospace.zh-HK", "MingLiU_HKSCS, Ming(for ISO10646), MingLiU, MingLiU_HKSCS-ExtB, Microsoft JhengHei");
   pref("font.name-list.cursive.zh-HK", "DFKai-SB");
 
   pref("font.name-list.serif.x-devanagari", "Kokila, Raghindi");
@@ -3935,6 +3934,7 @@ pref("signon.autologin.proxy",              false);
 pref("signon.formlessCapture.enabled",      true);
 pref("signon.generation.available",               true);
 pref("signon.generation.enabled",                 true);
+pref("signon.passwordEditCapture.enabled",        false);
 pref("signon.privateBrowsingCapture.enabled",     true);
 pref("signon.storeWhenAutocompleteOff",     true);
 pref("signon.userInputRequiredToCapture.enabled", true);
@@ -4030,8 +4030,30 @@ pref("network.psl.onUpdate_notify", false);
   pref("widget.wayland_vsync.enabled", false);
 #endif
 
-// Timeout for outbound network geolocation provider XHR
-pref("geo.wifi.xhr.timeout", 60000);
+// All the Geolocation preferences are here.
+//
+#ifndef EARLY_BETA_OR_EARLIER
+  pref("geo.provider.network.url", "https://www.googleapis.com/geolocation/v1/geolocate?key=%GOOGLE_LOCATION_SERVICE_API_KEY%");
+#else
+  // Use MLS on Nightly and early Beta.
+  pref("geo.provider.network.url", "https://location.services.mozilla.com/v1/geolocate?key=%MOZILLA_API_KEY%");
+#endif
+
+// Timeout for outbound network geolocation provider.
+pref("geo.provider.network.timeout", 60000);
+
+#ifdef XP_MACOSX
+  pref("geo.provider.use_corelocation", true);
+#endif
+
+// Set to false if things are really broken.
+#ifdef XP_WIN
+  pref("geo.provider.ms-windows-location", true);
+#endif
+
+#if defined(MOZ_WIDGET_GTK) && defined(MOZ_GPSD)
+  pref("geo.provider.use_gpsd", true);
+#endif
 
 // Enable/Disable the device storage API for content
 pref("device.storage.enabled", false);
@@ -4115,13 +4137,9 @@ pref("alerts.showFavicons", false);
 // notifications are used.
 
 // Linux and macOS turn on system level notification as default, but Windows is
-// Nightly only due to unstable yet.
+// disabled due to instability (dependencies of bug 1497425).
 #if defined(XP_WIN)
-  #if defined(NIGHTLY_BUILD)
-    pref("alerts.useSystemBackend", true);
-  #else
-    pref("alerts.useSystemBackend", false);
-  #endif
+  pref("alerts.useSystemBackend", false);
 #else
   pref("alerts.useSystemBackend", true);
 #endif
@@ -4874,6 +4892,10 @@ pref("marionette.contentListener", false);
 // "Config", "Info", "Warn", "Error", and "Fatal". The value is treated
 // case-sensitively.
 pref("remote.log.level", "Info");
+
+// Certain log messages that are known to be long are truncated. This
+// preference causes them to not be truncated.
+pref("remote.log.truncate", true);
 
 // Enable the JSON View tool (an inspector for application/json documents).
 pref("devtools.jsonview.enabled", true);

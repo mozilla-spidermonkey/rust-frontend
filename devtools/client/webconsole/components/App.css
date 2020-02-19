@@ -77,16 +77,15 @@ body {
   grid-column: filter-toolbar;
   grid-row: filter-toolbar / filter-toolbar-secondary;
   grid-template-rows: subgrid;
-  grid-template-columns: subgrid;
 }
 
 .webconsole-filterbar-primary {
-  grid-area: filter-toolbar;
+  grid-row: filter-toolbar;
 }
 
 /* Only put the filter buttons toolbar on its own row in narrow filterbar layout  */
 .narrow .devtools-toolbar.webconsole-filterbar-secondary {
-  grid-area: filter-toolbar-secondary;
+  grid-row: filter-toolbar-secondary;
 }
 
 .flexible-output-input {
@@ -138,6 +137,18 @@ body {
   flex-grow: 1;
 }
 
+/* When eager evaluation is enabled, we want the input + eager evaluation result to be 40px
+   at most, so we lower the minimum height of the input */
+.webconsole-app.eager-evaluation .jsterm-input-container {
+  min-height: 22px;
+  padding-block-start: 0;
+}
+
+.webconsole-app.eager-evaluation .webconsole-input-openEditorButton {
+  padding-block: 0;
+   height: 22px;
+}
+
 .webconsole-app:not(.jsterm-editor) .jsterm-input-container {
   direction: ltr;
 }
@@ -147,9 +158,13 @@ body {
 }
 
 .webconsole-input-openEditorButton {
-  grid-column: -1 / -2;
   height: 24px;
   margin: 0;
+}
+
+.webconsole-input-buttons {
+  grid-column: -1 / -2;
+  display: flex;
 }
 
 :root:dir(rtl) .webconsole-input-openEditorButton {
@@ -235,6 +250,8 @@ body {
      * |                          ↔                          ↔                 |
      * |                          ↔                          ↔                 |
      * +--------------------------↔                          ↔                 |
+     * |    [Eager evaluation]    ↔                          ↔                 |
+     * +--------------------------↔                          ↔                 |
      * |  [Reverse search input]  ↔                          ↔                 |
      * +-----------------------------------------------------+-----------------+
      *
@@ -247,12 +264,14 @@ body {
                        "editor-toolbar    filter-toolbar             sidebar"
                        "editor            filter-toolbar-secondary   sidebar"
                        "editor            output                     sidebar"
+                       "eager-evaluation  output                     sidebar"
                        "reverse-search    output                     sidebar";
   grid-template-rows:
     auto
     var(--primary-toolbar-height)
     auto
     1fr
+    auto
     auto;
   grid-template-columns: minmax(150px, auto) minmax(200px, 1fr) minmax(0, auto);
 }
@@ -370,6 +389,23 @@ body {
   font-size: var(--theme-code-font-size);
   line-height: var(--theme-code-line-height);
   background-image: none;
+}
+
+.jsterm-editor .eager-evaluation-result {
+  grid-area: eager-evaluation;
+  /* The next 2 lines make it so the element isn't impacting the grid column size, but
+    will still take the whole available space. */
+  min-width: 100%;
+  width: 0;
+  border-inline-end: 1px solid var(--theme-splitter-color);
+  border-block-start: 1px solid var(--theme-splitter-color);
+  padding-inline-start: 2px;
+  align-items: center;
+  padding-block: 5px;
+}
+
+.jsterm-editor .eager-evaluation-result:empty {
+  display: none;
 }
 
 .jsterm-editor .editor-resizer {

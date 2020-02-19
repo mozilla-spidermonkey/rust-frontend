@@ -90,15 +90,13 @@ already_AddRefed<StyleSheet> StyleSheet::Constructor(
       do_QueryInterface(aGlobal.GetAsSupports());
 
   if (!window) {
-    aRv.ThrowNotSupportedError(
-        "CSSStyleSheet constructor not supported when there is no document");
+    aRv.ThrowNotSupportedError("Not supported when there is no document");
     return nullptr;
   }
 
   Document* constructorDocument = window->GetExtantDoc();
   if (!constructorDocument) {
-    aRv.ThrowNotSupportedError(
-        "CSSStyleSheet constructor not supported when there is no document");
+    aRv.ThrowNotSupportedError("Not supported when there is no document");
     return nullptr;
   }
 
@@ -144,8 +142,15 @@ bool StyleSheet::HasRules() const {
 }
 
 Document* StyleSheet::GetAssociatedDocument() const {
-  return mDocumentOrShadowRoot ? mDocumentOrShadowRoot->AsNode().OwnerDoc()
-                               : nullptr;
+  auto* associated = GetAssociatedDocumentOrShadowRoot();
+  return associated ? associated->AsNode().OwnerDoc() : nullptr;
+}
+
+dom::DocumentOrShadowRoot* StyleSheet::GetAssociatedDocumentOrShadowRoot()
+    const {
+  // FIXME(nordzilla) This will not work for children of adtoped sheets.
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=1613748
+  return IsConstructed() ? mConstructorDocument : mDocumentOrShadowRoot;
 }
 
 Document* StyleSheet::GetComposedDoc() const {
@@ -165,6 +170,8 @@ bool StyleSheet::IsKeptAliveByDocument() const {
 void StyleSheet::LastRelease() {
   MOZ_ASSERT(mInner, "Should have an mInner at time of destruction.");
   MOZ_ASSERT(mInner->mSheets.Contains(this), "Our mInner should include us.");
+  MOZ_DIAGNOSTIC_ASSERT(mAdopters.IsEmpty(),
+                        "Should have no adopters at time of destruction.");
 
   UnparentChildren();
 
@@ -269,15 +276,22 @@ void StyleSheet::SetComplete() {
 }
 
 void StyleSheet::ApplicableStateChanged(bool aApplicable) {
-  if (!mDocumentOrShadowRoot) {
-    return;
+  auto Notify = [this](DocumentOrShadowRoot& target) {
+    nsINode& node = target.AsNode();
+    if (ShadowRoot* shadow = ShadowRoot::FromNode(node)) {
+      shadow->StyleSheetApplicableStateChanged(*this);
+    } else {
+      node.AsDocument()->StyleSheetApplicableStateChanged(*this);
+    }
+  };
+
+  if (mDocumentOrShadowRoot) {
+    Notify(*mDocumentOrShadowRoot);
   }
 
-  nsINode& node = mDocumentOrShadowRoot->AsNode();
-  if (auto* shadow = ShadowRoot::FromNode(node)) {
-    shadow->StyleSheetApplicableStateChanged(*this);
-  } else {
-    node.AsDocument()->StyleSheetApplicableStateChanged(*this);
+  for (DocumentOrShadowRoot* adopter : mAdopters) {
+    MOZ_ASSERT(adopter, "adopters should never be null");
+    Notify(*adopter);
   }
 }
 
@@ -448,21 +462,28 @@ void StyleSheet::DropStyleSet(ServoStyleSet* aStyleSet) {
 
 // NOTE(emilio): Composed doc and containing shadow root are set in child sheets
 // too, so no need to do it for each ancestor.
-#define NOTIFY(function_, args_)                        \
-  do {                                                  \
-    if (auto* shadow = GetContainingShadow()) {         \
-      shadow->function_ args_;                          \
-    }                                                   \
-    if (auto* doc = GetComposedDoc()) {                 \
-      doc->function_ args_;                             \
-    }                                                   \
-    StyleSheet* current = this;                         \
-    do {                                                \
-      for (ServoStyleSet * set : current->mStyleSets) { \
-        set->function_ args_;                           \
-      }                                                 \
-      current = current->mParent;                       \
-    } while (current);                                  \
+#define NOTIFY(function_, args_)                                      \
+  do {                                                                \
+    if (auto* shadow = GetContainingShadow()) {                       \
+      shadow->function_ args_;                                        \
+    }                                                                 \
+    if (auto* doc = GetComposedDoc()) {                               \
+      doc->function_ args_;                                           \
+    }                                                                 \
+    StyleSheet* current = this;                                       \
+    do {                                                              \
+      for (ServoStyleSet * set : current->mStyleSets) {               \
+        set->function_ args_;                                         \
+      }                                                               \
+      for (auto* adopter : mAdopters) {                               \
+        if (auto* shadow = ShadowRoot::FromNode(adopter->AsNode())) { \
+          shadow->function_ args_;                                    \
+        } else {                                                      \
+          adopter->AsNode().AsDocument()->function_ args_;            \
+        }                                                             \
+      }                                                               \
+      current = current->mParent;                                     \
+    } while (current);                                                \
   } while (0)
 
 void StyleSheet::EnsureUniqueInner() {
@@ -584,8 +605,7 @@ already_AddRefed<dom::Promise> StyleSheet::Replace(const nsAString& aText,
 
   // 2.1 Check if sheet is constructed, else throw.
   if (!mConstructorDocument) {
-    aRv.ThrowNotAllowedError(
-        "The replace() method can only be called on constructed style sheets");
+    aRv.ThrowNotAllowedError("Can only be called on constructed style sheets");
     return nullptr;
   }
 
@@ -615,15 +635,13 @@ void StyleSheet::ReplaceSync(const nsACString& aText, ErrorResult& aRv) {
   // 2.1 Check if sheet is constructed, else throw.
   if (!mConstructorDocument) {
     return aRv.ThrowNotAllowedError(
-        "The replaceSync() method can only be called on "
-        "constructed style sheets");
+        "Can only be called on constructed style sheets");
   }
 
   // 2.2 Check if sheet is modifiable, else throw.
   if (ModificationDisallowed()) {
     return aRv.ThrowNotAllowedError(
-        "The replaceSync() method can only be called on "
-        "modifiable style sheets");
+        "Can only be called on modifiable style sheets");
   }
 
   // 3. Parse aText into rules.
@@ -650,14 +668,15 @@ void StyleSheet::ReplaceSync(const nsACString& aText, ErrorResult& aRv) {
   // Consider changing this to detect @import rules during parse time.
   if (Servo_StyleSheet_HasImportRules(rawContent)) {
     return aRv.ThrowNotAllowedError(
-        "The replaceSync() method does not support @import "
-        "rules. Use the async replace() method instead.");
+        "@import rules are not allowed. Use the async replace() method "
+        "instead.");
   }
 
   // 5. Set sheet's rules to the new rules.
   DropRuleList();
-  Inner().mContents = rawContent.forget();
+  Inner().mContents = std::move(rawContent);
   FinishParse();
+  RuleChanged(nullptr);
 }
 
 nsresult StyleSheet::DeleteRuleFromGroup(css::GroupRule* aGroup,

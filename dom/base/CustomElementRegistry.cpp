@@ -647,18 +647,19 @@ int32_t CustomElementRegistry::InferNamespace(
 }
 
 bool CustomElementRegistry::JSObjectToAtomArray(
-    JSContext* aCx, JS::Handle<JSObject*> aConstructor, const char16_t* aName,
+    JSContext* aCx, JS::Handle<JSObject*> aConstructor, const nsString& aName,
     nsTArray<RefPtr<nsAtom>>& aArray, ErrorResult& aRv) {
   JS::RootedValue iterable(aCx, JS::UndefinedValue());
-  if (!JS_GetUCProperty(aCx, aConstructor, aName,
-                        std::char_traits<char16_t>::length(aName), &iterable)) {
+  if (!JS_GetUCProperty(aCx, aConstructor, aName.get(), aName.Length(),
+                        &iterable)) {
     aRv.NoteJSContextException(aCx);
     return false;
   }
 
   if (!iterable.isUndefined()) {
     if (!iterable.isObject()) {
-      aRv.ThrowTypeError<MSG_NOT_SEQUENCE>(nsDependentString(aName));
+      aRv.ThrowTypeError<MSG_NOT_SEQUENCE>(
+          NS_LITERAL_STRING("CustomElementRegistry.define: ") + aName);
       return false;
     }
 
@@ -669,7 +670,8 @@ bool CustomElementRegistry::JSObjectToAtomArray(
     }
 
     if (!iter.valueIsIterable()) {
-      aRv.ThrowTypeError<MSG_NOT_SEQUENCE>(nsDependentString(aName));
+      aRv.ThrowTypeError<MSG_NOT_SEQUENCE>(
+          NS_LITERAL_STRING("CustomElementRegistry.define: ") + aName);
       return false;
     }
 
@@ -729,7 +731,7 @@ void CustomElementRegistry::Define(
    */
   if (!JS::IsConstructor(constructorUnwrapped)) {
     aRv.ThrowTypeError<MSG_NOT_CONSTRUCTOR>(
-        NS_LITERAL_STRING("Argument 2 of CustomElementRegistry.define"));
+        u"Argument 2 of CustomElementRegistry.define");
     return;
   }
 
@@ -869,7 +871,7 @@ void CustomElementRegistry::Define(
      */
     if (!prototype.isObject()) {
       aRv.ThrowTypeError<MSG_NOT_OBJECT>(
-          NS_LITERAL_STRING("constructor.prototype"));
+          u"CustomElementRegistry.define: constructor.prototype");
       return;
     }
 
@@ -903,7 +905,8 @@ void CustomElementRegistry::Define(
      *          any exceptions from the conversion.
      */
     if (callbacksHolder->mAttributeChangedCallback.WasPassed()) {
-      if (!JSObjectToAtomArray(aCx, constructor, u"observedAttributes",
+      if (!JSObjectToAtomArray(aCx, constructor,
+                               NS_LITERAL_STRING("observedAttributes"),
                                observedAttributes, aRv)) {
         return;
       }
@@ -919,7 +922,8 @@ void CustomElementRegistry::Define(
      *       Rethrow any exceptions from the conversion.
      */
     if (StaticPrefs::dom_webcomponents_elementInternals_enabled()) {
-      if (!JSObjectToAtomArray(aCx, constructor, u"disabledFeatures",
+      if (!JSObjectToAtomArray(aCx, constructor,
+                               NS_LITERAL_STRING("disabledFeatures"),
                                disabledFeatures, aRv)) {
         return;
       }
@@ -1097,7 +1101,7 @@ static void DoUpgrade(Element* aElement, CustomElementDefinition* aDefinition,
                       ErrorResult& aRv) {
   if (aDefinition->mDisableShadow && aElement->GetShadowRoot()) {
     aRv.ThrowNotSupportedError(nsPrintfCString(
-        "Custom element upgrade to '%s' is disabled due to shadow root "
+        "Custom element upgrade to '%s' is disabled because a shadow root "
         "already exists",
         NS_ConvertUTF16toUTF8(aDefinition->mType->GetUTF16String()).get()));
     return;

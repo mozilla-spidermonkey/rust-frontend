@@ -336,22 +336,6 @@ nsAtom* Gecko_CounterStyle_GetName(const mozilla::CounterStylePtr* ptr);
 const mozilla::AnonymousCounterStyle* Gecko_CounterStyle_GetAnonymous(
     const mozilla::CounterStylePtr* ptr);
 
-// background-image style.
-void Gecko_SetNullImageValue(nsStyleImage* image);
-
-// NOTE: Takes ownership of the gradient.
-void Gecko_SetGradientImageValue(nsStyleImage*, mozilla::StyleGradient*);
-
-void Gecko_SetLayerImageImageValue(nsStyleImage* image,
-                                   const mozilla::StyleComputedImageUrl* url);
-
-void Gecko_SetImageElement(nsStyleImage* image, nsAtom* atom);
-void Gecko_CopyImageValueFrom(nsStyleImage* image, const nsStyleImage* other);
-void Gecko_InitializeImageCropRect(nsStyleImage* image);
-
-const nsStyleImageRequest* Gecko_GetImageRequest(const nsStyleImage* image);
-nsAtom* Gecko_GetImageElement(const nsStyleImage* image);
-
 // list-style-image style.
 void Gecko_SetListStyleImageNone(nsStyleList* style_struct);
 
@@ -361,11 +345,8 @@ void Gecko_SetListStyleImageImageValue(
 void Gecko_CopyListStyleImageFrom(nsStyleList* dest, const nsStyleList* src);
 
 // cursor style.
-void Gecko_SetCursorArrayLength(nsStyleUI* ui, size_t len);
-
-void Gecko_SetCursorImageValue(nsCursorImage* aCursor,
-                               const mozilla::StyleComputedImageUrl* url);
-
+void Gecko_SetCursorArrayCapacity(nsStyleUI*, size_t);
+void Gecko_AppendCursorImage(nsStyleUI*, const mozilla::StyleComputedImageUrl*);
 void Gecko_CopyCursorArrayFrom(nsStyleUI* dest, const nsStyleUI* src);
 
 // Dirtiness tracking.
@@ -460,18 +441,6 @@ mozilla::Keyframe* Gecko_GetOrCreateFinalKeyframe(
 mozilla::PropertyValuePair* Gecko_AppendPropertyValuePair(
     nsTArray<mozilla::PropertyValuePair>*, nsCSSPropertyID aProperty);
 
-void Gecko_CopyShapeSourceFrom(mozilla::StyleShapeSource* dst,
-                               const mozilla::StyleShapeSource* src);
-
-void Gecko_DestroyShapeSource(mozilla::StyleShapeSource* shape);
-
-void Gecko_NewShapeImage(mozilla::StyleShapeSource* shape);
-
-void Gecko_SetToSVGPath(
-    mozilla::StyleShapeSource* shape,
-    mozilla::StyleForgottenArcSlicePtr<mozilla::StylePathCommand>,
-    mozilla::StyleFillRule);
-
 void Gecko_ResetFilters(nsStyleEffects* effects, size_t new_len);
 
 void Gecko_CopyFiltersFrom(nsStyleEffects* aSrc, nsStyleEffects* aDest);
@@ -506,7 +475,7 @@ float Gecko_FontStretch_ToFloat(mozilla::FontStretch aStretch);
 void Gecko_FontStretch_SetFloat(mozilla::FontStretch* aStretch,
                                 float aFloatValue);
 
-void Gecko_LoadData_DeregisterLoad(const mozilla::StyleLoadData*);
+void Gecko_LoadData_Drop(mozilla::StyleLoadData*);
 
 float Gecko_FontSlantStyle_ToFloat(mozilla::FontSlantStyle aStyle);
 void Gecko_FontSlantStyle_SetNormal(mozilla::FontSlantStyle*);

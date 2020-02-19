@@ -78,7 +78,7 @@ const JOIN_CONTENT = {
     text: { string_id: `onboarding-benefit-${id}-text` },
   })),
   learn: {
-    text: { string_id: "onboarding-welcome-learn-more" },
+    text: { string_id: "onboarding-welcome-modal-family-learn-more" },
     url: "https://www.mozilla.org/firefox/accounts/",
   },
   form: {
@@ -504,7 +504,7 @@ const ONBOARDING_MESSAGES = () => [
       target: "fxa-toolbar-menu-button",
     },
     // Never accessed the FxA panel && doesn't use Firefox sync & has FxA enabled
-    targeting: `isFxABadgeEnabled && !hasAccessedFxAPanel && !usesFirefoxSync && isFxAEnabled == true`,
+    targeting: `!hasAccessedFxAPanel && !usesFirefoxSync && isFxAEnabled == true`,
     trigger: { id: "toolbarBadgeUpdate" },
   },
   {

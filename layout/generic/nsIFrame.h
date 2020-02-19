@@ -56,6 +56,7 @@
 #include "mozilla/AspectRatio.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/SmallPointerArray.h"
+#include "mozilla/PresShell.h"
 #include "mozilla/WritingModes.h"
 #include "nsDirection.h"
 #include "nsFrameList.h"
@@ -99,6 +100,7 @@
 class nsAtom;
 class nsPresContext;
 class nsView;
+class nsFrameSelection;
 class nsIWidget;
 class nsISelectionController;
 class nsBoxLayoutState;
@@ -771,7 +773,7 @@ class nsIFrame : public nsQueryFrame {
   void SetComputedStyle(ComputedStyle* aStyle) {
     if (aStyle != mComputedStyle) {
       AssertNewStyleIsSane(*aStyle);
-      RefPtr<ComputedStyle> oldComputedStyle = mComputedStyle.forget();
+      RefPtr<ComputedStyle> oldComputedStyle = std::move(mComputedStyle);
       mComputedStyle = aStyle;
       DidSetComputedStyle(oldComputedStyle);
     }
@@ -1204,6 +1206,9 @@ class nsIFrame : public nsQueryFrame {
   NS_DECLARE_FRAME_PROPERTY_DELETABLE(PreEffectsBBoxProperty, nsRect)
   NS_DECLARE_FRAME_PROPERTY_DELETABLE(PreTransformOverflowAreasProperty,
                                       nsOverflowAreas)
+
+  NS_DECLARE_FRAME_PROPERTY_DELETABLE(CachedBorderImageDataProperty,
+                                      CachedBorderImageData)
 
   NS_DECLARE_FRAME_PROPERTY_DELETABLE(OverflowAreasProperty, nsOverflowAreas)
 
@@ -2003,11 +2008,30 @@ class nsIFrame : public nsQueryFrame {
   }
 
   /**
-   * Ensure that aImage gets notifed when the underlying image request loads
-   * or animates.
+   * Ensure that `this` gets notifed when `aImage`s underlying image request
+   * loads or animates.
+   *
+   * This in practice is only needed for the canvas frame and table cell
+   * backgrounds, which are the only cases that should paint a background that
+   * isn't its own. The canvas paints the background from the root element or
+   * body, and the table cell paints the background for its row.
+   *
+   * For regular frames, this is done in DidSetComputedStyle.
+   *
+   * NOTE: It's unclear if we even actually _need_ this for the second case, as
+   * invalidating the row should invalidate all the cells. For the canvas case
+   * this is definitely needed as it paints the background from somewhere "down"
+   * in the frame tree.
+   *
+   * Returns whether the image was in fact associated with the frame.
    */
-  void AssociateImage(const nsStyleImage& aImage, nsPresContext* aPresContext,
-                      uint32_t aImageLoaderFlags);
+  MOZ_MUST_USE bool AssociateImage(const mozilla::StyleImage&);
+
+  /**
+   * This needs to be called if the above caller returned true, once the above
+   * caller doesn't care about getting notified anymore.
+   */
+  void DisassociateImage(const mozilla::StyleImage&);
 
   enum class AllowCustomCursorImage {
     No,
@@ -2570,22 +2594,28 @@ class nsIFrame : public nsQueryFrame {
                       const ReflowInput& aReflowInput,
                       nsReflowStatus& aStatus) = 0;
 
-  // Option flags for ReflowChild() and FinishReflowChild()
-  // member functions
+  // Option flags for ReflowChild(), FinishReflowChild(), and
+  // SyncFrameViewAfterReflow().
   enum class ReflowChildFlags : uint32_t {
     Default = 0,
+
+    // Don't position the frame's view. Set this if you don't want to
+    // automatically sync the frame and view.
     NoMoveView = 1 << 0,
+
+    // Don't move the frame. Also implies NoMoveView.
     NoMoveFrame = (1 << 1) | NoMoveView,
+
+    // Don't size the frame's view.
     NoSizeView = 1 << 2,
-    NoVisibility = 1 << 3,
 
     // Only applies to ReflowChild; if true, don't delete the next-in-flow, even
     // if the reflow is fully complete.
-    NoDeleteNextInFlowChild = 1 << 4,
+    NoDeleteNextInFlowChild = 1 << 3,
 
     // Only applies to FinishReflowChild.  Tell it to call
     // ApplyRelativePositioning.
-    ApplyRelativePositioning = 1 << 5
+    ApplyRelativePositioning = 1 << 4,
   };
 
   /**
@@ -3674,17 +3704,17 @@ class nsIFrame : public nsQueryFrame {
   }
 
   template <typename T>
-  FrameProperties::PropertyType<T> RemoveProperty(
+  MOZ_MUST_USE FrameProperties::PropertyType<T> TakeProperty(
       FrameProperties::Descriptor<T> aProperty, bool* aFoundResult = nullptr) {
-    return mProperties.Remove(aProperty, aFoundResult);
+    return mProperties.Take(aProperty, aFoundResult);
   }
 
   template <typename T>
-  void DeleteProperty(FrameProperties::Descriptor<T> aProperty) {
-    mProperties.Delete(aProperty, this);
+  void RemoveProperty(FrameProperties::Descriptor<T> aProperty) {
+    mProperties.Remove(aProperty, this);
   }
 
-  void DeleteAllProperties() { mProperties.DeleteAll(this); }
+  void RemoveAllProperties() { mProperties.RemoveAll(this); }
 
   // nsIFrames themselves are in the nsPresArena, and so are not measured here.
   // Instead, this measures heap-allocated things hanging off the nsIFrame, and

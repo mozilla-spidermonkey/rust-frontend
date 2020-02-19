@@ -92,6 +92,7 @@ linux64-fuzzing/debug:
     worker:
         max-run-time: 5400
         env:
+            MOZ_LOW_PARALLELISM_BUILD: '1'
             PERFHERDER_EXTRA_OPTIONS: fuzzing
             FORCE_GCC: '1'
     run:
@@ -253,6 +254,7 @@ linux64-base-toolchains/opt:
         docker-image: {in-tree: debian7-amd64-build-base}
         max-run-time: 7200
         env:
+            MOZ_LOW_PARALLELISM_BUILD: '1'
             PERFHERDER_EXTRA_OPTIONS: base-toolchains
             FORCE_GCC: '1'
     run:
@@ -290,6 +292,7 @@ linux64-base-toolchains/debug:
         docker-image: {in-tree: debian7-amd64-build-base}
         max-run-time: 7200
         env:
+            MOZ_LOW_PARALLELISM_BUILD: '1'
             PERFHERDER_EXTRA_OPTIONS: base-toolchains
             FORCE_GCC: '1'
     run:
@@ -887,6 +890,7 @@ linux64-fuzzing-ccov/opt:
     worker:
         max-run-time: 5400
         env:
+            MOZ_LOW_PARALLELISM_BUILD: '1'
             PERFHERDER_EXTRA_OPTIONS: fuzzing-ccov
             FORCE_GCC: '1'
             ASAN_OPTIONS: "detect_leaks=0"
@@ -1224,6 +1228,7 @@ linux64-ccov/opt:
               type: file
         max-run-time: 7200
         env:
+            MOZ_LOW_PARALLELISM_BUILD: '1'
             FORCE_GCC: '1'
             RUSTC_BOOTSTRAP: '1'
     run:

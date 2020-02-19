@@ -198,7 +198,7 @@ void nsHttpTransaction::SetClassOfService(uint32_t cos) {
 
 class ReleaseH2WSTrans final : public Runnable {
  public:
-  explicit ReleaseH2WSTrans(already_AddRefed<SpdyConnectTransaction>&& trans)
+  explicit ReleaseH2WSTrans(RefPtr<SpdyConnectTransaction>&& trans)
       : Runnable("ReleaseH2WSTrans"), mTrans(std::move(trans)) {}
 
   NS_IMETHOD Run() override {
@@ -239,7 +239,7 @@ nsHttpTransaction::~nsHttpTransaction() {
 
   if (mH2WSTransaction) {
     RefPtr<ReleaseH2WSTrans> r =
-        new ReleaseH2WSTrans(mH2WSTransaction.forget());
+        new ReleaseH2WSTrans(std::move(mH2WSTransaction));
     r->Dispatch();
   }
 }
@@ -485,7 +485,7 @@ void nsHttpTransaction::SetH2WSConnRefTaken() {
   }
 }
 
-nsHttpResponseHead* nsHttpTransaction::TakeResponseHead() {
+UniquePtr<nsHttpResponseHead> nsHttpTransaction::TakeResponseHead() {
   MOZ_ASSERT(!mResponseHeadTaken, "TakeResponseHead called 2x");
 
   // Lock TakeResponseHead() against main thread
@@ -500,19 +500,17 @@ nsHttpResponseHead* nsHttpTransaction::TakeResponseHead() {
     return nullptr;
   }
 
-  nsHttpResponseHead* head = mResponseHead;
-  mResponseHead = nullptr;
-  return head;
+  return WrapUnique(std::exchange(mResponseHead, nullptr));
 }
 
-nsHttpHeaderArray* nsHttpTransaction::TakeResponseTrailers() {
+UniquePtr<nsHttpHeaderArray> nsHttpTransaction::TakeResponseTrailers() {
   MOZ_ASSERT(!mResponseTrailersTaken, "TakeResponseTrailers called 2x");
 
   // Lock TakeResponseTrailers() against main thread
   MutexAutoLock lock(*nsHttp::GetLock());
 
   mResponseTrailersTaken = true;
-  return mForTakeResponseTrailers.forget();
+  return std::move(mForTakeResponseTrailers);
 }
 
 void nsHttpTransaction::SetProxyConnectFailed() { mProxyConnectFailed = true; }
@@ -2464,7 +2462,7 @@ void nsHttpTransaction::SetHttpTrailers(nsCString& aTrailers) {
   LOG(("[\n    %s\n]", aTrailers.BeginReading()));
 
   // Introduce a local variable to minimize the critical section.
-  nsAutoPtr<nsHttpHeaderArray> httpTrailers(new nsHttpHeaderArray());
+  UniquePtr<nsHttpHeaderArray> httpTrailers(new nsHttpHeaderArray());
   // Given it's usually null, use double-check locking for performance.
   if (mForTakeResponseTrailers) {
     MutexAutoLock lock(*nsHttp::GetLock());

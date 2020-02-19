@@ -23,6 +23,7 @@
 #include "mozilla/ComputedStyle.h"
 #include "nsIScrollableFrame.h"
 #include "nsContentUtils.h"
+#include "nsDocShell.h"
 #include "nsIContent.h"
 #include "nsStyleConsts.h"
 
@@ -625,26 +626,24 @@ static void AddImageURL(const StyleComputedUrl& aURL,
   }
 }
 
-static void AddImageURL(const nsStyleImageRequest& aRequest,
+static void AddImageURL(const StyleImage& aImage,
                         nsTArray<nsCString>& aURLs) {
-  AddImageURL(aRequest.GetImageValue(), aURLs);
-}
-
-static void AddImageURL(const nsStyleImage& aImage,
-                        nsTArray<nsCString>& aURLs) {
-  if (auto* urlValue = aImage.GetURLValue()) {
+  if (auto* urlValue = aImage.GetImageRequestURLValue()) {
     AddImageURL(*urlValue, aURLs);
   }
 }
 
-static void AddImageURL(const StyleShapeSource& aShapeSource,
+static void AddImageURL(const StyleShapeOutside& aShapeOutside,
                         nsTArray<nsCString>& aURLs) {
-  switch (aShapeSource.GetType()) {
-    case StyleShapeSourceType::Image:
-      AddImageURL(aShapeSource.ShapeImage(), aURLs);
-      break;
-    default:
-      break;
+  if (aShapeOutside.IsImage()) {
+    AddImageURL(aShapeOutside.AsImage(), aURLs);
+  }
+}
+
+static void AddImageURL(const StyleClipPath& aClipPath,
+                        nsTArray<nsCString>& aURLs) {
+  if (aClipPath.IsUrl()) {
+    AddImageURL(aClipPath.AsUrl(), aURLs);
   }
 }
 
@@ -669,7 +668,7 @@ static void CollectImageURLsForProperty(nsCSSPropertyID aProp,
   switch (aProp) {
     case eCSSProperty_cursor:
       for (auto& image : aStyle.StyleUI()->mCursorImages) {
-        AddImageURL(*image.mImage, aURLs);
+        AddImageURL(image.mImage, aURLs);
       }
       break;
     case eCSSProperty_background_image:
@@ -678,11 +677,13 @@ static void CollectImageURLsForProperty(nsCSSPropertyID aProp,
     case eCSSProperty_mask_clip:
       AddImageURLs(aStyle.StyleSVGReset()->mMask, aURLs);
       break;
-    case eCSSProperty_list_style_image:
-      if (nsStyleImageRequest* image = aStyle.StyleList()->mListStyleImage) {
-        AddImageURL(*image, aURLs);
+    case eCSSProperty_list_style_image: {
+      const auto& image = aStyle.StyleList()->mListStyleImage;
+      if (image.IsUrl()) {
+        AddImageURL(image.AsUrl(), aURLs);
       }
       break;
+    }
     case eCSSProperty_border_image_source:
       AddImageURL(aStyle.StyleBorder()->mBorderImageSource, aURLs);
       break;
@@ -939,7 +940,7 @@ bool nsComputedDOMStyle::NeedsToFlushLayout(nsCSSPropertyID aPropID) const {
     case eCSSProperty_bottom:
     case eCSSProperty_left:
       // Doing better than this is actually hard.
-      return style->StyleDisplay()->mPosition != NS_STYLE_POSITION_STATIC;
+      return style->StyleDisplay()->mPosition != StylePositionProperty::Static;
     case eCSSProperty_padding_top:
     case eCSSProperty_padding_right:
     case eCSSProperty_padding_bottom:
@@ -1508,7 +1509,7 @@ already_AddRefed<nsROCSSPrimitiveValue> nsComputedDOMStyle::GetGridTrackSize(
                "unexpected unit for fit-content() argument value");
     SetValueToLengthPercentage(val, aTrackSize.AsFitContent().AsBreadth(),
                                true);
-    val->GetCssText(argumentStr);
+    val->GetCssText(argumentStr, IgnoreErrors());
     fitContentStr.Append(argumentStr);
     fitContentStr.Append(char16_t(')'));
     val->SetString(fitContentStr);
@@ -1537,7 +1538,7 @@ already_AddRefed<nsROCSSPrimitiveValue> nsComputedDOMStyle::GetGridTrackSize(
 
   {
     RefPtr<nsROCSSPrimitiveValue> argValue = GetGridTrackBreadth(min);
-    argValue->GetCssText(argumentStr);
+    argValue->GetCssText(argumentStr, IgnoreErrors());
     minmaxStr.Append(argumentStr);
     argumentStr.Truncate();
   }
@@ -1546,7 +1547,7 @@ already_AddRefed<nsROCSSPrimitiveValue> nsComputedDOMStyle::GetGridTrackSize(
 
   {
     RefPtr<nsROCSSPrimitiveValue> argValue = GetGridTrackBreadth(max);
-    argValue->GetCssText(argumentStr);
+    argValue->GetCssText(argumentStr, IgnoreErrors());
     minmaxStr.Append(argumentStr);
   }
 
@@ -1983,25 +1984,25 @@ already_AddRefed<CSSValue> nsComputedDOMStyle::GetOffsetWidthFor(
     mozilla::Side aSide) {
   const nsStyleDisplay* display = StyleDisplay();
 
-  uint8_t position = display->mPosition;
+  mozilla::StylePositionProperty position = display->mPosition;
   if (!mOuterFrame) {
     // GetNonStaticPositionOffset or GetAbsoluteOffset don't handle elements
     // without frames in any sensible way. GetStaticOffset, however, is perfect
     // for that case.
-    position = NS_STYLE_POSITION_STATIC;
+    position = StylePositionProperty::Static;
   }
 
   switch (position) {
-    case NS_STYLE_POSITION_STATIC:
+    case StylePositionProperty::Static:
       return GetStaticOffset(aSide);
-    case NS_STYLE_POSITION_STICKY:
+    case StylePositionProperty::Sticky:
       return GetNonStaticPositionOffset(
           aSide, false, &nsComputedDOMStyle::GetScrollFrameContentWidth,
           &nsComputedDOMStyle::GetScrollFrameContentHeight);
-    case NS_STYLE_POSITION_ABSOLUTE:
-    case NS_STYLE_POSITION_FIXED:
+    case StylePositionProperty::Absolute:
+    case StylePositionProperty::Fixed:
       return GetAbsoluteOffset(aSide);
-    case NS_STYLE_POSITION_RELATIVE:
+    case StylePositionProperty::Relative:
       return GetNonStaticPositionOffset(
           aSide, true, &nsComputedDOMStyle::GetCBContentWidth,
           &nsComputedDOMStyle::GetCBContentHeight);
@@ -2473,9 +2474,7 @@ already_AddRefed<CSSValue> nsComputedDOMStyle::GetTransformValue(
    * using the named transforms.  Until a real solution is found, we'll just
    * use this approach.
    */
-  nsStyleTransformMatrix::TransformReferenceBox refBox(mInnerFrame,
-                                                       nsSize(0, 0));
-
+  nsStyleTransformMatrix::TransformReferenceBox refBox(mInnerFrame, nsRect());
   gfx::Matrix4x4 matrix = nsStyleTransformMatrix::ReadTransforms(
       aTransform, refBox, float(mozilla::AppUnitsPerCSSPixel()));
 
@@ -2498,14 +2497,13 @@ already_AddRefed<CSSValue> nsComputedDOMStyle::DoGetMask() {
           firstLayer.mPosition, nsStyleImageLayers::LayerType::Mask) ||
       !firstLayer.mRepeat.IsInitialValue() ||
       !firstLayer.mSize.IsInitialValue() ||
-      !(firstLayer.mImage.GetType() == eStyleImageType_Null ||
-        firstLayer.mImage.GetType() == eStyleImageType_Image)) {
+      !(firstLayer.mImage.IsNone() || firstLayer.mImage.IsUrl())) {
     return nullptr;
   }
 
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
 
-  SetValueToURLValue(firstLayer.mImage.GetURLValue(), val);
+  SetValueToURLValue(firstLayer.mImage.GetImageRequestURLValue(), val);
 
   return val.forget();
 }

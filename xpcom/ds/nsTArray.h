@@ -574,7 +574,9 @@ struct AssignRangeAlgorithm<true, true> {
   template <class Item, class ElemType, class IndexType, class SizeType>
   static void implementation(ElemType* aElements, IndexType aStart,
                              SizeType aCount, const Item* aValues) {
-    memcpy(aElements + aStart, aValues, aCount * sizeof(ElemType));
+    if (aValues) {
+      memcpy(aElements + aStart, aValues, aCount * sizeof(ElemType));
+    }
   }
 };
 
@@ -912,7 +914,7 @@ class nsTArray_Impl
   // Initialization methods
   //
 
-  nsTArray_Impl() {}
+  nsTArray_Impl() = default;
 
   // Initialize this array and pre-allocate some number of elements.
   explicit nsTArray_Impl(size_type aCapacity) { SetCapacity(aCapacity); }
@@ -2554,7 +2556,7 @@ class FallibleTArray : public nsTArray_Impl<E, nsTArrayFallibleAllocator> {
   typedef FallibleTArray<E> self_type;
   typedef typename base_type::size_type size_type;
 
-  FallibleTArray() {}
+  FallibleTArray() = default;
   explicit FallibleTArray(size_type aCapacity) : base_type(aCapacity) {}
   explicit FallibleTArray(const FallibleTArray<E>& aOther)
       : base_type(aOther) {}

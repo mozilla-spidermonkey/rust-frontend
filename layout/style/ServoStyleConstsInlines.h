@@ -10,6 +10,7 @@
 #define mozilla_ServoStyleConstsInlines_h
 
 #include "mozilla/ServoStyleConsts.h"
+#include "mozilla/EndianUtils.h"
 #include "mozilla/URLExtraData.h"
 #include "nsGkAtoms.h"
 #include "MainThreadUtils.h"
@@ -390,12 +391,14 @@ inline StyleLoadData& StyleCssUrl::LoadData() const {
 inline nsIURI* StyleCssUrl::GetURI() const {
   MOZ_DIAGNOSTIC_ASSERT(NS_IsMainThread());
   auto& loadData = LoadData();
-  if (!loadData.tried_to_resolve) {
-    loadData.tried_to_resolve = true;
-    NS_NewURI(getter_AddRefs(loadData.resolved), SpecifiedSerialization(),
-              nullptr, ExtraData().BaseURI());
+  if (!(loadData.flags & StyleLoadDataFlags::TRIED_TO_RESOLVE_URI)) {
+    loadData.flags |= StyleLoadDataFlags::TRIED_TO_RESOLVE_URI;
+    RefPtr<nsIURI> resolved;
+    NS_NewURI(getter_AddRefs(resolved), SpecifiedSerialization(), nullptr,
+              ExtraData().BaseURI());
+    loadData.resolved_uri = resolved.forget().take();
   }
-  return loadData.resolved.get();
+  return loadData.resolved_uri;
 }
 
 inline nsDependentCSubstring StyleComputedUrl::SpecifiedSerialization() const {
@@ -425,6 +428,20 @@ inline bool StyleComputedUrl::HasRef() const {
     return NS_SUCCEEDED(uri->GetHasRef(&hasRef)) && hasRef;
   }
   return false;
+}
+
+inline bool StyleComputedImageUrl::IsImageResolved() const {
+  return bool(LoadData().flags & StyleLoadDataFlags::TRIED_TO_RESOLVE_IMAGE);
+}
+
+inline imgRequestProxy* StyleComputedImageUrl::GetImage() const {
+  MOZ_ASSERT(IsImageResolved());
+  return LoadData().resolved_image;
+}
+
+template <>
+inline bool StyleGradient::Repeating() const {
+  return IsLinear() ? AsLinear().repeating : AsRadial().repeating;
 }
 
 template <>
@@ -519,7 +536,13 @@ bool LengthPercentage::IsCalc() const { return Tag() == TAG_CALC; }
 
 StyleCalcLengthPercentage& LengthPercentage::AsCalc() {
   MOZ_ASSERT(IsCalc());
+  // NOTE: in 32-bits, the pointer is not swapped, and goes along with the tag.
+#ifdef SERVO_32_BITS
   return *calc.ptr;
+#else
+  return *reinterpret_cast<StyleCalcLengthPercentage*>(
+      NativeEndian::swapFromLittleEndian(calc.ptr));
+#endif
 }
 
 const StyleCalcLengthPercentage& LengthPercentage::AsCalc() const {
@@ -533,11 +556,16 @@ StyleLengthPercentageUnion::StyleLengthPercentageUnion(const Self& aOther) {
     percentage = {TAG_PERCENTAGE, aOther.AsPercentage()};
   } else {
     MOZ_ASSERT(aOther.IsCalc());
+    auto* ptr = new StyleCalcLengthPercentage(aOther.AsCalc());
+    // NOTE: in 32-bits, the pointer is not swapped, and goes along with the
+    // tag.
     calc = {
 #ifdef SERVO_32_BITS
         TAG_CALC,
+        ptr,
+#else
+        NativeEndian::swapToLittleEndian(reinterpret_cast<uintptr_t>(ptr)),
 #endif
-        new StyleCalcLengthPercentage(aOther.AsCalc()),
     };
   }
   MOZ_ASSERT(Tag() == aOther.Tag());
@@ -545,7 +573,7 @@ StyleLengthPercentageUnion::StyleLengthPercentageUnion(const Self& aOther) {
 
 StyleLengthPercentageUnion::~StyleLengthPercentageUnion() {
   if (IsCalc()) {
-    delete calc.ptr;
+    delete &AsCalc();
   }
 }
 
@@ -873,6 +901,63 @@ inline nsRect StyleGenericClipRect<LengthOrAuto>::ToLayoutRect(
   nscoord height = bottom.IsLength() ? bottom.ToLength() - y : aAutoSize;
   return nsRect(x, y, width, height);
 }
+
+using RestyleHint = StyleRestyleHint;
+
+inline RestyleHint RestyleHint::RestyleSubtree() {
+  return RestyleHint::RESTYLE_SELF | RestyleHint::RESTYLE_DESCENDANTS;
+}
+
+inline RestyleHint RestyleHint::RecascadeSubtree() {
+  return RestyleHint::RECASCADE_SELF | RestyleHint::RECASCADE_DESCENDANTS;
+}
+
+inline RestyleHint RestyleHint::ForAnimations() {
+  return RestyleHint::RESTYLE_CSS_TRANSITIONS |
+         RestyleHint::RESTYLE_CSS_ANIMATIONS | RestyleHint::RESTYLE_SMIL;
+}
+
+template <>
+inline bool StyleImage::IsImageRequestType() const {
+  return IsUrl() || IsRect();
+}
+
+template <>
+inline const StyleComputedImageUrl* StyleImage::GetImageRequestURLValue()
+    const {
+  if (IsUrl()) {
+    return &AsUrl();
+  }
+  if (IsRect()) {
+    return &AsRect()->url;
+  }
+  return nullptr;
+}
+
+template <>
+inline imgRequestProxy* StyleImage::GetImageRequest() const {
+  auto* url = GetImageRequestURLValue();
+  return url ? url->GetImage() : nullptr;
+}
+
+template <>
+inline bool StyleImage::IsResolved() const {
+  auto* url = GetImageRequestURLValue();
+  return !url || url->IsImageResolved();
+}
+
+template <>
+bool StyleImage::IsOpaque() const;
+template <>
+bool StyleImage::IsSizeAvailable() const;
+template <>
+bool StyleImage::IsComplete() const;
+template <>
+bool StyleImage::StartDecoding() const;
+template <>
+Maybe<StyleImage::ActualCropRect> StyleImage::ComputeActualCropRect() const;
+template <>
+void StyleImage::ResolveImage(dom::Document&, const StyleImage*);
 
 }  // namespace mozilla
 

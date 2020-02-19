@@ -26,6 +26,7 @@
 #include "nsGkAtoms.h"
 #include "nsCocoaFeatures.h"
 #include "nsCocoaWindow.h"
+#include "nsNativeBasicTheme.h"
 #include "nsNativeThemeColors.h"
 #include "nsIScrollableFrame.h"
 #include "mozilla/ClearOnShutdown.h"
@@ -36,6 +37,7 @@
 #include "mozilla/dom/HTMLMeterElement.h"
 #include "mozilla/layers/StackingContextHelper.h"
 #include "mozilla/StaticPrefs_layout.h"
+#include "mozilla/StaticPrefs_widget.h"
 #include "nsLookAndFeel.h"
 #include "VibrancyManager.h"
 
@@ -2690,6 +2692,15 @@ Maybe<nsNativeThemeCocoa::WidgetInfo> nsNativeThemeCocoa::ComputeWidgetInfo(
   EventStates eventState = GetContentState(aFrame, aAppearance);
 
   switch (aAppearance) {
+    case StyleAppearance::Dialog:
+      if (IsWindowSheet(aFrame)) {
+        if (VibrancyManager::SystemSupportsVibrancy()) {
+          return Nothing();
+        }
+        return Some(WidgetInfo::SheetBackground());
+      }
+      return Some(WidgetInfo::DialogBackground());
+
     case StyleAppearance::Menupopup:
       if (VibrancyManager::SystemSupportsVibrancy()) {
         return Nothing();
@@ -3030,8 +3041,11 @@ Maybe<nsNativeThemeCocoa::WidgetInfo> nsNativeThemeCocoa::ComputeWidgetInfo(
 
     case StyleAppearance::MozMacSourceListSelection:
     case StyleAppearance::MozMacActiveSourceListSelection: {
-      // We only support vibrancy for source list selections if we're inside
-      // a source list.
+      // If we're in XUL tree, we need to rely on the source list's clear
+      // background display item. If we cleared the background behind the
+      // selections, the source list would not pick up the right font
+      // smoothing background. So, to simplify a bit, we only support vibrancy
+      // if we're in a source list.
       if (VibrancyManager::SystemSupportsVibrancy() && IsInSourceList(aFrame)) {
         return Nothing();
       }
@@ -3359,6 +3373,12 @@ bool nsNativeThemeCocoa::CreateWebRenderCommandsForWidget(
   //  - If the case in DrawWidgetBackground draws something complicated for the
   //    given widget type, return false here.
   switch (aAppearance) {
+    case StyleAppearance::Dialog:
+      if (IsWindowSheet(aFrame) && VibrancyManager::SystemSupportsVibrancy()) {
+        return true;
+      }
+      return false;
+
     case StyleAppearance::Menupopup:
       if (VibrancyManager::SystemSupportsVibrancy()) {
         return true;
@@ -4260,6 +4280,42 @@ bool nsNativeThemeCocoa::WidgetAppearanceDependsOnWindowFocus(StyleAppearance aA
   }
 }
 
+bool nsNativeThemeCocoa::IsWindowSheet(nsIFrame* aFrame) {
+  NSWindow* win = NativeWindowForFrame(aFrame);
+  id winDelegate = [win delegate];
+  nsIWidget* widget = [(WindowDelegate*)winDelegate geckoWidget];
+  if (!widget) {
+    return false;
+  }
+  return (widget->WindowType() == eWindowType_sheet);
+}
+
+bool nsNativeThemeCocoa::NeedToClearBackgroundBehindWidget(nsIFrame* aFrame,
+                                                           StyleAppearance aAppearance) {
+  switch (aAppearance) {
+    case StyleAppearance::MozMacSourceList:
+    // If we're in a XUL tree, we don't want to clear the background behind the
+    // selections below, since that would make our source list to not pick up
+    // the right font smoothing background. But since we don't call this method
+    // in nsTreeBodyFrame::BuildDisplayList, we never get here.
+    case StyleAppearance::MozMacSourceListSelection:
+    case StyleAppearance::MozMacActiveSourceListSelection:
+    case StyleAppearance::MozMacVibrancyLight:
+    case StyleAppearance::MozMacVibrancyDark:
+    case StyleAppearance::MozMacVibrantTitlebarLight:
+    case StyleAppearance::MozMacVibrantTitlebarDark:
+    case StyleAppearance::Tooltip:
+    case StyleAppearance::Menupopup:
+    case StyleAppearance::Menuitem:
+    case StyleAppearance::Checkmenuitem:
+      return true;
+    case StyleAppearance::Dialog:
+      return IsWindowSheet(aFrame);
+    default:
+      return false;
+  }
+}
+
 nsITheme::ThemeGeometryType nsNativeThemeCocoa::ThemeGeometryTypeForWidget(
     nsIFrame* aFrame, StyleAppearance aAppearance) {
   switch (aAppearance) {
@@ -4292,6 +4348,8 @@ nsITheme::ThemeGeometryType nsNativeThemeCocoa::ThemeGeometryTypeForWidget(
       bool isSelected = !isDisabled && CheckBooleanAttr(aFrame, nsGkAtoms::menuactive);
       return isSelected ? eThemeGeometryTypeHighlightedMenuItem : eThemeGeometryTypeMenu;
     }
+    case StyleAppearance::Dialog:
+      return IsWindowSheet(aFrame) ? eThemeGeometryTypeSheet : eThemeGeometryTypeUnknown;
     case StyleAppearance::MozMacSourceList:
       return eThemeGeometryTypeSourceList;
     case StyleAppearance::MozMacSourceListSelection:
@@ -4310,8 +4368,10 @@ nsITheme::Transparency nsNativeThemeCocoa::GetWidgetTransparency(nsIFrame* aFram
   switch (aAppearance) {
     case StyleAppearance::Menupopup:
     case StyleAppearance::Tooltip:
-    case StyleAppearance::Dialog:
       return eTransparent;
+
+    case StyleAppearance::Dialog:
+      return IsWindowSheet(aFrame) ? eTransparent : eOpaque;
 
     case StyleAppearance::ScrollbarSmall:
     case StyleAppearance::Scrollbar:
@@ -4345,7 +4405,11 @@ already_AddRefed<nsITheme> do_GetNativeTheme() {
   static nsCOMPtr<nsITheme> inst;
 
   if (!inst) {
-    inst = new nsNativeThemeCocoa();
+    if (XRE_IsContentProcess() && StaticPrefs::widget_disable_native_theme_for_content()) {
+      inst = new nsNativeBasicTheme();
+    } else {
+      inst = new nsNativeThemeCocoa();
+    }
     ClearOnShutdown(&inst);
   }
 

@@ -3387,13 +3387,12 @@ nsCSSBorderImageRenderer::CreateBorderImageRenderer(
     return Nothing();
   }
 
-  // Ensure we get invalidated for loads and animations of the image.
-  // We need to do this here because this might be the only code that
-  // knows about the association of the style data with the frame.
-  // XXX We shouldn't really... since if anybody is passing in a
-  // different style, they'll potentially have the wrong size for the
-  // border too.
-  aForFrame->AssociateImage(aStyleBorder.mBorderImageSource, aPresContext, 0);
+  // We should always get here with the frame's border, but we may construct an
+  // nsStyleBorder from the stack to deal with :visited. We copy the border
+  // image and such from the non-visited one, so there's no need to do anything
+  // with it.
+  MOZ_ASSERT(&aStyleBorder == aForFrame->StyleBorder() ||
+             aForFrame->Style()->GetStyleIfVisited());
 
   nsCSSBorderImageRenderer renderer(aForFrame, aBorderArea, aStyleBorder,
                                     aSkipSides, imgRenderer);
@@ -3610,7 +3609,8 @@ ImgDrawResult nsCSSBorderImageRenderer::CreateWebRenderCommands(
 
   ImgDrawResult drawResult = ImgDrawResult::SUCCESS;
   switch (mImageRenderer.GetType()) {
-    case eStyleImageType_Image: {
+    case StyleImage::Tag::Rect:
+    case StyleImage::Tag::Url: {
       RefPtr<imgIContainer> img = mImageRenderer.GetImage();
       if (!img || img->GetType() == imgIContainer::TYPE_VECTOR) {
         // Vector images will redraw each segment of the border up to 8 times.
@@ -3694,7 +3694,7 @@ ImgDrawResult nsCSSBorderImageRenderer::CreateWebRenderCommands(
       aBuilder.PushBorderImage(dest, clip, !aItem->BackfaceIsHidden(), params);
       break;
     }
-    case eStyleImageType_Gradient: {
+    case StyleImage::Tag::Gradient: {
       const StyleGradient& gradient = *mImageRenderer.GetGradientData();
       nsCSSGradientRenderer renderer = nsCSSGradientRenderer::Create(
           aForFrame->PresContext(), aForFrame->Style(), gradient, mImageSize);
@@ -3707,7 +3707,7 @@ ImgDrawResult nsCSSBorderImageRenderer::CreateWebRenderCommands(
       renderer.BuildWebRenderParameters(1.0, extendMode, stops, lineStart,
                                         lineEnd, gradientRadius);
 
-      if (gradient.kind.IsLinear()) {
+      if (gradient.IsLinear()) {
         LayoutDevicePoint startPoint =
             LayoutDevicePoint(dest.origin.x, dest.origin.y) + lineStart;
         LayoutDevicePoint endPoint =

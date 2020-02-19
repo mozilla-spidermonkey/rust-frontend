@@ -27,7 +27,7 @@
 namespace mozilla {
 namespace net {
 
-const nsCString kHttp3Version = NS_LITERAL_CSTRING("h3-24");
+const nsCString kHttp3Version = NS_LITERAL_CSTRING("h3-25");
 
 // define storage for all atoms
 namespace nsHttp {
@@ -842,8 +842,10 @@ void LogHeaders(const char* lineStart) {
 }
 
 nsresult HttpProxyResponseToErrorCode(uint32_t aStatusCode) {
-  MOZ_ASSERT(aStatusCode >= 300,
-             "Call HttpProxyResponseToErrorCode with successful status code!");
+  // In proxy CONNECT case, we treat every response code except 200 as an error.
+  // Even if the proxy server returns other 2xx codes (i.e. 206), this function
+  // still returns an error code.
+  MOZ_ASSERT(aStatusCode != 200);
 
   nsresult rv;
   switch (aStatusCode) {

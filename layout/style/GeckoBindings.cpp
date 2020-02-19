@@ -54,6 +54,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/ServoElementSnapshot.h"
 #include "mozilla/ShadowParts.h"
+#include "mozilla/StaticPresData.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/RestyleManager.h"
 #include "mozilla/SizeOfState.h"
@@ -1104,94 +1105,18 @@ const AnonymousCounterStyle* Gecko_CounterStyle_GetAnonymous(
   return aPtr->AsAnonymous();
 }
 
-void Gecko_SetNullImageValue(nsStyleImage* aImage) {
-  MOZ_ASSERT(aImage);
-  aImage->SetNull();
+void Gecko_SetCursorArrayCapacity(nsStyleUI* aUi, size_t aCapacity) {
+  aUi->mCursorImages.Clear();
+  aUi->mCursorImages.SetCapacity(aCapacity);
 }
 
-void Gecko_SetGradientImageValue(nsStyleImage* aImage,
-                                 StyleGradient* aGradient) {
-  MOZ_ASSERT(aImage);
-  aImage->SetGradientData(UniquePtr<StyleGradient>(aGradient));
-}
-
-static already_AddRefed<nsStyleImageRequest> CreateStyleImageRequest(
-    nsStyleImageRequest::Mode aModeFlags, const StyleComputedImageUrl* aUrl) {
-  RefPtr<nsStyleImageRequest> req = new nsStyleImageRequest(aModeFlags, *aUrl);
-  return req.forget();
-}
-
-void Gecko_SetLayerImageImageValue(nsStyleImage* aImage,
-                                   const StyleComputedImageUrl* aUrl) {
-  MOZ_ASSERT(aImage && aUrl);
-
-  RefPtr<nsStyleImageRequest> req =
-      CreateStyleImageRequest(nsStyleImageRequest::Mode::Track, aUrl);
-  aImage->SetImageRequest(req.forget());
-}
-
-void Gecko_SetImageElement(nsStyleImage* aImage, nsAtom* aAtom) {
-  MOZ_ASSERT(aImage);
-  aImage->SetElementId(do_AddRef(aAtom));
-}
-
-void Gecko_CopyImageValueFrom(nsStyleImage* aImage,
-                              const nsStyleImage* aOther) {
-  MOZ_ASSERT(aImage);
-  MOZ_ASSERT(aOther);
-
-  *aImage = *aOther;
-}
-
-void Gecko_InitializeImageCropRect(nsStyleImage* aImage) {
-  MOZ_ASSERT(aImage);
-  auto zero = StyleNumberOrPercentage::Number(0);
-  aImage->SetCropRect(MakeUnique<nsStyleImage::CropRect>(
-      nsStyleImage::CropRect{zero, zero, zero, zero}));
-}
-
-void Gecko_SetCursorArrayLength(nsStyleUI* aStyleUI, size_t aLen) {
-  aStyleUI->mCursorImages.Clear();
-  aStyleUI->mCursorImages.SetLength(aLen);
-}
-
-void Gecko_SetCursorImageValue(nsCursorImage* aCursor,
-                               const StyleComputedImageUrl* aUrl) {
-  MOZ_ASSERT(aCursor && aUrl);
-
-  aCursor->mImage =
-      CreateStyleImageRequest(nsStyleImageRequest::Mode::Discard, aUrl);
+void Gecko_AppendCursorImage(nsStyleUI* aUi,
+                             const StyleComputedImageUrl* aUrl) {
+  aUi->mCursorImages.EmplaceBack(*aUrl);
 }
 
 void Gecko_CopyCursorArrayFrom(nsStyleUI* aDest, const nsStyleUI* aSrc) {
   aDest->mCursorImages = aSrc->mCursorImages;
-}
-
-const nsStyleImageRequest* Gecko_GetImageRequest(const nsStyleImage* aImage) {
-  MOZ_ASSERT(aImage);
-  return aImage->ImageRequest();
-}
-
-nsAtom* Gecko_GetImageElement(const nsStyleImage* aImage) {
-  MOZ_ASSERT(aImage && aImage->GetType() == eStyleImageType_Element);
-  return const_cast<nsAtom*>(aImage->GetElementId());
-}
-
-void Gecko_SetListStyleImageNone(nsStyleList* aList) {
-  aList->mListStyleImage = nullptr;
-}
-
-void Gecko_SetListStyleImageImageValue(nsStyleList* aList,
-                                       const StyleComputedImageUrl* aUrl) {
-  MOZ_ASSERT(aList && aUrl);
-
-  aList->mListStyleImage =
-      CreateStyleImageRequest(nsStyleImageRequest::Mode(0), aUrl);
-}
-
-void Gecko_CopyListStyleImageFrom(nsStyleList* aList,
-                                  const nsStyleList* aSource) {
-  aList->mListStyleImage = aSource->mListStyleImage;
 }
 
 void Gecko_EnsureTArrayCapacity(void* aArray, size_t aCapacity,
@@ -1336,29 +1261,6 @@ PropertyValuePair* Gecko_AppendPropertyValuePair(
   MOZ_ASSERT(aProperty == eCSSPropertyExtra_variable ||
              !nsCSSProps::PropHasFlags(aProperty, CSSPropFlags::IsLogical));
   return aProperties->AppendElement(PropertyValuePair{aProperty});
-}
-
-void Gecko_CopyShapeSourceFrom(StyleShapeSource* aDst,
-                               const StyleShapeSource* aSrc) {
-  MOZ_ASSERT(aDst);
-  MOZ_ASSERT(aSrc);
-
-  *aDst = *aSrc;
-}
-
-void Gecko_DestroyShapeSource(StyleShapeSource* aShape) {
-  aShape->~StyleShapeSource();
-}
-
-void Gecko_NewShapeImage(StyleShapeSource* aShape) {
-  aShape->SetShapeImage(MakeUnique<nsStyleImage>());
-}
-
-void Gecko_SetToSVGPath(StyleShapeSource* aShape,
-                        StyleForgottenArcSlicePtr<StylePathCommand> aCommands,
-                        StyleFillRule aFill) {
-  MOZ_ASSERT(aShape);
-  aShape->SetPath(MakeUnique<StyleSVGPath>(aCommands, aFill));
 }
 
 void Gecko_nsStyleSVG_SetDashArrayLength(nsStyleSVG* aSvg, uint32_t aLen) {
@@ -1583,8 +1485,13 @@ GeckoFontMetrics Gecko_GetFontMetrics(const nsPresContext* aPresContext,
       presContext, aIsVertical, aFont, aFontSize, aUseUserFontSet);
 
   ret.mXSize = fm->XHeight();
+
+  // The size of the 'ch' unit is based on the width of the 'zero' glyph *in
+  // the font used to render it*, which may not be the same as the "first
+  // available font" in general, so we must explicitly tell GetFirstValidFont
+  // which character we care about.
   gfxFloat zeroWidth = fm->GetThebesFontGroup()
-                           ->GetFirstValidFont()
+                           ->GetFirstValidFont('0')
                            ->GetMetrics(fm->Orientation())
                            .zeroWidth;
   ret.mChSize = zeroWidth >= 0.0
@@ -1877,11 +1784,6 @@ bool Gecko_AssertClassAttrValueIsSane(const nsAttrValue* aValue) {
           aValue->GetStringValue())
           .IsEmpty());
   return true;
-}
-
-void Gecko_LoadData_DeregisterLoad(const StyleLoadData* aData) {
-  MOZ_ASSERT(aData->load_id != 0);
-  ImageLoader::DeregisterCSSImageFromAllLoaders(*aData);
 }
 
 void Gecko_PrintfStderr(const nsCString* aStr) {

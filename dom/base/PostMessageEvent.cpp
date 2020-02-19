@@ -69,7 +69,7 @@ PostMessageEvent::Run() {
   // The document URI is just used for the principal mismatch error message
   // below. Use a stack variable so mCallerURI is not held onto after
   // this method finishes, regardless of the method outcome.
-  nsCOMPtr<nsIURI> callerURI = mCallerURI.forget();
+  nsCOMPtr<nsIURI> callerURI = std::move(mCallerURI);
 
   // If we bailed before this point we're going to leak mMessage, but
   // that's probably better than crashing.
@@ -179,6 +179,10 @@ PostMessageEvent::Run() {
     cloneDataPolicy.allowIntraClusterClonableSharedObjects();
   }
 
+  if (targetWindow->IsSharedMemoryAllowed()) {
+    cloneDataPolicy.allowSharedMemoryObjects();
+  }
+
   StructuredCloneHolder* holder;
   if (mHolder.constructed<StructuredCloneHolder>()) {
     mHolder.ref<StructuredCloneHolder>().Read(
@@ -190,6 +194,7 @@ PostMessageEvent::Run() {
     holder = &mHolder.ref<ipc::StructuredCloneData>();
   }
   if (NS_WARN_IF(rv.Failed())) {
+    JS_ClearPendingException(cx);
     DispatchError(cx, targetWindow, eventTarget);
     return NS_OK;
   }

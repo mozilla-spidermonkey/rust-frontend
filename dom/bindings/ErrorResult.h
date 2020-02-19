@@ -52,8 +52,8 @@ namespace dom {
 
 class Promise;
 
-enum ErrNum {
-#define MSG_DEF(_name, _argc, _exn, _str) _name,
+enum ErrNum : uint16_t {
+#define MSG_DEF(_name, _argc, _has_context, _exn, _str) _name,
 #include "mozilla/dom/Errors.msg"
 #undef MSG_DEF
   Err_Limit
@@ -63,11 +63,18 @@ enum ErrNum {
 // use in static_assert.
 #if defined(DEBUG) && (defined(__clang__) || defined(__GNUC__))
 uint16_t constexpr ErrorFormatNumArgs[] = {
-#  define MSG_DEF(_name, _argc, _exn, _str) _argc,
+#  define MSG_DEF(_name, _argc, _has_context, _exn, _str) _argc,
 #  include "mozilla/dom/Errors.msg"
 #  undef MSG_DEF
 };
 #endif
+
+// Table of whether various error messages want a context arg.
+bool constexpr ErrorFormatHasContext[] = {
+#define MSG_DEF(_name, _argc, _has_context, _exn, _str) _has_context,
+#include "mozilla/dom/Errors.msg"
+#undef MSG_DEF
+};
 
 uint16_t GetErrorArgCount(const ErrNum aErrorNumber);
 
@@ -75,10 +82,13 @@ namespace binding_detail {
 void ThrowErrorMessage(JSContext* aCx, const unsigned aErrorNumber, ...);
 }  // namespace binding_detail
 
-template <typename... Ts>
-inline bool ThrowErrorMessage(JSContext* aCx, const ErrNum aErrorNumber,
-                              Ts&&... aArgs) {
-  binding_detail::ThrowErrorMessage(aCx, static_cast<unsigned>(aErrorNumber),
+template <ErrNum errorNumber, typename... Ts>
+inline bool ThrowErrorMessage(JSContext* aCx, Ts&&... aArgs) {
+#if defined(DEBUG) && (defined(__clang__) || defined(__GNUC__))
+  static_assert(ErrorFormatNumArgs[errorNumber] == sizeof...(aArgs),
+                "Pass in the right number of arguments");
+#endif
+  binding_detail::ThrowErrorMessage(aCx, static_cast<unsigned>(errorNumber),
                                     std::forward<Ts>(aArgs)...);
   return false;
 }
@@ -90,6 +100,7 @@ struct StringArrayAppender {
                        "required by the ErrNum.");
   }
 
+  // Allow passing nsAString instances for our args.
   template <typename... Ts>
   static void Append(nsTArray<nsString>& aArgs, uint16_t aCount,
                      const nsAString& aFirst, Ts&&... aOtherArgs) {
@@ -102,12 +113,27 @@ struct StringArrayAppender {
     aArgs.AppendElement(aFirst);
     Append(aArgs, aCount - 1, std::forward<Ts>(aOtherArgs)...);
   }
+
+  // Also allow passing u"" instances for our args.
+  template <int N, typename... Ts>
+  static void Append(nsTArray<nsString>& aArgs, uint16_t aCount,
+                     const char16_t (&aFirst)[N], Ts&&... aOtherArgs) {
+    if (aCount == 0) {
+      MOZ_ASSERT(false,
+                 "There should not be more string arguments provided than are "
+                 "required by the ErrNum.");
+      return;
+    }
+    aArgs.AppendElement(nsLiteralString(aFirst));
+    Append(aArgs, aCount - 1, std::forward<Ts>(aOtherArgs)...);
+  }
 };
 
 }  // namespace dom
 
 class ErrorResult;
 class OOMReporter;
+class CopyableErrorResult;
 
 namespace binding_danger {
 
@@ -232,14 +258,19 @@ class TErrorResult {
   //
   // After this call, the TErrorResult will no longer return true from Failed(),
   // since the exception will have moved to the JSContext.
+  //
+  // If "context" is not null and our exception has a useful message string, the
+  // string "%s: ", with the value of "context" replacing %s, will be prepended
+  // to the message string.  The passed-in string must be ASCII.
   MOZ_MUST_USE
-  bool MaybeSetPendingException(JSContext* cx) {
+  bool MaybeSetPendingException(JSContext* cx,
+                                const char* description = nullptr) {
     WouldReportJSException();
     if (!Failed()) {
       return false;
     }
 
-    SetPendingException(cx);
+    SetPendingException(cx, description);
     return true;
   }
 
@@ -442,9 +473,10 @@ class TErrorResult {
   template <dom::ErrNum errorNumber, typename... Ts>
   void ThrowErrorWithMessage(nsresult errorType, Ts&&... messageArgs) {
 #if defined(DEBUG) && (defined(__clang__) || defined(__GNUC__))
-    static_assert(
-        dom::ErrorFormatNumArgs[errorNumber] == sizeof...(messageArgs),
-        "Pass in the right number of arguments");
+    static_assert(dom::ErrorFormatNumArgs[errorNumber] ==
+                      sizeof...(messageArgs) +
+                          int(dom::ErrorFormatHasContext[errorNumber]),
+                  "Pass in the right number of arguments");
 #endif
 
     ClearUnionData();
@@ -452,6 +484,16 @@ class TErrorResult {
     nsTArray<nsString>& messageArgsArray =
         CreateErrorMessageHelper(errorNumber, errorType);
     uint16_t argCount = dom::GetErrorArgCount(errorNumber);
+    if (dom::ErrorFormatHasContext[errorNumber]) {
+      // Insert an empty string arg at the beginning and reduce our arg count to
+      // still be appended accordingly.
+      MOZ_ASSERT(argCount > 0,
+                 "Must have at least one arg if we have a context!");
+      MOZ_ASSERT(messageArgsArray.Length() == 0,
+                 "Why do we already have entries in the array?");
+      --argCount;
+      messageArgsArray.AppendElement();
+    }
     dom::StringArrayAppender::Append(messageArgsArray, argCount,
                                      std::forward<Ts>(messageArgs)...);
 #ifdef DEBUG
@@ -498,13 +540,15 @@ class TErrorResult {
   void ClearUnionData();
 
   // Implementation of MaybeSetPendingException for the case when we're a
-  // failure result.
-  void SetPendingException(JSContext* cx);
+  // failure result.  See documentation of MaybeSetPendingException for the
+  // "context" argument.
+  void SetPendingException(JSContext* cx, const char* context);
 
-  // Methods for setting various specific kinds of pending exceptions.
-  void SetPendingExceptionWithMessage(JSContext* cx);
+  // Methods for setting various specific kinds of pending exceptions.  See
+  // documentation of MaybeSetPendingException for the "context" argument.
+  void SetPendingExceptionWithMessage(JSContext* cx, const char* context);
   void SetPendingJSException(JSContext* cx);
-  void SetPendingDOMException(JSContext* cx);
+  void SetPendingDOMException(JSContext* cx, const char* context);
   void SetPendingGenericErrorException(JSContext* cx);
 
   MOZ_ALWAYS_INLINE void AssertReportedOrSuppressed() {
@@ -628,6 +672,10 @@ class ErrorResult : public binding_danger::TErrorResult<
   ErrorResult() : BaseErrorResult() {}
 
   ErrorResult(ErrorResult&& aRHS) : BaseErrorResult(std::move(aRHS)) {}
+  // Explicitly allow moving out of a CopyableErrorResult into an ErrorResult.
+  // This is implemented below so it can see the definition of
+  // CopyableErrorResult.
+  inline explicit ErrorResult(CopyableErrorResult&& aRHS);
 
   explicit ErrorResult(nsresult aRv) : BaseErrorResult(aRv) {}
 
@@ -743,7 +791,22 @@ class CopyableErrorResult
     }
     return *this;
   }
+
+  // Disallow implicit converstion to non-const ErrorResult&, because that would
+  // allow people to throw exceptions on us while bypassing our checks for JS
+  // exceptions.
+  operator ErrorResult&() = delete;
+
+  // Allow conversion to ErrorResult&& so we can move out of ourselves into
+  // an ErrorResult.
+  operator ErrorResult &&() && {
+    auto* val = reinterpret_cast<ErrorResult*>(this);
+    return std::move(*val);
+  }
 };
+
+inline ErrorResult::ErrorResult(CopyableErrorResult&& aRHS)
+    : ErrorResult(reinterpret_cast<ErrorResult&&>(aRHS)) {}
 
 namespace dom {
 namespace binding_detail {
@@ -796,8 +859,8 @@ class OOMReporterInstantiator : public OOMReporter {
   // We want to be able to call MaybeSetPendingException from codegen.  The one
   // on OOMReporter is not callable directly, because it comes from a private
   // superclass.  But we're a friend, so _we_ can call it.
-  bool MaybeSetPendingException(JSContext* cx) {
-    return OOMReporter::MaybeSetPendingException(cx);
+  bool MaybeSetPendingException(JSContext* cx, const char* context = nullptr) {
+    return OOMReporter::MaybeSetPendingException(cx, context);
   }
 };
 }  // namespace binding_danger

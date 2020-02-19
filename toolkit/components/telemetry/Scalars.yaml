@@ -480,6 +480,42 @@ browser.usage:
       - 'main'
       - 'content'
 
+gecko:
+  version:
+    bug_numbers:
+      - 1611240
+    description: >
+      The version of the Gecko engine, example: '74.0a1'.
+      It consists of the major and minor version, followed by the release life cycle phase.
+      'a' stands for alpha or nightly, 'b' stands for beta.
+      The number behind the release life cycle phase indicates minor releases within the phase.
+    expires: never
+    kind: string
+    notification_emails:
+      - gfx-telemetry-alerts@mozilla.com
+      - ktaeleman@mozilla.com
+    products:
+      - 'geckoview_streaming'
+    record_in_processes:
+      - 'main'
+    release_channel_collection: opt-out
+  build_id:
+    bug_numbers:
+      - 1611240
+    description: >
+      The build id of the Gecko engine, example: '20200205124310'.
+      It contains the time the build was created and is used as a unique id for the build.
+    expires: never
+    kind: string
+    notification_emails:
+      - gfx-telemetry-alerts@mozilla.com
+      - ktaeleman@mozilla.com
+    products:
+      - 'geckoview_streaming'
+    record_in_processes:
+      - 'main'
+    release_channel_collection: opt-out
+
 extensions.updates:
   rdf:
     bug_numbers:
@@ -1552,6 +1588,23 @@ dom.parentprocess:
       - 'geckoview'
     record_in_processes:
       - 'main'
+
+# The following section contains scalars related to DOM IPC messages.
+dom.ipc:
+  rejected_window_actor_message:
+    bug_numbers:
+      - 1604609
+    description: Each key is the window actor name followed by the message name, with digits removed, that was rejected for being over approximately 256MB, recorded in the sending process at the time of sending.
+    expires: "83"
+    kind: uint
+    notification_emails:
+      - amccreight@mozilla.com
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+      - 'content'
+    keyed: true
 
 devtools.toolbar.eyedropper:
   opened:
@@ -3212,6 +3265,25 @@ screenshots:
     record_in_processes:
       - 'main'
 
+# The following section is for quotaManager.
+qm:
+  repositories_initialization_time:
+    bug_numbers:
+      - 1609625
+    description: >
+      A temporary probe to track the time for initializing the best-effort
+      repositories especially the longest the time.
+    expires: "76"
+    kind: uint
+    notification_emails:
+      - ttung@mozilla.com
+      - storage-telemetry@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
 # The following section is for tracking the number of failure for indexedDB.
 idb.failure:
   fileinfo_error:
@@ -3240,9 +3312,10 @@ pdf.viewer:
     description: >
       How many times PDF Viewer was used.
     expires: never
+    kind: uint
     notification_emails:
       - bdahl@mozilla.com
-    kind: uint
+    release_channel_collection: opt-out
     products:
       - 'firefox'
     record_in_processes:
@@ -3253,10 +3326,11 @@ pdf.viewer:
       - 1566882
     description: >
       How many times PDF Viewer fallback bar was shown.
-    expires: "75"
+    expires: "84"
+    kind: uint
     notification_emails:
       - bdahl@mozilla.com
-    kind: uint
+    release_channel_collection: opt-out
     products:
       - 'firefox'
     record_in_processes:
@@ -3267,10 +3341,11 @@ pdf.viewer:
       - 1566882
     description: >
       How many times PDF Viewer print functionality was used.
-    expires: "75"
+    expires: "84"
+    kind: uint
     notification_emails:
       - bdahl@mozilla.com
-    kind: uint
+    release_channel_collection: opt-out
     products:
       - 'firefox'
     record_in_processes:
@@ -3293,6 +3368,25 @@ timestamps:
       - 'firefox'
       - 'fennec'
       - 'geckoview'
+    record_in_processes:
+      - main
+
+  first_paint_two:
+    bug_numbers:
+      - 1556568
+    description: >
+     Record the timestamp of the first main window paint, in milliseconds since process start.
+     Intended to replace first_paint since first_paint is broken.
+    expires: never
+    kind: uint
+    notification_emails:
+      - hkirschner@mozilla.com
+      - gfx-telemetry-alerts@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - firefox
+      - fennec
+      - geckoview
     record_in_processes:
       - main
 
@@ -3552,13 +3646,13 @@ update:
   fix_permissions_attempted:
     bug_numbers:
       - 1577317
+      - 1615065
     description: Set when we attempt to fix update directory permissions.
-    expires: "76"
+    expires: "84"
     kind: boolean
     notification_emails:
       - application-update-telemetry-alerts@mozilla.com
       - agashlin@mozilla.com
-      - rstrong@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'

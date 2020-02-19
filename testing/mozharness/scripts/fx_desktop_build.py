@@ -46,13 +46,10 @@ class FxDesktopBuild(BuildScript, TryToolsMixin, object):
                 "debug_build": False,
                 # nightly stuff
                 "nightly_build": False,
-                # hg tool stuff
-                "tools_repo": "https://hg.mozilla.org/build/tools",
                 # Seed all clones with mozilla-unified. This ensures subsequent
                 # jobs have a minimal `hg pull`.
                 "clone_upstream_url": "https://hg.mozilla.org/mozilla-unified",
                 "repo_base": "https://hg.mozilla.org",
-                "graph_selector": "/server/collect.cgi",
                 'build_resources_path': '%(upload_path)s/build_resources.json',
                 'nightly_promotion_branches': ['mozilla-central', 'mozilla-aurora'],
 
@@ -64,8 +61,6 @@ class FxDesktopBuild(BuildScript, TryToolsMixin, object):
                     'requests==2.8.1',
                 ],
                 'virtualenv_path': 'venv',
-                #
-
             },
             'ConfigClass': BuildingConfig,
         }
@@ -84,12 +79,10 @@ class FxDesktopBuild(BuildScript, TryToolsMixin, object):
             # there is a seperation in mh.  for example, rather than having
             # '{mozharness_repo}/build/build/', I have '{
             # mozharness_repo}/build/src/'
-            'abs_src_dir': os.path.join(abs_dirs['abs_work_dir'],
-                                        'src'),
+            'abs_src_dir': os.environ['GECKO_PATH'],
             'abs_obj_dir': os.path.join(abs_dirs['abs_work_dir'],
                                         'src',
                                         self._query_objdir()),
-            'abs_tools_dir': os.path.join(abs_dirs['abs_work_dir'], 'tools'),
             'upload_path': self.config["upload_env"]["UPLOAD_PATH"],
         }
         abs_dirs.update(dirs)

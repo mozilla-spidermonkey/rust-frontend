@@ -31,6 +31,7 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Tokenizer.h"
+#include "mozilla/UniquePtr.h"
 
 namespace mozilla {
 namespace net {
@@ -175,12 +176,13 @@ nsresult TRR::SendHTTPRequest() {
   }
 
   if (((mType == TRRTYPE_A) || (mType == TRRTYPE_AAAA)) &&
-      mRec->EffectiveTRRMode() != nsIRequest::TRR_ONLY_MODE) {
+      mRec->mEffectiveTRRMode != nsIRequest::TRR_ONLY_MODE) {
     // let NS resolves skip the blacklist check
     // we also don't check the blacklist for TRR only requests
     MOZ_ASSERT(mRec);
 
-    if (gTRRService->IsTRRBlacklisted(mHost, mOriginSuffix, mPB, true)) {
+    if (UseDefaultServer() &&
+        gTRRService->IsTRRBlacklisted(mHost, mOriginSuffix, mPB, true)) {
       if (mType == TRRTYPE_A) {
         // count only blacklist for A records to avoid double counts
         Telemetry::Accumulate(Telemetry::DNS_TRR_BLACKLISTED, true);
@@ -188,7 +190,7 @@ nsresult TRR::SendHTTPRequest() {
       // not really an error but no TRR is issued
       return NS_ERROR_UNKNOWN_HOST;
     } else {
-      if (mType == TRRTYPE_A) {
+      if (UseDefaultServer() && (mType == TRRTYPE_A)) {
         Telemetry::Accumulate(Telemetry::DNS_TRR_BLACKLISTED, false);
       }
     }
@@ -218,7 +220,7 @@ nsresult TRR::SendHTTPRequest() {
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsAutoCString uri;
-    if (!mRec || mRec->mTrrServer.IsEmpty()) {
+    if (UseDefaultServer()) {
       gTRRService->GetURI(uri);
     } else {
       uri = mRec->mTrrServer;
@@ -232,7 +234,7 @@ nsresult TRR::SendHTTPRequest() {
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsAutoCString uri;
-    if (!mRec || mRec->mTrrServer.IsEmpty()) {
+    if (UseDefaultServer()) {
       gTRRService->GetURI(uri);
     } else {
       uri = mRec->mTrrServer;
@@ -276,7 +278,7 @@ nsresult TRR::SendHTTPRequest() {
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsAutoCString cred;
-  if (!mRec || mRec->mTrrServer.IsEmpty()) {
+  if (UseDefaultServer()) {
     gTRRService->GetCredentials(cred);
   }
   if (!cred.IsEmpty()) {
@@ -487,6 +489,12 @@ nsresult TRR::ReceivePush(nsIHttpChannel* pushed, nsHostRecord* pushedRec) {
     return rv;
   }
 
+  // Since we don't ever call nsHostResolver::NameLookup for this record,
+  // we need to copy the trr mode from the previous record
+  if (hostRecord->mEffectiveTRRMode == nsIRequest::TRR_DEFAULT_MODE) {
+    hostRecord->mEffectiveTRRMode = pushedRec->mEffectiveTRRMode;
+  }
+
   rv = mHostResolver->TrrLookup_unlocked(hostRecord, this);
   if (NS_FAILED(rv)) {
     return rv;
@@ -511,7 +519,7 @@ TRR::OnPush(nsIHttpChannel* associated, nsIHttpChannel* pushed) {
   if (!mRec) {
     return NS_ERROR_FAILURE;
   }
-  if (!mRec->mTrrServer.IsEmpty()) {
+  if (!UseDefaultServer()) {
     return NS_ERROR_FAILURE;
   }
 
@@ -942,12 +950,14 @@ nsresult TRR::ReturnData(nsIChannel* aChannel) {
     nsCOMPtr<nsITimedChannel> timedChan = do_QueryInterface(aChannel);
     if (timedChan) {
       TimeStamp asyncOpen, start, end;
-      if (NS_SUCCEEDED(timedChan->GetAsyncOpen(&asyncOpen)) && !asyncOpen.IsNull()) {
-        ai->SetTrrFetchDuration((TimeStamp::Now() - asyncOpen).ToMilliseconds());
+      if (NS_SUCCEEDED(timedChan->GetAsyncOpen(&asyncOpen)) &&
+          !asyncOpen.IsNull()) {
+        ai->SetTrrFetchDuration(
+            (TimeStamp::Now() - asyncOpen).ToMilliseconds());
       }
       if (NS_SUCCEEDED(timedChan->GetRequestStart(&start)) &&
-          NS_SUCCEEDED(timedChan->GetResponseEnd(&end)) &&
-          !start.IsNull() && !end.IsNull()) {
+          NS_SUCCEEDED(timedChan->GetResponseEnd(&end)) && !start.IsNull() &&
+          !end.IsNull()) {
         ai->SetTrrFetchDurationNetworkOnly((end - start).ToMilliseconds());
       }
     }
@@ -1055,7 +1065,7 @@ TRR::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
   nsCOMPtr<nsIChannel> channel;
   channel.swap(mChannel);
 
-  if (!mRec || mRec->mTrrServer.IsEmpty()) {
+  if (UseDefaultServer()) {
     // Bad content is still considered "okay" if the HTTP response is okay
     gTRRService->TRRIsOkay(NS_SUCCEEDED(aStatusCode) ? TRRService::OKAY_NORMAL
                                                      : TRRService::OKAY_BAD);
@@ -1082,7 +1092,7 @@ TRR::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
     rv = httpChannel->GetResponseStatus(&httpStatus);
     if (NS_SUCCEEDED(rv) && httpStatus == 200) {
       rv = On200Response(channel);
-      if (NS_SUCCEEDED(rv)) {
+      if (NS_SUCCEEDED(rv) && UseDefaultServer()) {
         RecordProcessingTime(channel);
         return rv;
       }
@@ -1129,7 +1139,7 @@ TRR::OnDataAvailable(nsIRequest* aRequest, nsIInputStream* aInputStream,
 
 nsresult DOHresp::Add(uint32_t TTL, unsigned char* dns, int index, uint16_t len,
                       bool aLocalAllowed) {
-  nsAutoPtr<DOHaddr> doh(new DOHaddr);
+  auto doh = MakeUnique<DOHaddr>();
   NetAddr* addr = &doh->mNet;
   if (4 == len) {
     // IPv4
@@ -1159,7 +1169,7 @@ nsresult DOHresp::Add(uint32_t TTL, unsigned char* dns, int index, uint16_t len,
     NetAddrToString(addr, buf, sizeof(buf));
     LOG(("DOHresp:Add %s\n", buf));
   }
-  mAddresses.insertBack(doh.forget());
+  mAddresses.insertBack(doh.release());
   return NS_OK;
 }
 
@@ -1186,9 +1196,13 @@ void TRR::Cancel() {
     LOG(("TRR: %p canceling Channel %p %s %d\n", this, mChannel.get(),
          mHost.get(), mType));
     mChannel->Cancel(NS_ERROR_ABORT);
-    gTRRService->TRRIsOkay(TRRService::OKAY_TIMEOUT);
+    if (UseDefaultServer()) {
+      gTRRService->TRRIsOkay(TRRService::OKAY_TIMEOUT);
+    }
   }
 }
+
+bool TRR::UseDefaultServer() { return !mRec || mRec->mTrrServer.IsEmpty(); }
 
 #undef LOG
 

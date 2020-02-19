@@ -319,6 +319,18 @@
     "releaseChannelCollection": "opt-out",
     "bug_numbers": [1080160, 1529352, 1580129]
   },
+  "COMPOSITE_SWAP_TIME" : {
+    "record_in_processes": ["main", "gpu"],
+    "products": ["firefox", "fennec", "geckoview", "geckoview_streaming"],
+    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "jmuizelaar@mozilla.com"],
+    "expires_in_version": "never",
+    "description": "Time to do swap/present/commit in 100 microseconds",
+    "kind": "exponential",
+    "high": 1000,
+    "n_buckets": 50,
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [1612511]
+  },
   "COMPOSITE_FRAME_ROUNDTRIP_TIME" : {
     "record_in_processes": ["main", "content", "gpu"],
     "products": ["firefox", "fennec", "geckoview"],
@@ -3098,13 +3110,26 @@
     "kind": "boolean",
     "description": "Fraction of sockets that used a nsConnectionEntry with history - size 300."
   },
-  "HTTP_CACHE_DISPOSITION_2_V2": {
+  "HTTP_CACHE_DISPOSITION_3": {
     "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec", "geckoview"],
+    "products": ["firefox", "geckoview"],
+    "alert_emails": ["necko@mozilla.com", "mnovotny@mozilla.com"],
+    "bug_numbers": [1611185],
     "expires_in_version": "never",
-    "kind": "enumerated",
-    "n_values": 5,
-    "description": "HTTP Cache v2 Hit, Reval, Failed-Reval, Miss"
+    "kind": "categorical",
+    "labels": ["Unresolved", "Hit", "HitViaReval", "MissedViaReval", "Missed", "Unknown"],
+    "keyed": true,
+    "keys": [
+      "ALL",
+      "UNKNOWN",
+      "OTHER",
+      "JAVASCRIPT",
+      "IMAGE",
+      "MEDIA",
+      "STYLESHEET",
+      "WASM"
+    ],
+    "description": "HTTP Cache v2 hit/miss stats keyed by content type."
   },
   "HTTP_CACHE_ENTRY_RELOAD_TIME": {
     "record_in_processes": ["main", "content"],
@@ -9070,8 +9095,9 @@
   "PDF_VIEWER_DOCUMENT_VERSION_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "75",
+    "expires_in_version": "84",
     "alert_emails": ["bdahl@mozilla.com"],
+    "releaseChannelCollection": "opt-out",
     "bug_numbers": [1566882],
     "kind": "categorical",
     "labels": ["other", "v1_0", "v1_1", "v1_2", "v1_3", "v1_4", "v1_5", "v1_6", "v1_7", "v1_8", "v1_9", "v2_0", "v2_1", "v2_2", "v2_3"],
@@ -9080,8 +9106,9 @@
   "PDF_VIEWER_DOCUMENT_GENERATOR_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "75",
+    "expires_in_version": "84",
     "alert_emails": ["bdahl@mozilla.com"],
+    "releaseChannelCollection": "opt-out",
     "bug_numbers": [1566882],
     "kind": "categorical",
     "labels": ["acrobat_distiller", "acrobat_pdfwriter", "adobe_livecycle", "adobe_pdf_library", "adobe_photoshop", "ghostscript", "tcpdf", "cairo", "dvipdfm", "dvips", "pdftex", "pdfkit", "itext", "prince", "quarkxpress", "mac_os_x", "microsoft", "openoffice", "oracle", "luradocument", "pdf_xchange", "antenna_house", "aspose_cells", "fpdf"],
@@ -9090,8 +9117,9 @@
   "PDF_VIEWER_DOCUMENT_SIZE_KB": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "75",
+    "expires_in_version": "84",
     "alert_emails": ["bdahl@mozilla.com"],
+    "releaseChannelCollection": "opt-out",
     "bug_numbers": [1566882],
     "kind": "exponential",
     "low": 2,
@@ -9102,8 +9130,9 @@
   "PDF_VIEWER_FONT_TYPES_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "75",
+    "expires_in_version": "84",
     "alert_emails": ["bdahl@mozilla.com"],
+    "releaseChannelCollection": "opt-out",
     "bug_numbers": [1566882],
     "kind": "categorical",
     "labels": ["UNKNOWN", "TYPE1", "TYPE1C", "CIDFONTTYPE0", "CIDFONTTYPE0C", "TRUETYPE", "CIDFONTTYPE2", "TYPE3", "OPENTYPE", "TYPE0", "MMTYPE1"],
@@ -9112,8 +9141,9 @@
   "PDF_VIEWER_EMBED_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "75",
+    "expires_in_version": "84",
     "alert_emails": ["bdahl@mozilla.com"],
+    "releaseChannelCollection": "opt-out",
     "bug_numbers": [1566882],
     "kind": "categorical",
     "labels": ["object_embed", "iframe"],
@@ -9122,8 +9152,9 @@
   "PDF_VIEWER_FORM_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "75",
+    "expires_in_version": "84",
     "alert_emails": ["bdahl@mozilla.com"],
+    "releaseChannelCollection": "opt-out",
     "bug_numbers": [1566882],
     "kind": "categorical",
     "labels": ["acroform", "xfa"],
@@ -9132,8 +9163,9 @@
   "PDF_VIEWER_STREAM_TYPES_2": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
-    "expires_in_version": "75",
+    "expires_in_version": "84",
     "alert_emails": ["bdahl@mozilla.com"],
+    "releaseChannelCollection": "opt-out",
     "bug_numbers": [1566882],
     "kind": "categorical",
     "labels": ["UNKNOWN", "FLATE", "LZW", "DCT", "JPX", "JBIG", "A85", "AHX", "CCF", "RLX"],
@@ -9143,6 +9175,7 @@
     "record_in_processes": ["main", "content"],
     "products": ["firefox"],
     "expires_in_version": "never",
+    "releaseChannelCollection": "opt-out",
     "bug_numbers": [1566882],
     "kind": "exponential",
     "alert_emails": ["bdahl@mozilla.com"],
@@ -9393,6 +9426,16 @@
     "high": 520000,
     "n_buckets": 66,
     "description": "MediaCacheStream stream length size in KB; Either known size from the HTTP header if available, or otherwise the size actually downloaded. Recorded at every MediaCacheStream destruction."
+  },
+  "MEDIA_DECODING_PROCESS_CRASH": {
+    "record_in_processes": ["content"],
+    "products": ["firefox", "geckoview"],
+    "alert_emails": ["jolin@mozilla.com"],
+    "bug_numbers": [1304268],
+    "expires_in_version": "never",
+    "kind": "count",
+    "operating_systems": ["android"],
+    "description": "Records a value each time GeckoView remote decoding process crashes unexpectedly while decoding media content."
   },
   "WEBRTC_DTLS_CIPHER": {
     "record_in_processes": ["content", "socket"],
@@ -10815,6 +10858,16 @@
     "high": 3000,
     "n_buckets": 20,
     "description": "Time spent moving the cookies from one memory location to another (ms)"
+  },
+  "COOKIE_SAMESITE_SET_VS_UNSET": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "bug_numbers": [1612476],
+    "releaseChannelCollection": "opt-out",
+    "expires_in_version": "86",
+    "kind": "boolean",
+    "alert_emails": ["amarchesini@mozilla.com"],
+    "description": "Cookies with SameSite attribute set vs unset"
   },
   "NTLM_MODULE_USED_2": {
     "record_in_processes": ["main", "content"],
@@ -14531,7 +14584,7 @@
     "kind": "exponential",
     "high": 1000,
     "n_buckets": 50,
-    "description": "WebRender scene swap time in milliseconds"
+    "description": "WebRender scene swap time in miliseconds"
   },
   "WR_FRAMEBUILD_TIME": {
     "record_in_processes": ["main", "gpu"],
@@ -15044,5 +15097,20 @@
     "n_buckets": 100,
     "bug_numbers": [1597956],
     "description": "milliseconds to complete a TLS session resumption with external cache"
+  },
+  "WINDOW_REMOTE_SUBFRAMES_ENABLED_STATUS": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["nika@mozilla.com"],
+    "expires_in_version": "82",
+    "kind": "categorical",
+    "labels": [
+      "EnabledByAutostart",
+      "EnabledByUser",
+      "DisabledByAutostart",
+      "DisabledByUser"
+    ],
+    "bug_numbers": [1602903],
+    "description": "Fission enabled status of individual windows in fission.autostart and non-fission.autostart profiles"
   }
 }

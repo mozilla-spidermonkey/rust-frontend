@@ -32,6 +32,7 @@ HOST_SOURCES += [
     'NonMemMovableMemberChecker.cpp',
     'NonMemMovableTemplateArgChecker.cpp',
     'NonParamInsideFunctionDeclChecker.cpp',
+    'NonTrivialTypeInFfiChecker.cpp',
     'NoUsingNamespaceMozillaJavaChecker.cpp',
     'OverrideBaseCallChecker.cpp',
     'OverrideBaseCallUsageChecker.cpp',
@@ -48,6 +49,7 @@ HOST_SOURCES += [
 
 if CONFIG['OS_ARCH'] == 'WINNT':
     HOST_SOURCES += [
+        'FopenUsageChecker.cpp',
         'LoadLibraryUsageChecker.cpp',
     ]
 
@@ -60,6 +62,7 @@ if CONFIG['ENABLE_MOZSEARCH_PLUGIN']:
     ]
 
 GeneratedFile('ThirdPartyPaths.cpp', script="ThirdPartyPaths.py",
+              py2=True,
               entry_point="generate", inputs=[
                   '/tools/rewriting/ThirdPartyPaths.txt',
                   '/tools/rewriting/Generated.txt',

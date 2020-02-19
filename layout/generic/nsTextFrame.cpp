@@ -2987,7 +2987,7 @@ gfxSkipCharsIterator nsTextFrame::EnsureTextRun(
     }
     TabWidthStore* tabWidths = GetProperty(TabWidthProperty());
     if (tabWidths && tabWidths->mValidForContentOffset != GetContentOffset()) {
-      DeleteProperty(TabWidthProperty());
+      RemoveProperty(TabWidthProperty());
     }
   }
 
@@ -3594,7 +3594,7 @@ void nsTextFrame::PropertyProvider::CalcTabWidths(Range aRange,
 
   if (!mTabWidths) {
     // Delete any stale property that may be left on the frame
-    mFrame->DeleteProperty(TabWidthProperty());
+    mFrame->RemoveProperty(TabWidthProperty());
     mTabWidthsAnalyzedLimit =
         std::max(mTabWidthsAnalyzedLimit, aRange.end - startOffset);
   }
@@ -4054,7 +4054,7 @@ bool nsTextPaintStyle::InitSelectionColorsAndShadow() {
         style->GetVisitedDependentColor(&nsStyleBackground::mBackgroundColor);
     mSelectionTextColor =
         style->GetVisitedDependentColor(&nsStyleText::mWebkitTextFillColor);
-    mSelectionPseudoStyle = style.forget();
+    mSelectionPseudoStyle = std::move(style);
     return true;
   }
 
@@ -4294,11 +4294,11 @@ void nsTextFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
   // Remove any NewlineOffsetProperty or InFlowContentLengthProperty since they
   // might be invalid if the content was modified while there was no frame
   if (aContent->HasFlag(NS_HAS_NEWLINE_PROPERTY)) {
-    aContent->DeleteProperty(nsGkAtoms::newline);
+    aContent->RemoveProperty(nsGkAtoms::newline);
     aContent->UnsetFlags(NS_HAS_NEWLINE_PROPERTY);
   }
   if (aContent->HasFlag(NS_HAS_FLOWLENGTH_PROPERTY)) {
-    aContent->DeleteProperty(nsGkAtoms::flowlength);
+    aContent->RemoveProperty(nsGkAtoms::flowlength);
     aContent->UnsetFlags(NS_HAS_FLOWLENGTH_PROPERTY);
   }
 
@@ -4320,7 +4320,7 @@ void nsTextFrame::ClearFrameOffsetCache() {
       // means that the primary frame is already dead if we're a continuing text
       // frame, in which case, all of its properties are gone, and we don't need
       // to worry about deleting this property here.
-      primaryFrame->DeleteProperty(OffsetToFrameProperty());
+      primaryFrame->RemoveProperty(OffsetToFrameProperty());
     }
     RemoveStateBits(TEXT_IN_OFFSET_CACHE);
   }
@@ -4674,7 +4674,7 @@ bool nsTextFrame::RemoveTextRun(gfxTextRun* aTextRun) {
   }
   if ((GetStateBits() & TEXT_HAS_FONT_INFLATION) &&
       GetProperty(UninflatedTextRunProperty()) == aTextRun) {
-    DeleteProperty(UninflatedTextRunProperty());
+    RemoveProperty(UninflatedTextRunProperty());
     return true;
   }
   return false;
@@ -4703,7 +4703,7 @@ void nsTextFrame::DisconnectTextRuns() {
              "disconnect");
   mTextRun = nullptr;
   if ((GetStateBits() & TEXT_HAS_FONT_INFLATION)) {
-    DeleteProperty(UninflatedTextRunProperty());
+    RemoveProperty(UninflatedTextRunProperty());
   }
 }
 
@@ -4730,11 +4730,11 @@ void nsTextFrame::NotifyNativeAnonymousTextnodeChange(uint32_t aOldLength) {
 nsresult nsTextFrame::CharacterDataChanged(
     const CharacterDataChangeInfo& aInfo) {
   if (mContent->HasFlag(NS_HAS_NEWLINE_PROPERTY)) {
-    mContent->DeleteProperty(nsGkAtoms::newline);
+    mContent->RemoveProperty(nsGkAtoms::newline);
     mContent->UnsetFlags(NS_HAS_NEWLINE_PROPERTY);
   }
   if (mContent->HasFlag(NS_HAS_FLOWLENGTH_PROPERTY)) {
-    mContent->DeleteProperty(nsGkAtoms::flowlength);
+    mContent->RemoveProperty(nsGkAtoms::flowlength);
     mContent->UnsetFlags(NS_HAS_FLOWLENGTH_PROPERTY);
   }
 
@@ -5223,7 +5223,7 @@ nsRect nsTextFrame::UpdateTextEmphasis(WritingMode aWM,
                                        PropertyProvider& aProvider) {
   const nsStyleText* styleText = StyleText();
   if (!styleText->HasEffectiveTextEmphasis()) {
-    DeleteProperty(EmphasisMarkProperty());
+    RemoveProperty(EmphasisMarkProperty());
     return nsRect();
   }
 
@@ -5284,19 +5284,20 @@ nsRect nsTextFrame::UpdateTextEmphasis(WritingMode aWM,
 // https://drafts.csswg.org/css-text-decor-4/#text-decoration-width-property
 // Returns the thickness in device pixels.
 static gfxFloat ComputeDecorationLineThickness(
-    const StyleTextDecorationLength& aDecorationThickness,
-    const gfxFont::Metrics& aFontMetrics, const gfxFloat aAppUnitsPerDevPixel) {
-  // If a length or percentage is specified, we compute it here;
-  // otherwise the value must be `auto` or `from-font`, both of which
-  // mean we use the font's underline size.
-  if (aDecorationThickness.IsLengthPercentage()) {
-    auto em = [&] {
-      return nscoord(NS_round(aFontMetrics.emHeight * aAppUnitsPerDevPixel));
-    };
-    return aDecorationThickness.AsLengthPercentage().Resolve(em) /
-           aAppUnitsPerDevPixel;
+    const StyleTextDecorationLength& aThickness,
+    const gfxFloat aAutoValue, const gfxFont::Metrics& aFontMetrics,
+    const gfxFloat aAppUnitsPerDevPixel) {
+  if (aThickness.IsAuto()) {
+    return aAutoValue;
   }
-  return aFontMetrics.underlineSize;
+
+  if (aThickness.IsFromFont()) {
+    return aFontMetrics.underlineSize;
+  }
+  auto em = [&] {
+    return nscoord(NS_round(aFontMetrics.emHeight * aAppUnitsPerDevPixel));
+  };
+  return aThickness.AsLengthPercentage().Resolve(em) / aAppUnitsPerDevPixel;
 }
 
 // Helper function for implementing text-underline-offset and -position
@@ -5421,8 +5422,8 @@ void nsTextFrame::UnionAdditionalOverflow(nsPresContext* aPresContext,
 
     params.defaultLineThickness = metrics.underlineSize;
     params.lineSize.height = ComputeDecorationLineThickness(
-        aBlock->Style()->StyleTextReset()->mTextDecorationThickness, metrics,
-        appUnitsPerDevUnit);
+        aBlock->Style()->StyleTextReset()->mTextDecorationThickness,
+        params.defaultLineThickness, metrics, appUnitsPerDevUnit);
 
     const auto* styleText = aBlock->StyleText();
     bool swapUnderline =
@@ -5518,7 +5519,8 @@ void nsTextFrame::UnionAdditionalOverflow(nsPresContext* aPresContext,
 
             params.defaultLineThickness = metrics.*lineSize;
             params.lineSize.height = ComputeDecorationLineThickness(
-                dec.mTextDecorationThickness, metrics, appUnitsPerDevUnit);
+                dec.mTextDecorationThickness, params.defaultLineThickness,
+                metrics, appUnitsPerDevUnit);
 
             bool swapUnderline =
                 parentWM.IsCentralBaseline() && IsUnderlineRight(*Style());
@@ -5688,6 +5690,25 @@ void nsTextFrame::PaintDecorationLine(
   }
 }
 
+static uint8_t ToStyleLineStyle(const TextRangeStyle& aStyle) {
+  switch (aStyle.mLineStyle) {
+    case TextRangeStyle::LineStyle::None:
+      return NS_STYLE_TEXT_DECORATION_STYLE_NONE;
+    case TextRangeStyle::LineStyle::Solid:
+      return NS_STYLE_TEXT_DECORATION_STYLE_SOLID;
+    case TextRangeStyle::LineStyle::Dotted:
+      return NS_STYLE_TEXT_DECORATION_STYLE_DOTTED;
+    case TextRangeStyle::LineStyle::Dashed:
+      return NS_STYLE_TEXT_DECORATION_STYLE_DASHED;
+    case TextRangeStyle::LineStyle::Double:
+      return NS_STYLE_TEXT_DECORATION_STYLE_DOUBLE;
+    case TextRangeStyle::LineStyle::Wavy:
+      return NS_STYLE_TEXT_DECORATION_STYLE_WAVY;
+  }
+  MOZ_ASSERT_UNREACHABLE("Invalid line style");
+  return NS_STYLE_TEXT_DECORATION_STYLE_NONE;
+}
+
 /**
  * This, plus kSelectionTypesWithDecorations, encapsulates all knowledge
  * about drawing text decoration for selections.
@@ -5733,7 +5754,8 @@ void nsTextFrame::DrawSelectionDecorations(
       params.defaultLineThickness = ComputeSelectionUnderlineHeight(
           aTextPaintStyle.PresContext(), aFontMetrics, aSelectionType);
       params.lineSize.height = ComputeDecorationLineThickness(
-          decThickness, aFontMetrics, appUnitsPerDevPixel);
+          decThickness, params.defaultLineThickness, aFontMetrics,
+          appUnitsPerDevPixel);
 
       bool swapUnderline = wm.IsCentralBaseline() && IsUnderlineRight(*Style());
       const auto* styleText = StyleText();
@@ -5764,10 +5786,10 @@ void nsTextFrame::DrawSelectionDecorations(
       if (isIMEType && aRangeStyle.IsDefined()) {
         // If IME defines the style, that should override our definition.
         if (aRangeStyle.IsLineStyleDefined()) {
-          if (aRangeStyle.mLineStyle == TextRangeStyle::LINESTYLE_NONE) {
+          if (aRangeStyle.mLineStyle == TextRangeStyle::LineStyle::None) {
             return;
           }
-          params.style = aRangeStyle.mLineStyle;
+          params.style = ToStyleLineStyle(aRangeStyle);
           relativeSize = aRangeStyle.mIsBoldLine ? 2.0f : 1.0f;
         } else if (!weDefineSelectionUnderline) {
           // There is no underline style definition.
@@ -5814,7 +5836,8 @@ void nsTextFrame::DrawSelectionDecorations(
       params.style = NS_STYLE_TEXT_DECORATION_STYLE_SOLID;
       params.defaultLineThickness = metrics.strikeoutSize;
       params.lineSize.height = ComputeDecorationLineThickness(
-          decThickness, metrics, appUnitsPerDevPixel);
+          decThickness, params.defaultLineThickness, metrics,
+          appUnitsPerDevPixel);
       // TODO(jfkthame): ComputeDecorationLineOffset? check vertical mode!
       params.offset = metrics.strikeoutOffset + 0.5;
       params.decoration = StyleTextDecorationLine::LINE_THROUGH;
@@ -7011,7 +7034,8 @@ void nsTextFrame::DrawTextRunAndDecorations(
     params.baselineOffset = dec.mBaselineOffset / app;
     params.defaultLineThickness = metrics.*lineSize;
     params.lineSize.height = ComputeDecorationLineThickness(
-        dec.mTextDecorationThickness, metrics, app);
+        dec.mTextDecorationThickness, params.defaultLineThickness, metrics,
+        app);
 
     bool swapUnderline = wm.IsCentralBaseline() && IsUnderlineRight(*Style());
     params.offset = ComputeDecorationLineOffset(
@@ -7339,10 +7363,10 @@ bool nsTextFrame::CombineSelectionUnderlineRect(nsPresContext* aPresContext,
       TextRangeStyle& rangeStyle = sd->mTextRangeStyle;
       if (rangeStyle.IsDefined()) {
         if (!rangeStyle.IsLineStyleDefined() ||
-            rangeStyle.mLineStyle == TextRangeStyle::LINESTYLE_NONE) {
+            rangeStyle.mLineStyle == TextRangeStyle::LineStyle::None) {
           continue;
         }
-        params.style = rangeStyle.mLineStyle;
+        params.style = ToStyleLineStyle(rangeStyle);
         relativeSize = rangeStyle.mIsBoldLine ? 2.0f : 1.0f;
       } else if (!nsTextPaintStyle::GetSelectionUnderline(
                      aPresContext, index, nullptr, &relativeSize,
@@ -7358,7 +7382,8 @@ bool nsTextFrame::CombineSelectionUnderlineRect(nsPresContext* aPresContext,
         aPresContext, metrics, sd->mSelectionType);
 
     params.lineSize.height = ComputeDecorationLineThickness(
-        decThickness, metrics, aPresContext->AppUnitsPerDevPixel());
+        decThickness, params.defaultLineThickness, metrics,
+        aPresContext->AppUnitsPerDevPixel());
 
     bool swapUnderline = wm.IsCentralBaseline() && IsUnderlineRight(*Style());
     const auto* styleText = StyleText();
@@ -8238,7 +8263,7 @@ void nsTextFrame::SetFontSizeInflation(float aInflation) {
   if (aInflation == 1.0f) {
     if (HasFontSizeInflation()) {
       RemoveStateBits(TEXT_HAS_FONT_INFLATION);
-      DeleteProperty(FontSizeInflationProperty());
+      RemoveProperty(FontSizeInflationProperty());
     }
     return;
   }
@@ -8969,7 +8994,7 @@ void nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
   // reflow request from CharacterDataChanged (since we're reflowing now).
   RemoveStateBits(TEXT_REFLOW_FLAGS | TEXT_WHITESPACE_FLAGS);
   mReflowRequestedForCharDataChange = false;
-  DeleteProperty(WebRenderTextBounds());
+  RemoveProperty(WebRenderTextBounds());
   // Temporarily map all possible content while we construct our new textrun.
   // so that when doing reflow our styles prevail over any part of the
   // textrun we look at. Note that next-in-flows may be mapping the same
@@ -9513,7 +9538,7 @@ void nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
       cachedNewlineOffset->mNewlineOffset = contentNewLineOffset;
     }
   } else if (cachedNewlineOffset) {
-    mContent->DeleteProperty(nsGkAtoms::newline);
+    mContent->RemoveProperty(nsGkAtoms::newline);
     mContent->UnsetFlags(NS_HAS_NEWLINE_PROPERTY);
   }
 
@@ -9635,7 +9660,7 @@ nsTextFrame::TrimOutput nsTextFrame::TrimTrailingWhiteSpace(
 
 nsOverflowAreas nsTextFrame::RecomputeOverflow(nsIFrame* aBlockFrame,
                                                bool aIncludeShadows) {
-  DeleteProperty(WebRenderTextBounds());
+  RemoveProperty(WebRenderTextBounds());
 
   nsRect bounds(nsPoint(0, 0), GetSize());
   nsOverflowAreas result(bounds, bounds);
@@ -10015,7 +10040,7 @@ void nsTextFrame::List(FILE* out, const char* aPrefix, uint32_t aFlags) const {
 void nsTextFrame::AdjustOffsetsForBidi(int32_t aStart, int32_t aEnd) {
   AddStateBits(NS_FRAME_IS_BIDI);
   if (mContent->HasFlag(NS_HAS_FLOWLENGTH_PROPERTY)) {
-    mContent->DeleteProperty(nsGkAtoms::flowlength);
+    mContent->RemoveProperty(nsGkAtoms::flowlength);
     mContent->UnsetFlags(NS_HAS_FLOWLENGTH_PROPERTY);
   }
 

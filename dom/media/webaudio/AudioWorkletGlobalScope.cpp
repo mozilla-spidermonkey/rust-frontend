@@ -33,7 +33,9 @@ NS_IMPL_ADDREF_INHERITED(AudioWorkletGlobalScope, WorkletGlobalScope)
 NS_IMPL_RELEASE_INHERITED(AudioWorkletGlobalScope, WorkletGlobalScope)
 
 AudioWorkletGlobalScope::AudioWorkletGlobalScope(AudioWorkletImpl* aImpl)
-    : mImpl(aImpl) {}
+    : WorkletGlobalScope(aImpl->GetAgentClusterId(),
+                         aImpl->IsSharedMemoryAllowed()),
+      mImpl(aImpl) {}
 
 bool AudioWorkletGlobalScope::WrapGlobalObject(
     JSContext* aCx, JS::MutableHandle<JSObject*> aReflector) {
@@ -55,9 +57,7 @@ void AudioWorkletGlobalScope::RegisterProcessor(
    *    a valid key.
    */
   if (aName.IsEmpty()) {
-    aRv.ThrowNotSupportedError(
-        "Argument 1 of AudioWorkletGlobalScope.registerProcessor should not be "
-        "an empty string.");
+    aRv.ThrowNotSupportedError("Argument 1 should not be an empty string.");
     return;
   }
 
@@ -70,8 +70,8 @@ void AudioWorkletGlobalScope::RegisterProcessor(
   if (mNameToProcessorMap.GetWeak(aName)) {
     // Duplicate names are not allowed
     aRv.ThrowNotSupportedError(
-        "Argument 1 of AudioWorkletGlobalScope.registerProcessor is invalid: a "
-        "class with the same name is already registered.");
+        "Argument 1 is invalid: a class with the same name is already "
+        "registered.");
     return;
   }
 
@@ -81,7 +81,7 @@ void AudioWorkletGlobalScope::RegisterProcessor(
   if (!constructorUnwrapped) {
     // If the caller's compartment does not have permission to access the
     // unwrapped constructor then throw.
-    aRv.Throw(NS_ERROR_DOM_SECURITY_ERR);
+    aRv.ThrowSecurityError("Constructor cannot be called");
     return;
   }
 
@@ -90,8 +90,8 @@ void AudioWorkletGlobalScope::RegisterProcessor(
    *    throw a TypeError and abort these steps.
    */
   if (!JS::IsConstructor(constructorUnwrapped)) {
-    aRv.ThrowTypeError<MSG_NOT_CONSTRUCTOR>(NS_LITERAL_STRING(
-        "Argument 2 of AudioWorkletGlobalScope.registerProcessor"));
+    aRv.ThrowTypeError<MSG_NOT_CONSTRUCTOR>(
+        u"Argument 2 of AudioWorkletGlobalScope.registerProcessor");
     return;
   }
 
@@ -112,9 +112,9 @@ void AudioWorkletGlobalScope::RegisterProcessor(
    *    TypeError and abort all these steps.
    */
   if (!prototype.isObject()) {
-    aRv.ThrowTypeError<MSG_NOT_OBJECT>(NS_LITERAL_STRING(
-        "Argument 2 of AudioWorkletGlobalScope.registerProcessor "
-        "processorCtor.prototype"));
+    aRv.ThrowTypeError<MSG_NOT_OBJECT>(
+        u"Argument 2 of AudioWorkletGlobalScope.registerProcessor "
+        u"processorCtor.prototype");
     return;
   }
   /**
@@ -145,9 +145,8 @@ void AudioWorkletGlobalScope::RegisterProcessor(
   }
 
   if (!descriptors.isUndefined() && !isArray) {
-    aRv.ThrowTypeError<MSG_NOT_ARRAY_NOR_UNDEFINED>(NS_LITERAL_STRING(
-        "Argument 2 of AudioWorkletGlobalScope.registerProcessor "
-        "constructor.parameterDescriptors"));
+    aRv.ThrowTypeError<MSG_NOT_ARRAY_NOR_UNDEFINED>(
+        u".constructor.parameterDescriptors of argument 2");
     return;
   }
 
@@ -303,8 +302,12 @@ bool AudioWorkletGlobalScope::ConstructProcessor(
    * 5. Let deserializedOptions be the result of
    *    StructuredDeserialize(serializedOptions, the current Realm).
    */
+  JS::CloneDataPolicy cloneDataPolicy;
+  cloneDataPolicy.allowIntraClusterClonableSharedObjects();
+  cloneDataPolicy.allowSharedMemoryObjects();
+
   JS::Rooted<JS::Value> deserializedOptions(cx);
-  aSerializedOptions->Read(this, cx, &deserializedOptions, rv);
+  aSerializedOptions->Read(this, cx, &deserializedOptions, cloneDataPolicy, rv);
   if (rv.MaybeSetPendingException(cx)) {
     return false;
   }

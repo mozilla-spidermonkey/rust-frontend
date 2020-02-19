@@ -13,6 +13,7 @@
 #include "ExplicitOperatorBoolChecker.h"
 #ifdef _WIN32
 #include "LoadLibraryUsageChecker.h"
+#include "FopenUsageChecker.h"
 #endif
 #include "KungFuDeathGripChecker.h"
 #include "MustOverrideChecker.h"
@@ -27,6 +28,7 @@
 #include "NonMemMovableMemberChecker.h"
 #include "NonMemMovableTemplateArgChecker.h"
 #include "NonParamInsideFunctionDeclChecker.h"
+#include "NonTrivialTypeInFfiChecker.h"
 #include "NoUsingNamespaceMozillaJavaChecker.h"
 #include "OverrideBaseCallChecker.h"
 #include "OverrideBaseCallUsageChecker.h"

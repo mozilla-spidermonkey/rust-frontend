@@ -74,12 +74,14 @@ registerCleanupFunction(async function() {
  *        The URL for the tab to be opened.
  * @param Boolean clearJstermHistory
  *        true (default) if the jsterm history should be cleared.
+ * @param String hostId (optional)
+ *        The type of toolbox host to be used.
  * @return Promise
  *         Resolves when the tab has been added, loaded and the toolbox has been opened.
  *         Resolves to the toolbox.
  */
-async function openNewTabAndConsole(url, clearJstermHistory = true) {
-  const toolbox = await openNewTabAndToolbox(url, "webconsole");
+async function openNewTabAndConsole(url, clearJstermHistory = true, hostId) {
+  const toolbox = await openNewTabAndToolbox(url, "webconsole", hostId);
   const hud = toolbox.getCurrentPanel().hud;
 
   if (clearJstermHistory) {
@@ -389,11 +391,6 @@ function _getContextMenu(hud) {
   const toolbox = hud.toolbox;
   const doc = toolbox ? toolbox.topWindow.document : hud.chromeWindow.document;
   return doc.getElementById("webconsole-menu");
-}
-
-function loadDocument(url, browser = gBrowser.selectedBrowser) {
-  BrowserTestUtils.loadURI(browser, url);
-  return BrowserTestUtils.browserLoaded(browser);
 }
 
 async function toggleConsoleSetting(hud, selector) {
@@ -962,17 +959,17 @@ async function openMessageInNetmonitor(toolbox, hud, url, urlInConsole) {
 
   store.dispatch(nmActions.batchEnable(false));
 
-  await waitUntil(() => {
+  await waitFor(() => {
     const selected = getSelectedRequest(store.getState());
     return selected && selected.url === url;
-  });
+  }, "network entry for the URL wasn't found");
 
   ok(true, "The attached url is correct.");
 
   info(
-    "Wait for the netmonitor headers panel to appear as it spawn RDP requests"
+    "Wait for the netmonitor headers panel to appear as it spawns RDP requests"
   );
-  await waitUntil(() =>
+  await waitFor(() =>
     panelWin.document.querySelector("#headers-panel .headers-overview")
   );
 }

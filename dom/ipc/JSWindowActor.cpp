@@ -6,6 +6,8 @@
 
 #include "mozilla/dom/JSWindowActor.h"
 #include "mozilla/dom/JSWindowActorBinding.h"
+
+#include "mozilla/Telemetry.h"
 #include "mozilla/dom/ClonedErrorHolder.h"
 #include "mozilla/dom/ClonedErrorHolderBinding.h"
 #include "mozilla/dom/DOMException.h"
@@ -15,6 +17,7 @@
 #include "mozilla/dom/Promise.h"
 #include "js/Promise.h"
 #include "xpcprivate.h"
+#include "nsASCIIMask.h"
 
 namespace mozilla {
 namespace dom {
@@ -55,6 +58,8 @@ void JSWindowActor::AfterDestroy() {
 }
 
 void JSWindowActor::InvokeCallback(CallbackFunction callback) {
+  MOZ_ASSERT(nsContentUtils::IsSafeToRunScript());
+
   AutoEntryScript aes(GetParentObject(), "JSWindowActor destroy callback");
   JSContext* cx = aes.cx();
   MozJSWindowActorCallbacks callbacksHolder;
@@ -81,6 +86,8 @@ void JSWindowActor::InvokeCallback(CallbackFunction callback) {
 }
 
 nsresult JSWindowActor::QueryInterfaceActor(const nsIID& aIID, void** aPtr) {
+  MOZ_ASSERT(nsContentUtils::IsSafeToRunScript());
+
   if (!mWrappedJS) {
     AutoEntryScript aes(GetParentObject(), "JSWindowActor query interface");
     JSContext* cx = aes.cx();
@@ -101,6 +108,8 @@ nsresult JSWindowActor::QueryInterfaceActor(const nsIID& aIID, void** aPtr) {
 }
 
 void JSWindowActor::RejectPendingQueries() {
+  MOZ_ASSERT(nsContentUtils::IsSafeToRunScript());
+
   // Take our queries out, in case somehow rejecting promises can trigger
   // additions or removals.
   nsRefPtrHashtable<nsUint64HashKey, Promise> pendingQueries;
@@ -121,6 +130,18 @@ bool JSWindowActor::AllowMessage(const JSWindowActorMessageMeta& aMetadata,
   if (aDataLength < kMaxMessageSize) {
     return true;
   }
+
+  nsAutoString messageName(aMetadata.actorName());
+  messageName.AppendLiteral("::");
+  messageName.Append(aMetadata.messageName());
+
+  // Remove digits to avoid spamming telemetry if anybody is dynamically
+  // generating message names with numbers in them.
+  messageName.StripTaggedASCII(ASCIIMask::Mask0to9());
+
+  Telemetry::ScalarAdd(
+      Telemetry::ScalarID::DOM_IPC_REJECTED_WINDOW_ACTOR_MESSAGE, messageName,
+      1);
 
   return false;
 }
@@ -222,6 +243,8 @@ already_AddRefed<Promise> JSWindowActor::SendQuery(
 void JSWindowActor::ReceiveRawMessage(const JSWindowActorMessageMeta& aMetadata,
                                       ipc::StructuredCloneData&& aData,
                                       ipc::StructuredCloneData&& aStack) {
+  MOZ_ASSERT(nsContentUtils::IsSafeToRunScript());
+
   AutoEntryScript aes(GetParentObject(), "JSWindowActor message handler");
   JSContext* cx = aes.cx();
 
@@ -313,7 +336,7 @@ void JSWindowActor::ReceiveMessageOrQuery(
         promise->MaybeRejectWithTimeoutError(
             "Message handler threw uncatchable exception");
       } else {
-        promise->MaybeReject(aRv);
+        promise->MaybeReject(std::move(aRv));
       }
     } else {
       promise->MaybeResolve(retval);

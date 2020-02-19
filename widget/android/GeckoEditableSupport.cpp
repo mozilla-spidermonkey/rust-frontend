@@ -1103,13 +1103,18 @@ bool GeckoEditableSupport::DoReplaceText(int32_t aStart, int32_t aEnd,
           mDispatcher->DispatchKeyboardEvent(event->mMessage, *event, status);
         } else {
           mDispatcher->MaybeDispatchKeypressEvents(*event, status);
+          if (status == nsEventStatus_eConsumeNoDefault) {
+            textChanged = true;
+          }
         }
         if (!mDispatcher || widget->Destroyed()) {
+          // Don't wait for any text change event.
+          textChanged = false;
           break;
         }
       }
       mIMEKeyEvents.Clear();
-      return false;
+      return textChanged;
     }
 
     if (aStart != aEnd) {
@@ -1183,7 +1188,7 @@ void GeckoEditableSupport::OnImeAddCompositionRange(
   range.mEndOffset = aEnd;
   range.mRangeType = ToTextRangeType(aRangeType);
   range.mRangeStyle.mDefinedStyles = aRangeStyle;
-  range.mRangeStyle.mLineStyle = aRangeLineStyle;
+  range.mRangeStyle.mLineStyle = TextRangeStyle::ToLineStyle(aRangeLineStyle);
   range.mRangeStyle.mIsBoldLine = aRangeBoldLine;
   range.mRangeStyle.mForegroundColor =
       ConvertAndroidColor(uint32_t(aRangeForeColor));

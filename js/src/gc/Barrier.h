@@ -299,6 +299,8 @@ bool CurrentThreadIsIonCompilingSafeForMinorGC();
 
 bool CurrentThreadIsGCSweeping();
 
+bool CurrentThreadIsGCFinalizing();
+
 bool IsMarkedBlack(JSObject* obj);
 
 bool CurrentThreadIsTouchingGrayThings();
@@ -549,8 +551,9 @@ class GCPtr : public WriteBarriered<T> {
     //
     // Note that when sweeping the wrapped pointer may already have been
     // freed by this point.
-    MOZ_ASSERT(CurrentThreadIsGCSweeping() ||
-               this->value == JS::SafelyInitialized<T>());
+    MOZ_ASSERT_IF(
+        !CurrentThreadIsGCSweeping() && !CurrentThreadIsGCFinalizing(),
+        this->value == JS::SafelyInitialized<T>());
     Poison(this, JS_FREED_HEAP_PTR_PATTERN, sizeof(*this),
            MemCheckKind::MakeNoAccess);
   }
@@ -832,8 +835,8 @@ class HeapSlotArray {
   }
 
   operator const Value*() const {
-    JS_STATIC_ASSERT(sizeof(GCPtr<Value>) == sizeof(Value));
-    JS_STATIC_ASSERT(sizeof(HeapSlot) == sizeof(Value));
+    static_assert(sizeof(GCPtr<Value>) == sizeof(Value));
+    static_assert(sizeof(HeapSlot) == sizeof(Value));
     return reinterpret_cast<const Value*>(array);
   }
   operator HeapSlot*() const {

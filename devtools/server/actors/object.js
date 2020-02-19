@@ -193,7 +193,7 @@ const proto = {
       // ContentDOMReference.get takes a DOM element and returns an object with
       // its browsing context id, as well as a unique identifier. We are putting it in
       // the grip here in order to be able to retrieve the node later, potentially from a
-      // different DebuggerServer running in the same process.
+      // different DevToolsServer running in the same process.
       // If ContentDOMReference.get throws, we simply don't add the property to the grip.
       try {
         g.contentDomReference = ContentDOMReference.get(raw);
@@ -213,12 +213,6 @@ const proto = {
 
     if (isStorage(this.obj)) {
       return getStorageLength(this.obj);
-    }
-
-    if (isReplaying) {
-      // When replaying we can get the number of properties directly, to avoid
-      // needing to enumerate all of them.
-      return this.obj.getOwnPropertyNamesCount();
     }
 
     try {
@@ -474,12 +468,7 @@ const proto = {
           continue;
         }
 
-        let result;
-        if (isReplaying && this.obj.replayHasPropertyValue(name)) {
-          result = this.obj.replayPropertyValue(name);
-        } else {
-          result = getter.call(this.obj);
-        }
+        const result = getter.call(this.obj);
         if (!result || "throw" in result) {
           continue;
         }

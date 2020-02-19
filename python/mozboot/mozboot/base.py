@@ -158,7 +158,7 @@ MODERN_MERCURIAL_VERSION = LooseVersion('4.8')
 MODERN_PYTHON_VERSION = LooseVersion('2.7.3')
 
 # Upgrade rust older than this.
-MODERN_RUST_VERSION = LooseVersion('1.39.0')
+MODERN_RUST_VERSION = LooseVersion('1.41.0')
 
 # Upgrade nasm older than this.
 MODERN_NASM_VERSION = LooseVersion('2.14')
@@ -531,9 +531,9 @@ class BaseBootstrapper(object):
         string forces that no user or system hgrc file is used.
         """
         env = os.environ.copy()
-        env[b'HGPLAIN'] = b'1'
+        env['HGPLAIN'] = '1'
         if not load_hgrc:
-            env[b'HGRCPATH'] = b''
+            env['HGRCPATH'] = ''
 
         return env
 

@@ -151,8 +151,10 @@
 
 #ifdef EARLY_BETA_OR_EARLIER
 #define IS_EARLY_BETA_OR_EARLIER true
+#define IS_NOT_EARLY_BETA_OR_EARLIER false
 #else
 #define IS_EARLY_BETA_OR_EARLIER false
+#define IS_NOT_EARLY_BETA_OR_EARLIER true
 #endif
 
 #ifdef ANDROID
@@ -901,6 +903,12 @@
   value: true
   mirror: always
 
+# Force usage of in-memory (rather than file on disk) media cache for video streaming when private browsing
+- name: browser.privatebrowsing.forceMediaMemoryCache
+  type: bool
+  value: false
+  mirror: always
+
 # Blocked plugin content
 - name: browser.safebrowsing.blockedURIs.enabled
   type: bool
@@ -1422,6 +1430,12 @@
   value: true
   mirror: always
 
+# Is support for CSSPseudoElement enabled?
+- name: dom.css_pseudo_element.enabled
+  type: bool
+  value: false
+  mirror: always
+
 # Any how many seconds we allow external protocol URLs in iframe when not in
 # single events
 - name: dom.delay.block_external_protocol_in_iframes
@@ -1445,6 +1459,13 @@
 - name: dom.disable_open_during_load
   type: bool
   value: false
+  mirror: always
+
+# If set this to true, `Document.execCommand` may be performed nestedly.
+# Otherwise, nested calls just return false.
+- name: dom.document.exec_command.nested_calls_allowed
+  type: bool
+  value: @IS_NOT_EARLY_BETA_OR_EARLIER@
   mirror: always
 
 - name: dom.enable_window_print
@@ -1573,10 +1594,10 @@
   value: false
   mirror: always
 
-# Whether the form.requestSubmit API is enabled
+# Enable the form.requestSubmit API
 - name: dom.forms.requestsubmit.enabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Whether the Gamepad API is enabled
@@ -1629,8 +1650,8 @@
 #
 # See https://github.com/whatwg/html/pull/3752
 - name: dom.image-lazy-loading.enabled
-  type: bool
-  value: false
+  type: RelaxedAtomicBool
+  value: true
   mirror: always
 
 # Enable passing the "storage" option to indexedDB.open.
@@ -1675,6 +1696,20 @@
   type: uint32_t
   value: 500
   mirror: always
+
+#ifdef MOZ_ENABLE_FORKSERVER
+- name: dom.ipc.forkserver.enable
+  type: bool
+  value: false
+  mirror: once
+#endif
+
+# Whether or not to collect a paired minidump when force-killing a
+# content process.
+- name: dom.ipc.tabs.createKillHardCrashReports
+  type: bool
+  value: @IS_NOT_RELEASE_OR_BETA@
+  mirror: once
 
 # Allow Flash async drawing mode in 64-bit release builds.
 - name: dom.ipc.plugins.asyncdrawing.enabled
@@ -3853,8 +3888,8 @@
 
 - name: gfx.webrender.compositor
   type: bool
-#if defined(XP_WIN) || defined(XP_MACOSX)
-  value: true
+#if defined(XP_WIN)
+  value: false
 #else
   value: false
 #endif
@@ -4259,11 +4294,7 @@
 # composition.
 - name: intl.ime.hack.on_any_apps.fire_key_events_for_composition
   type: bool
-#ifdef MOZ_WIDGET_ANDROID
-  value: @IS_EARLY_BETA_OR_EARLIER@
-#else
-  value: false
-#endif
+  value: @IS_ANDROID@
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -6776,6 +6807,13 @@
   value: false
   mirror: always
 
+#if defined(XP_MACOSX)
+- name: media.macos.screenrecording.oscheck.enabled
+  type: bool
+  value: true
+  mirror: always
+#endif
+
 #---------------------------------------------------------------------------
 # Prefs starting with "mousewheel."
 #---------------------------------------------------------------------------
@@ -7799,7 +7837,7 @@
 # Block Worker/SharedWorker scripts with wrong MIME type.
 - name: security.block_Worker_with_wrong_mime
   type: bool
-  value: @IS_EARLY_BETA_OR_EARLIER@
+  value: true
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -7936,7 +7974,11 @@
 # for this pref means we call _exit(0) earlier during shutdown.
 - name: toolkit.shutdown.fastShutdownStage
   type: int32_t
+#if defined(NIGHTLY_BUILD) && !defined(DEBUG) && !defined(MOZ_CODE_COVERAGE) && !defined(MOZ_VALGRIND) && !defined(MOZ_PROFILE_GENERATE)
+  value: 1
+#else
   value: 0
+#endif
   mirror: always
 
 # Sending each remote accumulation immediately places undue strain on the IPC
@@ -7956,6 +7998,11 @@
 - name: toolkit.telemetry.geckoview.batchDurationMS
   type: RelaxedAtomicUint32
   value: 5000
+  mirror: always
+
+- name: toolkit.telemetry.geckoview.maxBatchStalenessMS
+  type: RelaxedAtomicUint32
+  value: 60000
   mirror: always
 
 - name: toolkit.telemetry.geckoview.streaming
@@ -8291,8 +8338,8 @@
 # Prefs starting with "widget."
 #---------------------------------------------------------------------------
 
-# Global user preference for disabling native theme. Used in NativeWindowTheme.
-- name: widget.disable-native-theme
+# Global user preference for disabling native theme in content processes.
+- name: widget.disable-native-theme-for-content
   type: bool
   value: false
   mirror: always

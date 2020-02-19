@@ -224,7 +224,7 @@ RefPtr<ClientOpPromise> ClientNavigateOpChild::DoNavigate(
 
   if (url->GetSpecOrDefault().EqualsLiteral("about:blank")) {
     CopyableErrorResult result;
-    result.ThrowTypeError(u"Client.navigate to \"about:blank\" is not allowed");
+    result.ThrowTypeError(u"Navigation to \"about:blank\" is not allowed");
     return ClientOpPromise::CreateAndReject(result, __func__);
   }
 
@@ -284,7 +284,7 @@ RefPtr<ClientOpPromise> ClientNavigateOpChild::DoNavigate(
     // XXXbz Can we throw something better here?
     result.Throw(rv);
     promise->Reject(result, __func__);
-    return promise.forget();
+    return promise;
   }
 
   return promise->Then(

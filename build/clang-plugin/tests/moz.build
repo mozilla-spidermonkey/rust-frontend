@@ -36,6 +36,7 @@ SOURCES += [
     'TestNonMemMovableStdAtomic.cpp',
     'TestNonParameterChecker.cpp',
     'TestNonTemporaryClass.cpp',
+    'TestNonTrivialTypeInFfi.cpp',
     'TestNoRefcountedInsideLambdas.cpp',
     'TestNoUsingNamespaceMozillaJava.cpp',
     'TestOverrideBaseCall.cpp',
@@ -53,6 +54,7 @@ SOURCES += [
 
 if CONFIG['OS_ARCH'] == 'WINNT':
     SOURCES += [
+        'TestFopenUsage.cpp',
         'TestLoadLibraryUsage.cpp',
     ]
 

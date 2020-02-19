@@ -248,7 +248,8 @@ void AccessibleCaretManager::UpdateCaretsForCursorMode(
 
   switch (result) {
     case PositionChangedResult::NotChanged:
-    case PositionChangedResult::Changed:
+    case PositionChangedResult::Position:
+    case PositionChangedResult::Zoom:
       if (!aHints.contains(UpdateCaretsHint::RespectOldAppearance)) {
         if (HasNonEmptyTextContent(GetEditingHostForFrame(frame))) {
           mFirstCaret->SetAppearance(Appearance::Normal);
@@ -283,7 +284,7 @@ void AccessibleCaretManager::UpdateCaretsForCursorMode(
 
   mSecondCaret->SetAppearance(Appearance::None);
 
-  mIsCaretPositionChanged = (result == PositionChangedResult::Changed);
+  mIsCaretPositionChanged = (result == PositionChangedResult::Position);
 
   if (!aHints.contains(UpdateCaretsHint::DispatchNoEvent) && !mActiveCaret) {
     DispatchCaretStateChangedEvent(CaretChangedReason::Updateposition);
@@ -314,7 +315,8 @@ void AccessibleCaretManager::UpdateCaretsForSelectionMode(
 
     switch (result) {
       case PositionChangedResult::NotChanged:
-      case PositionChangedResult::Changed:
+      case PositionChangedResult::Position:
+      case PositionChangedResult::Zoom:
         if (!aHints.contains(UpdateCaretsHint::RespectOldAppearance)) {
           aCaret->SetAppearance(Appearance::Normal);
         }
@@ -333,8 +335,8 @@ void AccessibleCaretManager::UpdateCaretsForSelectionMode(
       updateSingleCaret(mSecondCaret.get(), endFrame, endOffset);
 
   mIsCaretPositionChanged =
-      firstCaretResult == PositionChangedResult::Changed ||
-      secondCaretResult == PositionChangedResult::Changed;
+      firstCaretResult == PositionChangedResult::Position ||
+      secondCaretResult == PositionChangedResult::Position;
 
   if (mIsCaretPositionChanged) {
     // Flush layout to make the carets intersection correct.
@@ -624,13 +626,14 @@ nsresult AccessibleCaretManager::SelectWordOrShortcut(const nsPoint& aPoint) {
     RefPtr<nsFrameSelection> frameSelection = GetFrameSelection();
     if (frameSelection) {
       int32_t offset;
-      nsIFrame* theFrame = frameSelection->GetFrameForNodeOffset(
+      nsIFrame* theFrame = nsFrameSelection::GetFrameForNodeOffset(
           offsets.content, offsets.offset, offsets.associate, &offset);
       if (theFrame && theFrame != ptFrame) {
         SetSelectionDragState(true);
-        frameSelection->HandleClick(offsets.content, offsets.StartOffset(),
-                                    offsets.EndOffset(), false, false,
-                                    offsets.associate);
+        frameSelection->HandleClick(
+            offsets.content, offsets.StartOffset(), offsets.EndOffset(),
+            nsFrameSelection::FocusMode::kCollapseToNewPoint,
+            offsets.associate);
         SetSelectionDragState(false);
         ClearMaintainedSelection();
 
@@ -1064,9 +1067,8 @@ nsIFrame* AccessibleCaretManager::GetFrameForFirstRangeStartOrLastRangeEnd(
   }
 
   nsCOMPtr<nsIContent> startContent = do_QueryInterface(startNode);
-  RefPtr<nsFrameSelection> fs = GetFrameSelection();
-  nsIFrame* startFrame =
-      fs->GetFrameForNodeOffset(startContent, nodeOffset, hint, aOutOffset);
+  nsIFrame* startFrame = nsFrameSelection::GetFrameForNodeOffset(
+      startContent, nodeOffset, hint, aOutOffset);
 
   if (!startFrame) {
     ErrorResult err;
@@ -1256,9 +1258,12 @@ nsresult AccessibleCaretManager::DragCaretInternal(const nsPoint& aPoint) {
 
   ClearMaintainedSelection();
 
+  const nsFrameSelection::FocusMode focusMode =
+      (GetCaretMode() == CaretMode::Selection)
+          ? nsFrameSelection::FocusMode::kExtendSelection
+          : nsFrameSelection::FocusMode::kCollapseToNewPoint;
   fs->HandleClick(offsets.content, offsets.StartOffset(), offsets.EndOffset(),
-                  GetCaretMode() == CaretMode::Selection, false,
-                  offsets.associate);
+                  focusMode, offsets.associate);
   return NS_OK;
 }
 

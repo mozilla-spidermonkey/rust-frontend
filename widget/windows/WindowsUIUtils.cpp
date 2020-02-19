@@ -33,7 +33,6 @@
 
 #  pragma comment(lib, "runtimeobject.lib")
 
-using namespace mozilla;
 using namespace ABI::Windows::UI;
 using namespace ABI::Windows::UI::ViewManagement;
 using namespace Microsoft::WRL;
@@ -130,6 +129,8 @@ IDataPackage4 : public IInspectable {
 #  endif
 
 #endif
+
+using namespace mozilla;
 
 WindowsUIUtils::WindowsUIUtils() : mInTabletMode(eTabletModeUnknown) {}
 
@@ -273,12 +274,13 @@ WindowsUIUtils::UpdateTabletModeState() {
   return NS_OK;
 }
 
+#ifndef __MINGW32__
 struct HStringDeleter {
   typedef HSTRING pointer;
   void operator()(pointer aString) { WindowsDeleteString(aString); }
 };
 
-typedef mozilla::UniquePtr<HSTRING, HStringDeleter> HStringUniquePtr;
+typedef UniquePtr<HSTRING, HStringDeleter> HStringUniquePtr;
 
 Result<HStringUniquePtr, HRESULT> ConvertToWindowsString(
     const nsAString& aStr) {
@@ -291,7 +293,6 @@ Result<HStringUniquePtr, HRESULT> ConvertToWindowsString(
   return HStringUniquePtr(rawStr);
 }
 
-#ifndef __MINGW32__
 Result<Ok, nsresult> RequestShare(
     const std::function<HRESULT(IDataRequestedEventArgs* pArgs)>& aCallback) {
   if (!IsWin10OrLater()) {

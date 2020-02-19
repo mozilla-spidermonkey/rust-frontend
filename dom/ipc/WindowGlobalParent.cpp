@@ -109,7 +109,9 @@ void WindowGlobalParent::Init(const WindowGlobalInit& aInit) {
 
   // If there is no current window global, assume we're about to become it
   // optimistically.
-  mBrowsingContext->SetCurrentInnerWindowId(aInit.innerWindowId());
+  if (!mBrowsingContext->IsDiscarded()) {
+    mBrowsingContext->SetCurrentInnerWindowId(aInit.innerWindowId());
+  }
 
   nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
   if (obs) {
@@ -298,11 +300,11 @@ const nsAString& WindowGlobalParent::GetRemoteType() {
 }
 
 void WindowGlobalParent::NotifyContentBlockingEvent(
-    uint32_t aEvent, nsIRequest* aRequest, bool aBlocked, nsIURI* aURIHint,
+    uint32_t aEvent, nsIRequest* aRequest, bool aBlocked,
+    const nsACString& aTrackingOrigin,
     const nsTArray<nsCString>& aTrackingFullHashes,
     const Maybe<AntiTrackingCommon::StorageAccessGrantedReason>& aReason) {
   MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(aURIHint);
   DebugOnly<bool> isCookiesBlockedTracker =
       aEvent == nsIWebProgressListener::STATE_COOKIES_BLOCKED_TRACKER ||
       aEvent == nsIWebProgressListener::STATE_COOKIES_BLOCKED_SOCIALTRACKER;
@@ -318,11 +320,8 @@ void WindowGlobalParent::NotifyContentBlockingEvent(
     return;
   }
 
-  nsAutoCString origin;
-  nsContentUtils::GetASCIIOrigin(aURIHint, origin);
-
   Maybe<uint32_t> event = GetContentBlockingLog()->RecordLogParent(
-      origin, aEvent, aBlocked, aReason, aTrackingFullHashes);
+      aTrackingOrigin, aEvent, aBlocked, aReason, aTrackingFullHashes);
 
   // Notify the OnContentBlockingEvent if necessary.
   if (event) {
