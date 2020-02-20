@@ -368,7 +368,7 @@ AutoFrontendTraceLog::AutoFrontendTraceLog(JSContext* cx,
   }
 
   frontendEvent_.emplace(TraceLogger_Frontend, errorReporter.getFilename(),
-                         funbox->startLine, funbox->startColumn);
+                         funbox->extent.lineno, funbox->extent.column);
   frontendLog_.emplace(logger_, *frontendEvent_);
   typeLog_.emplace(logger_, id);
 }
@@ -442,11 +442,15 @@ static bool InternalCreateScript(CompilationInfo& compilationInfo,
                                  HandleObject functionOrGlobal,
                                  uint32_t toStringStart, uint32_t toStringEnd,
                                  uint32_t sourceBufferLength) {
+  SourceExtent extent{/* sourceStart = */ 0,
+                      sourceBufferLength,
+                      toStringStart,
+                      toStringEnd,
+                      compilationInfo.options.lineno,
+                      compilationInfo.options.column};
   compilationInfo.script = JSScript::Create(
       compilationInfo.cx, functionOrGlobal, compilationInfo.options,
-      compilationInfo.sourceObject,
-      /* sourceStart = */ 0, sourceBufferLength, toStringStart, toStringEnd,
-      compilationInfo.options.lineno, compilationInfo.options.column);
+      compilationInfo.sourceObject, extent);
   return compilationInfo.script != nullptr;
 }
 
@@ -661,8 +665,9 @@ bool frontend::StandaloneFunctionCompiler<Unit>::compile(
   if (funbox->isInterpreted()) {
     MOZ_ASSERT(fun == funbox->function());
 
-    if (!createFunctionScript(compilationInfo, fun, funbox->toStringStart,
-                              funbox->toStringEnd)) {
+    if (!createFunctionScript(compilationInfo, fun,
+                              funbox->extent.toStringStart,
+                              funbox->extent.toStringEnd)) {
       return false;
     }
 
@@ -743,9 +748,10 @@ static JSScript* CompileGlobalBinASTScriptImpl(
     return nullptr;
   }
 
-  RootedScript script(
-      cx, JSScript::Create(cx, cx->global(), options,
-                           compilationInfo.sourceObject, 0, len, 0, len, 0, 0));
+  SourceExtent extent(0, len, 0, len, 0, 0);
+  RootedScript script(cx,
+                      JSScript::Create(cx, cx->global(), options,
+                                       compilationInfo.sourceObject, extent));
 
   if (!script) {
     return nullptr;
