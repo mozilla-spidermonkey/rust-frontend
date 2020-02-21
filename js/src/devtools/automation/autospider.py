@@ -271,6 +271,10 @@ else:
     env.setdefault('RUSTC', 'rustc')
     env.setdefault('CARGO', 'cargo')
 
+cbindgen_dir = os.path.join(DIR.fetches, 'cbindgen')
+if os.path.exists(os.path.join(cbindgen_dir, 'cbindgen')):
+    env.setdefault('CBINDGEN', os.path.join(cbindgen_dir, 'cbindgen'))
+
 if platform.system() == 'Darwin':
     os.environ['SOURCE'] = DIR.source
     set_vars_from_script(os.path.join(DIR.scripts, 'macbuildenv.sh'),

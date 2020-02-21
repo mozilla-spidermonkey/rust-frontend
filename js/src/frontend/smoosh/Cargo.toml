@@ -5,10 +5,7 @@ authors = ["Ashley Hauck <khyperia@mozilla.com>"]
 edition = "2018"
 
 [dependencies]
-jsparagus-ast = { path = "../../../jsparagus/rust/ast" }
 bumpalo = "2.6.0"
+jsparagus-ast = { path = "../../../jsparagus/rust/ast" }
 jsparagus-emitter = { path = "../../../jsparagus/rust/emitter" }
 jsparagus-parser = { path = "../../../jsparagus/rust/parser" }
-
-[build-dependencies]
-cbindgen = "0.12"
