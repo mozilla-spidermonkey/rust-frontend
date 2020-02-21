@@ -127,6 +127,7 @@ case $cmd in
 + /third_party/python/**
 + /third_party/rust/**
 
++ /layout/style/RunCbindgen.py
 + /layout/tools/reftest/reftest/**
 
 + /testing/mozbase/**

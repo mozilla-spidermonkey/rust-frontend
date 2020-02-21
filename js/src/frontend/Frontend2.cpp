@@ -14,7 +14,7 @@
 #include "jsapi.h"
 
 #include "frontend/CompilationInfo.h"  // CompilationInfo
-#include "frontend/smoosh/smoosh.h"  // CVec, SmooshResult, SmooshCompileOptions, free_smoosh, run_smoosh
+#include "frontend/smoosh_generated.h"  // CVec, SmooshResult, SmooshCompileOptions, free_smoosh, run_smoosh
 #include "frontend/SourceNotes.h"  // jssrcnote
 #include "gc/Rooting.h"            // RootedScriptSourceObject
 #include "js/HeapAPI.h"            // JS::GCCellPtr
