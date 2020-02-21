@@ -1363,6 +1363,9 @@ void TypeSet::ObjectKey::ensureTrackedProperty(JSContext* cx, jsid id) {
 }
 
 void js::EnsureTrackPropertyTypes(JSContext* cx, JSObject* obj, jsid id) {
+  if (!IsTypeInferenceEnabled()) {
+    return;
+  }
   id = IdToTypeId(id);
 
   if (obj->isSingleton()) {
@@ -2947,6 +2950,9 @@ void ObjectGroup::markPropertyNonData(JSContext* cx, JSObject* obj, jsid id) {
 
 void ObjectGroup::markPropertyNonWritable(JSContext* cx, JSObject* obj,
                                           jsid id) {
+  if (!IsTypeInferenceEnabled()) {
+    return;
+  }
   AutoEnterAnalysis enter(cx);
 
   id = IdToTypeId(id);
@@ -3053,6 +3059,8 @@ void ObjectGroup::detachNewScript(bool isSweeping, ObjectGroup* replacement) {
 
   if (newScript->analyzed()) {
     ObjectGroupRealm& objectGroups = ObjectGroupRealm::get(this);
+    const JSClass* clasp = this->clasp();
+    MOZ_ASSERT(clasp == &PlainObject::class_);
     TaggedProto proto = this->proto();
     if (proto.isObject() && IsForwarded(proto.toObject())) {
       proto = TaggedProto(Forwarded(proto.toObject()));
@@ -3062,10 +3070,10 @@ void ObjectGroup::detachNewScript(bool isSweeping, ObjectGroup* replacement) {
       AutoSweepObjectGroup sweepReplacement(replacement);
       MOZ_ASSERT(replacement->newScript(sweepReplacement)->function() ==
                  newScript->function());
-      objectGroups.replaceDefaultNewGroup(nullptr, proto, associated,
+      objectGroups.replaceDefaultNewGroup(clasp, proto, associated,
                                           replacement);
     } else {
-      objectGroups.removeDefaultNewGroup(nullptr, proto, associated);
+      objectGroups.removeDefaultNewGroup(clasp, proto, associated);
     }
   } else {
     MOZ_ASSERT(!replacement);
@@ -3403,6 +3411,9 @@ void js::TypeMonitorCallSlow(JSContext* cx, JSObject* callee,
 /* static */
 void JitScript::MonitorBytecodeType(JSContext* cx, JSScript* script,
                                     jsbytecode* pc, TypeSet::Type type) {
+  if (!IsTypeInferenceEnabled()) {
+    return;
+  }
   cx->check(script, type);
 
   AutoEnterAnalysis enter(cx);
@@ -3422,6 +3433,9 @@ void JitScript::MonitorBytecodeType(JSContext* cx, JSScript* script,
 void JitScript::MonitorBytecodeTypeSlow(JSContext* cx, JSScript* script,
                                         jsbytecode* pc, StackTypeSet* types,
                                         TypeSet::Type type) {
+  if (!IsTypeInferenceEnabled()) {
+    return;
+  }
   cx->check(script, type);
 
   AutoEnterAnalysis enter(cx);
@@ -3440,6 +3454,7 @@ void JitScript::MonitorBytecodeTypeSlow(JSContext* cx, JSScript* script,
 void JitScript::MonitorMagicValueBytecodeType(JSContext* cx, JSScript* script,
                                               jsbytecode* pc,
                                               const js::Value& rval) {
+  MOZ_ASSERT(IsTypeInferenceEnabled());
   MOZ_ASSERT(rval.isMagic());
 
   // It's possible that we arrived here from bailing out of Ion, and that
@@ -3465,6 +3480,10 @@ void JitScript::MonitorBytecodeType(JSContext* cx, JSScript* script,
                                     jsbytecode* pc, const js::Value& rval) {
   MOZ_ASSERT(BytecodeOpHasTypeSet(JSOp(*pc)));
 
+  if (!IsTypeInferenceEnabled()) {
+    return;
+  }
+
   if (!script->hasJitScript()) {
     return;
   }
@@ -3480,6 +3499,9 @@ void JitScript::MonitorBytecodeType(JSContext* cx, JSScript* script,
 /* static */
 bool JSFunction::setTypeForScriptedFunction(JSContext* cx, HandleFunction fun,
                                             bool singleton /* = false */) {
+  if (!IsTypeInferenceEnabled()) {
+    return true;
+  }
   if (singleton) {
     if (!setSingleton(cx, fun)) {
       return false;
@@ -3505,6 +3527,8 @@ bool JSFunction::setTypeForScriptedFunction(JSContext* cx, HandleFunction fun,
 /////////////////////////////////////////////////////////////////////
 
 void PreliminaryObjectArray::registerNewObject(PlainObject* res) {
+  MOZ_ASSERT(IsTypeInferenceEnabled());
+
   // The preliminary object pointers are weak, and won't be swept properly
   // during nursery collections, so the preliminary objects need to be
   // initially tenured.
@@ -3530,6 +3554,8 @@ bool PreliminaryObjectArray::full() const {
 }
 
 void PreliminaryObjectArray::sweep() {
+  MOZ_ASSERT(IsTypeInferenceEnabled());
+
   // All objects in the array are weak, so clear any that are about to be
   // destroyed.
   for (size_t i = 0; i < COUNT; i++) {
@@ -3541,6 +3567,7 @@ void PreliminaryObjectArray::sweep() {
 }
 
 void PreliminaryObjectArrayWithTemplate::trace(JSTracer* trc) {
+  MOZ_ASSERT(IsTypeInferenceEnabled());
   TraceNullableEdge(trc, &shape_, "PreliminaryObjectArrayWithTemplate_shape");
 }
 
@@ -4006,7 +4033,7 @@ bool TypeNewScript::maybeAnalyze(JSContext* cx, ObjectGroup* group,
   group->addDefiniteProperties(cx, prefixShape);
 
   ObjectGroupRealm& realm = ObjectGroupRealm::get(group);
-  realm.replaceDefaultNewGroup(nullptr, group->proto(), function(),
+  realm.replaceDefaultNewGroup(group->clasp(), group->proto(), function(),
                                initialGroup);
 
   templateObject()->setGroup(initialGroup);
@@ -4487,11 +4514,13 @@ void JitScript::sweepTypes(const js::AutoSweepJitScript& sweep, Zone* zone) {
     inlinedCompilations.shrinkTo(dest);
   }
 
-  // Remove constraints and references to dead objects from stack type sets.
-  unsigned num = numTypeSets();
-  StackTypeSet* arr = typeArray(sweep);
-  for (unsigned i = 0; i < num; i++) {
-    arr[i].sweep(sweep, zone);
+  if (IsTypeInferenceEnabled()) {
+    // Remove constraints and references to dead objects from stack type sets.
+    unsigned num = numTypeSets();
+    StackTypeSet* arr = typeArray(sweep);
+    for (unsigned i = 0; i < num; i++) {
+      arr[i].sweep(sweep, zone);
+    }
   }
 
   if (types.hadOOMSweepingTypes()) {

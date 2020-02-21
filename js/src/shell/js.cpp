@@ -2760,13 +2760,6 @@ static bool CpuNow(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-static bool ClearKeptObjects(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  JS::ClearKeptObjects(cx);
-  args.rval().setUndefined();
-  return true;
-}
-
 static bool PrintInternal(JSContext* cx, const CallArgs& args, RCFile* file) {
   if (!file->isOpen()) {
     JS_ReportErrorASCII(cx, "output file is closed");
@@ -9152,12 +9145,6 @@ JS_FN_HELP("parseBin", BinParse, 1, 0,
 " Returns the approximate processor time used by the process since an arbitrary epoch, in seconds.\n"
 " Only the difference between two calls to `cpuNow()` is meaningful."),
 
-   JS_FN_HELP("clearKeptObjects", ClearKeptObjects, 0, 0,
-"clearKeptObjects()",
-"Clear the kept alive objects for JS WeakRef, this is used in shell to test \n"
-"WeakRef bahavior when a synchronous sequence of ECMAScript execution completes"
-".\n"),
-
     JS_FS_HELP_END
 };
 // clang-format on
@@ -10581,6 +10568,12 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
     jit::JitOptions.nativeRegExp = false;
   }
 
+#ifdef NIGHTLY_BUILD
+  if (op.getBoolOption("no-ti")) {
+    jit::JitOptions.typeInference = false;
+  }
+#endif
+
   if (const char* str = op.getStringOption("ion-regalloc")) {
     jit::JitOptions.forcedRegisterAllocator = jit::LookupRegisterAllocator(str);
     if (!jit::JitOptions.forcedRegisterAllocator.isSome()) {
@@ -11097,6 +11090,9 @@ int main(int argc, char** argv, char** envp) {
       !op.addBoolOption('\0', "no-ion", "Disable IonMonkey") ||
       !op.addBoolOption('\0', "no-ion-for-main-context",
                         "Disable IonMonkey for the main context only") ||
+#ifdef NIGHTLY_BUILD
+      !op.addBoolOption('\0', "no-ti", "Disable Type Inference") ||
+#endif
       !op.addBoolOption('\0', "no-asmjs", "Disable asm.js compilation") ||
       !op.addStringOption(
           '\0', "wasm-compiler", "[option]",

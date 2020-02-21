@@ -94,12 +94,14 @@ interface BrowserActionDelegate {
 
 class WebExtensionManager implements WebExtension.ActionDelegate,
                                      WebExtensionController.PromptDelegate,
+                                     WebExtensionController.DebuggerDelegate,
                                      TabSessionManager.TabObserver {
     public WebExtension extension;
 
     private LruCache<WebExtension.Icon, Bitmap> mBitmapCache = new LruCache<>(5);
     private GeckoRuntime mRuntime;
     private WebExtension.Action mDefaultAction;
+    private TabSessionManager mTabManager;
 
     private WeakReference<BrowserActionDelegate> mActionDelegate;
 
@@ -107,6 +109,11 @@ class WebExtensionManager implements WebExtension.ActionDelegate,
     @Override
     public GeckoResult<AllowOrDeny> onInstallPrompt(final @NonNull WebExtension extension) {
         return GeckoResult.fromValue(AllowOrDeny.ALLOW);
+    }
+
+    @Override
+    public void onExtensionListUpdated() {
+        refreshExtensionList();
     }
 
     // We only support either one browserAction or one pageAction
@@ -244,12 +251,12 @@ class WebExtensionManager implements WebExtension.ActionDelegate,
         }
     }
 
-    public GeckoResult<Void> unregisterExtension(TabSessionManager tabManager) {
+    public GeckoResult<Void> unregisterExtension() {
         if (extension == null) {
             return GeckoResult.fromValue(null);
         }
 
-        tabManager.unregisterWebExtension();
+        mTabManager.unregisterWebExtension();
 
         return mRuntime.getWebExtensionController().uninstall(extension).accept((unused) -> {
             extension = null;
@@ -258,22 +265,24 @@ class WebExtensionManager implements WebExtension.ActionDelegate,
         });
     }
 
-    public void registerExtension(WebExtension extension,
-                                  TabSessionManager tabManager) {
+    public void registerExtension(WebExtension extension) {
         extension.setActionDelegate(this);
-        tabManager.setWebExtensionActionDelegate(extension, this);
+        mTabManager.setWebExtensionActionDelegate(extension, this);
         this.extension = extension;
+    }
+
+    private void refreshExtensionList() {
+        mRuntime.getWebExtensionController()
+                .list().accept(extensions -> {
+            for (final WebExtension extension : extensions) {
+                registerExtension(extension);
+            }
+        });
     }
 
     public WebExtensionManager(GeckoRuntime runtime,
                                TabSessionManager tabManager) {
-        runtime.getWebExtensionController()
-                .list().accept(extensions -> {
-            for (final WebExtension extension : extensions) {
-                registerExtension(extension, tabManager);
-            }
-        });
-
+        mTabManager = tabManager;
         mRuntime = runtime;
     }
 }
@@ -299,6 +308,7 @@ public class GeckoViewActivity
     private GeckoView mGeckoView;
     private boolean mFullAccessibilityTree;
     private boolean mUseTrackingProtection;
+    private boolean mAllowAutoplay;
     private boolean mUsePrivateBrowsing;
     private boolean mEnableRemoteDebugging;
     private boolean mKillProcessOnDestroy;
@@ -308,7 +318,6 @@ public class GeckoViewActivity
 
     private boolean mShowNotificationsRejected;
     private ArrayList<String> mAcceptedPersistentStorage = new ArrayList<String>();
-    private ArrayList<String> mAcceptedAutoplay = new ArrayList<>();
 
     private ToolbarLayout mToolbarView;
     private String mCurrentUri;
@@ -400,6 +409,7 @@ public class GeckoViewActivity
                 public GeckoResult<GeckoSession> onNewTab(WebExtension source, String uri) {
                     final TabSession newSession = createSession();
                     mToolbarView.updateTabCount();
+                    setGeckoViewSession(newSession);
                     return GeckoResult.fromValue(newSession);
                 }
                 @Override
@@ -414,6 +424,8 @@ public class GeckoViewActivity
 
             sExtensionManager = new WebExtensionManager(sGeckoRuntime, mTabSessionManager);
             mTabSessionManager.setTabObserver(sExtensionManager);
+
+            sGeckoRuntime.getWebExtensionController().setDebuggerDelegate(sExtensionManager);
 
             // `getSystemService` call requires API level 23
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
@@ -487,6 +499,7 @@ public class GeckoViewActivity
                 mFullAccessibilityTree = session.getSettings().getFullAccessibilityTree();
 
                 mTabSessionManager.addSession(session);
+                session.open(sGeckoRuntime);
                 setGeckoViewSession(session);
             } else {
                 session = createSession();
@@ -721,6 +734,7 @@ public class GeckoViewActivity
         menu.findItem(R.id.desktop_mode).setChecked(mDesktopMode);
         menu.findItem(R.id.action_remote_debugging).setChecked(mEnableRemoteDebugging);
         menu.findItem(R.id.action_forward).setEnabled(mCanGoForward);
+        menu.findItem(R.id.allow_autoplay).setChecked(mAllowAutoplay);
         return true;
     }
 
@@ -737,6 +751,10 @@ public class GeckoViewActivity
             case R.id.action_tp:
                 mUseTrackingProtection = !mUseTrackingProtection;
                 updateTrackingProtection(session);
+                session.reload();
+                break;
+            case R.id.allow_autoplay:
+                mAllowAutoplay = !mAllowAutoplay;
                 session.reload();
                 break;
             case R.id.action_tpe:
@@ -797,12 +815,12 @@ public class GeckoViewActivity
             setPopupVisibility(false);
             mPopupView = null;
             mPopupSession = null;
-            sExtensionManager.unregisterExtension(mTabSessionManager).then(unused -> {
+            sExtensionManager.unregisterExtension().then(unused -> {
                 final WebExtensionController controller = sGeckoRuntime.getWebExtensionController();
                 controller.setPromptDelegate(sExtensionManager);
                 return controller.install(uri);
             }).accept(extension ->
-                    sExtensionManager.registerExtension(extension, mTabSessionManager));
+                    sExtensionManager.registerExtension(extension));
         });
         builder.setNegativeButton(R.string.cancel, (dialog, which) -> {
             // Nothing to do
@@ -849,9 +867,6 @@ public class GeckoViewActivity
         final GeckoSession previousSession = mGeckoView.releaseSession();
         if (previousSession != null) {
             controller.setTabActive(previousSession, false);
-        }
-        if (!session.isOpen()) {
-            session.open(sGeckoRuntime);
         }
         mGeckoView.setSession(session);
         controller.setTabActive(session, true);
@@ -1304,8 +1319,13 @@ public class GeckoViewActivity
             } else if (PERMISSION_XR == type) {
                 resId = R.string.request_xr;
             } else if (PERMISSION_AUTOPLAY_AUDIBLE == type || PERMISSION_AUTOPLAY_INAUDIBLE == type) {
-                Log.d(LOGTAG, "Rejecting autoplay request");
-                callback.reject();
+                if (!mAllowAutoplay) {
+                    Log.d(LOGTAG, "Rejecting autoplay request");
+                    callback.reject();
+                } else {
+                    Log.d(LOGTAG, "Granting autoplay request");
+                    callback.grant();
+                }
                 return;
             } else {
                 Log.w(LOGTAG, "Unknown permission: " + type);
@@ -1387,6 +1407,10 @@ public class GeckoViewActivity
         @Override
         public void onLocationChange(GeckoSession session, final String url) {
             mToolbarView.getLocationView().setText(url);
+            TabSession tabSession = mTabSessionManager.getSession(session);
+            if (tabSession != null) {
+                tabSession.onLocationChange(url);
+            }
             mCurrentUri = url;
         }
 
@@ -1415,6 +1439,7 @@ public class GeckoViewActivity
         public GeckoResult<GeckoSession> onNewSession(final GeckoSession session, final String uri) {
             final TabSession newSession = createSession();
             mToolbarView.updateTabCount();
+            setGeckoViewSession(newSession);
             // A reference to newSession is stored by mTabSessionManager,
             // which prevents the session from being garbage-collected.
             return GeckoResult.fromValue(newSession);

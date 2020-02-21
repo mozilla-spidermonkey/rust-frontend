@@ -34,9 +34,8 @@ struct SelectionDetails {
       : mStart(), mEnd(), mSelectionType(mozilla::SelectionType::eInvalid) {
     MOZ_COUNT_CTOR(SelectionDetails);
   }
-#ifdef NS_BUILD_REFCNT_LOGGING
-  ~SelectionDetails() { MOZ_COUNT_DTOR(SelectionDetails); }
-#endif
+  MOZ_COUNTED_DTOR(SelectionDetails)
+
   int32_t mStart;
   int32_t mEnd;
   mozilla::SelectionType mSelectionType;
@@ -46,8 +45,8 @@ struct SelectionDetails {
 
 struct SelectionCustomColors {
 #ifdef NS_BUILD_REFCNT_LOGGING
-  SelectionCustomColors() { MOZ_COUNT_CTOR(SelectionCustomColors); }
-  ~SelectionCustomColors() { MOZ_COUNT_DTOR(SelectionCustomColors); }
+  MOZ_COUNTED_DEFAULT_CTOR(SelectionCustomColors)
+  MOZ_COUNTED_DTOR(SelectionCustomColors)
 #endif
   mozilla::Maybe<nscolor> mForegroundColor;
   mozilla::Maybe<nscolor> mBackgroundColor;
@@ -308,7 +307,7 @@ class nsFrameSelection final {
                                 mozilla::WidgetMouseEvent* aMouseEvent);
 
   /**
-   * Add cell to the selection.
+   * Add cell to the selection with `SelectionType::eNormal`.
    *
    * @param  aCell  [in] HTML td element.
    */
@@ -791,10 +790,6 @@ class nsFrameSelection final {
   nsresult SelectBlockOfCells(nsIContent* aStartNode, nsIContent* aEndNode);
   nsresult SelectRowOrColumn(nsIContent* aCellContent,
                              mozilla::TableSelectionMode aTarget);
-  nsresult UnselectCells(nsIContent* aTable, int32_t aStartRowIndex,
-                         int32_t aStartColumnIndex, int32_t aEndRowIndex,
-                         int32_t aEndColumnIndex,
-                         bool aRemoveOutsideOfCellRange);
 
   static nsresult GetCellIndexes(nsIContent* aCell, int32_t& aRowIndex,
                                  int32_t& aColIndex);
@@ -805,7 +800,6 @@ class nsFrameSelection final {
                                    nsIContent* aContent2);
   // Might return null
   static nsIContent* GetParentTable(nsIContent* aCellNode);
-  nsresult CreateAndAddRange(nsINode* aContainer, int32_t aOffset);
 
   ////////////BEGIN nsFrameSelection members
 
@@ -823,6 +817,13 @@ class nsFrameSelection final {
     // not return null, then the first node in the returned range is a cell
     // (according to GetFirstCellNodeInRange).
     nsRange* GetNextCellRange(const mozilla::dom::Selection& aNormalSelection);
+
+    // TODO: mark as `MOZ_CAN_RUN_SCRIPT`.
+    nsresult UnselectCells(nsIContent* aTable, int32_t aStartRowIndex,
+                           int32_t aStartColumnIndex, int32_t aEndRowIndex,
+                           int32_t aEndColumnIndex,
+                           bool aRemoveOutsideOfCellRange,
+                           mozilla::dom::Selection& aNormalSelection);
 
     nsCOMPtr<nsINode> mCellParent;  // used to snap to table selection
     nsCOMPtr<nsIContent> mStartSelectedCell;
@@ -869,7 +870,7 @@ class nsFrameSelection final {
 
   bool mChangesDuringBatching = false;
   bool mDragSelectingCells = false;
-  bool mDragState = false;             // for drag purposes
+  bool mDragState = false;  // for drag purposes
   bool mDesiredPosSet = false;
   bool mAccessibleCaretEnabled = false;
 

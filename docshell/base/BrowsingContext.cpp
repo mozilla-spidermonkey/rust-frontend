@@ -534,9 +534,11 @@ void BrowsingContext::RestoreChildren(Children&& aChildren, bool aFromIPC) {
           ("%s: Restoring children of 0x%08" PRIx64 "",
            XRE_IsParentProcess() ? "Parent" : "Child", Id()));
 
+  nsTArray<MaybeDiscarded<BrowsingContext>> ipcChildren(aChildren.Length());
   for (BrowsingContext* child : aChildren) {
     MOZ_DIAGNOSTIC_ASSERT(child->GetParent() == this);
     Unused << mGroup->EvictCachedContext(child);
+    ipcChildren.AppendElement(child);
   }
 
   mChildren.AppendElements(aChildren);
@@ -544,7 +546,7 @@ void BrowsingContext::RestoreChildren(Children&& aChildren, bool aFromIPC) {
   if (!aFromIPC && XRE_IsContentProcess()) {
     auto cc = ContentChild::GetSingleton();
     MOZ_DIAGNOSTIC_ASSERT(cc);
-    cc->SendRestoreBrowsingContextChildren(this, aChildren);
+    cc->SendRestoreBrowsingContextChildren(this, ipcChildren);
   }
 }
 
@@ -1516,35 +1518,18 @@ void BrowsingContext::AddDeprioritizedLoadRunner(nsIRunnable* aRunner) {
 
 namespace ipc {
 
-void IPDLParamTraits<dom::BrowsingContext*>::Write(
-    IPC::Message* aMsg, IProtocol* aActor, dom::BrowsingContext* aParam) {
-  MOZ_DIAGNOSTIC_ASSERT(!aParam || aParam->EverAttached());
-  uint64_t id = aParam ? aParam->Id() : 0;
+void IPDLParamTraits<dom::MaybeDiscarded<dom::BrowsingContext>>::Write(
+    IPC::Message* aMsg, IProtocol* aActor,
+    const dom::MaybeDiscarded<dom::BrowsingContext>& aParam) {
+  MOZ_DIAGNOSTIC_ASSERT(!aParam.GetMaybeDiscarded() ||
+                        aParam.GetMaybeDiscarded()->EverAttached());
+  uint64_t id = aParam.ContextId();
   WriteIPDLParam(aMsg, aActor, id);
-  if (!aParam) {
-    return;
-  }
-
-  // Make sure that the other side will still have our BrowsingContext around
-  // when it tries to perform deserialization.
-  if (aActor->GetIPCChannel()->IsCrossProcess()) {
-    // If we're sending the message between processes, we only know the other
-    // side will still have a copy if we've not been discarded yet. As
-    // serialization cannot fail softly, fail loudly by crashing.
-    MOZ_RELEASE_ASSERT(
-        !aParam->IsDiscarded(),
-        "Cannot send discarded BrowsingContext between processes!");
-  } else {
-    // If we're in-process, we can take an extra reference to ensure it lives
-    // long enough to make it to the other side. This reference is freed in
-    // `::Read()`.
-    aParam->AddRef();
-  }
 }
 
-bool IPDLParamTraits<dom::BrowsingContext*>::Read(
+bool IPDLParamTraits<dom::MaybeDiscarded<dom::BrowsingContext>>::Read(
     const IPC::Message* aMsg, PickleIterator* aIter, IProtocol* aActor,
-    RefPtr<dom::BrowsingContext>* aResult) {
+    dom::MaybeDiscarded<dom::BrowsingContext>* aResult) {
   uint64_t id = 0;
   if (!ReadIPDLParam(aMsg, aIter, aActor, &id)) {
     return false;
@@ -1552,30 +1537,11 @@ bool IPDLParamTraits<dom::BrowsingContext*>::Read(
 
   if (id == 0) {
     *aResult = nullptr;
-    return true;
+  } else if (RefPtr<dom::BrowsingContext> bc = dom::BrowsingContext::Get(id)) {
+    *aResult = std::move(bc);
+  } else {
+    aResult->SetDiscarded(id);
   }
-
-  RefPtr<dom::BrowsingContext> browsingContext = dom::BrowsingContext::Get(id);
-  if (!browsingContext) {
-#ifndef FUZZING
-    // NOTE: We could fail softly by returning `false` if the `BrowsingContext`
-    // isn't present, but doing so will cause a crash anyway. Let's improve
-    // diagnostics by reliably crashing here.
-    //
-    // If we can recover from failures to deserialize in the future, this crash
-    // should be removed or modified.
-    MOZ_CRASH("Attempt to deserialize absent BrowsingContext");
-#endif
-    *aResult = nullptr;
-    return false;
-  }
-
-  if (!aActor->GetIPCChannel()->IsCrossProcess()) {
-    // Release the reference taken in `::Write()` for in-process actors.
-    browsingContext.get()->Release();
-  }
-
-  *aResult = std::move(browsingContext);
   return true;
 }
 

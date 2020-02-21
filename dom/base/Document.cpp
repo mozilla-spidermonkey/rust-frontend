@@ -95,6 +95,7 @@
 #include "mozilla/EventStateManager.h"
 #include "mozilla/FullscreenChange.h"
 #include "mozilla/PendingAnimationTracker.h"
+#include "mozilla/intl/LocaleService.h"
 
 #include "mozilla/dom/Attr.h"
 #include "mozilla/dom/BindingDeclarations.h"
@@ -311,7 +312,6 @@
 #  include "mozilla/dom/XULBroadcastManager.h"
 #  include "mozilla/dom/XULPersist.h"
 #  include "nsIAppWindow.h"
-#  include "nsIChromeRegistry.h"
 #  include "nsXULPrototypeDocument.h"
 #  include "nsXULCommandDispatcher.h"
 #  include "nsXULPopupManager.h"
@@ -8448,6 +8448,12 @@ void Document::DoNotifyPossibleTitleChange() {
     }
   }
 
+  if (nsPIDOMWindowInner* inner = GetInnerWindow()) {
+    if (WindowGlobalChild* child = inner->GetWindowGlobalChild()) {
+      child->SendUpdateDocumentTitle(title);
+    }
+  }
+
   // Fire a DOM event for the title change.
   nsContentUtils::DispatchChromeEvent(this, ToSupports(this),
                                       NS_LITERAL_STRING("DOMTitleChanged"),
@@ -11573,28 +11579,12 @@ bool Document::IsDocumentRightToLeft() {
     }
   }
 
-  // otherwise, get the locale from the chrome registry and
-  // look up the intl.uidirection.<locale> preference
-  nsCOMPtr<nsIXULChromeRegistry> reg =
-      mozilla::services::GetXULChromeRegistryService();
-  if (!reg) return false;
-
-  nsAutoCString package;
-  if (mDocumentURI->SchemeIs("chrome")) {
-    mDocumentURI->GetHostPort(package);
-  } else {
-    // use the 'global' package for about and resource uris.
-    // otherwise, just default to left-to-right.
-    if (mDocumentURI->SchemeIs("about") || mDocumentURI->SchemeIs("resource")) {
-      package.AssignLiteral("global");
-    } else {
-      return false;
-    }
+  if (!mDocumentURI->SchemeIs("chrome") && !mDocumentURI->SchemeIs("about") &&
+      !mDocumentURI->SchemeIs("resource")) {
+    return false;
   }
 
-  bool isRTL = false;
-  reg->IsLocaleRTL(package, &isRTL);
-  return isRTL;
+  return intl::LocaleService::GetInstance()->IsAppLocaleRTL();
 }
 
 class nsDelayedEventDispatcher : public Runnable {
@@ -12804,8 +12794,8 @@ class FullscreenRoots {
   static bool IsEmpty();
 
  private:
-  FullscreenRoots() { MOZ_COUNT_CTOR(FullscreenRoots); }
-  ~FullscreenRoots() { MOZ_COUNT_DTOR(FullscreenRoots); }
+  MOZ_COUNTED_DEFAULT_CTOR(FullscreenRoots)
+  MOZ_COUNTED_DTOR(FullscreenRoots)
 
   enum { NotFound = uint32_t(-1) };
   // Looks in mRoots for aRoot. Returns the index if found, otherwise NotFound.
@@ -15087,7 +15077,7 @@ void Document::MaybeAllowStorageForOpenerAfterUserInteraction() {
   }
 
   // No tracking resource.
-  if (!nsContentUtils::IsTrackingResourceWindow(inner)) {
+  if (!nsContentUtils::IsThirdPartyTrackingResourceWindow(inner)) {
     return;
   }
 

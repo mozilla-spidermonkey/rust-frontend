@@ -87,6 +87,10 @@ static nsAtom* GetTag(nsINode* aNode);
 // returns the parent
 static nsINode* ParentOffset(nsINode* aNode, int32_t* aChildOffset);
 static nsINode* GetCellParent(nsINode* aDomNode);
+static nsresult CreateAndAddRange(nsINode* aContainer, int32_t aOffset,
+                                  Selection& aNormalSelection);
+static nsresult SelectCellElement(nsIContent* aCellElement,
+                                  Selection& aNormalSelection);
 
 #ifdef PRINT_RANGE
 static void printRange(nsRange* aDomRange);
@@ -2202,8 +2206,9 @@ nsresult nsFrameSelection::HandleTableSelection(nsINode* aParentContent,
         mTableSelection.mEndSelectedCell = nullptr;
 
         // Remove existing selection and select the table
-        mDomSelections[index]->RemoveAllRanges(IgnoreErrors());
-        return CreateAndAddRange(aParentContent, aContentOffset);
+        const RefPtr<Selection> selection = mDomSelections[index];
+        selection->RemoveAllRanges(IgnoreErrors());
+        return CreateAndAddRange(aParentContent, aContentOffset, *selection);
       }
       if (aTarget == TableSelectionMode::Row ||
           aTarget == TableSelectionMode::Column) {
@@ -2371,8 +2376,15 @@ nsresult nsFrameSelection::SelectBlockOfCells(nsIContent* aStartCell,
 
   if (mDragSelectingCells) {
     // Drag selecting: remove selected cells outside of new block limits
-    UnselectCells(table, startRowIndex, startColIndex, endRowIndex, endColIndex,
-                  true);
+    const int8_t index = GetIndexFromSelectionType(SelectionType::eNormal);
+    const RefPtr<mozilla::dom::Selection> selection = mDomSelections[index];
+    if (!selection) {
+      return NS_ERROR_NULL_POINTER;
+    }
+
+    // TODO: `UnselectCells`'s return value shouldn't be ignored.
+    mTableSelection.UnselectCells(table, startRowIndex, startColIndex,
+                                  endRowIndex, endColIndex, true, *selection);
   }
 
   // Note that we select block in the direction of user's mouse dragging,
@@ -2381,14 +2393,11 @@ nsresult nsFrameSelection::SelectBlockOfCells(nsIContent* aStartCell,
                              endColIndex);
 }
 
-nsresult nsFrameSelection::UnselectCells(nsIContent* aTableContent,
-                                         int32_t aStartRowIndex,
-                                         int32_t aStartColumnIndex,
-                                         int32_t aEndRowIndex,
-                                         int32_t aEndColumnIndex,
-                                         bool aRemoveOutsideOfCellRange) {
-  int8_t index = GetIndexFromSelectionType(SelectionType::eNormal);
-  if (!mDomSelections[index]) return NS_ERROR_NULL_POINTER;
+nsresult nsFrameSelection::TableSelection::UnselectCells(
+    nsIContent* aTableContent, int32_t aStartRowIndex,
+    int32_t aStartColumnIndex, int32_t aEndRowIndex, int32_t aEndColumnIndex,
+    bool aRemoveOutsideOfCellRange, mozilla::dom::Selection& aNormalSelection) {
+  MOZ_ASSERT(aNormalSelection.Type() == SelectionType::eNormal);
 
   nsTableWrapperFrame* tableFrame =
       do_QueryFrame(aTableContent->GetPrimaryFrame());
@@ -2400,8 +2409,7 @@ nsresult nsFrameSelection::UnselectCells(nsIContent* aTableContent,
   int32_t maxColIndex = std::max(aStartColumnIndex, aEndColumnIndex);
 
   // Strong reference because we sometimes remove the range
-  RefPtr<nsRange> range =
-      mTableSelection.GetFirstCellRange(*mDomSelections[index]);
+  RefPtr<nsRange> range = GetFirstCellRange(aNormalSelection);
   nsIContent* cellNode = GetFirstSelectedContent(range);
   MOZ_ASSERT(!range || cellNode, "Must have cellNode if had a range");
 
@@ -2418,10 +2426,10 @@ nsresult nsFrameSelection::UnselectCells(nsIContent* aTableContent,
       if (aRemoveOutsideOfCellRange) {
         if (curRowIndex < minRowIndex || curRowIndex > maxRowIndex ||
             curColIndex < minColIndex || curColIndex > maxColIndex) {
-          mDomSelections[index]->RemoveRangeAndUnselectFramesAndNotifyListeners(
+          aNormalSelection.RemoveRangeAndUnselectFramesAndNotifyListeners(
               *range, IgnoreErrors());
           // Since we've removed the range, decrement pointer to next range
-          mTableSelection.mSelectedCellIndex--;
+          mSelectedCellIndex--;
         }
 
       } else {
@@ -2444,21 +2452,32 @@ nsresult nsFrameSelection::UnselectCells(nsIContent* aTableContent,
             maxColIndex >= 0 &&
             origColIndex + actualColSpan - 1 >=
                 static_cast<uint32_t>(minColIndex)) {
-          mDomSelections[index]->RemoveRangeAndUnselectFramesAndNotifyListeners(
+          aNormalSelection.RemoveRangeAndUnselectFramesAndNotifyListeners(
               *range, IgnoreErrors());
           // Since we've removed the range, decrement pointer to next range
-          mTableSelection.mSelectedCellIndex--;
+          mSelectedCellIndex--;
         }
       }
     }
 
-    const Selection* selection = mDomSelections[index];
-    range = selection ? mTableSelection.GetNextCellRange(*selection) : nullptr;
+    range = GetNextCellRange(aNormalSelection);
     cellNode = GetFirstSelectedContent(range);
     MOZ_ASSERT(!range || cellNode, "Must have cellNode if had a range");
   }
 
   return NS_OK;
+}
+
+nsresult SelectCellElement(nsIContent* aCellElement,
+                           Selection& aNormalSelection) {
+  MOZ_ASSERT(aNormalSelection.Type() == SelectionType::eNormal);
+
+  nsIContent* parent = aCellElement->GetParent();
+
+  // Get child offset
+  int32_t offset = parent->ComputeIndexOf(aCellElement);
+
+  return CreateAndAddRange(parent, offset, aNormalSelection);
 }
 
 nsresult nsFrameSelection::AddCellsToSelection(nsIContent* aTableContent,
@@ -2514,8 +2533,15 @@ nsresult nsFrameSelection::RemoveCellsFromSelection(nsIContent* aTable,
                                                     int32_t aStartColumnIndex,
                                                     int32_t aEndRowIndex,
                                                     int32_t aEndColumnIndex) {
-  return UnselectCells(aTable, aStartRowIndex, aStartColumnIndex, aEndRowIndex,
-                       aEndColumnIndex, false);
+  const int8_t index = GetIndexFromSelectionType(SelectionType::eNormal);
+  const RefPtr<mozilla::dom::Selection> selection = mDomSelections[index];
+  if (!selection) {
+    return NS_ERROR_NULL_POINTER;
+  }
+
+  return mTableSelection.UnselectCells(aTable, aStartRowIndex,
+                                       aStartColumnIndex, aEndRowIndex,
+                                       aEndColumnIndex, false, *selection);
 }
 
 nsresult nsFrameSelection::RestrictCellsToSelection(nsIContent* aTable,
@@ -2523,8 +2549,15 @@ nsresult nsFrameSelection::RestrictCellsToSelection(nsIContent* aTable,
                                                     int32_t aStartColumnIndex,
                                                     int32_t aEndRowIndex,
                                                     int32_t aEndColumnIndex) {
-  return UnselectCells(aTable, aStartRowIndex, aStartColumnIndex, aEndRowIndex,
-                       aEndColumnIndex, true);
+  const int8_t index = GetIndexFromSelectionType(SelectionType::eNormal);
+  const RefPtr<mozilla::dom::Selection> selection = mDomSelections[index];
+  if (!selection) {
+    return NS_ERROR_NULL_POINTER;
+  }
+
+  return mTableSelection.UnselectCells(aTable, aStartRowIndex,
+                                       aStartColumnIndex, aEndRowIndex,
+                                       aEndColumnIndex, true, *selection);
 }
 
 nsresult nsFrameSelection::SelectRowOrColumn(nsIContent* aCellContent,
@@ -2718,16 +2751,19 @@ nsIContent* nsFrameSelection::GetParentTable(nsIContent* aCell) {
 }
 
 nsresult nsFrameSelection::SelectCellElement(nsIContent* aCellElement) {
-  nsIContent* parent = aCellElement->GetParent();
+  const int8_t index = GetIndexFromSelectionType(SelectionType::eNormal);
+  const RefPtr<Selection> selection = mDomSelections[index];
+  if (!selection) {
+    return NS_ERROR_NULL_POINTER;
+  }
 
-  // Get child offset
-  int32_t offset = parent->ComputeIndexOf(aCellElement);
-
-  return CreateAndAddRange(parent, offset);
+  return ::SelectCellElement(aCellElement, *selection);
 }
 
-nsresult nsFrameSelection::CreateAndAddRange(nsINode* aContainer,
-                                             int32_t aOffset) {
+nsresult CreateAndAddRange(nsINode* aContainer, int32_t aOffset,
+                           Selection& aNormalSelection) {
+  MOZ_ASSERT(aNormalSelection.Type() == SelectionType::eNormal);
+
   if (!aContainer) {
     return NS_ERROR_NULL_POINTER;
   }
@@ -2741,11 +2777,8 @@ nsresult nsFrameSelection::CreateAndAddRange(nsINode* aContainer,
   }
   MOZ_ASSERT(range);
 
-  int8_t index = GetIndexFromSelectionType(SelectionType::eNormal);
-  if (!mDomSelections[index]) return NS_ERROR_NULL_POINTER;
-
   ErrorResult err;
-  mDomSelections[index]->AddRangeAndSelectFramesAndNotifyListeners(*range, err);
+  aNormalSelection.AddRangeAndSelectFramesAndNotifyListeners(*range, err);
   return err.StealNSResult();
 }
 

@@ -122,7 +122,6 @@ react_dom__WEBPACK_IMPORTED_MODULE_6___default.a.hydrate(react__WEBPACK_IMPORTED
   store: store
 }, react__WEBPACK_IMPORTED_MODULE_5___default.a.createElement(content_src_components_Base_Base__WEBPACK_IMPORTED_MODULE_1__["Base"], {
   isFirstrun: global.document.location.href === "about:welcome",
-  locale: global.document.documentElement.lang,
   strings: global.gActivityStreamStrings
 })), document.getElementById("root"));
 /* WEBPACK VAR INJECTION */}.call(this, __webpack_require__(1)))
@@ -727,7 +726,9 @@ class BaseContent extends react__WEBPACK_IMPORTED_MODULE_7___default.a.PureCompo
       className: `body-wrapper${initialized ? " on" : ""}`
     }, isDiscoveryStream ? react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_ErrorBoundary_ErrorBoundary__WEBPACK_IMPORTED_MODULE_6__["ErrorBoundary"], {
       className: "borderless-error"
-    }, react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_DiscoveryStreamBase_DiscoveryStreamBase__WEBPACK_IMPORTED_MODULE_5__["DiscoveryStreamBase"], null)) : react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_Sections_Sections__WEBPACK_IMPORTED_MODULE_9__["Sections"], null), react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(PrefsButton, {
+    }, react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_DiscoveryStreamBase_DiscoveryStreamBase__WEBPACK_IMPORTED_MODULE_5__["DiscoveryStreamBase"], {
+      locale: props.App.locale
+    })) : react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_Sections_Sections__WEBPACK_IMPORTED_MODULE_9__["Sections"], null), react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(PrefsButton, {
       onClick: this.openPreferences
     })), react__WEBPACK_IMPORTED_MODULE_7___default.a.createElement(content_src_components_ConfirmDialog_ConfirmDialog__WEBPACK_IMPORTED_MODULE_3__["ConfirmDialog"], null))));
   }
@@ -4383,7 +4384,7 @@ class _DiscoveryStreamBase extends react__WEBPACK_IMPORTED_MODULE_14___default.a
       state: this.props.DiscoveryStream,
       prefs: this.props.Prefs.values,
       rollCache,
-      lang: this.props.document.documentElement.lang
+      locale: this.props.locale
     });
     const {
       config,
@@ -6382,7 +6383,11 @@ class _CollectionCardGrid extends react__WEBPACK_IMPORTED_MODULE_1___default.a.P
     const {
       title,
       context
-    } = DiscoveryStream.spocs.data[placement.name] || {}; // Generally a card grid displays recs with spocs already injected.
+    } = DiscoveryStream.spocs.data[placement.name] || {}; // Just in case of bad data, don't display a broken collection.
+
+    if (!title) {
+      return null;
+    } // Generally a card grid displays recs with spocs already injected.
     // Normally it doesn't care which rec is a spoc and which isn't,
     // it just displays content in a grid.
     // For collections, we're only displaying a list of spocs.
@@ -6390,6 +6395,7 @@ class _CollectionCardGrid extends react__WEBPACK_IMPORTED_MODULE_1___default.a.P
     // it shouldn't need to care. So we just pass our spocs along as recs.
     // Think of it as injecting all rec positions with spocs.
     // Consider maybe making recommendations in CardGrid use a more generic name.
+
 
     const recsData = {
       recommendations: data.spocs
@@ -10230,7 +10236,7 @@ const selectLayoutRender = ({
   state = {},
   prefs = {},
   rollCache = [],
-  lang = ""
+  locale = ""
 }) => {
   const {
     layout,
@@ -10291,7 +10297,7 @@ const selectLayoutRender = ({
     filterArray.push("TopSites");
   }
 
-  if (!lang.startsWith("en-")) {
+  if (!locale.startsWith("en-")) {
     filterArray.push("Navigation");
   }
 
@@ -14354,7 +14360,8 @@ const dedupe = new Dedupe(site => site && site.url);
 const INITIAL_STATE = {
   App: {
     // Have we received real data from the app yet?
-    initialized: false
+    initialized: false,
+    locale: ""
   },
   ASRouter: {
     initialized: false

@@ -50,7 +50,7 @@ namespace dom {
 
 WindowGlobalParent::WindowGlobalParent(const WindowGlobalInit& aInit,
                                        bool aInProcess)
-    : WindowContext(aInit.browsingContext(), aInit.innerWindowId(), {}),
+    : WindowContext(aInit.browsingContext().get(), aInit.innerWindowId(), {}),
       mDocumentPrincipal(aInit.principal()),
       mDocumentURI(aInit.documentURI()),
       mInnerWindowId(aInit.innerWindowId()),
@@ -62,7 +62,7 @@ WindowGlobalParent::WindowGlobalParent(const WindowGlobalInit& aInit,
   MOZ_RELEASE_ASSERT(mDocumentPrincipal, "Must have a valid principal");
 
   // NOTE: mBrowsingContext initialized in Init()
-  MOZ_RELEASE_ASSERT(aInit.browsingContext(),
+  MOZ_RELEASE_ASSERT(!aInit.browsingContext().IsNullOrDiscarded(),
                      "Must be made in BrowsingContext");
 
   mFields.SetWithoutSyncing<IDX_OuterWindowId>(aInit.outerWindowId());
@@ -86,7 +86,7 @@ void WindowGlobalParent::Init(const WindowGlobalInit& aInit) {
     cp->TransmitPermissionsForPrincipal(mDocumentPrincipal);
   }
 
-  mBrowsingContext = CanonicalBrowsingContext::Cast(aInit.browsingContext());
+  mBrowsingContext = aInit.browsingContext().get_canonical();
   MOZ_ASSERT(mBrowsingContext);
 
   MOZ_DIAGNOSTIC_ASSERT(
@@ -191,49 +191,52 @@ void WindowGlobalParent::GetContentBlockingLog(nsAString& aLog) {
 }
 
 mozilla::ipc::IPCResult WindowGlobalParent::RecvLoadURI(
-    dom::BrowsingContext* aTargetBC, nsDocShellLoadState* aLoadState,
-    bool aSetNavigating) {
-  if (!aTargetBC || aTargetBC->IsDiscarded()) {
+    const MaybeDiscarded<dom::BrowsingContext>& aTargetBC,
+    nsDocShellLoadState* aLoadState, bool aSetNavigating) {
+  if (aTargetBC.IsNullOrDiscarded()) {
     MOZ_LOG(
         BrowsingContext::GetLog(), LogLevel::Debug,
         ("ParentIPC: Trying to send a message with dead or detached context"));
     return IPC_OK();
   }
+  CanonicalBrowsingContext* targetBC = aTargetBC.get_canonical();
 
   // FIXME: For cross-process loads, we should double check CanAccess() for the
   // source browsing context in the parent process.
 
-  if (aTargetBC->Group() != BrowsingContext()->Group()) {
+  if (targetBC->Group() != BrowsingContext()->Group()) {
     return IPC_FAIL(this, "Illegal cross-group BrowsingContext load");
   }
 
   // FIXME: We should really initiate the load in the parent before bouncing
   // back down to the child.
 
-  aTargetBC->LoadURI(nullptr, aLoadState, aSetNavigating);
+  targetBC->LoadURI(nullptr, aLoadState, aSetNavigating);
   return IPC_OK();
 }
 
 mozilla::ipc::IPCResult WindowGlobalParent::RecvInternalLoad(
-    dom::BrowsingContext* aTargetBC, nsDocShellLoadState* aLoadState) {
-  if (!aTargetBC || aTargetBC->IsDiscarded()) {
+    const MaybeDiscarded<dom::BrowsingContext>& aTargetBC,
+    nsDocShellLoadState* aLoadState) {
+  if (aTargetBC.IsNullOrDiscarded()) {
     MOZ_LOG(
         BrowsingContext::GetLog(), LogLevel::Debug,
         ("ParentIPC: Trying to send a message with dead or detached context"));
     return IPC_OK();
   }
+  CanonicalBrowsingContext* targetBC = aTargetBC.get_canonical();
 
   // FIXME: For cross-process loads, we should double check CanAccess() for the
   // source browsing context in the parent process.
 
-  if (aTargetBC->Group() != BrowsingContext()->Group()) {
+  if (targetBC->Group() != BrowsingContext()->Group()) {
     return IPC_FAIL(this, "Illegal cross-group BrowsingContext load");
   }
 
   // FIXME: We should really initiate the load in the parent before bouncing
   // back down to the child.
 
-  aTargetBC->InternalLoad(mBrowsingContext, aLoadState, nullptr, nullptr);
+  targetBC->InternalLoad(mBrowsingContext, aLoadState, nullptr, nullptr);
   return IPC_OK();
 }
 
@@ -241,6 +244,12 @@ IPCResult WindowGlobalParent::RecvUpdateDocumentURI(nsIURI* aURI) {
   // XXX(nika): Assert that the URI change was one which makes sense (either
   // about:blank -> a real URI, or a legal push/popstate URI change?)
   mDocumentURI = aURI;
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult WindowGlobalParent::RecvUpdateDocumentTitle(
+    const nsString& aTitle) {
+  mDocumentTitle = aTitle;
   return IPC_OK();
 }
 

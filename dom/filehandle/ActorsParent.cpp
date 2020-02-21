@@ -587,6 +587,21 @@ FileHandleThreadPool* GetFileHandleThreadPoolFor(FileHandleStorage aStorage) {
   }
 }
 
+nsresult ClampResultCode(nsresult aResultCode) {
+  if (NS_SUCCEEDED(aResultCode) ||
+      NS_ERROR_GET_MODULE(aResultCode) == NS_ERROR_MODULE_DOM_FILEHANDLE) {
+    return aResultCode;
+  }
+
+  NS_WARNING(nsPrintfCString("Converting non-filehandle error code (0x%" PRIX32
+                             ") to "
+                             "NS_ERROR_DOM_FILEHANDLE_UNKNOWN_ERR",
+                             static_cast<uint32_t>(aResultCode))
+                 .get());
+
+  return NS_ERROR_DOM_FILEHANDLE_UNKNOWN_ERR;
+}
+
 }  // namespace
 
 /*******************************************************************************
@@ -1759,7 +1774,8 @@ bool NormalFileHandleOp::SendFailureResult(nsresult aResultCode) {
   bool result = false;
 
   if (!IsActorDestroyed()) {
-    result = PBackgroundFileRequestParent::Send__delete__(this, aResultCode);
+    result = PBackgroundFileRequestParent::Send__delete__(
+        this, ClampResultCode(aResultCode));
   }
 
 #ifdef DEBUG
@@ -1912,6 +1928,10 @@ nsresult CopyFileHandleOp::DoFileWork(FileHandle* aFileHandle) {
     mOwningEventTarget->Dispatch(runnable, NS_DISPATCH_NORMAL);
   } while (true);
 
+  if (mOffset < mSize) {
+    // end-of-file reached
+    return NS_ERROR_FAILURE;
+  }
   MOZ_ASSERT(mOffset == mSize);
 
   if (mRead) {

@@ -816,6 +816,18 @@
   mirror: always
   rust: true
 
+# Whether we should suppress the background-image of the canvas (the root
+# frame) if we're in forced colors mode.
+#
+# This is important because some sites use background-image with a plain color
+# and it causes undesirable results in high-contrast mode.
+#
+# See bug 1614921 for example.
+- name: browser.display.suppress_canvas_background_image_on_forced_colors
+  type: bool
+  value: true
+  mirror: always
+
 - name: browser.display.focus_ring_on_anything
   type: bool
   value: false
@@ -3848,6 +3860,11 @@
   value: false
   mirror: always
 
+- name: gfx.webrender.dl.dump-content-serialized
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 # Also expose a pref to allow users to force-disable WR. This is exposed
 # on all channels because WR can be enabled on qualified hardware on all
 # channels.
@@ -3884,6 +3901,11 @@
 - name: gfx.webrender.enable-multithreading
   type: bool
   value: true
+  mirror: always
+
+- name: gfx.webrender.batching.lookback
+  type: uint32_t
+  value: 10
   mirror: always
 
 - name: gfx.webrender.compositor
@@ -8125,6 +8147,21 @@
   value: false
   mirror: always
 
+- name: view_source.wrap_long_lines
+  type: bool
+  value: @IS_ANDROID@
+  mirror: always
+
+- name: view_source.syntax_highlight
+  type: bool
+  value: true
+  mirror: always
+
+- name: view_source.tab_size
+  type: int32_t
+  value: 4
+  mirror: always
+
 #---------------------------------------------------------------------------
 # Prefs starting with "webgl." (for pref access from Worker threads)
 #---------------------------------------------------------------------------
@@ -8177,11 +8214,6 @@
   value: @IS_NOT_ANDROID@
   mirror: always
 
-- name: webgl.default-low-power
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-
 - name: webgl.default-no-alpha
   type: RelaxedAtomicBool
   value: false
@@ -8210,7 +8242,6 @@
   type: RelaxedAtomicBool
   value: false
   mirror: always
-
 
 - name: webgl.disable-fail-if-major-performance-caveat
   type: RelaxedAtomicBool
@@ -8308,6 +8339,11 @@
 - name: webgl.out-of-process
   type: RelaxedAtomicBool
   value: false
+  mirror: always
+
+- name: webgl.power-preference-override
+  type: int32_t
+  value: 0
   mirror: always
 
 - name: webgl.prefer-16bpp

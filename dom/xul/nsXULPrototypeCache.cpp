@@ -68,7 +68,7 @@ static void DisableXULCacheChangedCallback(const char* aPref, void* aClosure) {
 
 nsXULPrototypeCache* nsXULPrototypeCache::sInstance = nullptr;
 
-nsXULPrototypeCache::nsXULPrototypeCache() {}
+nsXULPrototypeCache::nsXULPrototypeCache() = default;
 
 nsXULPrototypeCache::~nsXULPrototypeCache() { FlushScripts(); }
 
@@ -341,9 +341,7 @@ nsresult nsXULPrototypeCache::HasData(nsIURI* uri, bool* exists) {
     *exists = sc->HasEntry(spec.get());
   } else {
     *exists = false;
-    return NS_OK;
   }
-  *exists = NS_SUCCEEDED(rv);
   return NS_OK;
 }
 

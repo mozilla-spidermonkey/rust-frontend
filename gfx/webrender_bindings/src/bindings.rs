@@ -1558,6 +1558,11 @@ pub unsafe extern "C" fn wr_api_enable_multithreading(dh: &mut DocumentHandle, e
     dh.api.send_debug_cmd(DebugCommand::EnableMultithreading(enable));
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn wr_api_set_batching_lookback(dh: &mut DocumentHandle, count: u32) {
+    dh.api.send_debug_cmd(DebugCommand::SetBatchingLookback(count));
+}
+
 fn make_transaction(do_async: bool) -> Transaction {
     let mut transaction = Transaction::new();
     // Ensure that we either use async scene building or not based on the
@@ -3606,6 +3611,11 @@ pub extern "C" fn wr_dump_display_list(state: &mut WrState,
     eprint!("{}", String::from_utf8(sink.into_inner()).unwrap());
 
     index
+}
+
+#[no_mangle]
+pub extern "C" fn wr_dump_serialized_display_list(state: &mut WrState) {
+    state.frame_builder.dl_builder.dump_serialized_display_list();
 }
 
 #[no_mangle]

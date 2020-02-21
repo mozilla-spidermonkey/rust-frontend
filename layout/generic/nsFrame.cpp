@@ -183,8 +183,8 @@ struct nsBoxLayoutMetrics {
 };
 
 struct nsContentAndOffset {
-  nsIContent* mContent;
-  int32_t mOffset;
+  nsIContent* mContent = nullptr;
+  int32_t mOffset = 0;
 };
 
 // Some Misc #defines
@@ -932,7 +932,8 @@ static void CompareLayers(
     // be different with the corresponded one in aSecondLayers
     if (!aSecondLayers || i >= aSecondLayers->mImageCount ||
         (!aSecondLayers->mLayers[i].mImage.IsResolved() ||
-         image.GetImageRequest() != aSecondLayers->mLayers[i].mImage.GetImageRequest())) {
+         image.GetImageRequest() !=
+             aSecondLayers->mLayers[i].mImage.GetImageRequest())) {
       if (imgRequestProxy* req = image.GetImageRequest()) {
         aCallback(req);
       }
@@ -2319,11 +2320,7 @@ class nsDisplaySelectionOverlay : public nsPaintedDisplayItem {
         mSelectionValue(aSelectionValue) {
     MOZ_COUNT_CTOR(nsDisplaySelectionOverlay);
   }
-#ifdef NS_BUILD_REFCNT_LOGGING
-  virtual ~nsDisplaySelectionOverlay() {
-    MOZ_COUNT_DTOR(nsDisplaySelectionOverlay);
-  }
-#endif
+  MOZ_COUNTED_DTOR_OVERRIDE(nsDisplaySelectionOverlay)
 
   virtual void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
   bool CreateWebRenderCommands(
@@ -2412,10 +2409,7 @@ static Element* FindElementAncestorForMozSelection(nsIContent* aContent) {
     aContent = aContent->GetClosestNativeAnonymousSubtreeRootParent();
   }
   NS_ASSERTION(aContent, "aContent isn't in non-anonymous tree?");
-  while (aContent && !aContent->IsElement()) {
-    aContent = aContent->GetParent();
-  }
-  return aContent ? aContent->AsElement() : nullptr;
+  return aContent ? aContent->GetAsElementOrParentElement() : nullptr;
 }
 
 already_AddRefed<ComputedStyle> nsIFrame::ComputeSelectionStyle(
@@ -8464,21 +8458,39 @@ nsIFrame::CaretPosition nsIFrame::GetExtremeCaretPosition(bool aStart) {
   return result;
 }
 
+// If this is a preformatted text frame, see if it ends with a newline
+static nsContentAndOffset FindLineBreakInText(nsIFrame* aFrame,
+                                              nsDirection aDirection) {
+  nsContentAndOffset result;
+
+  if (aFrame->IsGeneratedContentFrame() ||
+      !aFrame->HasSignificantTerminalNewline()) {
+    return result;
+  }
+
+  int32_t startOffset, endOffset;
+  aFrame->GetOffsets(startOffset, endOffset);
+  result.mContent = aFrame->GetContent();
+  result.mOffset = endOffset - (aDirection == eDirPrevious ? 0 : 1);
+  return result;
+}
+
 // Find the first (or last) descendant of the given frame
 // which is either a block-level frame or a BRFrame, or some other kind of break
 // which stops the line.
 static nsContentAndOffset FindLineBreakingFrame(nsIFrame* aFrame,
                                                 nsDirection aDirection) {
   nsContentAndOffset result;
-  result.mContent = nullptr;
-  result.mOffset = 0;
 
-  if (aFrame->IsGeneratedContentFrame()) return result;
+  if (aFrame->IsGeneratedContentFrame()) {
+    return result;
+  }
 
   // Treat form controls as inline leaves
   // XXX we really need a way to determine whether a frame is inline-level
-  nsIFormControlFrame* fcf = do_QueryFrame(aFrame);
-  if (fcf) return result;
+  if (static_cast<nsIFormControlFrame*>(do_QueryFrame(aFrame))) {
+    return result;
+  }
 
   // Check the frame itself
   // Fall through block-in-inline split frames because their mContent is
@@ -8500,12 +8512,8 @@ static nsContentAndOffset FindLineBreakingFrame(nsIFrame* aFrame,
     return result;
   }
 
-  // If this is a preformatted text frame, see if it ends with a newline
-  if (aFrame->HasSignificantTerminalNewline()) {
-    int32_t startOffset, endOffset;
-    aFrame->GetOffsets(startOffset, endOffset);
-    result.mContent = aFrame->GetContent();
-    result.mOffset = endOffset - (aDirection == eDirPrevious ? 0 : 1);
+  result = FindLineBreakInText(aFrame, aDirection);
+  if (result.mContent) {
     return result;
   }
 
@@ -8573,6 +8581,10 @@ nsresult nsIFrame::PeekOffsetParagraph(nsPeekOffsetStruct* aPos) {
         reachedBlockAncestor = true;
         break;
       }
+
+      // Try to find our own line-break before looking at our siblings.
+      blockFrameOrBR = FindLineBreakInText(frame, eDirNext);
+
       nsIFrame* sibling = frame->GetNextSibling();
       while (sibling && !blockFrameOrBR.mContent) {
         blockFrameOrBR = FindLineBreakingFrame(sibling, eDirNext);
@@ -11720,7 +11732,7 @@ struct DR_FrameTreeNode {
     MOZ_COUNT_CTOR(DR_FrameTreeNode);
   }
 
-  ~DR_FrameTreeNode() { MOZ_COUNT_DTOR(DR_FrameTreeNode); }
+  MOZ_COUNTED_DTOR(DR_FrameTreeNode)
 
   nsIFrame* mFrame;
   DR_FrameTreeNode* mParent;

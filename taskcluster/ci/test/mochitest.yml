@@ -267,7 +267,7 @@ mochitest-media:
             default: built-projects
     variants:
         by-test-platform:
-            android.*: []
+            android.*: ['socketprocess']
             linux1804-64/debug: ['fission', 'serviceworker', 'socketprocess']
             default: ['fission', 'socketprocess']
     loopback-video: true
@@ -291,7 +291,7 @@ mochitest-media:
                 default: true
     tier:
         by-test-platform:
-            android-em.*: 2
+            android-em.*: 1
             windows10-aarch64.*: 2
             android-hw.*: 1
             default: default
