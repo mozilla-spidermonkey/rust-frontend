@@ -15,7 +15,9 @@
  * limitations under the Licenses.
  */
 
-extern crate parser;
+extern crate jsparagus_ast as ast;
+extern crate jsparagus_emitter as emitter;
+extern crate jsparagus_parser as parser;
 
 use ast::types::Program;
 use bumpalo;
