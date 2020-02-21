@@ -1947,6 +1947,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jsparagus"
+version = "0.1.0"
+dependencies = [
+ "jsparagus-ast",
+ "jsparagus-emitter",
+ "jsparagus-generated-parser",
+ "jsparagus-parser",
+]
+
+[[package]]
 name = "jsparagus-ast"
 version = "0.1.0"
 dependencies = [
@@ -3846,9 +3856,7 @@ name = "smoosh"
 version = "0.1.0"
 dependencies = [
  "bumpalo",
- "jsparagus-ast",
- "jsparagus-emitter",
- "jsparagus-parser",
+ "jsparagus",
 ]
 
 [[package]]

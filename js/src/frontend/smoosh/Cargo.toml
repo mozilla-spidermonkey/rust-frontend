@@ -6,6 +6,4 @@ edition = "2018"
 
 [dependencies]
 bumpalo = "2.6.0"
-jsparagus-ast = { path = "../../../jsparagus/rust/ast" }
-jsparagus-emitter = { path = "../../../jsparagus/rust/emitter" }
-jsparagus-parser = { path = "../../../jsparagus/rust/parser" }
+jsparagus = { path = "../../../jsparagus" }
