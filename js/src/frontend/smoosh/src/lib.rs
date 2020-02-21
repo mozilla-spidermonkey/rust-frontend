@@ -15,14 +15,10 @@
  * limitations under the Licenses.
  */
 
-extern crate jsparagus_ast as ast;
-extern crate jsparagus_emitter as emitter;
-extern crate jsparagus_parser as parser;
-
-use ast::types::Program;
+use jsparagus::ast::types::Program;
 use bumpalo;
-use emitter::{emit, EmitResult, EmitError, EmitOptions};
-use parser::{parse_module, parse_script, ParseError, ParseOptions};
+use jsparagus::emitter::{emit, EmitResult, EmitError, EmitOptions};
+use jsparagus::parser::{parse_module, parse_script, ParseError, ParseOptions};
 use std::{mem, slice, str};
 
 #[repr(C)]
