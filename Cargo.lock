@@ -66,15 +66,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ast"
-version = "0.1.0"
-dependencies = [
- "bumpalo",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "atom"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1154,15 +1145,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "18785c1ba806c258137c937e44ada9ee7e69a37e3c72077542cd2f069d78562a"
 
 [[package]]
-name = "emitter"
-version = "0.1.0"
-dependencies = [
- "ast",
- "bumpalo",
- "byteorder",
-]
-
-[[package]]
 name = "encoding_c"
 version = "0.9.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1453,14 +1435,6 @@ dependencies = [
  "style",
  "style_traits",
  "to_shmem",
-]
-
-[[package]]
-name = "generated_parser"
-version = "0.1.0"
-dependencies = [
- "ast",
- "bumpalo",
 ]
 
 [[package]]
@@ -1987,6 +1961,42 @@ dependencies = [
  "log",
  "mozjs_sys",
  "num-traits",
+]
+
+[[package]]
+name = "jsparagus-ast"
+version = "0.1.0"
+dependencies = [
+ "bumpalo",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "jsparagus-emitter"
+version = "0.1.0"
+dependencies = [
+ "bumpalo",
+ "byteorder",
+ "jsparagus-ast",
+]
+
+[[package]]
+name = "jsparagus-generated-parser"
+version = "0.1.0"
+dependencies = [
+ "bumpalo",
+ "jsparagus-ast",
+]
+
+[[package]]
+name = "jsparagus-parser"
+version = "0.1.0"
+dependencies = [
+ "bumpalo",
+ "jsparagus-ast",
+ "jsparagus-generated-parser",
+ "unic-ucd-ident",
 ]
 
 [[package]]
@@ -2961,16 +2971,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "parser"
-version = "0.1.0"
-dependencies = [
- "ast",
- "bumpalo",
- "generated_parser",
- "unic-ucd-ident",
-]
-
-[[package]]
 name = "peek-poke"
 version = "0.2.0"
 source = "git+https://github.com/kvark/peek-poke?rev=969bd7fe2be1a83f87916dc8b388c63cfd457075#969bd7fe2be1a83f87916dc8b388c63cfd457075"
@@ -3862,11 +3862,11 @@ checksum = "5c2fb2ec9bcd216a5b0d0ccf31ab17b5ed1d627960edff65bbe95d3ce221cefc"
 name = "smoosh"
 version = "0.1.0"
 dependencies = [
- "ast",
  "bumpalo",
  "cbindgen",
- "emitter",
- "parser",
+ "jsparagus-ast",
+ "jsparagus-emitter",
+ "jsparagus-parser",
 ]
 
 [[package]]
