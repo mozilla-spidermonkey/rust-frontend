@@ -453,23 +453,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "926013f2860c46252efceabb19f4a6b308197505082c609025aa6706c011d427"
 
 [[package]]
-name = "cbindgen"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d94e15ad254cde8d71f12f8eeab1aa7ea997f02849f8eba4e81e6e7f46592b2"
-dependencies = [
- "clap",
- "log",
- "proc-macro2",
- "quote",
- "serde",
- "serde_json",
- "syn",
- "tempfile",
- "toml 0.5.1",
-]
-
-[[package]]
 name = "cc"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2650,7 +2633,7 @@ dependencies = [
  "neqo-common",
  "serde",
  "serde_derive",
- "toml 0.4.5",
+ "toml",
 ]
 
 [[package]]
@@ -3863,7 +3846,6 @@ name = "smoosh"
 version = "0.1.0"
 dependencies = [
  "bumpalo",
- "cbindgen",
  "jsparagus-ast",
  "jsparagus-emitter",
  "jsparagus-parser",
@@ -4002,7 +3984,7 @@ dependencies = [
  "time",
  "to_shmem",
  "to_shmem_derive",
- "toml 0.4.5",
+ "toml",
  "uluru",
  "unicode-bidi",
  "unicode-segmentation",
@@ -4423,15 +4405,6 @@ name = "toml"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7540f4ffc193e0d3c94121edb19b055670d369f77d5804db11ae053a45b6e7e"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "toml"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8c96d7873fa7ef8bdeb3a9cda3ac48389b4154f32b9803b4bc26220b677b039"
 dependencies = [
  "serde",
 ]

@@ -3,7 +3,10 @@
 
 #![deny(warnings)]
 
-use serde_derive::Deserialize;
+extern crate toml;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
 
 /// This is what we're going to decode into. Each field is optional, meaning
 /// that it doesn't have to be present in TOML.
