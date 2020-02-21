@@ -181,8 +181,14 @@ JSScript* Smoosh::compileGlobalScript(CompilationInfo& compilationInfo,
     return nullptr;
   }
 
-  RootedScript script(cx, JSScript::Create(cx, cx->global(), options, sso, 0,
-                                           length, 0, length, 1, 0));
+  SourceExtent extent(/* sourceStart = */ 0,
+                      /* sourceEnd = */ length,
+                      /* toStringStart = */ 0,
+                      /* toStringEnd = */ length,
+                      /* lineno = */ 1,
+                      /* column = */ 0);
+  RootedScript script(cx,
+                      JSScript::Create(cx, cx->global(), options, sso, extent));
 
   SmooshScriptStencil stencil(smoosh);
   if (!JSScript::fullyInitFromStencil(cx, script, stencil)) {
