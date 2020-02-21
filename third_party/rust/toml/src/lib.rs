@@ -1,6 +1,6 @@
 //! A [TOML]-parsing library
 //!
-//! This library implements a [TOML] v0.5.0 compatible parser,
+//! This library implements a [TOML] v0.4.0 compatible parser,
 //! primarily supporting the [`serde`] library for encoding/decoding
 //! various types in Rust.
 //!
@@ -77,7 +77,9 @@
 //! An example of deserializing with TOML is:
 //!
 //! ```rust
-//! use serde_derive::Deserialize;
+//! #[macro_use]
+//! extern crate serde_derive;
+//! extern crate toml;
 //!
 //! #[derive(Deserialize)]
 //! struct Config {
@@ -111,7 +113,9 @@
 //! You can serialize types in a similar fashion:
 //!
 //! ```rust
-//! use serde_derive::Serialize;
+//! #[macro_use]
+//! extern crate serde_derive;
+//! extern crate toml;
 //!
 //! #[derive(Serialize)]
 //! struct Config {
@@ -144,27 +148,21 @@
 //! [Cargo]: https://crates.io/
 //! [`serde`]: https://serde.rs/
 
-#![doc(html_root_url = "https://docs.rs/toml/0.5")]
+#![doc(html_root_url = "https://docs.rs/toml/0.4")]
 #![deny(missing_docs)]
-#![warn(rust_2018_idioms)]
 
-pub mod map;
+#[macro_use]
+extern crate serde;
+
 pub mod value;
 #[doc(no_inline)]
-pub use crate::value::Value;
+pub use value::Value;
 mod datetime;
 
 pub mod ser;
 #[doc(no_inline)]
-pub use crate::ser::{to_string, to_string_pretty, to_vec, Serializer};
+pub use ser::{to_string, to_string_pretty, to_vec, Serializer};
 pub mod de;
 #[doc(no_inline)]
-pub use crate::de::{from_slice, from_str, Deserializer};
+pub use de::{from_slice, from_str, Deserializer};
 mod tokens;
-
-#[doc(hidden)]
-pub mod macros;
-
-mod spanned;
-#[doc(no_inline)]
-pub use crate::spanned::Spanned;

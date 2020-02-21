@@ -1,12 +1,12 @@
 # toml-rs
 
-[![Build Status](https://travis-ci.com/alexcrichton/toml-rs.svg?branch=master)](https://travis-ci.com/alexcrichton/toml-rs)
+[![Build Status](https://travis-ci.org/alexcrichton/toml-rs.svg?branch=master)](https://travis-ci.org/alexcrichton/toml-rs)
 [![Coverage Status](https://coveralls.io/repos/alexcrichton/toml-rs/badge.svg?branch=master&service=github)](https://coveralls.io/github/alexcrichton/toml-rs?branch=master)
 [![Latest Version](https://img.shields.io/crates/v/toml.svg)](https://crates.io/crates/toml)
 [![Documentation](https://docs.rs/toml/badge.svg)](https://docs.rs/toml)
 
 A [TOML][toml] decoder and encoder for Rust. This library is currently compliant
-with the v0.5.0 version of TOML. This library will also likely continue to stay
+with the v0.4.0 version of TOML. This library will also likely continue to stay
 up to date with the TOML specification as changes happen.
 
 [toml]: https://github.com/toml-lang/toml
@@ -14,7 +14,7 @@ up to date with the TOML specification as changes happen.
 ```toml
 # Cargo.toml
 [dependencies]
-toml = "0.5"
+toml = "0.4"
 ```
 
 This crate also supports serialization/deserialization through the
@@ -24,17 +24,8 @@ used for that support.
 
 # License
 
-This project is licensed under either of
+`toml-rs` is primarily distributed under the terms of both the MIT license and
+the Apache License (Version 2.0), with portions covered by various BSD-like
+licenses.
 
- * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or
-   http://www.apache.org/licenses/LICENSE-2.0)
- * MIT license ([LICENSE-MIT](LICENSE-MIT) or
-   http://opensource.org/licenses/MIT)
-
-at your option.
-
-### Contribution
-
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in toml-rs by you, as defined in the Apache-2.0 license, shall be
-dual licensed as above, without any additional terms or conditions.
+See LICENSE-APACHE, and LICENSE-MIT for details.
